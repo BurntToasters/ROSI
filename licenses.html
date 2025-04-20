@@ -2,121 +2,215 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Rosi</title>
+  <title>Rosi - Licenses & Credits</title>
   <style>
     body {
       margin: 0;
       padding: 0;
       font-family: 'Segoe UI', sans-serif;
-      backdrop-filter: blur(20px);
-      background: rgba(255, 255, 255, 0.1);
+      background: rgb(114, 63, 44);
       color: #fff;
-      background-color: rgb(114, 63, 44);
-      height: 100vh;
+      min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
-      overflow: auto;
+      justify-content: flex-start;
+      overflow-x: hidden;
     }
-    input, select, button {
-      margin: 10px;
-      padding: 10px;
-      border: none;
-      border-radius: 10px;
-      backdrop-filter: blur(10px);
-      background: rgba(255, 255, 255, 0.2);
-      color: white;
+    .container {
+      width: 95%;
+      max-width: 800px;
+      margin: 40px auto 20px auto;
+      background: rgba(255,255,255,0.07);
+      border-radius: 18px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.18);
+      padding: 32px 24px 24px 24px;
     }
-    button:hover {
-      background: rgba(255, 255, 255, 0.3);
-      cursor: pointer;
+    h1, h2 {
+      text-align: center;
+      margin-top: 0;
     }
-    pre {
-      margin-top: 10px;
-      max-height: 200px;
-      overflow-y: auto;
-      width: 90%;
-      background: rgba(0, 0, 0, 0.4);
-      padding: 10px;
-      border-radius: 10px;
-    }
-    #settings {
-      position: absolute;
-      top: 10px;
-      right: 10px;
-      cursor: pointer;
-      font-size: 18px;
-      background: rgba(255, 255, 255, 0.2);
-      border-radius: 50%;
-      width: 30px;
-      height: 30px;
+    .license-list {
       display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    #settings-modal {
-      position: absolute;
-      top: 50px;
-      right: 20px;
-      background: rgba(0, 0, 0, 0.6);
-      padding: 20px;
-      border-radius: 15px;
-      display: none;
       flex-direction: column;
-      z-index: 999;
+      gap: 24px;
+      margin-top: 32px;
     }
-    #settings-modal label {
-      margin-bottom: 10px;
+    .license-card {
+      background: rgba(0,0,0,0.22);
+      border-radius: 14px;
+      padding: 22px 18px 18px 18px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .license-title {
+      font-size: 1.2em;
+      font-weight: bold;
+      margin-bottom: 2px;
+      color: #ffe6c7;
+    }
+    .license-meta {
+      font-size: 0.98em;
+      color: #d6cfc9;
+      margin-bottom: 6px;
+    }
+    .license-description {
+      font-size: 1em;
+      margin-bottom: 8px;
+    }
+    details {
+      background: rgba(255,255,255,0.07);
+      border-radius: 8px;
+      padding: 8px 12px;
+      margin-top: 6px;
+      font-size: 0.97em;
+      color: #f3e7de;
+    }
+    summary {
+      cursor: pointer;
+      font-weight: 500;
+      color: #b7e7b7;
+      outline: none;
     }
     a {
-      color:rgb(125, 172, 125);
+      color: #b7e7b7;
+      text-decoration: underline;
+    }
+    .back-btn {
+      margin-top: 32px;
+      display: flex;
+      justify-content: flex-start;
+    }
+    .back-btn button {
+      padding: 8px 18px;
+      border-radius: 8px;
+      border: none;
+      background: rgba(255,255,255,0.18);
+      color: #fff;
+      font-size: 1em;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .back-btn button:hover {
+      background: rgba(255,255,255,0.28);
+    }
+    @media (max-width: 600px) {
+      .container { padding: 12px 4px; }
+      .license-card { padding: 12px 6px; }
     }
   </style>
 </head>
 <body>
-  <br>
-  <br>
-  <h1 style="text-align: center;"><a href="index.html"><img src="app.png" style="max-width: 45%; margin-bottom: 0px;"></a></h1>
-  <h1 style="margin-bottom: 2px; margin-top: 2px;">Licenses:</h1>
-  <h2 style="margin-top: 5px">The following items are used under the respective license accompanied by the item.</h2>
-  <h3 style="margin-bottom: 2px;">Font: Press Start 2P</h3>
-  <p style="font-size: 12px">Copyright 2012 The Press Start 2P Project Authors (<a href="mailto:cody@zone38.net">cody@zone38.net</a>) with Reserved Font Name "Press Start 2P".
+  <div class="container">
+    <h1>
+      <a href="index.html"><img src="app.png" style="max-width: 38%; margin-bottom: 0px;"></a>
+    </h1>
+    <h1>Licenses & Credits</h1>
+    <h2 style="font-weight: 400; font-size: 1.1em;">
+      The following items are used under their respective licenses.
+    </h2>
+    <div class="license-list">
+      <!-- License/Credit Card Example -->
+      <div class="license-card">
+        <div class="license-title">Font: Press Start 2P</div>
+        <div class="license-meta">
+          Copyright 2012 The Press Start 2P Project Authors
+          (<a href="mailto:cody@zone38.net">cody@zone38.net</a>)<br>
+          License: <a href="#" onclick="window.api.openExternal('https://openfontlicense.org')">SIL Open Font License 1.1</a>
+        </div>
+        <div class="license-description">
+          Used for retro-style text. Licensed under the SIL Open Font License, Version 1.1.
+        </div>
+        <details>
+          <summary>Show Full License Text</summary>
+          <div style="overflow-x:auto; max-width:100%;">
+            <pre style="white-space:pre-wrap; word-break:break-word; font-size:0.97em; line-height:1.5; background:none; color:inherit; border:none; margin:0; padding:0;">
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
 
-    This Font Software is licensed under the SIL Open Font License, Version 1.1 . This license is copied below, and is also available with a FAQ at: <a href="https://openfontlicense.org">https://openfontlicense.org</a>
-    
-    SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
-    PREAMBLE
-    
-    The goals of the Open Font License (OFL) are to stimulate worldwide development of collaborative font projects, to support the font creation efforts of academic and linguistic communities, and to provide a free and open framework in which fonts may be shared and improved in partnership with others.
-    
-    The OFL allows the licensed fonts to be used, studied, modified and redistributed freely as long as they are not sold by themselves. The fonts, including any derivative works, can be bundled, embedded, redistributed and/or sold with any software provided that any reserved names are not used by derivative works. The fonts and derivatives, however, cannot be released under any other type of license. The requirement for fonts to remain under this license does not apply to any document created using the fonts or their derivatives.
-    DEFINITIONS
-    
-    "Font Software" refers to the set of files released by the Copyright Holder(s) under this license and clearly marked as such. This may include source files, build scripts and documentation.
-    
-    "Reserved Font Name" refers to any names specified as such after the copyright statement(s).
-    "Original Version" refers to the collection of Font Software components as distributed by the Copyright Holder(s).
-    
-    "Modified Version" refers to any derivative made by adding to, deleting, or substituting -- in part or in whole -- any of the components of the Original Version, by changing formats or by porting the Font Software to a new environment.
-    
-    "Author" refers to any designer, engineer, programmer, technical writer or other person who contributed to the Font Software.
-    PERMISSION & CONDITIONS
-    
-    Permission is hereby granted, free of charge, to any person obtaining a copy of the Font Software, to use, study, copy, merge, embed, modify, redistribute, and sell modified and unmodified copies of the Font Software, subject to the following conditions:
-    
-        Neither the Font Software nor any of its individual components, in Original or Modified Versions, may be sold by itself.
-        Original or Modified Versions of the Font Software may be bundled, redistributed and/or sold with any software, provided that each copy contains the above copyright notice and this license. These can be included either as stand-alone text files, human-readable headers or in the appropriate machine-readable metadata fields within text or binary files as long as those fields can be easily viewed by the user.
-        No Modified Version of the Font Software may use the Reserved Font Name(s) unless explicit written permission is granted by the corresponding Copyright Holder. This restriction only applies to the primary font name as presented to the users.
-        The name(s) of the Copyright Holder(s) or the Author(s) of the Font Software shall not be used to promote, endorse or advertise any Modified Version, except to acknowledge the contribution(s) of the Copyright Holder(s) and the Author(s) or with their explicit written permission.
-        The Font Software, modified or unmodified, in part or in whole, must be distributed entirely under this license, and must not be distributed under any other license. The requirement for fonts to remain under this license does not apply to any document created using the Font Software.
-    
-    TERMINATION
-    
-    This license becomes null and void if any of the above conditions are not met.
-    DISCLAIMER
-    
-    THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER DEALINGS IN THE FONT SOFTWARE. </p>
-    <a href="#" onclick="window.location.href = 'index.html'" style="text-align: left;"><button style="margin-bottom: 1px;">< Back</button></a>
+PREAMBLE
+
+The goals of the Open Font License (OFL) are to stimulate worldwide development of collaborative font projects, to support the font creation efforts of academic and linguistic communities, and to provide a free and open framework in which fonts may be shared and improved in partnership with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and redistributed freely as long as they are not sold by themselves. The fonts, including any derivative works, can be bundled, embedded, redistributed and/or sold with any software provided that any reserved names are not used by derivative works. The fonts and derivatives, however, cannot be released under any other type of license. The requirement for fonts to remain under this license does not apply to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+
+"Font Software" refers to the set of files released by the Copyright Holder(s) under this license and clearly marked as such. This may include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the copyright statement(s).
+"Original Version" refers to the collection of Font Software components as distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting, or substituting -- in part or in whole -- any of the components of the Original Version, by changing formats or by porting the Font Software to a new environment.
+
+"Author" refers to any designer, engineer, programmer, technical writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of the Font Software, to use, study, copy, merge, embed, modify, redistribute, and sell modified and unmodified copies of the Font Software, subject to the following conditions:
+
+    Neither the Font Software nor any of its individual components, in Original or Modified Versions, may be sold by itself.
+    Original or Modified Versions of the Font Software may be bundled, redistributed and/or sold with any software, provided that each copy contains the above copyright notice and this license. These can be included either as stand-alone text files, human-readable headers or in the appropriate machine-readable metadata fields within text or binary files as long as those fields can be easily viewed by the user.
+    No Modified Version of the Font Software may use the Reserved Font Name(s) unless explicit written permission is granted by the corresponding Copyright Holder. This restriction only applies to the primary font name as presented to the users.
+    The name(s) of the Copyright Holder(s) or the Author(s) of the Font Software shall not be used to promote, endorse or advertise any Modified Version, except to acknowledge the contribution(s) of the Copyright Holder(s) and the Author(s) or with their explicit written permission.
+    The Font Software, modified or unmodified, in part or in whole, must be distributed entirely under this license, and must not be distributed under any other license. The requirement for fonts to remain under this license does not apply to any document created using the Font Software.
+
+TERMINATION
+
+This license becomes null and void if any of the above conditions are not met.
+
+DISCLAIMER
+
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER DEALINGS IN THE FONT SOFTWARE.
+            </pre>
+          </div>
+        </details>
+      </div>
+      <div class="license-card">
+        <div class="license-title">Binary: YT-DLP</div>
+        <div class="license-meta">
+          License: <a href="#" onclick="window.api.openExternal('https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE')">UNLICENSE</a>
+        </div>
+        <div class="license-description">
+          Used as the backend for downloading videos.
+        </div>
+        <details>
+          <summary>Show Full License Text</summary>
+          <div style="overflow-x:auto; max-width:100%;">
+            <pre style="white-space:pre-wrap; word-break:break-word; font-size:0.97em; line-height:1.5; background:none; color:inherit; border:none; margin:0; padding:0;">
+This is free and unencumbered software released into the public domain.
+
+Anyone is free to copy, modify, publish, use, compile, sell, or
+distribute this software, either in source code form or as a compiled
+binary, for any purpose, commercial or non-commercial, and by any
+means.
+
+In jurisdictions that recognize copyright laws, the author or authors
+of this software dedicate any and all copyright interest in the
+software to the public domain. We make this dedication for the benefit
+of the public at large and to the detriment of our heirs and
+successors. We intend this dedication to be an overt act of
+relinquishment in perpetuity of all present and future rights to this
+software under copyright law.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+For more information, please refer to <a href="#" onclick="window.api.openExternal('http://unlicense.org/')">http://unlicense.org/</a>
+            </pre>
+          </div>
+        </details>
+      </div>
+    </div>
+    <div class="back-btn">
+      <a href="index.html"><button>&lt; Back</button></a>
+    </div>
+  </div>
 </body>
 </html>

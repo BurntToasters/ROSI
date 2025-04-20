@@ -21,10 +21,10 @@
       cursor: not-allowed;
     }
     .loader-icon {
-      width: 18px;
-      height: 18px;
+      width: 30px;
+      height: 30px;
       vertical-align: middle;
-      margin-right: 6px;
+      margin-right: 0px;
     }
     button.loading {
       background: rgba(255,255,255,0.15);
@@ -302,6 +302,26 @@
       updateKeepOriginalToggleState();
     };
     updateUIFromSettings();
+
+    // --- Support Modal Logic ---
+    if (!settings.hideSupportModal) {
+      showModal({
+        title: "Support This Project?",
+        message: "Would you like to support the development of ROSI?<br>Your help keeps this project alive!",
+        buttons: [
+          { label: "❤️ Yes Support!", action: () => { 
+            window.api.openExternal('https://google.com')
+            settings.hideSupportModal = true;
+              window.api.saveSettings(settings);
+           }},
+          { label: "No thanks", action: () => {
+              settings.hideSupportModal = true;
+              window.api.saveSettings(settings);
+            }
+          }
+        ]
+      });
+    }
 
     // settings modal listeners
     if (settingsButton) settingsButton.addEventListener('click', toggleSettingsModal);
