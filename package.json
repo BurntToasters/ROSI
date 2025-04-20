@@ -5,7 +5,8 @@
   "main": "main.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "electron": "electron ."
+    "electron": "electron .",
+    "build": "electron-builder"
   },
   "repository": {
     "type": "git",
@@ -19,9 +20,82 @@
   "homepage": "https://github.com/BurntToasters/rosi#readme",
   "devDependencies": {
     "electron": "^35.2.0",
-    "electron-packager": "^17.1.2"
+    "electron-packager": "^17.1.2",
+    "electron-builder": "^24.14.2"
   },
   "dependencies": {
     "glob": "^11.0.1"
+  },
+
+"build": {
+  "appId": "com.burnttoasters.rosi",
+  "productName": "Rosi",
+  "files": [
+    "**/*",
+    "!**/node_modules/*/{test,__tests__,tests}/**",
+    "!**/*.md",
+    "!**/package-devonly.js",
+    "!yt-dlp.exe",
+    "!yt-dlp_macos",
+    "!yt-dlp_linux"
+  ],
+  "directories": {
+    "output": "dist"
+  },
+  "win": {
+    "target": "nsis",
+    "extraFiles": [
+      {
+        "from": "yt-dlp.exe",
+        "to": "yt-dlp.exe"
+      }
+    ]
+  },
+  "mac": {
+    "target": "dmg",
+    "icon": "build/app-icon.icns",
+    "extraFiles": [
+      {
+        "from": "yt-dlp_macos",
+        "to": "yt-dlp_macos"
+      }
+    ]
+  },
+  "linux": {
+    "target": [
+      "AppImage",
+      "deb"
+    ],
+    "category": "Utility",
+    "extraFiles": [
+      {
+        "from": "yt-dlp_linux",
+        "to": "yt-dlp_linux"
+      }
+    ]
+  },
+  "dmg": {
+    "background": "build/dmg-background.png",
+    "icon": "build/app-icon.icns",
+    "iconSize": 100,
+    "contents": [
+      {
+        "x": 130,
+        "y": 220,
+        "type": "file"
+      },
+      {
+        "x": 410,
+        "y": 220,
+        "type": "link",
+        "path": "/Applications"
+      }
+    ],
+    "window": {
+      "width": 540,
+      "height": 380
+    }
   }
+}
+
 }

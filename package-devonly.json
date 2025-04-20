@@ -1,0 +1,27 @@
+{
+  "name": "rosi",
+  "version": "0.1.0",
+  "description": "Electron GUI for yt-dlp",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "electron": "electron ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BurntToasters/rosi.git"
+  },
+  "author": "BurntToasters",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/BurntToasters/rosi/issues"
+  },
+  "homepage": "https://github.com/BurntToasters/rosi#readme",
+  "devDependencies": {
+    "electron": "^35.2.0",
+    "electron-packager": "^17.1.2"
+  },
+  "dependencies": {
+    "glob": "^11.0.1"
+  }
+}
