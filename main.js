@@ -5,8 +5,26 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 
 const isWindows = process.platform === 'win32';
-const ytdlpBinary = isWindows ? 'yt-dlp.exe' : 'yt-dlp_macos';
+const isMac = process.platform === 'darwin';
+const isLinux = process.platform === 'linux';
+
+const ytdlpBinary = isWindows
+  ? 'yt-dlp.exe'
+  : isMac
+    ? 'yt-dlp_macos'
+    : 'yt-dlp_linux';
 const ytdlpPath = path.resolve(__dirname, ytdlpBinary);
+
+// yt-dlp binary executable on macOS/Linux
+if (!isWindows && fs.existsSync(ytdlpPath)) {
+  try {
+    fs.chmodSync(ytdlpPath, 0o755);
+  } catch (err) {
+    dialog.showErrorBox('Permission Error', `Failed to set executable permissions on yt-dlp binary at ${ytdlpPath}.\nError: ${err.message}`);
+    app.quit();
+  }
+}
+
 if (!fs.existsSync(ytdlpPath)) {
     dialog.showErrorBox('Missing Dependency', `yt-dlp binary not found at ${ytdlpPath}.\nPlease ensure ${ytdlpBinary} is in the application's directory.`);
     app.quit();
