@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Rosi</title>
+  <link rel="stylesheet" href="main.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <style>
+    .press-start-2p-regular {
+      font-family: "Press Start 2P", system-ui;
+      font-weight: 400;
+      font-style: normal;
+    }
+    label.disabled {
+      color: #888;
+      cursor: not-allowed;
+    }
+    label.disabled input[type="checkbox"] {
+      cursor: not-allowed;
+    }
+    .loader-icon {
+      width: 18px;
+      height: 18px;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    button.loading {
+      background: rgba(255,255,255,0.15);
+      color: #fff;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <!-- loader overlay (legacy, not used with new button loader) -->
+  <div id="loader-overlay">
+      <img id="loader" src="loader.svg" alt="Loading..." />
+      <button id="cancel-button">Cancel</button>
+  </div>
+
+  <!-- settings gear icon -->
+  <div id="settings" title="Settings">⚙️</div>
+
+  <!-- settings modal with toggles -->
+  <div id="settings-modal">
+    <p style="text-align: center;"><a href="#" onclick="window.api.openExternal('https://help.rosie.run')" style="color: cornflowerblue;"><img src="app.png" style="max-width: 15%;"></a></p>
+    <label>
+      <input type="checkbox" id="consoleToggle"> Show Console Output
+    </label>
+    <label>
+      <input type="checkbox" id="advancedToggle"> Show Advanced Options
+    </label>
+    <label>
+      <input type="checkbox" id="mp4Toggle"> Convert all video files to .mp4
+    </label>
+    <label>
+      <input type="checkbox" id="keepOriginalToggle"> Keep original video file after conversion
+    </label>
+    <button id="resetSettings">Reset Settings</button>
+  </div>
+
+  <!-- app logo and title -->
+  <div class="rosi-text press-start-2p-regular">
+    <h1 style="text-align: center;"><img src="app.png" style="max-width: 25%; margin-bottom: 0px;"></h1>
+    <h1><b style="color: black;">R</b><b style="color: white;">O</b><b style="color:black;">S</b><b style="color: white;">I</b></h1>
+  </div>
+  <h2>A simple yt-dlp GUI app.</h2>
+
+  <!-- url input -->
+  <input id="url" type="text" placeholder="Enter video URL" />
+
+  <!-- advanced format options, hidden by default -->
+  <div id="formatOptions" style="display: none;">
+    <button id="fetchFormatsBtn" data-default-text="Check Resolutions">Check Resolutions</button>
+    <label>Video Format:</label>
+    <select id="videoFormat"></select>
+    <label>Audio Format:</label>
+    <select id="audioFormat"></select>
+  </div>
+
+  <!-- download button -->
+  <button id="downloadBtn" data-default-text="Download">Download</button>
+
+  <!-- output console -->
+  <pre id="output" class="console-output"></pre>
+
+  <!-- footer links -->
+  <p style="text-align: center;">
+    <a href="#" onclick="window.api.openExternal('https://help.rosie.run')" style="color: cornflowerblue;">Help</a>
+    <b style="color: white;">|</b>
+    <a href="#" onclick="window.api.openExternal('https://rosie.run')" style="color: cornflowerblue;">Website</a>
+    <b style="color: white;">|</b>
+    <a href="#" onclick="window.location.href = 'licenses.html'" style="color: cornflowerblue;">Licenses</a>
+  </p>
+
+  <!-- modal for alerts and confirmations -->
+  <div id="app-modal" class="modal-overlay">
+    <div class="modal-box">
+      <h3 id="modal-title">Modal Title</h3>
+      <p id="modal-message">Modal message goes here...</p>
+      <div id="modal-buttons" class="modal-buttons"></div>
+    </div>
+  </div>
+
+<script>
+  // toggles console output visibility
+  function updateConsoleVisibility(show) {
+    const outputEl = document.getElementById('output');
+    outputEl.style.display = show ? 'block' : 'none';
+  }
+
+  // handles loader in button, swaps text for spinner, click cancels
+  function setButtonLoading(button, isLoading, onCancel) {
+    if (!button) return;
+    if (isLoading) {
+      button.classList.add('loading');
+      button.innerHTML = `<img src="loader.svg" class="loader-icon" alt="Loading...">`;
+      button.disabled = false;
+      button.onclick = onCancel;
+    } else {
+      button.classList.remove('loading');
+      button.innerHTML = button.dataset.defaultText || button.textContent;
+      button.disabled = false;
+      button.onclick = button._originalClick;
+    }
+  }
+
+  // toggles settings modal
+  function toggleSettingsModal() {
+    const modal = document.getElementById('settings-modal');
+    modal.style.display = modal.style.display === 'flex' ? 'none' : 'flex';
+  }
+
+  // shows/hides advanced options
+  function toggleAdvancedUI(show) {
+    const formatSection = document.getElementById('formatOptions');
+    if (formatSection) {
+      formatSection.style.display = show ? 'block' : 'none';
+    }
+  }
+
+  // shows modal dialog with title, message, and buttons
+  function showModal({ title, message, buttons = [] }) {
+    const modal = document.getElementById('app-modal');
+    const titleEl = document.getElementById('modal-title');
+    const msgEl = document.getElementById('modal-message');
+    const btnContainer = document.getElementById('modal-buttons');
+    if (!modal || !titleEl || !msgEl || !btnContainer) return;
+    titleEl.textContent = title;
+    msgEl.innerHTML = message.replace(/\n/g, '<br>');
+    btnContainer.innerHTML = '';
+    buttons.forEach(({ label, action }) => {
+      const btn = document.createElement('button');
+      btn.textContent = label;
+      btn.onclick = () => {
+        modal.style.display = 'none';
+        if (typeof action === 'function') action();
+      };
+      btnContainer.appendChild(btn);
+    });
+    modal.style.display = 'flex';
+  }
+
+  // disables/enables keep original toggle based on mp4 toggle
+  function updateKeepOriginalToggleState() {
+    const mp4Toggle = document.getElementById('mp4Toggle');
+    const keepOriginalToggle = document.getElementById('keepOriginalToggle');
+    const keepOriginalLabel = keepOriginalToggle ? keepOriginalToggle.closest('label') : null;
+    if (!mp4Toggle || !keepOriginalToggle) return;
+    if (mp4Toggle.checked) {
+      keepOriginalToggle.disabled = false;
+      if (keepOriginalLabel) keepOriginalLabel.classList.remove('disabled');
+    } else {
+      keepOriginalToggle.disabled = true;
+      keepOriginalToggle.checked = false;
+      if (keepOriginalLabel) keepOriginalLabel.classList.add('disabled');
+    }
+  }
+
+  // fetches available formats from backend, populates dropdowns
+  let isFetchingFormats = false;
+  let fetchFormatsAbort = null;
+  async function fetchFormats() {
+    const btn = document.getElementById('fetchFormatsBtn');
+    const urlInput = document.getElementById('url');
+    const videoUrl = urlInput ? urlInput.value : null;
+    if (!btn || !videoUrl || videoUrl.trim() === "") {
+      showModal({ title: "Input Error", message: "Please enter a video URL first.", buttons: [{ label: "OK" }] });
+      return;
+    }
+    if (isFetchingFormats) return;
+    isFetchingFormats = true;
+    fetchFormatsAbort = () => {
+      isFetchingFormats = false;
+      setButtonLoading(btn, false);
+    };
+    setButtonLoading(btn, true, () => {
+      window.api.cancelDownload();
+      fetchFormatsAbort();
+    });
+    const videoSelect = document.getElementById('videoFormat');
+    const audioSelect = document.getElementById('audioFormat');
+    if (videoSelect) videoSelect.innerHTML = '<option value="">Loading...</option>';
+    if (audioSelect) audioSelect.innerHTML = '<option value="">Loading...</option>';
+    try {
+      const output = await window.api.getFormats(videoUrl);
+      const lines = output.split('\n');
+      if (videoSelect) videoSelect.innerHTML = '<option value="">Select Video Format</option>';
+      if (audioSelect) audioSelect.innerHTML = '<option value="">Select Audio Format</option>';
+      let videoFormatsFound = 0, audioFormatsFound = 0;
+      lines.forEach(line => {
+        if (/^\s*\d+\s+[a-zA-Z0-9]+/.test(line.trim())) {
+          const parts = line.trim().split(/\s+/);
+          const formatId = parts[0];
+          const option = document.createElement('option');
+          option.value = formatId;
+          let labelText = line.trim();
+          const resolutionMatch = labelText.match(/(\d{3,4}x\d{3,4}|\d{3,4}p)/);
+          const fpsMatch = labelText.match(/@\s*(\d+fps)/);
+          const sizeMatch = labelText.match(/(\d+(\.\d+)?(MiB|GiB|KiB))/);
+          const codecMatch = line.match(/(avc1|vp9|av01|h264|h265|opus|mp4a|aac|vorbis)/i);
+          let cleanLabel = `ID: ${formatId}`;
+          if (resolutionMatch) cleanLabel += ` ${resolutionMatch[0]}`;
+          if (fpsMatch) cleanLabel += ` ${fpsMatch[1]}`;
+          if (codecMatch) cleanLabel += ` (${codecMatch[0]})`;
+          if (sizeMatch) cleanLabel += ` ~${sizeMatch[0]}`;
+          option.text = cleanLabel;
+          option.title = line.trim();
+          const isVideo = /video/.test(line.toLowerCase()) && !/audio only/i.test(line);
+          const isAudio = /audio/.test(line.toLowerCase()) && !/video only/i.test(line);
+          const isVideoOnly = /video only/i.test(line);
+          const isAudioOnly = /audio only/i.test(line);
+          if (isVideoOnly || (isVideo && !isAudio)) {
+            if (videoSelect) videoSelect.appendChild(option);
+            videoFormatsFound++;
+          } else if (isAudioOnly || (isAudio && !isVideo)) {
+            if (audioSelect) audioSelect.appendChild(option);
+            audioFormatsFound++;
+          } else if (isVideo && isAudio) {
+            if (videoSelect) videoSelect.appendChild(option);
+            videoFormatsFound++;
+          }
+        }
+      });
+      if (videoFormatsFound === 0 && videoSelect) videoSelect.innerHTML = '<option value="">No video formats found</option>';
+      if (audioFormatsFound === 0 && audioSelect) audioSelect.innerHTML = '<option value="">No audio formats found</option>';
+    } catch (e) {
+      const errorMessage = typeof e === 'string' ? e : (e.message || 'Unknown error');
+      if (videoSelect) videoSelect.innerHTML = '<option value="">Error loading formats</option>';
+      if (audioSelect) audioSelect.innerHTML = '<option value="">Error loading formats</option>';
+      showModal({
+        title: "Format Fetch Failed",
+        message: `Could not retrieve formats.\nError: ${errorMessage}`,
+        buttons: [{ label: "OK" }]
+      });
+    } finally {
+      isFetchingFormats = false;
+      setButtonLoading(btn, false);
+    }
+  }
+
+  // handles download button logic, triggers download, manages loader/cancel
+  let isDownloading = false;
+  let downloadAbort = null;
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    let settings;
+    try {
+      settings = await window.api.getSettings();
+    } catch (error) {
+      settings = {
+        showConsoleOutput: false, advancedOptions: false,
+        convertToMp4: false, keepOriginalAfterConvert: true, firstLaunch: true
+      };
+      showModal({ title: "Settings Error", message: "Could not load settings. Using defaults.", buttons: [{ label: "OK" }] });
+    }
+    const consoleToggle = document.getElementById('consoleToggle');
+    const advancedToggle = document.getElementById('advancedToggle');
+    const mp4Toggle = document.getElementById('mp4Toggle');
+    const keepOriginalToggle = document.getElementById('keepOriginalToggle');
+    const outputEl = document.getElementById('output');
+    const settingsButton = document.getElementById('settings');
+    const settingsModal = document.getElementById('settings-modal');
+    const resetSettingsBtn = document.getElementById('resetSettings');
+    const fetchFormatsBtn = document.getElementById('fetchFormatsBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    // store original click handlers for loader logic
+    if (fetchFormatsBtn) fetchFormatsBtn._originalClick = fetchFormats;
+    if (downloadBtn) downloadBtn._originalClick = null;
+
+    // update UI from settings
+    const updateUIFromSettings = () => {
+      if (!consoleToggle || !advancedToggle || !mp4Toggle || !keepOriginalToggle) return;
+      consoleToggle.checked = settings.showConsoleOutput;
+      advancedToggle.checked = settings.advancedOptions;
+      mp4Toggle.checked = settings.convertToMp4;
+      keepOriginalToggle.checked = settings.keepOriginalAfterConvert ?? true;
+      updateConsoleVisibility(settings.showConsoleOutput);
+      toggleAdvancedUI(settings.advancedOptions);
+      updateKeepOriginalToggleState();
+    };
+    updateUIFromSettings();
+
+    // settings modal listeners
+    if (settingsButton) settingsButton.addEventListener('click', toggleSettingsModal);
+    document.addEventListener('click', (event) => {
+      if (settingsModal && settingsButton && settingsModal.style.display === 'flex' &&
+          !settingsModal.contains(event.target) &&
+          !settingsButton.contains(event.target)) {
+        settingsModal.style.display = 'none';
+      }
+    });
+    document.addEventListener('keydown', (event) => {
+      if (settingsModal && event.key === 'Escape' && settingsModal.style.display === 'flex') {
+        settingsModal.style.display = 'none';
+      }
+    });
+    if (consoleToggle) consoleToggle.addEventListener('change', (e) => {
+      settings.showConsoleOutput = e.target.checked;
+      window.api.saveSettings(settings);
+      updateConsoleVisibility(settings.showConsoleOutput);
+    });
+    if (advancedToggle) advancedToggle.addEventListener('change', (e) => {
+      settings.advancedOptions = e.target.checked;
+      toggleAdvancedUI(e.target.checked);
+      window.api.saveSettings(settings);
+    });
+    if (mp4Toggle) mp4Toggle.addEventListener('change', (e) => {
+      settings.convertToMp4 = e.target.checked;
+      updateKeepOriginalToggleState();
+      if (!settings.convertToMp4) {
+        settings.keepOriginalAfterConvert = true;
+        if (keepOriginalToggle) keepOriginalToggle.checked = true;
+      }
+      window.api.saveSettings(settings);
+    });
+    if (keepOriginalToggle) keepOriginalToggle.addEventListener('change', (e) => {
+      if (!e.target.disabled) {
+        settings.keepOriginalAfterConvert = e.target.checked;
+        window.api.saveSettings(settings);
+      } else {
+        e.preventDefault();
+      }
+    });
+    if (resetSettingsBtn) resetSettingsBtn.addEventListener('click', () => {
+      showModal({
+        title: "Confirm Reset",
+        message: "Are you sure you want to reset all settings to default? Rosi will restart.",
+        buttons: [
+          { label: "Cancel" },
+          { label: "⟳ Reset & Restart", action: () => window.api.resetSettings() }
+        ]
+      });
+    });
+
+    // format button click
+    if (fetchFormatsBtn) {
+      fetchFormatsBtn.onclick = fetchFormats;
+    }
+
+    // download button click
+    if (downloadBtn) {
+      downloadBtn._originalClick = async function () {
+        if (isDownloading) return;
+        const urlInput = document.getElementById('url');
+        const url = urlInput ? urlInput.value : null;
+        if (!url || url.trim() === "") {
+          showModal({ title: "Input Error", message: "Please enter a video URL.", buttons: [{ label: "OK" }] });
+          return;
+        }
+        const videoSelect = document.getElementById('videoFormat');
+        const audioSelect = document.getElementById('audioFormat');
+        if (settings.advancedOptions && (!videoSelect || !audioSelect || !videoSelect.value || !audioSelect.value)) {
+          showModal({ title: "Format Selection Needed", message: "Please check resolutions and select video/audio formats first.", buttons: [{ label: "OK" }] });
+          return;
+        }
+        const savePath = await window.api.selectDownloadLocation();
+        if (!savePath) {
+          if (outputEl) outputEl.textContent = "⚠️ Download cancelled: No save location selected.";
+          return;
+        }
+        if (outputEl) outputEl.textContent = "";
+        isDownloading = true;
+        downloadAbort = () => {
+          isDownloading = false;
+          setButtonLoading(downloadBtn, false);
+        };
+        setButtonLoading(downloadBtn, true, () => {
+          window.api.cancelDownload();
+          downloadAbort();
+        });
+        const videoFormat = settings.advancedOptions ? videoSelect.value : null;
+        const audioFormat = settings.advancedOptions ? audioSelect.value : null;
+        window.api.downloadVideo({ url, videoFormat, audioFormat, outputPath: savePath });
+      };
+      downloadBtn.onclick = downloadBtn._originalClick;
+    }
+
+    // output listeners for progress and completion
+    window.api.onProgress((message) => {
+      if (!outputEl) return;
+      outputEl.textContent += message + '\n';
+      outputEl.scrollTop = outputEl.scrollHeight;
+    });
+    window.api.onComplete((statusMessage) => {
+      if (downloadBtn) {
+        isDownloading = false;
+        setButtonLoading(downloadBtn, false);
+      }
+      if (fetchFormatsBtn) setButtonLoading(fetchFormatsBtn, false);
+      if (outputEl) {
+        outputEl.textContent += statusMessage + '\n';
+        outputEl.scrollTop = outputEl.scrollHeight;
+      }
+    });
+
+    // first launch info modal
+    if (settings.firstLaunch) {
+      showModal({
+        title: "FFMPEG Required for Conversion",
+        message: "ROSI uses FFMPEG for converting files to MP4.<br>If you plan to use the MP4 conversion feature, please ensure FFMPEG is installed and accessible in your system's PATH.<br>Click 'More Info' for guidance.",
+        buttons: [
+          { label: "More Info", action: () => window.api.openExternal('https://help.rosie.run/installing-ffmpeg') },
+          { label: "OK" }
+        ]
+      });
+      settings.firstLaunch = false;
+      window.api.saveSettings(settings);
+    }
+  });
+</script>
+</body>
+</html>
