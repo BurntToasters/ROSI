@@ -1,6 +1,6 @@
 {
   "name": "rosi",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Electron GUI for yt-dlp",
   "main": "main.js",
   "scripts": {
@@ -34,20 +34,28 @@
       "!**/node_modules/*/{test,__tests__,tests}/**",
       "!**/*.md",
       "!**/package-devonly.js",
+      "!**/dist",
       "!yt-dlp.exe",
       "!yt-dlp_macos",
       "!yt-dlp_linux"
+    ],
+    "asarUnpack": [
+      "yt-dlp.exe",
+      "yt-dlp_macos",
+      "yt-dlp_linux"
     ],
     "directories": {
       "output": "dist"
     },
     "win": {
       "target": "nsis",
+      "icon": "build/app-icon.png",
       "extraFiles": [
         {
           "from": "yt-dlp.exe",
           "to": "yt-dlp.exe"
         }
+        
       ]
     },
     "mac": {
