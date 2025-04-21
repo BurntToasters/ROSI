@@ -61,6 +61,8 @@
     </label>
     <label>
       <input type="checkbox" id="hookBrowserToggle"> Hook into web browser
+      <a href="#" title="Learn more about browser cookies" style="margin-left:6px; text-decoration:none; color:cornflowerblue; font-weight:bold;"
+         onclick="window.api.openExternal('https://help.rosie.run/about-browser-cookies'); return false;">?</a>
     </label>
     <div id="browserChoiceContainer" style="display:none; margin-left: 24px;">
       <label for="browserChoice">Browser:</label>
@@ -305,6 +307,19 @@
     // store original click handlers for loader logic
     if (fetchFormatsBtn) fetchFormatsBtn._originalClick = fetchFormats;
     if (downloadBtn) downloadBtn._originalClick = null;
+
+    // Detect platform from userAgent
+    const isWindows = navigator.userAgent.includes('Windows');
+
+    // Filter browser options for Windows
+    if (isWindows && browserChoiceSelect) {
+      // Only keep Firefox
+      Array.from(browserChoiceSelect.options).forEach(opt => {
+        if (opt.value !== "Firefox") browserChoiceSelect.removeChild(opt);
+      });
+      // Set default to Firefox
+      browserChoiceSelect.value = "Firefox";
+    }
 
     // update UI from settings
     const updateUIFromSettings = () => {
