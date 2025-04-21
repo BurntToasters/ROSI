@@ -45,7 +45,8 @@
 
   <!-- settings modal with toggles -->
   <div id="settings-modal">
-    <p style="text-align: center;"><a href="#" onclick="window.api.openExternal('https://help.rosie.run')" style="color: cornflowerblue;"><img src="app.png" style="max-width: 15%;"></a></p>
+    <div class="press-start-2p-regular"><p style="text-align: center; color: white; margin-bottom: 0px; margin-top: 0px;">SETTINGS</p></div>
+    <div class="rainbowHr"><hr style="margin-bottom: 0px;"></div>
     <label>
       <input type="checkbox" id="consoleToggle"> Show Console Output
     </label>
@@ -58,13 +59,25 @@
     <label>
       <input type="checkbox" id="keepOriginalToggle"> Keep original video file after conversion
     </label>
+    <label>
+      <input type="checkbox" id="hookBrowserToggle"> Hook into web browser
+    </label>
+    <div id="browserChoiceContainer" style="display:none; margin-left: 24px;">
+      <label for="browserChoice">Browser:</label>
+      <select id="browserChoice">
+        <option value="Chrome">Chrome</option>
+        <option value="Firefox">Firefox</option>
+        <option value="Edge">Edge</option>
+        <option value="Brave">Brave</option>
+      </select>
+    </div>
     <button id="resetSettings">Reset Settings</button>
   </div>
 
   <!-- app logo and title -->
   <div class="rosi-text press-start-2p-regular">
     <h1 style="text-align: center;"><img src="app.png" style="max-width: 25%; margin-bottom: 0px;"></h1>
-    <h1><b style="color: black;">R</b><b style="color: white;">O</b><b style="color:black;">S</b><b style="color: white;">I</b></h1>
+    <h1 style="margin-top: 10px; margin-bottom: 0px;"><b style="color: black;">R</b><b style="color: white;">O</b><b style="color:black;">S</b><b style="color: white;">I</b></h1>
   </div>
   <h2>A simple yt-dlp GUI app.</h2>
 
@@ -280,6 +293,9 @@
     const advancedToggle = document.getElementById('advancedToggle');
     const mp4Toggle = document.getElementById('mp4Toggle');
     const keepOriginalToggle = document.getElementById('keepOriginalToggle');
+    const hookBrowserToggle = document.getElementById('hookBrowserToggle');
+    const browserChoiceContainer = document.getElementById('browserChoiceContainer');
+    const browserChoiceSelect = document.getElementById('browserChoice');
     const outputEl = document.getElementById('output');
     const settingsButton = document.getElementById('settings');
     const settingsModal = document.getElementById('settings-modal');
@@ -292,11 +308,14 @@
 
     // update UI from settings
     const updateUIFromSettings = () => {
-      if (!consoleToggle || !advancedToggle || !mp4Toggle || !keepOriginalToggle) return;
+      if (!consoleToggle || !advancedToggle || !mp4Toggle || !keepOriginalToggle || !hookBrowserToggle || !browserChoiceContainer || !browserChoiceSelect) return;
       consoleToggle.checked = settings.showConsoleOutput;
       advancedToggle.checked = settings.advancedOptions;
       mp4Toggle.checked = settings.convertToMp4;
       keepOriginalToggle.checked = settings.keepOriginalAfterConvert ?? true;
+      hookBrowserToggle.checked = settings.hookBrowser ?? false;
+      browserChoiceSelect.value = settings.browserChoice ?? "Chrome";
+      browserChoiceContainer.style.display = settings.hookBrowser ? 'block' : 'none';
       updateConsoleVisibility(settings.showConsoleOutput);
       toggleAdvancedUI(settings.advancedOptions);
       updateKeepOriginalToggleState();
@@ -363,6 +382,15 @@
       } else {
         e.preventDefault();
       }
+    });
+    if (hookBrowserToggle) hookBrowserToggle.addEventListener('change', (e) => {
+      settings.hookBrowser = e.target.checked;
+      if (browserChoiceContainer) browserChoiceContainer.style.display = e.target.checked ? 'block' : 'none';
+      window.api.saveSettings(settings);
+    });
+    if (browserChoiceSelect) browserChoiceSelect.addEventListener('change', (e) => {
+      settings.browserChoice = e.target.value;
+      window.api.saveSettings(settings);
     });
     if (resetSettingsBtn) resetSettingsBtn.addEventListener('click', () => {
       showModal({

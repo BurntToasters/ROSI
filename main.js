@@ -36,7 +36,9 @@ const defaultSettings = {
   advancedOptions: false,
   convertToMp4: false,
   keepOriginalAfterConvert: true,
-  firstLaunch: true
+  firstLaunch: true,
+  hookBrowser: false, // NEW
+  browserChoice: "Chrome" // NEW
 };
 
 // load settings from file or use defaults
@@ -215,10 +217,8 @@ ipcMain.on('download-video', async (event, options) => {
         url
     ];
 
-    if (options?.videoFormat && options?.audioFormat) {
-        ytdlpArgs.splice(-1, 0, '-f', `${options.videoFormat}+${options.audioFormat}`);
-    } else if (options?.videoFormat) {
-        ytdlpArgs.splice(-1, 0, '-f', options.videoFormat);
+    if (settings.hookBrowser && settings.browserChoice) {
+      ytdlpArgs.splice(-1, 0, '--cookies-from-browser', settings.browserChoice);
     }
 
     safeSend('progress', `🚀 Starting download: ${url}`);
