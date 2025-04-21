@@ -34,15 +34,7 @@
       "!**/node_modules/*/{test,__tests__,tests}/**",
       "!**/*.md",
       "!**/package-devonly.js",
-      "!**/dist",
-      "!yt-dlp.exe",
-      "!yt-dlp_macos",
-      "!yt-dlp_linux"
-    ],
-    "asarUnpack": [
-      "yt-dlp.exe",
-      "yt-dlp_macos",
-      "yt-dlp_linux"
+      "!**/dist"
     ],
     "directories": {
       "output": "dist"
@@ -50,22 +42,15 @@
     "win": {
       "target": "nsis",
       "icon": "build/app-icon.png",
-      "extraFiles": [
-        {
-          "from": "yt-dlp.exe",
-          "to": "yt-dlp.exe"
-        }
-        
+      "asarUnpack": [
+        "yt-dlp.exe"
       ]
     },
     "mac": {
       "target": "dmg",
       "icon": "build/app-icon.icns",
-      "extraFiles": [
-        {
-          "from": "yt-dlp_macos",
-          "to": "yt-dlp_macos"
-        }
+      "asarUnpack": [
+        "yt-dlp_macos"
       ]
     },
     "linux": {
@@ -74,11 +59,8 @@
         "deb"
       ],
       "category": "Utility",
-      "extraFiles": [
-        {
-          "from": "yt-dlp_linux",
-          "to": "yt-dlp_linux"
-        }
+      "asarUnpack": [
+        "yt-dlp_linux"
       ]
     },
     "dmg": {

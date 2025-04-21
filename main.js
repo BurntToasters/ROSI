@@ -8,12 +8,21 @@ const isWindows = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
 const isLinux = process.platform === 'linux';
 
+const isPackaged = app.isPackaged;
 const ytdlpBinary = isWindows
   ? 'yt-dlp.exe'
   : isMac
     ? 'yt-dlp_macos'
     : 'yt-dlp_linux';
-const ytdlpPath = path.resolve(__dirname, ytdlpBinary);
+
+let ytdlpPath;
+if (isPackaged) {
+  // Use asarUnpack location
+  ytdlpPath = path.join(process.resourcesPath, 'app.asar.unpacked', ytdlpBinary);
+} else {
+  // DEV
+  ytdlpPath = path.join(__dirname, ytdlpBinary);
+}
 
 // yt-dlp binary executable on macOS/Linux
 if (!isWindows && fs.existsSync(ytdlpPath)) {
