@@ -295,4 +295,12 @@ background: rgba(255, 255, 255, 0.4);
   border-radius: 6px;
   margin-top: 10px;
 }
+
+div.rainbowHr hr {
+  border: 0;
+  height: 3px;
+  background: linear-gradient(to right, red, orange, yellow, green, blue, indigo, violet);
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+  margin: 20px auto;
+}
 /* END CSS */
