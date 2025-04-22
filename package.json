@@ -48,7 +48,7 @@
     },
     "mac": {
       "target": "dmg",
-      "icon": "build/app-icon.icns",
+      "icon": "build/app-icon.png",
       "asarUnpack": [
         "yt-dlp_macos"
       ]
