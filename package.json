@@ -69,12 +69,12 @@
       "iconSize": 100,
       "contents": [
         {
-          "x": 118,
+          "x": 120,
           "y": 300,
           "type": "file"
         },
         {
-          "x": 536,
+          "x": 546,
           "y": 300,
           "type": "link",
           "path": "/Applications"
