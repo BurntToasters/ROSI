@@ -13,7 +13,7 @@
     "url": "git+https://github.com/BurntToasters/rosi.git"
   },
   "author": "BurntToasters",
-  "license": "ISC",
+  "license": "MPL-2.0",
   "bugs": {
     "url": "https://github.com/BurntToasters/rosi/issues"
   },
