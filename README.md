@@ -1,6 +1,11 @@
 # ROSI
 ROSI is an Electron GUI for yt-dlp
 
+# Requirements
+
+ROSI requires ffmpeg to be installed in your system and available in its PATH.
+Learn how to install ffmpeg: [https://help.rosie.run/installing-ffmpeg](https://help.rosie.run/installing-ffmpeg)
+
 # How to build ROSI from source:
 
 Download ROSI source code from main
