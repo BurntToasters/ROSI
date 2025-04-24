@@ -43,11 +43,12 @@ const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 const defaultSettings = {
   showConsoleOutput: false,
   advancedOptions: false,
-  convertToMp4: false,
+  convertEnabled: false, 
+  convertFormat: "mp4",
   keepOriginalAfterConvert: true,
   firstLaunch: true,
-  hookBrowser: false, // NEW
-  browserChoice: "Chrome" // NEW
+  hookBrowser: false,
+  browserChoice: "Chrome"
 };
 
 // load settings from file or use defaults
@@ -276,29 +277,36 @@ ipcMain.on('download-video', async (event, options) => {
           return;
       }
 
-      // if convert to mp4 is enabled, run ffmpeg
-      if (currentSettings.convertToMp4) {
+      // if convert is enabled, run ffmpeg
+      if (currentSettings.convertEnabled) {
         safeSend('progress', '⏳ Checking if conversion is needed...');
         try {
           const inputPath = downloadedFilePath;
           const inputFileExt = path.extname(inputPath);
           const inputFilename = path.basename(inputPath);
+          const targetFormat = currentSettings.convertFormat || "mp4";
+          const outputPath = inputPath.replace(/\.[^/.]+$/, `.${targetFormat}`);
+          const outputFilename = path.basename(outputPath);
 
-          if (inputFileExt.toLowerCase() === '.mp4') {
-            safeSend('progress', `ℹ️ Downloaded file is already MP4 (${inputFilename}). Skipping conversion.`);
-            safeSend('complete', '✅ Done (Already MP4).');
+          // Only convert if not already in target format
+          if (inputFileExt.toLowerCase() === `.${targetFormat}`) {
+            safeSend('progress', `ℹ️ Downloaded file is already ${targetFormat.toUpperCase()} (${inputFilename}). Skipping conversion.`);
+            safeSend('complete', `✅ Done (Already ${targetFormat.toUpperCase()}).`);
             return;
           }
 
-          const outputPath = inputPath.replace(inputFileExt, '.mp4');
-          const outputFilename = path.basename(outputPath);
-
           if (fs.existsSync(outputPath)) {
-              safeSend('progress', `⚠️ Output file ${outputFilename} already exists. Overwriting.`);
+            safeSend('progress', `⚠️ Output file ${outputFilename} already exists. Overwriting.`);
           }
 
-          safeSend('progress', `🎬 Converting ${inputFilename} to MP4...`);
-          const ffmpegArgs = ['-i', inputPath, '-c:v', 'copy', '-c:a', 'aac', '-movflags', '+faststart', '-y', outputPath];
+          safeSend('progress', `🎬 Converting ${inputFilename} to ${targetFormat.toUpperCase()}...`);
+          // Choose ffmpeg args based on format
+          let ffmpegArgs;
+          if (targetFormat === "mp3" || targetFormat === "m4a") {
+            ffmpegArgs = ['-i', inputPath, '-vn', '-c:a', targetFormat === "mp3" ? 'libmp3lame' : 'aac', '-y', outputPath];
+          } else {
+            ffmpegArgs = ['-i', inputPath, '-c:v', 'copy', '-c:a', 'aac', '-movflags', '+faststart', '-y', outputPath];
+          }
           ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
 
           let ffmpegOutput = '';
@@ -364,7 +372,7 @@ ipcMain.on('download-video', async (event, options) => {
           safeSend('complete', '❌ Conversion failed (setup error).');
         }
       } else {
-        safeSend('progress', 'ℹ️ Conversion to MP4 not enabled for this download.');
+        safeSend('progress', 'ℹ️ Conversion not enabled for this download.');
         safeSend('complete', '✅ Download complete (no conversion).');
       }
     });
