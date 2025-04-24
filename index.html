@@ -73,7 +73,8 @@
         <option value="Brave">Brave</option>
       </select>
     </div>
-    <button id="resetSettings">Reset Settings</button>
+    <button id="checkUpdateBtn">Check for updates</button>
+    <button id="resetSettings" class="small-btn">Reset Settings</button>
   </div>
 
   <!-- app logo and title -->
@@ -280,6 +281,53 @@
   let isDownloading = false;
   let downloadAbort = null;
 
+  // Version compare helper
+  function compareVersions(a, b) {
+    const pa = a.split('.').map(Number);
+    const pb = b.split('.').map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const na = pa[i] || 0, nb = pb[i] || 0;
+      if (na > nb) return 1;
+      if (na < nb) return -1;
+    }
+    return 0;
+  }
+
+  // Check for updates function
+  async function checkForUpdates() {
+    try {
+      const res = await fetch('https://api.github.com/repos/BurntToasters/ROSI/releases/latest', {
+        headers: { 'User-Agent': 'ROSI-Updater' }
+      });
+      if (!res.ok) throw new Error('Failed to fetch release info');
+      const release = await res.json();
+      const latestVersion = release.tag_name.replace(/^v/, '');
+      const currentVersion = window.api?.getAppVersion ? await window.api.getAppVersion() : (window.rosiVersion || '0.0.0');
+      if (compareVersions(latestVersion, currentVersion) > 0) {
+        showModal({
+          title: "Update Available!",
+          message: `A new version (v${latestVersion}) of ROSI is available!`,
+          buttons: [
+            { label: "Update", action: () => window.api.openExternal(release.html_url) },
+            { label: "No thanks" }
+          ]
+        });
+      } else {
+        showModal({
+          title: "ROSI is up to date!",
+          message: `You are running the latest version (v${currentVersion}).`,
+          buttons: [{ label: "OK" }]
+        });
+      }
+    } catch (e) {
+      showModal({
+        title: "Update Check Failed",
+        message: "Could not check for updates. Please try again later.",
+        buttons: [{ label: "OK" }]
+      });
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', async () => {
     let settings;
     try {
@@ -304,6 +352,7 @@
     const resetSettingsBtn = document.getElementById('resetSettings');
     const fetchFormatsBtn = document.getElementById('fetchFormatsBtn');
     const downloadBtn = document.getElementById('downloadBtn');
+    const checkUpdateBtn = document.getElementById('checkUpdateBtn');
     // store original click handlers for loader logic
     if (fetchFormatsBtn) fetchFormatsBtn._originalClick = fetchFormats;
     if (downloadBtn) downloadBtn._originalClick = null;
@@ -459,6 +508,11 @@
         window.api.downloadVideo({ url, videoFormat, audioFormat, outputPath: savePath });
       };
       downloadBtn.onclick = downloadBtn._originalClick;
+    }
+
+    // check for updates button click
+    if (checkUpdateBtn) {
+      checkUpdateBtn.onclick = checkForUpdates;
     }
 
     // output listeners for progress and completion
