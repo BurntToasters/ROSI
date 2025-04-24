@@ -38,7 +38,7 @@ contextBridge.exposeInMainWorld('api', {
   cancelDownload: () => ipcRenderer.send('cancel-download'),
 
   // get application version
-  getAppVersion: () => process.env.npm_package_version || require('electron').remote.app.getVersion(),
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
   // listen for progress messages from main
   onProgress: (callback) => {

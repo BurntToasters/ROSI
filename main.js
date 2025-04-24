@@ -171,6 +171,9 @@ ipcMain.handle('getFormats', async (_, url) => {
     });
 });
 
+// get app version
+ipcMain.handle('get-app-version', () => app.getVersion());
+
 // --- Download Video ---
 let ytdlpProcess = null;
 let ffmpegProcess = null;
