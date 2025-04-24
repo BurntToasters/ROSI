@@ -303,4 +303,13 @@ div.rainbowHr hr {
   box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
   margin: 20px auto;
 }
+
+.small-btn {
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 8px;
+  margin: 6px 0;
+  min-width: 0;
+}
+
 /* END CSS */
