@@ -34,11 +34,6 @@
   </style>
 </head>
 <body>
-  <!-- loader overlay (legacy, not used with new button loader) -->
-  <div id="loader-overlay">
-      <img id="loader" src="loader.svg" alt="Loading..." />
-      <button id="cancel-button">Cancel</button>
-  </div>
 
   <!-- settings gear icon -->
   <div id="settings" title="Settings">⚙️</div>
@@ -51,13 +46,22 @@
       <input type="checkbox" id="consoleToggle"> Show Console Output
     </label>
     <label>
+      <input type="checkbox" id="convertToggle"> Convert video files to...
+    </label>
+    <div id="convertFormatContainer" style="display:none; margin-left: 24px;">
+      <label for="convertFormat">Format:</label>
+      <select id="convertFormat">
+        <option value="mp4">.mp4 (video)</option>
+        <option value="mov">.mov (video)</option>
+        <option value="mp3">.mp3 (audio only)</option>
+        <option value="m4a">.m4a (audio only)</option>
+      </select>
+    </div>
+    <label id="keepOriginalLabel" style="display:none;">
+      <input type="checkbox" id="keepOriginalToggle"> Keep original file after conversion
+    </label>
+    <label>
       <input type="checkbox" id="advancedToggle"> Show Advanced Options
-    </label>
-    <label>
-      <input type="checkbox" id="mp4Toggle"> Convert all video files to .mp4
-    </label>
-    <label>
-      <input type="checkbox" id="keepOriginalToggle"> Keep original video file after conversion
     </label>
     <label>
       <input type="checkbox" id="hookBrowserToggle"> Hook into web browser
@@ -73,8 +77,10 @@
         <option value="Brave">Brave</option>
       </select>
     </div>
+
     <button id="checkUpdateBtn">Check for updates</button>
     <button id="resetSettings" class="small-btn">Reset Settings</button>
+    <p style="text-align: right; font-size: 8.5px; color: white; margin-top: 4px; margin-bottom: -10px;">V1.1.0</p>
   </div>
 
   <!-- app logo and title -->
@@ -181,18 +187,8 @@
 
   // disables/enables keep original toggle based on mp4 toggle
   function updateKeepOriginalToggleState() {
-    const mp4Toggle = document.getElementById('mp4Toggle');
     const keepOriginalToggle = document.getElementById('keepOriginalToggle');
     const keepOriginalLabel = keepOriginalToggle ? keepOriginalToggle.closest('label') : null;
-    if (!mp4Toggle || !keepOriginalToggle) return;
-    if (mp4Toggle.checked) {
-      keepOriginalToggle.disabled = false;
-      if (keepOriginalLabel) keepOriginalLabel.classList.remove('disabled');
-    } else {
-      keepOriginalToggle.disabled = true;
-      keepOriginalToggle.checked = false;
-      if (keepOriginalLabel) keepOriginalLabel.classList.add('disabled');
-    }
   }
 
   // fetches available formats from backend, populates dropdowns
@@ -341,11 +337,14 @@
     }
     const consoleToggle = document.getElementById('consoleToggle');
     const advancedToggle = document.getElementById('advancedToggle');
-    const mp4Toggle = document.getElementById('mp4Toggle');
     const keepOriginalToggle = document.getElementById('keepOriginalToggle');
     const hookBrowserToggle = document.getElementById('hookBrowserToggle');
     const browserChoiceContainer = document.getElementById('browserChoiceContainer');
     const browserChoiceSelect = document.getElementById('browserChoice');
+    const convertToggle = document.getElementById('convertToggle');
+    const convertFormatContainer = document.getElementById('convertFormatContainer');
+    const convertFormatSelect = document.getElementById('convertFormat');
+    const keepOriginalLabel = document.getElementById('keepOriginalLabel');
     const outputEl = document.getElementById('output');
     const settingsButton = document.getElementById('settings');
     const settingsModal = document.getElementById('settings-modal');
@@ -372,17 +371,24 @@
 
     // update UI from settings
     const updateUIFromSettings = () => {
-      if (!consoleToggle || !advancedToggle || !mp4Toggle || !keepOriginalToggle || !hookBrowserToggle || !browserChoiceContainer || !browserChoiceSelect) return;
-      consoleToggle.checked = settings.showConsoleOutput;
-      advancedToggle.checked = settings.advancedOptions;
-      mp4Toggle.checked = settings.convertToMp4;
+      if (
+        !consoleToggle || !advancedToggle || !keepOriginalToggle ||
+        !hookBrowserToggle || !browserChoiceContainer || !browserChoiceSelect ||
+        !convertToggle || !convertFormatContainer || !convertFormatSelect || !keepOriginalLabel
+      ) return;
+      consoleToggle.checked = settings.showConsoleOutput ?? false;
+      advancedToggle.checked = settings.advancedOptions ?? false;
       keepOriginalToggle.checked = settings.keepOriginalAfterConvert ?? true;
       hookBrowserToggle.checked = settings.hookBrowser ?? false;
       browserChoiceSelect.value = settings.browserChoice ?? "Chrome";
+      convertToggle.checked = settings.convertEnabled ?? false;
+      convertFormatSelect.value = settings.convertFormat ?? "mp4";
+      keepOriginalToggle.checked = settings.keepOriginalAfterConvert ?? true;
+      convertFormatContainer.style.display = convertToggle.checked ? 'block' : 'none';
+      keepOriginalLabel.style.display = convertToggle.checked ? 'inline-block' : 'none';
       browserChoiceContainer.style.display = settings.hookBrowser ? 'block' : 'none';
       updateConsoleVisibility(settings.showConsoleOutput);
       toggleAdvancedUI(settings.advancedOptions);
-      updateKeepOriginalToggleState();
     };
     updateUIFromSettings();
 
@@ -430,15 +436,6 @@
       toggleAdvancedUI(e.target.checked);
       window.api.saveSettings(settings);
     });
-    if (mp4Toggle) mp4Toggle.addEventListener('change', (e) => {
-      settings.convertToMp4 = e.target.checked;
-      updateKeepOriginalToggleState();
-      if (!settings.convertToMp4) {
-        settings.keepOriginalAfterConvert = true;
-        if (keepOriginalToggle) keepOriginalToggle.checked = true;
-      }
-      window.api.saveSettings(settings);
-    });
     if (keepOriginalToggle) keepOriginalToggle.addEventListener('change', (e) => {
       if (!e.target.disabled) {
         settings.keepOriginalAfterConvert = e.target.checked;
@@ -454,6 +451,24 @@
     });
     if (browserChoiceSelect) browserChoiceSelect.addEventListener('change', (e) => {
       settings.browserChoice = e.target.value;
+      window.api.saveSettings(settings);
+    });
+    if (convertToggle) convertToggle.addEventListener('change', (e) => {
+      settings.convertEnabled = e.target.checked;
+      convertFormatContainer.style.display = e.target.checked ? 'block' : 'none';
+      keepOriginalLabel.style.display = e.target.checked ? 'inline-block' : 'none';
+      if (!e.target.checked) {
+        settings.keepOriginalAfterConvert = true;
+        if (keepOriginalToggle) keepOriginalToggle.checked = true;
+      }
+      window.api.saveSettings(settings);
+    });
+    if (convertFormatSelect) convertFormatSelect.addEventListener('change', (e) => {
+      settings.convertFormat = e.target.value;
+      window.api.saveSettings(settings);
+    });
+    if (keepOriginalToggle) keepOriginalToggle.addEventListener('change', (e) => {
+      settings.keepOriginalAfterConvert = e.target.checked;
       window.api.saveSettings(settings);
     });
     if (resetSettingsBtn) resetSettingsBtn.addEventListener('click', () => {
@@ -505,7 +520,9 @@
         });
         const videoFormat = settings.advancedOptions ? videoSelect.value : null;
         const audioFormat = settings.advancedOptions ? audioSelect.value : null;
-        window.api.downloadVideo({ url, videoFormat, audioFormat, outputPath: savePath });
+        const convertFormat = settings.convertEnabled ? convertFormatSelect.value : null;
+        const keepOriginal = settings.convertEnabled ? keepOriginalToggle.checked : null;
+        window.api.downloadVideo({ url, videoFormat, audioFormat, outputPath: savePath, convertFormat, keepOriginal });
       };
       downloadBtn.onclick = downloadBtn._originalClick;
     }
@@ -525,6 +542,14 @@
       if (downloadBtn) {
         isDownloading = false;
         setButtonLoading(downloadBtn, false);
+        
+        const originalText = downloadBtn.dataset.defaultText || "Download";
+        downloadBtn.innerHTML = "✅ Download Complete!";
+        downloadBtn.disabled = true;
+        setTimeout(() => {
+          downloadBtn.innerHTML = originalText;
+          downloadBtn.disabled = false;
+        }, 4000);
       }
       if (fetchFormatsBtn) setButtonLoading(fetchFormatsBtn, false);
       if (outputEl) {
