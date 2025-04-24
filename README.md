@@ -8,8 +8,24 @@ ROSI is an Electron GUI for yt-dlp
 ROSI requires ffmpeg to be installed in your system and available in its PATH.
 Learn how to install ffmpeg: [https://help.rosie.run/installing-ffmpeg](https://help.rosie.run/installing-ffmpeg)
 
+- **MacOS:** `brew install ffmpeg`
+- **Windows:** `winget install ffmpeg`
+- **Linux:** 
+- - **Debian/Ubuntu:** `sudo apt install ffmpeg`
+  - **Fedora:** `sudo dnf install ffmpeg`
+  - **Arch:** `sudo pacman -S ffmpeg`
+
+
 # How to build ROSI from source:
 
-Download ROSI source code from main
-in unzipped folder, open a terminal window and type `npm i --save-dev electron` to download the required electron packages (nodejs and npm are required to already be installed).
-run ``npm run build`` or ``npm run build -- --[extra args]`` to build ROSI for your Host os.
+Download ROSI source code from source (main)
+1) Download zip of release source code (non-release source code are not recommended as they may contain issues not yet fixed for a release).
+2) Unzip the folder folder, place it in a good location on your computer.
+3) Install [NodeJS](https://nodejs.org/en/download) and [NPM](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm) *(Required to build ROSI)*.
+4) Open a terminal window within the project's folder and type `npm i --save-dev electron` to download the required electron packages.
+5) Run `npm run build` or `npm run build -- --[extra args]` to build ROSI for your Host OS.
+
+# Need help with something?
+
+If there is an issue with the program, feel free to create a **Github Issue**!  
+For other issues/general contact, please go to [https://help.rosie.run/contact](https://help.rosie.run/contact).
