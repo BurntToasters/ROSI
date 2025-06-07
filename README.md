@@ -7,7 +7,7 @@ ___
 
 # LICENSES
 
-Rosi includes the official YT-DLP binary which on its own uses the [unlicense] license, however there are bundled third party packages. Read [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES.md) for more.
+Rosi includes the official YT-DLP binary which on its own uses the [unlicense] license, however there are bundled third party packages. Read [THIRD‑PARTY‑NOTICES](THIRD‑PARTY‑NOTICES.md) for more.
 
 ___
 
