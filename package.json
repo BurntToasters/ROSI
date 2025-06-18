@@ -19,7 +19,7 @@
   },
   "homepage": "https://github.com/BurntToasters/rosi#readme",
   "devDependencies": {
-    "electron": "^35.2.1",
+    "electron": "^35.5.1",
     "electron-builder": "^26.0.12",
     "electron-packager": "^17.1.2"
   },
