@@ -268,7 +268,12 @@ ipcMain.on('download-video', async (event, options) => {
       let downloadedFilePath = null;
       try {
           const outputLines = downloadOutputData.trim().split('\n');
-          downloadedFilePath = outputLines.filter(line => line.trim() !== '').pop();
+          const candidatePaths = outputLines
+            .map(line => line.trim())
+            .filter(line => line && fs.existsSync(line) && fs.lstatSync(line).isFile());
+
+          downloadedFilePath = candidatePaths.pop();
+
           if (!downloadedFilePath) {
               throw new Error("Could not find downloaded filepath in yt-dlp output.");
           }

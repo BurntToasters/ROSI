@@ -1,6 +1,6 @@
 {
   "name": "rosi",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "description": "Electron GUI for yt-dlp",
   "main": "main.js",
   "scripts": {
@@ -19,7 +19,7 @@
   },
   "homepage": "https://github.com/BurntToasters/rosi#readme",
   "devDependencies": {
-    "electron": "^35.5.1",
+    "electron": "^35.2.1",
     "electron-builder": "^26.0.12",
     "electron-packager": "^17.1.2"
   },
