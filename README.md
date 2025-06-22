@@ -25,6 +25,11 @@ Learn how to install ffmpeg: [https://help.rosie.run/installing-ffmpeg](https://
 
 ___
 
+# ℹ️ The Microsoft Store version of ROSI is in a seperate repo. The MS store version contains minor changes to work with the MS Store. 
+**➡️<u>[REPO LINK](https://github.com/BurntToasters/ROSI-msstore)</u>**
+
+___
+
 # Build ROSI from source:
 
 Download ROSI source code from source (main)
