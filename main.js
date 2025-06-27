@@ -1,8 +1,10 @@
-// --- begin main.js ---
+// main.js
+
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const sanitize = require('sanitize-filename');
 
 const isWindows = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
@@ -43,7 +45,7 @@ const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 const defaultSettings = {
   showConsoleOutput: false,
   advancedOptions: false,
-  convertEnabled: false, 
+  convertEnabled: false,
   convertFormat: "mp4",
   keepOriginalAfterConvert: true,
   firstLaunch: true,
@@ -173,9 +175,6 @@ ipcMain.handle('getFormats', async (_, url) => {
     });
 });
 
-// get app version
-ipcMain.handle('get-app-version', () => app.getVersion());
-
 // --- Download Video ---
 let ytdlpProcess = null;
 let ffmpegProcess = null;
@@ -268,21 +267,15 @@ ipcMain.on('download-video', async (event, options) => {
       let downloadedFilePath = null;
       try {
           const outputLines = downloadOutputData.trim().split('\n');
-          const candidatePaths = outputLines
-            .map(line => line.trim())
-            .filter(line => line && fs.existsSync(line) && fs.lstatSync(line).isFile());
-
-          downloadedFilePath = candidatePaths.pop();
+          downloadedFilePath = outputLines.filter(line => line.trim() !== '').pop();
 
           if (!downloadedFilePath) {
-              throw new Error("Could not find downloaded filepath in yt-dlp output.");
-          }
-          if (!fs.existsSync(downloadedFilePath)) {
-              throw new Error(`Reported file path does not exist: ${downloadedFilePath}`);
+              throw new Error("Could not find a valid filepath in yt-dlp's output.");
           }
           safeSend('progress', `✅ Download finished. Identified file: ${path.basename(downloadedFilePath)}`);
       } catch (extractError) {
           safeSend('progress', `❌ Error determining downloaded file path after download.`);
+          safeSend('progress', `   Error: ${extractError.message}`);
           safeSend('complete', '❌ Failed (File Path Error).');
           return;
       }
@@ -291,7 +284,17 @@ ipcMain.on('download-video', async (event, options) => {
       if (currentSettings.convertEnabled) {
         safeSend('progress', '⏳ Checking if conversion is needed...');
         try {
-          const inputPath = downloadedFilePath;
+          const originalInputPath = downloadedFilePath;
+          const sanitizedFileName = sanitize(path.basename(originalInputPath));
+          const sanitizedInputPath = path.join(path.dirname(originalInputPath), sanitizedFileName);
+
+          // Rename the downloaded file to the sanitized version
+          if (originalInputPath !== sanitizedInputPath) {
+            fs.renameSync(originalInputPath, sanitizedInputPath);
+            safeSend('progress', `Renamed to sanitized filename: ${sanitizedFileName}`);
+          }
+        
+          const inputPath = sanitizedInputPath;
           const inputFileExt = path.extname(inputPath);
           const inputFilename = path.basename(inputPath);
           const targetFormat = currentSettings.convertFormat || "mp4";
@@ -310,14 +313,24 @@ ipcMain.on('download-video', async (event, options) => {
           }
 
           safeSend('progress', `🎬 Converting ${inputFilename} to ${targetFormat.toUpperCase()}...`);
-          // Choose ffmpeg args based on format
-          let ffmpegArgs;
-          if (targetFormat === "mp3" || targetFormat === "m4a") {
-            ffmpegArgs = ['-i', inputPath, '-vn', '-c:a', targetFormat === "mp3" ? 'libmp3lame' : 'aac', '-y', outputPath];
+
+          if (isWindows) {
+              let ffmpegCommand;
+              if (targetFormat === "mp3" || targetFormat === "m4a") {
+                ffmpegCommand = `ffmpeg -i "${inputPath}" -vn -c:a ${targetFormat === "mp3" ? 'libmp3lame' : 'aac'} -y "${outputPath}"`;
+              } else {
+                ffmpegCommand = `ffmpeg -i "${inputPath}" -c:v copy -c:a aac -movflags +faststart -y "${outputPath}"`;
+              }
+              ffmpegProcess = spawn(ffmpegCommand, { shell: true });
           } else {
-            ffmpegArgs = ['-i', inputPath, '-c:v', 'copy', '-c:a', 'aac', '-movflags', '+faststart', '-y', outputPath];
+              let ffmpegArgs;
+              if (targetFormat === "mp3" || targetFormat === "m4a") {
+                ffmpegArgs = ['-i', inputPath, '-vn', '-c:a', targetFormat === "mp3" ? 'libmp3lame' : 'aac', '-y', outputPath];
+              } else {
+                ffmpegArgs = ['-i', inputPath, '-c:v', 'copy', '-c:a', 'aac', '-movflags', '+faststart', '-y', outputPath];
+              }
+              ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
           }
-          ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
 
           let ffmpegOutput = '';
           ffmpegProcess.stdout.on('data', (data) => {
