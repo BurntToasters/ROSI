@@ -24,7 +24,8 @@
     "electron-packager": "^17.1.2"
   },
   "dependencies": {
-    "glob": "^11.0.1"
+    "glob": "^11.0.1",
+    "sanitize-filename": "^1.6.3"
   },
   "build": {
     "appId": "com.burnttoasters.rosi",
