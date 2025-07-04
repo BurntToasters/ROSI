@@ -300,7 +300,7 @@
       if (!res.ok) throw new Error('Failed to fetch release info');
       const release = await res.json();
       const latestVersion = release.tag_name.replace(/^v/, '');
-      const currentVersion = window.api?.getAppVersion ? await window.api.getAppVersion() : (window.rosiVersion || '0.0.0');
+      const currentVersion = await window.api.getAppVersion();
       if (compareVersions(latestVersion, currentVersion) > 0) {
         showModal({
           title: "Update Available!",
