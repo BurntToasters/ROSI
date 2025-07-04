@@ -41,6 +41,8 @@ if (!fs.existsSync(ytdlpPath)) {
     app.quit();
 }
 
+ipcMain.handle('get-app-version', () => app.getVersion());
+
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 const defaultSettings = {
   showConsoleOutput: false,
