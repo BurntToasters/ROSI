@@ -3,129 +3,99 @@
 <head>
   <meta charset="UTF-8">
   <title>Rosi</title>
-  <link rel="stylesheet" href="main.css">
+  <link rel="stylesheet" href="beta.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
-  <style>
-    .press-start-2p-regular {
-      font-family: "Press Start 2P", system-ui;
-      font-weight: 400;
-      font-style: normal;
-    }
-    label.disabled {
-      color: #888;
-      cursor: not-allowed;
-    }
-    label.disabled input[type="checkbox"] {
-      cursor: not-allowed;
-    }
-    .loader-icon {
-      width: 30px;
-      height: 30px;
-      vertical-align: middle;
-      margin-right: 0px;
-    }
-    button.loading {
-      background: rgba(255,255,255,0.15);
-      color: #fff;
-      cursor: pointer;
-    }
-  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Press+Start+2P&display=swap" rel="stylesheet">
 </head>
 <body>
 
-  <!-- settings gear icon -->
-  <div id="settings" title="Settings">⚙️</div>
+  <div id="settings" title="Settings">
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V15a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51-1z"></path></svg>
+  </div>
 
-  <!-- settings modal with toggles -->
   <div id="settings-modal">
-    <div class="press-start-2p-regular"><p style="text-align: center; color: white; margin-bottom: 0px; margin-top: 0px;">SETTINGS</p></div>
-    <div class="rainbowHr"><hr style="margin-bottom: 0px;"></div>
-    <label>
-      <input type="checkbox" id="consoleToggle"> Show Console Output
-    </label>
-    <label>
-      <input type="checkbox" id="convertToggle"> Convert video files to...
-    </label>
-    <div id="convertFormatContainer" style="display:none; margin-left: 24px;">
-      <label for="convertFormat">Format:</label>
-      <select id="convertFormat">
-        <option value="mp4">.mp4 (video)</option>
-        <option value="mov">.mov (video)</option>
-        <option value="mp3">.mp3 (audio only)</option>
-        <option value="m4a">.m4a (audio only)</option>
-      </select>
+    <div class="settings-header">
+      <h3 class="press-start-2p-regular">SETTINGS</h3>
+      <div class="rainbowHr"></div>
     </div>
-    <label id="keepOriginalLabel" style="display:none;">
-      <input type="checkbox" id="keepOriginalToggle"> Keep original file after conversion
-    </label>
-    <label>
-      <input type="checkbox" id="advancedToggle"> Show Advanced Options
-    </label>
-    <label>
-      <input type="checkbox" id="hookBrowserToggle"> Hook into web browser
-      <a href="#" title="Learn more about browser cookies" style="margin-left:6px; text-decoration:none; color:cornflowerblue; font-weight:bold;"
-         onclick="window.api.openExternal('https://help.rosie.run/about-browser-cookies'); return false;">?</a>
-    </label>
-    <div id="browserChoiceContainer" style="display:none; margin-left: 24px;">
-      <label for="browserChoice">Browser:</label>
-      <select id="browserChoice">
-        <option value="Chrome">Chrome</option>
-        <option value="Firefox">Firefox</option>
-        <option value="Edge">Edge</option>
-        <option value="Brave">Brave</option>
-      </select>
+    <div class="settings-body">
+      <label class="toggle-label"><input type="checkbox" id="consoleToggle"> Show Console Output</label>
+      <label class="toggle-label"><input type="checkbox" id="advancedToggle"> Show Advanced Options</label>
+      <label class="toggle-label"><input type="checkbox" id="convertToggle"> Convert video files to...</label>
+      <div id="convertFormatContainer" class="settings-inset">
+        <label for="convertFormat">Format:</label>
+        <select id="convertFormat">
+          <option value="mp4">.mp4 (video)</option>
+          <option value="mov">.mov (video)</option>
+          <option value="mp3">.mp3 (audio only)</option>
+          <option value="m4a">.m4a (audio only)</option>
+        </select>
+      </div>
+      <label id="keepOriginalLabel" class="toggle-label settings-inset"><input type="checkbox" id="keepOriginalToggle"> Keep original file</label>
+      <label class="toggle-label">
+        <input type="checkbox" id="hookBrowserToggle"> Hook into web browser
+        <a href="#" class="info-link" title="Learn more about browser cookies" onclick="window.api.openExternal('https://help.rosie.run/about-browser-cookies'); return false;">?</a>
+      </label>
+      <div id="browserChoiceContainer" class="settings-inset">
+        <label for="browserChoice">Browser:</label>
+        <select id="browserChoice">
+          <option value="Chrome">Chrome</option>
+          <option value="Firefox">Firefox</option>
+          <option value="Edge">Edge</option>
+          <option value="Brave">Brave</option>
+        </select>
+      </div>
     </div>
-
-    <button id="checkUpdateBtn">Check for updates</button>
-    <button id="resetSettings" class="small-btn">Reset Settings</button>
-    <p style="text-align: right; font-size: 8.5px; color: white; margin-top: 4px; margin-bottom: -10px;"><a href="#" title="View release notes" style="color:lightblue;" onclick="window.api.openExternal('https://github.com/BurntToasters/ROSI/releases/tag/v1.1.6')">V1.1.6</a></p>
-    <a href="#" onclick="betaRedesignWarn()" style="color: #c7c7c7; font-size: 9.5px;">Launch Experimental UI</a>
+    <div class="settings-footer">
+      <button id="checkUpdateBtn" class="small-btn">Check for updates</button>
+      <button id="resetSettings" class="small-btn danger">Reset Settings</button>
+      <p id="version-info">
+        <a href="#" title="View release notes" onclick="window.api.openExternal('https://github.com/BurntToasters/ROSI/releases/latest')">V1.1.6</a>
+      </p>
+    </div>
   </div>
 
-  <!-- app logo and title -->
-  <div class="rosi-text press-start-2p-regular">
-    <h1 style="text-align: center;"><img src="app.png" style="max-width: 25%; margin-bottom: 0px;"></h1>
-    <h1 style="margin-top: 10px; margin-bottom: 0px;"><b style="color: black;">R</b><b style="color: white;">O</b><b style="color:black;">S</b><b style="color: white;">I</b></h1>
+  <div class="container">
+    <header class="app-header">
+      <img src="app.png" alt="ROSI Logo" class="app-logo">
+      <h1 class="press-start-2p-regular">ROSI</h1>
+      <h2>A simple yt-dlp GUI app.</h2>
+    </header>
+
+    <main class="app-main">
+      <div class="input-group">
+        <input id="url" type="text" placeholder="Enter video URL" />
+        <button id="downloadBtn" data-default-text="Download">Download</button>
+      </div>
+
+      <div id="formatOptions">
+        <button id="fetchFormatsBtn" data-default-text="Check Resolutions">Check Resolutions</button>
+        <div class="format-selects">
+          <label>Video Format: <select id="videoFormat"></select></label>
+          <label>Audio Format: <select id="audioFormat"></select></label>
+        </div>
+      </div>
+
+      <pre id="output" class="console-output"></pre>
+    </main>
+
+    <footer class="app-footer">
+      <a href="#" onclick="window.api.openExternal('https://help.rosie.run')">Help</a>
+      <span>|</span>
+      <a href="#" onclick="window.api.openExternal('https://rosie.run')">Website</a>
+      <span>|</span>
+      <a href="#" onclick="window.api.openExternal('https://rosie.run/support')">Support</a>
+      <span>|</span>
+      <a href="#" onclick="window.location.href = 'licenses.html'">Licenses</a>
+    </footer>
   </div>
-  <h2>A simple yt-dlp GUI app.</h2>
 
-  <!-- url input -->
-  <input id="url" type="text" placeholder="Enter video URL" />
-
-  <!-- advanced format options, hidden by default -->
-  <div id="formatOptions" style="display: none;">
-    <button id="fetchFormatsBtn" data-default-text="Check Resolutions">Check Resolutions</button>
-    <label>Video Format:</label>
-    <select id="videoFormat"></select>
-    <label>Audio Format:</label>
-    <select id="audioFormat"></select>
-  </div>
-
-  <!-- download button -->
-  <button id="downloadBtn" data-default-text="Download">Download</button>
-
-  <!-- output console -->
-  <pre id="output" class="console-output"></pre>
-
-  <!-- footer links -->
-  <p style="text-align: center;">
-    <a href="#" onclick="window.api.openExternal('https://help.rosie.run')" style="color: cornflowerblue;">Help</a>
-    <b style="color: white;">|</b>
-    <a href="#" onclick="window.api.openExternal('https://rosie.run')" style="color: cornflowerblue;">Website</a>
-    <b style="color: white;">|</b>
-    <a href="#" onclick="window.api.openExternal('https://rosie.run/support')" style="color: cornflowerblue;">Support this project!</a>
-    <b style="color: white;">|</b>
-    <a href="#" onclick="window.location.href = 'licenses.html'" style="color: cornflowerblue;">Licenses</a>
-  </p>
-
-  <!-- modal for alerts and confirmations -->
   <div id="app-modal" class="modal-overlay">
     <div class="modal-box">
       <h3 id="modal-title">Modal Title</h3>
       <p id="modal-message">Modal message goes here...</p>
-      <div id="modal-buttons" class="modal-buttons"></div>
+      <div id="modal-buttons"></div>
     </div>
   </div>
 
@@ -166,7 +136,7 @@
     }
   }
 
-  // shows modal dialog with title, message, and buttons
+  
   function showModal({ title, message, buttons = [] }) {
     const modal = document.getElementById('app-modal');
     const titleEl = document.getElementById('modal-title');
@@ -188,13 +158,13 @@
     modal.style.display = 'flex';
   }
 
-  // disables/enables keep original toggle based on mp4 toggle
+  
   function updateKeepOriginalToggleState() {
     const keepOriginalToggle = document.getElementById('keepOriginalToggle');
     const keepOriginalLabel = keepOriginalToggle ? keepOriginalToggle.closest('label') : null;
   }
 
-  // fetches available formats from backend, populates dropdowns
+
   let isFetchingFormats = false;
   let fetchFormatsAbort = null;
   async function fetchFormats() {
@@ -276,7 +246,7 @@
     }
   }
 
-  // handles download button logic, triggers download, manages loader/cancel
+  // handles download button logic
   let isDownloading = false;
   let downloadAbort = null;
 
@@ -292,7 +262,7 @@
     return 0;
   }
 
-  // Check for updates function
+  // Check updates
   async function checkForUpdates() {
     try {
       const res = await fetch('https://api.github.com/repos/BurntToasters/ROSI/releases/latest', {
@@ -327,20 +297,6 @@
     }
   }
 
-  function betaRedesignWarn() {
-  showModal({
-    title: "Try New Design?",
-    message: "ROSI has a new experimental UI available!<br>Would you like to try the new design?",
-    buttons: [
-      { label: "Yes", action: () => { 
-        window.api.openBetaWindow();
-      }},
-      { label: "No thanks", action: () => {
-      }}
-    ]
-  });
-}
-
   document.addEventListener('DOMContentLoaded', async () => {
     let settings;
     try {
@@ -369,11 +325,10 @@
     const fetchFormatsBtn = document.getElementById('fetchFormatsBtn');
     const downloadBtn = document.getElementById('downloadBtn');
     const checkUpdateBtn = document.getElementById('checkUpdateBtn');
-    // store original click handlers for loader logic
     if (fetchFormatsBtn) fetchFormatsBtn._originalClick = fetchFormats;
     if (downloadBtn) downloadBtn._originalClick = null;
 
-    // Detect platform from userAgent
+    // userAgent
     const isWindows = navigator.userAgent.includes('Windows');
 
     // Filter browser options for Windows
@@ -382,7 +337,7 @@
       Array.from(browserChoiceSelect.options).forEach(opt => {
         if (opt.value !== "Firefox") browserChoiceSelect.removeChild(opt);
       });
-      // Set default to Firefox
+      //Firefox
       browserChoiceSelect.value = "Firefox";
     }
 
@@ -409,7 +364,7 @@
     };
     updateUIFromSettings();
 
-    // --- Support Modal Logic ---
+
     if (!settings.hideSupportModal) {
       showModal({
         title: "Support This Project?",
@@ -430,8 +385,6 @@
     }
 
 
-
-    // settings modal listeners
     if (settingsButton) settingsButton.addEventListener('click', toggleSettingsModal);
     document.addEventListener('click', (event) => {
       if (settingsModal && settingsButton && settingsModal.style.display === 'flex' &&
@@ -501,12 +454,12 @@
       });
     });
 
-    // format button click
+
     if (fetchFormatsBtn) {
       fetchFormatsBtn.onclick = fetchFormats;
     }
 
-    // download button click
+    // download button
     if (downloadBtn) {
       downloadBtn._originalClick = async function () {
         if (isDownloading) return;
@@ -546,12 +499,12 @@
       downloadBtn.onclick = downloadBtn._originalClick;
     }
 
-    // check for updates button click
+
     if (checkUpdateBtn) {
       checkUpdateBtn.onclick = checkForUpdates;
     }
 
-    // output listeners for progress and completion
+
     window.api.onProgress((message) => {
       if (!outputEl) return;
       outputEl.textContent += message + '\n';
@@ -577,7 +530,7 @@
       }
     });
 
-    // first launch info modal
+
     if (settings.firstLaunch) {
       showModal({
         title: "FFMPEG Required for Conversion",
@@ -592,5 +545,6 @@
     }
   });
 </script>
+
 </body>
 </html>
