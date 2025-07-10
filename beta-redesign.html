@@ -50,10 +50,11 @@
     <div class="settings-footer">
       <button id="checkUpdateBtn" class="small-btn">Check for updates</button>
       <button id="resetSettings" class="small-btn danger">Reset Settings</button>
+      </div>
       <p id="version-info">
-        <a href="#" title="View release notes" onclick="window.api.openExternal('https://github.com/BurntToasters/ROSI/releases/latest')">V1.1.6</a>
+        <a href="#" title="View release notes" style="text-align: left; margin-left: 10px;" onclick="window.api.openExternal('https://github.com/BurntToasters/ROSI/releases/latest')">V1.1.6</a>
       </p>
-    </div>
+    
   </div>
 
   <div class="container">
@@ -87,7 +88,7 @@
       <span>|</span>
       <a href="#" onclick="window.api.openExternal('https://rosie.run/support')">Support</a>
       <span>|</span>
-      <a href="#" onclick="window.location.href = 'licenses.html'">Licenses</a>
+      <a href="#" onclick="showLicenses(); return false;">Licenses</a>
     </footer>
   </div>
 
@@ -96,6 +97,13 @@
       <h3 id="modal-title">Modal Title</h3>
       <p id="modal-message">Modal message goes here...</p>
       <div id="modal-buttons"></div>
+    </div>
+  </div>
+
+  <div id="licenses-overlay" class="modal-overlay">
+    <div class="licenses-container">
+      <button id="close-licenses" class="close-btn">&times;</button>
+      <iframe id="licenses-frame" src="licenses-iframe.html" width="100%" height="100%" frameborder="0"></iframe>
     </div>
   </div>
 
@@ -296,6 +304,23 @@
       });
     }
   }
+
+      // License popup
+function showLicenses() {
+  const licensesOverlay = document.getElementById('licenses-overlay');
+  if (licensesOverlay) {
+    licensesOverlay.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+  }
+}
+
+function hideLicenses() {
+  const licensesOverlay = document.getElementById('licenses-overlay');
+  if (licensesOverlay) {
+    licensesOverlay.style.display = 'none';
+    document.body.style.overflow = ''; // Restore scrolling
+  }
+}
 
   document.addEventListener('DOMContentLoaded', async () => {
     let settings;
@@ -543,6 +568,21 @@
       settings.firstLaunch = false;
       window.api.saveSettings(settings);
     }
+
+
+
+
+const closeBtn = document.getElementById('close-licenses');
+if (closeBtn) {
+  closeBtn.addEventListener('click', hideLicenses);
+}
+
+// esc key
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    hideLicenses();
+  }
+});
   });
 </script>
 

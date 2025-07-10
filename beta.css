@@ -3,14 +3,15 @@
   --font-pixel: "Press Start 2P", system-ui;
   --font-mono: 'Courier New', Courier, monospace;
 
-  --bg-start: #1e1e2f;
-  --bg-end: #3c2a5a;
+  --bg-start: #2c233b;
+  --bg-end: #6839ad;
   --surface: rgba(255, 255, 255, 0.05);
   --surface-hover: rgba(255, 255, 255, 0.1);
   --border-color: rgba(255, 255, 255, 0.15);
   --text-primary: #e0e0e0;
   --text-secondary: #a0a0b0;
-  --accent: #6a5acd; 
+  --accent: #6a5acd;
+  --bgaccent: #5e2985; 
   --accent-hover: #7b68ee;
   --danger: #e53e3e;
   --danger-hover: #c53030;
@@ -32,17 +33,19 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, var(--bg-start), var(--bg-end));
+  background: linear-gradient(135deg, var(--bg-start), var(--bgaccent) 50%, var(--bg-end));
   background-size: 200% 200%;
-  animation: gradientFlow 20s ease infinite;
+  animation: gradientFlow 30s ease infinite alternate;
   overflow: hidden;
   color: var(--text-primary);
 }
 
 @keyframes gradientFlow {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
+  0% { background-position: 0% 0%; }
+  25% { background-position: 100% 0%; }
+  50% { background-position: 100% 100%; }
+  75% { background-position: 0% 100%; }
+  100% { background-position: 0% 0%; }
 }
 
 .press-start-2p-regular {
@@ -153,7 +156,7 @@ button:active {
 
 
 #formatOptions {
-  display: none; /* Hidden by default */
+  display: none; 
   width: 100%;
   background: var(--surface);
   padding: 1rem;
@@ -301,8 +304,9 @@ select {
 .settings-footer {
   padding: 1rem;
   display: flex;
-  justify-content: space-between;
+  flex-direction: row;
   align-items: center;
+  gap: 10px;   
 }
 .small-btn {
   padding: 0.4rem 0.8rem;
@@ -317,10 +321,16 @@ select {
 .small-btn.danger:hover {
   background-color: var(--danger-hover);
 }
+#version-info {
+  font-size: 0.75rem;
+  text-align: center;   
+}
 #version-info a {
   font-size: 0.75rem;
   color: var(--text-secondary);
   text-decoration: none;
+  display: block;
+  margin-bottom: 5px;
 }
 #version-info a:hover {
   color: #fff;
@@ -413,4 +423,72 @@ label.disabled {
 }
 label.disabled input[type="checkbox"] {
   cursor: not-allowed;
+}
+
+.licenses-container {
+  background: var(--bg-start);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  width: 90%;
+  height: 90%;
+  max-width: 1000px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 12px 48px rgba(0,0,0,0.4);
+  display: flex;
+  flex-direction: column;
+}
+
+.licenses-container iframe {
+  border: none;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) rgba(0,0,0,0.2);
+}
+
+.close-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(0, 0, 0, 0.4);
+  color: var(--text-primary);
+  border: none;
+  border-radius: 50%;
+  width: 42px;
+  height: 42px;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.2s;
+}
+
+.close-btn:hover {
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
+}
+
+
+.licenses-container iframe::-webkit-scrollbar {
+  width: 6px; 
+}
+
+.licenses-container iframe::-webkit-scrollbar-track {
+  background: rgba(0,0,0,0.2);
+  border-radius: 3px;
+}
+
+.licenses-container iframe::-webkit-scrollbar-thumb {
+  background-color: var(--accent);
+  border-radius: 3px;
+}
+
+.licenses-container iframe::-webkit-scrollbar-thumb:hover {
+  background-color: var(--accent-hover);
 }
