@@ -52,7 +52,8 @@
       <button id="resetSettings" class="small-btn danger">Reset Settings</button>
       </div>
       <p id="version-info">
-        <a href="#" title="View release notes" style="text-align: left; margin-left: 10px;" onclick="window.api.openExternal('https://github.com/BurntToasters/ROSI/releases/latest')">V1.1.6</a>
+        <a href="#" onclick="showKeyboardShortcuts(); return false;" style="text-align: center; margin-top: -7px;"><button class="small-btn">Shortcuts</button></a>
+        <a href="#" title="View release notes" style="text-align: right; margin-right: 10px;" onclick="window.api.openExternal('https://github.com/BurntToasters/ROSI/releases/latest')">V1.1.6</a>
       </p>
     
   </div>
@@ -60,7 +61,7 @@
   <div class="container">
     <header class="app-header">
       <img src="app.png" alt="ROSI Logo" class="app-logo">
-      <h1 class="press-start-2p-regular">ROSI</h1>
+      <h1 class="press-start-2p-regular"><b style="color: white;">R</b><b style="color: black;">O</b><b style="color: white;">S</b><b style="color: black;">I</b></h1>
       <h2>A simple yt-dlp GUI app.</h2>
     </header>
 
@@ -82,13 +83,13 @@
     </main>
 
     <footer class="app-footer">
-      <a href="#" onclick="window.api.openExternal('https://help.rosie.run')">Help</a>
+      <a href="#" onclick="window.api.openExternal('https://help.rosie.run')"><b style="font-size: 11px;">ℹ️</b> Help</a>
       <span>|</span>
-      <a href="#" onclick="window.api.openExternal('https://rosie.run')">Website</a>
+      <a href="#" onclick="window.api.openExternal('https://rosie.run')"><b style="font-size: 11px;">🌎</b> Website</a>
       <span>|</span>
-      <a href="#" onclick="window.api.openExternal('https://rosie.run/support')">Support</a>
+      <a href="#" onclick="window.api.openExternal('https://rosie.run/support')"><b style="font-size: 11px;">❤️</b> Support</a>
       <span>|</span>
-      <a href="#" onclick="showLicenses(); return false;">Licenses</a>
+      <a href="#" onclick="showLicenses(); return false;"><b style="font-size: 11px;">⚖️</b> Licenses</a>
     </footer>
   </div>
 
@@ -172,6 +173,20 @@
     const keepOriginalLabel = keepOriginalToggle ? keepOriginalToggle.closest('label') : null;
   }
 
+
+function showKeyboardShortcuts() {
+  showModal({
+    title: "Keyboard Shortcuts",
+    message: `
+      <ul style="text-align: left; list-style: none;">
+        <li><strong>Ctrl+D:</strong> Restart application</li>
+        <li><strong>Ctrl+F:</strong> Focus URL input field</li>
+        <li><strong>Ctrl+,:</strong> Open settings</li>
+      </ul>
+    `,
+    buttons: [{ label: "OK" }]
+  });
+}
 
   let isFetchingFormats = false;
   let fetchFormatsAbort = null;
@@ -304,7 +319,7 @@
       });
     }
   }
-
+/*
       // License popup
 function showLicenses() {
   const licensesOverlay = document.getElementById('licenses-overlay');
@@ -319,6 +334,33 @@ function hideLicenses() {
   if (licensesOverlay) {
     licensesOverlay.style.display = 'none';
     document.body.style.overflow = ''; // Restore scrolling
+  }
+}
+
+*/
+
+function showLicenses() {
+  const licensesOverlay = document.getElementById('licenses-overlay');
+  if (licensesOverlay) {
+    licensesOverlay.classList.add('showing');
+    licensesOverlay.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+    void licensesOverlay.offsetWidth;
+    requestAnimationFrame(() => {
+      licensesOverlay.classList.remove('showing');
+    });
+  }
+}
+
+function hideLicenses() {
+  const licensesOverlay = document.getElementById('licenses-overlay');
+  if (licensesOverlay) {
+    licensesOverlay.classList.add('hiding');
+    setTimeout(() => {
+      licensesOverlay.style.display = 'none';
+      licensesOverlay.classList.remove('hiding');
+      document.body.style.overflow = '';
+    }, 300);
   }
 }
 
@@ -582,6 +624,46 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     hideLicenses();
   }
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (event) => {
+  
+  if (event.ctrlKey && event.key === 'd') {
+    event.preventDefault();
+    showModal({
+      title: "Restart Application",
+      message: "Are you sure you want to restart ROSI?",
+      buttons: [
+        { label: "Cancel" },
+        { label: "Restart", action: () => window.api.restartApp() }
+      ]
+    });
+  }
+  
+  /*
+  if (event.ctrlKey && event.key === 'o') {
+    event.preventDefault();
+    if (downloadBtn && !isDownloading) downloadBtn._originalClick();
+  }
+ Test for possible future use
+  */
+  
+  if (event.ctrlKey && event.key === 'f') {
+    event.preventDefault();
+    const urlInput = document.getElementById('url');
+    if (urlInput) {
+      urlInput.focus();
+      urlInput.select();
+    }
+  }
+  
+  
+  if (event.ctrlKey && event.key === ',') {
+    event.preventDefault();
+    toggleSettingsModal();
+  }
+  
 });
   });
 </script>

@@ -367,6 +367,34 @@ select {
   align-items: center;
 }
 
+.modal-overlay {
+  transition: opacity 0.3s ease-out;
+  opacity: 1;
+}
+
+.modal-overlay.hiding {
+  opacity: 0;
+}
+
+
+.modal-overlay.showing {
+  opacity: 0;
+}
+
+.modal-overlay.showing .licenses-container {
+  transform: scale(0.9);
+  opacity: 0;
+}
+
+.modal-overlay.hiding .licenses-container {
+  transform: scale(0.95);
+  opacity: 0;
+}
+
+.modal-overlay:not([style*="display: flex"]) {
+  opacity: 0;
+}
+
 .modal-box {
   background: var(--bg-start);
   border: 1px solid var(--border-color);
@@ -402,6 +430,16 @@ select {
   background-color: var(--accent-hover);
 }
 
+#modal-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 16px; 
+  margin-top: 20px;
+}
+
+#modal-buttons button {
+  min-width: 100px; 
+}
 
 button.loading {
   cursor: not-allowed;
@@ -437,6 +475,9 @@ label.disabled input[type="checkbox"] {
   box-shadow: 0 12px 48px rgba(0,0,0,0.4);
   display: flex;
   flex-direction: column;
+  transition: all 0.3s ease-out;
+  transform: scale(1);
+  opacity: 1;
 }
 
 .licenses-container iframe {

@@ -461,4 +461,9 @@ ipcMain.on('cancel-download', () => {
   }
 });
 
+ipcMain.handle('restart-app', () => {
+  app.relaunch();
+  app.exit(0);
+});
+
 // --- End main.js ---
