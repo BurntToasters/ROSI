@@ -163,21 +163,38 @@
     const msgEl = document.getElementById('modal-message');
     const btnContainer = document.getElementById('modal-buttons');
     if (!modal || !titleEl || !msgEl || !btnContainer) return;
+    
     titleEl.textContent = title;
     msgEl.innerHTML = message.replace(/\n/g, '<br>');
     btnContainer.innerHTML = '';
+    
+    modal.classList.add('showing');
+    modal.style.display = 'flex';
+    
+    void modal.offsetWidth;
+    
+    requestAnimationFrame(() => {
+      modal.classList.remove('showing');
+    });
+    
     buttons.forEach(({ label, action }) => {
       const btn = document.createElement('button');
       btn.textContent = label;
       btn.onclick = () => {
-        modal.style.display = 'none';
-        if (typeof action === 'function') action();
+        hideModal(modal, action);
       };
       btnContainer.appendChild(btn);
     });
-    modal.style.display = 'flex';
   }
 
+  function hideModal(modal, action) {
+    modal.classList.add('hiding');
+    setTimeout(() => {
+      modal.style.display = 'none';
+      modal.classList.remove('hiding');
+      if (typeof action === 'function') action();
+    }, 150);
+  }
   
   function updateKeepOriginalToggleState() {
     const keepOriginalToggle = document.getElementById('keepOriginalToggle');
