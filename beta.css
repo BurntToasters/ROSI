@@ -404,6 +404,16 @@ select {
   opacity: 0;
 }
 
+.modal-overlay.showing .modal-box {
+  transform: scale(0.9);
+  opacity: 0;
+}
+
+.modal-overlay.hiding .modal-box {
+  transform: scale(0.95);
+  opacity: 0;
+}
+
 .modal-overlay:not([style*="display: flex"]) {
   opacity: 0;
 }
@@ -416,6 +426,9 @@ select {
   text-align: center;
   max-width: 400px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  transition: all 0.15s ease-out;
+  transform: scale(1);
+  opacity: 1;
 }
 .modal-box h3 {
   margin-bottom: 1rem;
