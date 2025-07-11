@@ -312,4 +312,12 @@ div.rainbowHr hr {
   min-width: 0;
 }
 
+.smaller-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 8px;
+  margin: 4px 0;
+  min-width: 0;
+}
+
 /* END CSS */
