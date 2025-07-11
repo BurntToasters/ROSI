@@ -131,20 +131,31 @@
     }
   }
 
-  // toggles settings modal
   function toggleSettingsModal() {
     const modal = document.getElementById('settings-modal');
-    modal.style.display = modal.style.display === 'flex' ? 'none' : 'flex';
+    if (!modal) return;
+    if (modal.style.display !== 'flex') {
+      modal.classList.add('showing');
+      modal.style.display = 'flex';
+      // Force reflow
+      void modal.offsetWidth;
+      requestAnimationFrame(() => {
+        modal.classList.remove('showing');
+      });
+    } else {
+      modal.classList.add('hiding');
+      setTimeout(() => {
+        modal.style.display = 'none';
+        modal.classList.remove('hiding');
+      }, 150);
+    }
   }
-
-  // shows/hides advanced options
   function toggleAdvancedUI(show) {
     const formatSection = document.getElementById('formatOptions');
     if (formatSection) {
       formatSection.style.display = show ? 'block' : 'none';
     }
   }
-
   
   function showModal({ title, message, buttons = [] }) {
     const modal = document.getElementById('app-modal');
