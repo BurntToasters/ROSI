@@ -1,2 +1,2 @@
-npm run build:x64
-npm run build:arm64
+win: npm run build:x64
+win: npm run build:arm64
