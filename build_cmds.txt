@@ -1,0 +1,2 @@
+npm run build:x64
+npm run build:arm64

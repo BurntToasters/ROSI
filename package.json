@@ -6,7 +6,9 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "electron": "electron .",
-    "build": "electron-builder"
+    "build": "electron-builder",
+    "build:x64": "electron-builder --x64",
+    "build:arm64": "electron-builder --arm64"
   },
   "repository": {
     "type": "git",
@@ -38,13 +40,22 @@
       "!**/dist"
     ],
     "directories": {
-      "output": "dist"
+      "output": "dist/${arch}"
     },
     "win": {
       "target": "nsis",
-      "icon": "build/app-icon.png",
+      "icon": "build/app-icon.png"
+    },
+    "nsis": {
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
+    },
+    "win-x64": {
       "asarUnpack": [
-        "yt-dlp.exe",
+        "yt-dlp.exe"
+      ]
+    },
+    "win-arm64": {
+      "asarUnpack": [
         "yt-dlp_arm64.exe"
       ]
     },
