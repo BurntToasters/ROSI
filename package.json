@@ -1,6 +1,6 @@
 {
   "name": "rosi",
-  "version": "1.1.11",
+  "version": "1.2.0",
   "description": "Electron GUI for yt-dlp",
   "main": "main.js",
   "scripts": {
@@ -44,7 +44,8 @@
       "target": "nsis",
       "icon": "build/app-icon.png",
       "asarUnpack": [
-        "yt-dlp.exe"
+        "yt-dlp.exe",
+        "yt-dlp_arm64.exe"
       ]
     },
     "mac": {
