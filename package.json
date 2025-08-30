@@ -7,8 +7,10 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "electron": "electron .",
     "build": "electron-builder",
-    "build:x64": "electron-builder --x64",
-    "build:arm64": "electron-builder --arm64"
+    "build:win:x64": "electron-builder --win --x64 --config.win.asarUnpack=yt-dlp.exe",
+    "build:win:arm64": "electron-builder --win --arm64 --config.win.asarUnpack=yt-dlp_arm64.exe",
+    "build:mac:universal": "electron-builder --mac --universal",
+    "build:linux": "electron-builder --linux AppImage deb rpm"
   },
   "repository": {
     "type": "git",
@@ -48,16 +50,6 @@
     },
     "nsis": {
       "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
-    },
-    "win-x64": {
-      "asarUnpack": [
-        "yt-dlp.exe"
-      ]
-    },
-    "win-arm64": {
-      "asarUnpack": [
-        "yt-dlp_arm64.exe"
-      ]
     },
     "mac": {
       "target": "dmg",

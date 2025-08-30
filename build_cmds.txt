@@ -1,2 +1,11 @@
-win: npm run build:x64
-win: npm run build:arm64
+# Windows x64
+npm run build:win:x64
+
+# Windows ARM64
+npm run build:win:arm64
+
+# macOS Universal
+npm run build:mac:universal
+
+# Linux
+npm run build:linux
