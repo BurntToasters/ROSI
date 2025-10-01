@@ -8,7 +8,9 @@ const sanitize = require('sanitize-filename');
 
 const isWindows = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
+const isLinux = process.platform === 'linux';
 const isArm64 = process.arch === 'arm64';
+
 const isPackaged = app.isPackaged;
 const ytdlpBinary = isWindows
   ? (isArm64 ? 'yt-dlp_arm64.exe' : 'yt-dlp.exe')
@@ -40,7 +42,7 @@ if (!fs.existsSync(ytdlpPath)) {
     app.quit();
 }
 
-ipcMain.handle('get-app-version', () => app.getVersion());
+// ipcMain.handle('get-app-version', () => app.getVersion());
 
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 const defaultSettings = {

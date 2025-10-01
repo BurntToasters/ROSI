@@ -41,7 +41,7 @@ contextBridge.exposeInMainWorld('api', {
   cancelDownload: () => ipcRenderer.send('cancel-download'),
 
   // get application version
-  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  // disabled; not applicable for MS-STORE getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
   // listen for progress messages from main
   onProgress: (callback) => {
