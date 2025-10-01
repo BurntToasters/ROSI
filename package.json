@@ -9,6 +9,8 @@
     "build": "electron-builder",
     "build:win:x64": "electron-builder --win --x64 --config.win.asarUnpack=yt-dlp.exe",
     "build:win:arm64": "electron-builder --win --arm64 --config.win.asarUnpack=yt-dlp_arm64.exe",
+    "build:winstore:x64": "node build-scripts/prepare-x64.js && electron-builder --win --x64 -c.win.target=appx",
+    "build:winstore:arm64": "node build-scripts/prepare-arm64.js && electron-builder --win --arm64 -c.win.target=appx",
     "build:mac:universal": "electron-builder --mac --universal",
     "build:linux": "electron-builder --linux AppImage deb rpm"
   },
