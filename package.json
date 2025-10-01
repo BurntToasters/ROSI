@@ -46,7 +46,7 @@
     },
     "win": {
       "target": "nsis",
-      "icon": "build/app-icon.png"
+      "icon": "build/app-icon.ico"
     },
     "nsis": {
       "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
@@ -63,6 +63,7 @@
         "AppImage",
         "deb"
       ],
+      "icon": "build/app-icon.png",
       "category": "Utility",
       "asarUnpack": [
         "yt-dlp_linux"
