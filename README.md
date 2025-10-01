@@ -29,7 +29,7 @@ Learn how to install ffmpeg: [https://help.rosie.run/installing-ffmpeg](https://
 ___
 
 
-## ℹ️ The Microsoft Store version of ROSI is in a seperate branch as the MS store version contains minor changes to be in compliance with the Microsoft Store. 
+## ℹ️ The Microsoft Store version of ROSI is in a separate branch as the MS store version contains minor changes to be in compliance with the Microsoft Store. 
 **➡️<u>[See Branch](https://github.com/BurntToasters/ROSI/tree/ms-store)</u>**
 
 ___
