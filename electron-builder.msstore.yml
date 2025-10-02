@@ -1,0 +1,18 @@
+extends: ./electron-builder.base.yml
+appId: BurntToasters.ROSI
+productName: ROSI
+directories:
+  output: dist
+win:
+  target: appx
+  icon: build/app-icon.png
+appx:
+  identityName: BurntToasters.ROSI
+  publisher: CN=BC0CB990-55E8-4580-97B7-1E2DAA4B44F6
+  publisherDisplayName: BurntToasters
+  displayName: ROSI
+  backgroundColor: '#ffffff'
+  minVersion: 10.0.10240.0
+  maxVersionTested: 10.0.22621.0
+  customManifestPath: build/appx/appxmanifest.xml
+  artifactName: ROSI-${version}-${arch}.${ext}

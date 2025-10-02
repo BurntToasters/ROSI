@@ -9,6 +9,9 @@ contextBridge.exposeInMainWorld('api', {
   
   // restart the application
   restartApp: () => ipcRenderer.invoke('restart-app'),
+  // get active distribution channel
+  getChannel: () => (process.env.CHANNEL === 'msstore' || process.windowsStore ? 'msstore' : 'github'),
+
 
   // get available formats for a url
   getFormats: (url) => ipcRenderer.invoke('getFormats', url),
