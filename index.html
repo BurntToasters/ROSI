@@ -77,9 +77,11 @@
         <option value="Brave">Brave</option>
       </select>
     </div>
+
+    <button id="checkUpdateBtn">Check for updates</button>
     <button id="resetSettings" class="small-btn">Reset Settings</button>
     <a href="#" onclick="betaRedesignWarn()" style="color:aquamarine; text-align: center;"><button class="smaller-btn">Launch Experimental UI!</button></a>
-    <p style="text-align: right; font-size: 8.5px; color: white; margin-top: 4px; margin-bottom: -10px;"><a href="#" title="View release notes" style="color:lightblue;" onclick="window.api.openExternal('https://github.com/BurntToasters/ROSI-msstore/releases/tag/v1.2.2')">V1.2.2 (MS STORE)</a></p>
+    <p style="text-align: right; font-size: 8.5px; color: white; margin-top: 4px; margin-bottom: -10px;"><a href="#" title="View release notes" style="color:lightblue;" onclick="window.api.openExternal('https://github.com/BurntToasters/ROSI/releases/tag/v1.2.2')">V1.2.2</a></p>
 
   </div>
 
@@ -289,6 +291,41 @@
       if (na < nb) return -1;
     }
     return 0;
+  }
+
+  // Check for updates function
+  async function checkForUpdates() {
+    try {
+      const res = await fetch('https://api.github.com/repos/BurntToasters/ROSI/releases/latest', {
+        headers: { 'User-Agent': 'ROSI-Updater' }
+      });
+      if (!res.ok) throw new Error('Failed to fetch release info');
+      const release = await res.json();
+      const latestVersion = release.tag_name.replace(/^v/, '');
+      const currentVersion = await window.api.getAppVersion();
+      if (compareVersions(latestVersion, currentVersion) > 0) {
+        showModal({
+          title: "Update Available!",
+          message: `A new version (v${latestVersion}) of ROSI is available!`,
+          buttons: [
+            { label: "Update", action: () => window.api.openExternal(release.html_url) },
+            { label: "No thanks" }
+          ]
+        });
+      } else {
+        showModal({
+          title: "ROSI is up to date!",
+          message: `You are running the latest version (v${currentVersion}).`,
+          buttons: [{ label: "OK" }]
+        });
+      }
+    } catch (e) {
+      showModal({
+        title: "Update Check Failed",
+        message: "Could not check for updates. Please try again later.",
+        buttons: [{ label: "OK" }]
+      });
+    }
   }
 
   function betaRedesignWarn() {
@@ -508,6 +545,11 @@
         window.api.downloadVideo({ url, videoFormat, audioFormat, outputPath: savePath, convertFormat, keepOriginal });
       };
       downloadBtn.onclick = downloadBtn._originalClick;
+    }
+
+    // check for updates button click
+    if (checkUpdateBtn) {
+      checkUpdateBtn.onclick = checkForUpdates;
     }
 
     // output listeners for progress and completion
