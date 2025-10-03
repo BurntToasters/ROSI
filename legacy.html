@@ -1,110 +1,133 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <!--This legacy UI will be removed on the stable v2.0.0 update-->
   <meta charset="UTF-8">
   <title>Rosi</title>
-  <link rel="stylesheet" href="beta.css">
+  <link rel="stylesheet" href="main.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Press+Start+2P&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <style>
+    .press-start-2p-regular {
+      font-family: "Press Start 2P", system-ui;
+      font-weight: 400;
+      font-style: normal;
+    }
+    label.disabled {
+      color: #888;
+      cursor: not-allowed;
+    }
+    label.disabled input[type="checkbox"] {
+      cursor: not-allowed;
+    }
+    .loader-icon {
+      width: 30px;
+      height: 30px;
+      vertical-align: middle;
+      margin-right: 0px;
+    }
+    button.loading {
+      background: rgba(255,255,255,0.15);
+      color: #fff;
+      cursor: pointer;
+    }
+  </style>
 </head>
 <body>
 
-  <div id="settings" title="Settings">
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V15a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51-1z"></path></svg>
-  </div>
+  <!-- settings gear icon -->
+  <div id="settings" title="Settings">⚙️</div>
 
+  <!-- settings modal with toggles -->
   <div id="settings-modal">
-    <div class="settings-header">
-      <h3 class="press-start-2p-regular">SETTINGS</h3>
-      <div class="rainbowHr"></div>
+    <div class="press-start-2p-regular"><p style="text-align: center; color: white; margin-bottom: 0px; margin-top: 0px;">SETTINGS</p></div>
+    <div class="rainbowHr"><hr style="margin-bottom: 0px;"></div>
+    <label>
+      <input type="checkbox" id="consoleToggle"> Show Console Output
+    </label>
+    <label>
+      <input type="checkbox" id="convertToggle"> Convert video files to...
+    </label>
+    <div id="convertFormatContainer" style="display:none; margin-left: 24px;">
+      <label for="convertFormat">Format:</label>
+      <select id="convertFormat">
+        <option value="mp4">.mp4 (video)</option>
+        <option value="mov">.mov (video)</option>
+        <option value="mp3">.mp3 (audio only)</option>
+        <option value="m4a">.m4a (audio only)</option>
+      </select>
     </div>
-    <div class="settings-body">
-      <label class="toggle-label"><input type="checkbox" id="consoleToggle"> Show Console Output</label>
-      <label class="toggle-label"><input type="checkbox" id="advancedToggle"> Show Advanced Options</label>
-      <label class="toggle-label"><input type="checkbox" id="convertToggle"> Convert video files to...</label>
-      <div id="convertFormatContainer" class="settings-inset">
-        <label for="convertFormat">Format:</label>
-        <select id="convertFormat">
-          <option value="mp4">.mp4 (video)</option>
-          <option value="mov">.mov (video)</option>
-          <option value="mp3">.mp3 (audio only)</option>
-          <option value="m4a">.m4a (audio only)</option>
-        </select>
-      </div>
-      <label id="keepOriginalLabel" class="toggle-label settings-inset"><input type="checkbox" id="keepOriginalToggle"> Keep original file</label>
-      <label class="toggle-label">
-        <input type="checkbox" id="hookBrowserToggle"> Hook into web browser
-        <a href="#" class="info-link" title="Learn more about browser cookies" onclick="window.api.openExternal('https://help.rosie.run/about-browser-cookies'); return false;">?</a>
-      </label>
-      <div id="browserChoiceContainer" class="settings-inset">
-        <label for="browserChoice">Browser:</label>
-        <select id="browserChoice">
-          <option value="Chrome">Chrome</option>
-          <option value="Firefox">Firefox</option>
-          <option value="Edge">Edge</option>
-          <option value="Brave">Brave</option>
-        </select>
-      </div>
+    <label id="keepOriginalLabel" style="display:none;">
+      <input type="checkbox" id="keepOriginalToggle"> Keep original file after conversion
+    </label>
+    <label>
+      <input type="checkbox" id="advancedToggle"> Show Advanced Options
+    </label>
+    <label>
+      <input type="checkbox" id="hookBrowserToggle"> Hook into web browser
+      <a href="#" title="Learn more about browser cookies" style="margin-left:6px; text-decoration:none; color:cornflowerblue; font-weight:bold;"
+         onclick="window.api.openExternal('https://help.rosie.run/about-browser-cookies'); return false;">?</a>
+    </label>
+    <div id="browserChoiceContainer" style="display:none; margin-left: 24px;">
+      <label for="browserChoice">Browser:</label>
+      <select id="browserChoice">
+        <option value="Chrome">Chrome</option>
+        <option value="Firefox">Firefox</option>
+        <option value="Edge">Edge</option>
+        <option value="Brave">Brave</option>
+      </select>
     </div>
-    <div class="settings-footer">
-      <button id="checkUpdateBtn" class="small-btn">Check for updates</button>
-      <button id="resetSettings" class="small-btn danger">Reset Settings</button>
-      </div>
-      <p id="version-info">
-        <a href="#" onclick="showKeyboardShortcuts(); return false;" style="text-align: center; margin-top: -7px;"><button class="small-btn">Shortcuts</button></a>
-        <a href="#" title="View release notes" style="text-align: right; margin-right: 10px;" onclick="window.api.openExternal('https://github.com/BurntToasters/ROSI/releases/tag/v1.2.2')">V1.2.2</a>
-      </p>
-    
+
+    <button id="checkUpdateBtn">Check for updates</button>
+    <button id="resetSettings" class="small-btn">Reset Settings</button>
+    <a href="#" onclick="betaRedesignWarn()" style="color:aquamarine; text-align: center;"><button class="smaller-btn">Launch Experimental UI!</button></a>
+    <p style="text-align: right; font-size: 8.5px; color: white; margin-top: 4px; margin-bottom: -10px;"><a href="#" title="View release notes" style="color:lightblue;" onclick="window.api.openExternal('https://github.com/BurntToasters/ROSI/releases/tag/v1.2.2')">V1.2.2</a></p>
+
   </div>
 
-  <div class="container">
-    <header class="app-header">
-      <img src="app.png" alt="ROSI Logo" class="app-logo">
-      <h1 class="press-start-2p-regular"><b style="color: white;">R</b><b style="color: black;">O</b><b style="color: white;">S</b><b style="color: black;">I</b></h1>
-      <h2>A simple yet amazing yt-dlp app.</h2>
-    </header>
+  <!-- app logo and title -->
+  <div class="rosi-text press-start-2p-regular">
+    <h1 style="text-align: center;"><img src="app.png" style="max-width: 25%; margin-bottom: 0px;"></h1>
+    <h1 style="margin-top: 10px; margin-bottom: 0px;"><b style="color: black;">R</b><b style="color: white;">O</b><b style="color:black;">S</b><b style="color: white;">I</b></h1>
+  </div>
+  <h2>A simple yt-dlp GUI app.</h2>
 
-    <main class="app-main">
-      <div class="input-group">
-        <input id="url" type="text" placeholder="Enter video URL" />
-        <button id="downloadBtn" data-default-text="Download">Download</button>
-      </div>
+  <!-- url input -->
+  <input id="url" type="text" placeholder="Enter video URL" />
 
-      <div id="formatOptions">
-        <button id="fetchFormatsBtn" data-default-text="Check Resolutions">Check Resolutions</button>
-        <div class="format-selects">
-          <label>Video Format: <select id="videoFormat"></select></label>
-          <label>Audio Format: <select id="audioFormat"></select></label>
-        </div>
-      </div>
-
-      <pre id="output" class="console-output"></pre>
-    </main>
-
-    <footer class="app-footer">
-      <a href="#" onclick="window.api.openExternal('https://help.rosie.run')"><b style="font-size: 11px;">ℹ️</b> Help</a>
-      <span>|</span>
-      <a href="#" onclick="window.api.openExternal('https://rosie.run')"><b style="font-size: 11px;">🌎</b> Website</a>
-      <span>|</span>
-      <a href="#" onclick="window.api.openExternal('https://rosie.run/support')"><b style="font-size: 11px;">❤️</b> Support</a>
-      <span>|</span>
-      <a href="#" onclick="showLicenses(); return false;"><b style="font-size: 11px;">⚖️</b> Licenses</a>
-    </footer>
+  <!-- advanced format options, hidden by default -->
+  <div id="formatOptions" style="display: none;">
+    <button id="fetchFormatsBtn" data-default-text="Check Resolutions">Check Resolutions</button>
+    <label>Video Format:</label>
+    <select id="videoFormat"></select>
+    <label>Audio Format:</label>
+    <select id="audioFormat"></select>
   </div>
 
+  <!-- download button -->
+  <button id="downloadBtn" data-default-text="Download">Download</button>
+
+  <!-- output console -->
+  <pre id="output" class="console-output"></pre>
+
+  <!-- footer links -->
+  <p style="text-align: center;">
+    <a href="#" onclick="window.api.openExternal('https://help.rosie.run')" style="color: cornflowerblue;">Help</a>
+    <b style="color: white;">|</b>
+    <a href="#" onclick="window.api.openExternal('https://rosie.run')" style="color: cornflowerblue;">Website</a>
+    <b style="color: white;">|</b>
+    <a href="#" onclick="window.api.openExternal('https://rosie.run/support')" style="color: cornflowerblue;">Support this project!</a>
+    <b style="color: white;">|</b>
+    <a href="#" onclick="window.location.href = 'licenses.html'" style="color: cornflowerblue;">Licenses</a>
+  </p>
+
+  <!-- modal for alerts and confirmations -->
   <div id="app-modal" class="modal-overlay">
     <div class="modal-box">
       <h3 id="modal-title">Modal Title</h3>
       <p id="modal-message">Modal message goes here...</p>
-      <div id="modal-buttons"></div>
-    </div>
-  </div>
-
-  <div id="licenses-overlay" class="modal-overlay">
-    <div class="licenses-container">
-      <button id="close-licenses" class="close-btn">&times;</button>
-      <iframe id="licenses-frame" src="licenses-iframe.html" width="100%" height="100%" frameborder="0"></iframe>
+      <div id="modal-buttons" class="modal-buttons"></div>
     </div>
   </div>
 
@@ -131,91 +154,49 @@
     }
   }
 
+  // toggles settings modal
   function toggleSettingsModal() {
     const modal = document.getElementById('settings-modal');
-    if (!modal) return;
-    if (modal.style.display !== 'flex') {
-      modal.classList.add('showing');
-      modal.style.display = 'flex';
-      // Force reflow
-      void modal.offsetWidth;
-      requestAnimationFrame(() => {
-        modal.classList.remove('showing');
-      });
-    } else {
-      modal.classList.add('hiding');
-      setTimeout(() => {
-        modal.style.display = 'none';
-        modal.classList.remove('hiding');
-      }, 150);
-    }
+    modal.style.display = modal.style.display === 'flex' ? 'none' : 'flex';
   }
+
+  // shows/hides advanced options
   function toggleAdvancedUI(show) {
     const formatSection = document.getElementById('formatOptions');
     if (formatSection) {
       formatSection.style.display = show ? 'block' : 'none';
     }
   }
-  
+
+  // shows modal dialog with title, message, and buttons
   function showModal({ title, message, buttons = [] }) {
     const modal = document.getElementById('app-modal');
     const titleEl = document.getElementById('modal-title');
     const msgEl = document.getElementById('modal-message');
     const btnContainer = document.getElementById('modal-buttons');
     if (!modal || !titleEl || !msgEl || !btnContainer) return;
-    
     titleEl.textContent = title;
     msgEl.innerHTML = message.replace(/\n/g, '<br>');
     btnContainer.innerHTML = '';
-    
-    modal.classList.add('showing');
-    modal.style.display = 'flex';
-    
-    void modal.offsetWidth;
-    
-    requestAnimationFrame(() => {
-      modal.classList.remove('showing');
-    });
-    
     buttons.forEach(({ label, action }) => {
       const btn = document.createElement('button');
       btn.textContent = label;
       btn.onclick = () => {
-        hideModal(modal, action);
+        modal.style.display = 'none';
+        if (typeof action === 'function') action();
       };
       btnContainer.appendChild(btn);
     });
+    modal.style.display = 'flex';
   }
 
-  function hideModal(modal, action) {
-    modal.classList.add('hiding');
-    setTimeout(() => {
-      modal.style.display = 'none';
-      modal.classList.remove('hiding');
-      if (typeof action === 'function') action();
-    }, 150);
-  }
-  
+  // disables/enables keep original toggle based on mp4 toggle
   function updateKeepOriginalToggleState() {
     const keepOriginalToggle = document.getElementById('keepOriginalToggle');
     const keepOriginalLabel = keepOriginalToggle ? keepOriginalToggle.closest('label') : null;
   }
 
-
-function showKeyboardShortcuts() {
-  showModal({
-    title: "Keyboard Shortcuts",
-    message: `
-      <ul style="text-align: left; list-style: none;">
-        <li><strong>Ctrl+D:</strong> Restart application</li>
-        <li><strong>Ctrl+F:</strong> Focus URL input field</li>
-        <li><strong>Ctrl+,:</strong> Open settings</li>
-      </ul>
-    `,
-    buttons: [{ label: "OK" }]
-  });
-}
-
+  // fetches available formats from backend, populates dropdowns
   let isFetchingFormats = false;
   let fetchFormatsAbort = null;
   async function fetchFormats() {
@@ -297,7 +278,7 @@ function showKeyboardShortcuts() {
     }
   }
 
-  // handles download button logic
+  // handles download button logic, triggers download, manages loader/cancel
   let isDownloading = false;
   let downloadAbort = null;
 
@@ -313,7 +294,7 @@ function showKeyboardShortcuts() {
     return 0;
   }
 
-  // Check updates
+  // Check for updates function
   async function checkForUpdates() {
     try {
       const res = await fetch('https://api.github.com/repos/BurntToasters/ROSI/releases/latest', {
@@ -347,49 +328,19 @@ function showKeyboardShortcuts() {
       });
     }
   }
-/*
-      // License popup
-function showLicenses() {
-  const licensesOverlay = document.getElementById('licenses-overlay');
-  if (licensesOverlay) {
-    licensesOverlay.style.display = 'flex';
-    document.body.style.overflow = 'hidden';
-  }
-}
 
-function hideLicenses() {
-  const licensesOverlay = document.getElementById('licenses-overlay');
-  if (licensesOverlay) {
-    licensesOverlay.style.display = 'none';
-    document.body.style.overflow = ''; // Restore scrolling
-  }
-}
-
-*/
-
-function showLicenses() {
-  const licensesOverlay = document.getElementById('licenses-overlay');
-  if (licensesOverlay) {
-    licensesOverlay.classList.add('showing');
-    licensesOverlay.style.display = 'flex';
-    document.body.style.overflow = 'hidden';
-    void licensesOverlay.offsetWidth;
-    requestAnimationFrame(() => {
-      licensesOverlay.classList.remove('showing');
-    });
-  }
-}
-
-function hideLicenses() {
-  const licensesOverlay = document.getElementById('licenses-overlay');
-  if (licensesOverlay) {
-    licensesOverlay.classList.add('hiding');
-    setTimeout(() => {
-      licensesOverlay.style.display = 'none';
-      licensesOverlay.classList.remove('hiding');
-      document.body.style.overflow = '';
-    }, 300);
-  }
+  function betaRedesignWarn() {
+  showModal({
+    title: "Try New Design?",
+    message: "ROSI has a new experimental UI available!<br>Would you like to try the new design?",
+    buttons: [
+      { label: "Yes", action: () => { 
+        window.api.openBetaWindow();
+      }},
+      { label: "No thanks", action: () => {
+      }}
+    ]
+  });
 }
 
   document.addEventListener('DOMContentLoaded', async () => {
@@ -420,10 +371,11 @@ function hideLicenses() {
     const fetchFormatsBtn = document.getElementById('fetchFormatsBtn');
     const downloadBtn = document.getElementById('downloadBtn');
     const checkUpdateBtn = document.getElementById('checkUpdateBtn');
+    // store original click handlers for loader logic
     if (fetchFormatsBtn) fetchFormatsBtn._originalClick = fetchFormats;
     if (downloadBtn) downloadBtn._originalClick = null;
 
-    // userAgent
+    // Detect platform from userAgent
     const isWindows = navigator.userAgent.includes('Windows');
 
     // Filter browser options for Windows
@@ -432,7 +384,7 @@ function hideLicenses() {
       Array.from(browserChoiceSelect.options).forEach(opt => {
         if (opt.value !== "Firefox") browserChoiceSelect.removeChild(opt);
       });
-      //Firefox
+      // Set default to Firefox
       browserChoiceSelect.value = "Firefox";
     }
 
@@ -459,7 +411,7 @@ function hideLicenses() {
     };
     updateUIFromSettings();
 
-
+    // --- Support Modal Logic ---
     if (!settings.hideSupportModal) {
       showModal({
         title: "Support This Project?",
@@ -480,6 +432,8 @@ function hideLicenses() {
     }
 
 
+
+    // settings modal listeners
     if (settingsButton) settingsButton.addEventListener('click', toggleSettingsModal);
     document.addEventListener('click', (event) => {
       if (settingsModal && settingsButton && settingsModal.style.display === 'flex' &&
@@ -549,12 +503,12 @@ function hideLicenses() {
       });
     });
 
-
+    // format button click
     if (fetchFormatsBtn) {
       fetchFormatsBtn.onclick = fetchFormats;
     }
 
-    // download button
+    // download button click
     if (downloadBtn) {
       downloadBtn._originalClick = async function () {
         if (isDownloading) return;
@@ -594,12 +548,12 @@ function hideLicenses() {
       downloadBtn.onclick = downloadBtn._originalClick;
     }
 
-
+    // check for updates button click
     if (checkUpdateBtn) {
       checkUpdateBtn.onclick = checkForUpdates;
     }
 
-
+    // output listeners for progress and completion
     window.api.onProgress((message) => {
       if (!outputEl) return;
       outputEl.textContent += message + '\n';
@@ -625,7 +579,7 @@ function hideLicenses() {
       }
     });
 
-
+    // first launch info modal
     if (settings.firstLaunch) {
       showModal({
         title: "FFMPEG Required for Conversion",
@@ -638,64 +592,8 @@ function hideLicenses() {
       settings.firstLaunch = false;
       window.api.saveSettings(settings);
     }
-
-
-
-
-const closeBtn = document.getElementById('close-licenses');
-if (closeBtn) {
-  closeBtn.addEventListener('click', hideLicenses);
-}
-
-// esc key
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') {
-    hideLicenses();
-  }
-});
-
-// Keyboard shortcuts
-document.addEventListener('keydown', (event) => {
-  
-  if (event.ctrlKey && event.key === 'd') {
-    event.preventDefault();
-    showModal({
-      title: "Restart Application",
-      message: "Are you sure you want to restart ROSI?",
-      buttons: [
-        { label: "Cancel" },
-        { label: "Restart", action: () => window.api.restartApp() }
-      ]
-    });
-  }
-  
-  /*
-  if (event.ctrlKey && event.key === 'o') {
-    event.preventDefault();
-    if (downloadBtn && !isDownloading) downloadBtn._originalClick();
-  }
- Test for possible future use
-  */
-  
-  if (event.ctrlKey && event.key === 'f') {
-    event.preventDefault();
-    const urlInput = document.getElementById('url');
-    if (urlInput) {
-      urlInput.focus();
-      urlInput.select();
-    }
-  }
-  
-  
-  if (event.ctrlKey && event.key === ',') {
-    event.preventDefault();
-    toggleSettingsModal();
-  }
-  
-});
   });
 </script>
-
 
 <script>
   (function(){
