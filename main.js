@@ -117,15 +117,18 @@ function createWindow() {
       nodeIntegration: false,
       spellcheck: false,
       devTools: isDev,
-    }
+    },
+    autoHideMenuBar: !isDev,
+    menuBarVisible: isDev
   });
   mainWindow.loadFile('index.html');
-  const showMenu = process.argv.includes('--show-menu');
-  mainWindow.setMenuBarVisibility(showMenu);
-  mainWindow.setAutoHideMenuBar(!showMenu);
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
+  
+  mainWindow.setMenuBarVisibility(isDev);
+  mainWindow.setAutoHideMenuBar(!isDev);
+
+  if (!isDev) {
+    mainWindow.removeMenu();
+  }
 }
 
 app.whenReady().then(createWindow);
@@ -148,33 +151,6 @@ ipcMain.on('reset-settings', (event) => {
   app.relaunch();
   app.exit();
 });
-
-// ⚠️ THIS CODE IS TEMPORARY AND WILL BE REMOVED IN THE FUTURE
-ipcMain.on('open-beta-window', () => {
-  const isDev = process.env.NODE_ENV === 'development' || process.argv.includes('--dev');
-  const betaWindow = new BrowserWindow({
-    width: 1000,
-    height: 700,
-    icon: path.join(__dirname, 'app.png'),
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      spellcheck: false,
-      devTools: isDev,
-    }
-  });
-  betaWindow.loadFile('beta-redesign.html');
-  const showMenu = process.argv.includes('--show-menu');
-  betaWindow.setMenuBarVisibility(showMenu);
-  betaWindow.setAutoHideMenuBar(!showMenu);
-  
-  
-  if (mainWindow) {
-    mainWindow.close();
-  }
-});
-//END TEMPORARY CODE
 
 // open external links in browser
 ipcMain.on('open-external', (_, url) => {

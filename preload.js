@@ -57,8 +57,5 @@ contextBridge.exposeInMainWorld('api', {
     const listener = (_, message) => callback(message);
     ipcRenderer.on('complete', listener);
   },
-
-  // This is a temporary function for the beta UI
-  openBetaWindow: () => ipcRenderer.send('open-beta-window')
 });
 // --- end preload.js ---
