@@ -28,9 +28,7 @@ Learn how to install ffmpeg: [https://help.rosie.run/installing-ffmpeg](https://
 
 ___
 
-
 ## ℹ️ The Microsoft Store version of ROSI is now integreated into the main codebase. Its customizations are run via electron-builder when specifying to release for the ms store. 
-**➡️<u>[See Branch](https://github.com/BurntToasters/ROSI/tree/ms-store)</u>**
 
 ___
 
