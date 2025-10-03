@@ -96,7 +96,7 @@
       }
     },
     "asarUnpack": [
-      "yt-dlp_arm64.exe"
+      "yt-dlp.exe"
     ]
   }
 }

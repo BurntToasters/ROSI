@@ -18,8 +18,26 @@ const ytdlpBinary = isWindows
 
 let ytdlpPath;
 if (isPackaged) {
-  // Use asarUnpack location
-  ytdlpPath = path.join(process.resourcesPath, 'app.asar.unpacked', ytdlpBinary);
+  const possiblePaths = [
+    path.join(process.resourcesPath, 'app.asar.unpacked', ytdlpBinary),
+    path.join(process.resourcesPath, ytdlpBinary),
+    path.join(__dirname, '..', ytdlpBinary),
+    path.join(__dirname, ytdlpBinary)
+  ];
+  
+  for (const tryPath of possiblePaths) {
+    console.log(`Trying yt-dlp path: ${tryPath}`);
+    if (fs.existsSync(tryPath)) {
+      ytdlpPath = tryPath;
+      console.log(`Found yt-dlp at: ${ytdlpPath}`);
+      break;
+    }
+  }
+  
+  if (!ytdlpPath) {
+    console.error(`Could not find ${ytdlpBinary} in any expected location`);
+    ytdlpPath = path.join(process.resourcesPath, 'app.asar.unpacked', ytdlpBinary); // Default for error reporting
+  }
 } else {
   // DEV
   ytdlpPath = path.join(__dirname, ytdlpBinary);
