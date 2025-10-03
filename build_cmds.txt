@@ -1,8 +1,10 @@
-# Windows x64
+# Windows .exe x64 & arm64
 npm run build:win:x64
-
-# Windows ARM64
 npm run build:win:arm64
+
+# Windows .appx x64 & arm64
+npm run build:win:msstore:x64
+npm run build:win:msstore:arm64
 
 # macOS Universal
 npm run build:mac:universal
