@@ -53,7 +53,7 @@
       </div>
       <p id="version-info">
         <a href="#" onclick="showKeyboardShortcuts(); return false;" style="text-align: center; margin-top: -7px;"><button class="small-btn">Shortcuts</button></a>
-        <a href="#" title="View release notes" style="text-align: right; margin-right: 10px;" onclick="window.api.openExternal('https://github.com/BurntToasters/ROSI/releases/tag/v2.0.0~pre1')">V2.0.0~pre1</a>
+        <a href="#" title="View release notes" style="text-align: right; margin-right: 10px;" onclick="window.api.openExternal('https://github.com/BurntToasters/ROSI/releases/tag/v2.0.0~pre1')">V2.0.0~pre2</a>
       </p>
     
   </div>
@@ -312,6 +312,18 @@ function showKeyboardShortcuts() {
     }
     return 0;
   }
+
+function testmsg () {
+          showModal({
+          title: "Test!",
+          message: `ATest`,
+          buttons: [
+            { label: "Action", action: () => window.api.openExternal('https://google.com') },
+            { label: "No thanks" },
+            { label: "Test 3" }
+          ]
+        });
+}
 
   // Check updates
   async function checkForUpdates() {
