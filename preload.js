@@ -1,4 +1,3 @@
-// --- begin preload.js ---
 const { contextBridge, ipcRenderer } = require('electron');
 
 console.log("✅ PRELOAD IS RUNNING!");
@@ -58,4 +57,3 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('complete', listener);
   },
 });
-// --- end preload.js ---

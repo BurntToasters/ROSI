@@ -489,6 +489,7 @@ select option {
 .small-btn.danger {
   background-color: var(--danger);
   color: #fff;
+  max-width: fit-content; /* only for reset button */
 }
 
 .small-btn.danger:hover {
