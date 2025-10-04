@@ -117,6 +117,7 @@ body {
 
 
 .app-header {
+  margin-top: -15px;
   margin-bottom: 1.25rem;
 }
 
@@ -285,7 +286,7 @@ select option {
 .console-output {
   display: none;
   width: 100%;
-  max-height: 450px;
+  max-height: 145px;
   overflow-y: auto;
   margin-top: 1rem;
   margin-bottom: 2.5rem;
@@ -299,6 +300,8 @@ select option {
   border-radius: 12px;
   color: var(--console-text);
   white-space: pre-wrap;
+  overflow-y: auto;
+  overflow-x: hidden;
   word-break: break-word;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3),
               inset 0 0 20px rgba(0, 255, 127, 0.05);
