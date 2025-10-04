@@ -1,5 +1,3 @@
-// main.js
-
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -69,7 +67,8 @@ const defaultSettings = {
   keepOriginalAfterConvert: true,
   firstLaunch: true,
   hookBrowser: false,
-  browserChoice: "Chrome"
+  browserChoice: "Chrome",
+  animateBackground: true
 };
 
 // [!] The console debugger uses emojis to easily identify messages. If you see any issues with emojis, please ensure your terminal supports them or disable the console output in settings.
@@ -202,7 +201,7 @@ ipcMain.handle('getFormats', async (_, url) => {
 let ytdlpProcess = null;
 let ffmpegProcess = null;
 
-// handle download-video, spawn yt-dlp, handle conversion, send progress
+// handle download-video, spawn yt-dlp
 ipcMain.on('download-video', async (event, options) => {
   if (ytdlpProcess) {
     ytdlpProcess.kill();
@@ -303,7 +302,7 @@ ipcMain.on('download-video', async (event, options) => {
           return;
       }
 
-      // if convert is enabled, run ffmpeg
+      // if convert enabled, run ffmpeg
       if (currentSettings.convertEnabled) {
         safeSend('progress', '⏳ Checking if conversion is needed...');
         try {
@@ -311,7 +310,7 @@ ipcMain.on('download-video', async (event, options) => {
           const sanitizedFileName = sanitize(path.basename(originalInputPath));
           const sanitizedInputPath = path.join(path.dirname(originalInputPath), sanitizedFileName);
 
-          // Rename the downloaded file to the sanitized version
+          // Rename downloaded file -> sanitized version
           if (originalInputPath !== sanitizedInputPath) {
             fs.renameSync(originalInputPath, sanitizedInputPath);
             safeSend('progress', `Renamed to sanitized filename: ${sanitizedFileName}`);
@@ -458,5 +457,3 @@ ipcMain.handle('restart-app', () => {
   app.relaunch();
   app.exit(0);
 });
-
-// --- End main.js ---

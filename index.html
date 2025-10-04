@@ -50,10 +50,11 @@
     </div>
     <div class="settings-footer">
       <button id="checkUpdateBtn" class="small-btn">Check for updates</button>
-      <button id="resetSettings" class="small-btn danger">Reset Settings</button>
+      <button id="additionalOptionsBtn" class="small-btn">Additional Options...</button>
+      <a href="#" onclick="showKeyboardShortcuts(); return false;" style="text-align: center;"><button class="small-btn">Shortcuts</button></a>
       </div>
       <p id="version-info">
-        <a href="#" onclick="showKeyboardShortcuts(); return false;" style="text-align: center; margin-top: -7px;"><button class="small-btn">Shortcuts</button></a>
+        <button id="resetSettings" class="small-btn danger">Reset Settings</button>
         <a href="#" title="View release notes" style="text-align: right; margin-right: 10px;" onclick="window.api.openExternal('https://github.com/BurntToasters/ROSI/releases/tag/v2.0.0-pre3')">V2.0.0-pre3</a>
       </p>
     
@@ -109,7 +110,34 @@
     </div>
   </div>
 
+  <div id="additional-options-modal" class="modal-overlay">
+    <div class="modal-box">
+      <h3>Additional Options</h3>
+      <div style="text-align: left; padding: 1rem 0;">
+        <label class="toggle-label">
+          <input type="checkbox" id="animateBackgroundToggle"> Animate background gradient
+        </label>
+      </div>
+      <div id="additional-options-buttons" style="display: flex; gap: 1rem; justify-content: center; margin-top: 1rem;">
+        <button id="closeAdditionalOptions">Close</button>
+      </div>
+    </div>
+  </div>
+
 <script>
+  // Add these helper functions at the very top of the script section
+  function isMac() {
+    return navigator.platform.toLowerCase().includes('mac');
+  }
+
+  function getModifierKey() {
+    return isMac() ? 'metaKey' : 'ctrlKey';
+  }
+
+  function getModifierKeyName() {
+    return isMac() ? 'Cmd' : 'Ctrl';
+  }
+
   // toggles console output visibility
   function updateConsoleVisibility(show) {
     const outputEl = document.getElementById('output');
@@ -203,19 +231,20 @@
   }
 
 
-function showKeyboardShortcuts() {
-  showModal({
-    title: "Keyboard Shortcuts",
-    message: `
-      <ul style="text-align: left; list-style: none;">
-        <li><strong>Ctrl+D:</strong> Restart application</li>
-        <li><strong>Ctrl+F:</strong> Focus URL input field</li>
-        <li><strong>Ctrl+,:</strong> Open settings</li>
-      </ul>
-    `,
-    buttons: [{ label: "OK" }]
-  });
-}
+  function showKeyboardShortcuts() {
+    const modKey = getModifierKeyName();
+    showModal({
+      title: "Keyboard Shortcuts",
+      message: `
+        <ul style="text-align: left; list-style: none;">
+          <li><strong>${modKey}+D:</strong> Restart application</li>
+          <li><strong>${modKey}+F:</strong> Focus URL input field</li>
+          <li><strong>${modKey}+,:</strong> Open settings</li>
+        </ul>
+      `,
+      buttons: [{ label: "OK" }]
+    });
+  }
 
   let isFetchingFormats = false;
   let fetchFormatsAbort = null;
@@ -405,6 +434,40 @@ function hideLicenses() {
   }
 }
 
+  function showAdditionalOptions() {
+    const modal = document.getElementById('additional-options-modal');
+    if (!modal) return;
+    
+    modal.classList.add('showing');
+    modal.style.display = 'flex';
+    
+    void modal.offsetWidth;
+    
+    requestAnimationFrame(() => {
+      modal.classList.remove('showing');
+    });
+  }
+
+  function hideAdditionalOptions() {
+    const modal = document.getElementById('additional-options-modal');
+    if (!modal) return;
+    
+    modal.classList.add('hiding');
+    setTimeout(() => {
+      modal.style.display = 'none';
+      modal.classList.remove('hiding');
+    }, 150);
+  }
+
+  function updateBackgroundAnimation(animate) {
+    const body = document.body;
+    if (animate) {
+      body.style.animation = 'gradientFlow 30s ease infinite alternate';
+    } else {
+      body.style.animation = 'none';
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', async () => {
     let settings;
     try {
@@ -433,6 +496,10 @@ function hideLicenses() {
     const fetchFormatsBtn = document.getElementById('fetchFormatsBtn');
     const downloadBtn = document.getElementById('downloadBtn');
     const checkUpdateBtn = document.getElementById('checkUpdateBtn');
+    const additionalOptionsBtn = document.getElementById('additionalOptionsBtn');
+    const closeAdditionalOptionsBtn = document.getElementById('closeAdditionalOptions');
+    const animateBackgroundToggle = document.getElementById('animateBackgroundToggle');
+    
     if (fetchFormatsBtn) fetchFormatsBtn._originalClick = fetchFormats;
     if (downloadBtn) downloadBtn._originalClick = null;
 
@@ -469,6 +536,12 @@ function hideLicenses() {
       browserChoiceContainer.style.display = settings.hookBrowser ? 'block' : 'none';
       updateConsoleVisibility(settings.showConsoleOutput);
       toggleAdvancedUI(settings.advancedOptions);
+      
+      // Update additional options
+      if (animateBackgroundToggle) {
+        animateBackgroundToggle.checked = settings.animateBackground ?? true;
+        updateBackgroundAnimation(settings.animateBackground ?? true);
+      }
     };
     updateUIFromSettings();
 
@@ -551,6 +624,26 @@ function hideLicenses() {
       settings.keepOriginalAfterConvert = e.target.checked;
       window.api.saveSettings(settings);
     });
+    
+    // Additional Options button
+    if (additionalOptionsBtn) {
+      additionalOptionsBtn.addEventListener('click', showAdditionalOptions);
+    }
+    
+    // Close Additional Options modal
+    if (closeAdditionalOptionsBtn) {
+      closeAdditionalOptionsBtn.addEventListener('click', hideAdditionalOptions);
+    }
+    
+    // Animate Background toggle
+    if (animateBackgroundToggle) {
+      animateBackgroundToggle.addEventListener('change', (e) => {
+        settings.animateBackground = e.target.checked;
+        updateBackgroundAnimation(e.target.checked);
+        window.api.saveSettings(settings);
+      });
+    }
+    
     if (resetSettingsBtn) resetSettingsBtn.addEventListener('click', () => {
       showModal({
         title: "Confirm Reset",
@@ -669,8 +762,9 @@ document.addEventListener('keydown', (event) => {
 
 // Keyboard shortcuts
 document.addEventListener('keydown', (event) => {
+  const modifierPressed = isMac() ? event.metaKey : event.ctrlKey;
   
-  if (event.ctrlKey && event.key === 'd') {
+  if (modifierPressed && event.key === 'd') {
     event.preventDefault();
     showModal({
       title: "Restart Application",
@@ -683,14 +777,14 @@ document.addEventListener('keydown', (event) => {
   }
   
   /*
-  if (event.ctrlKey && event.key === 'o') {
+  if (modifierPressed && event.key === 'o') {
     event.preventDefault();
     if (downloadBtn && !isDownloading) downloadBtn._originalClick();
   }
  Test for possible future use
   */
   
-  if (event.ctrlKey && event.key === 'f') {
+  if (modifierPressed && event.key === 'f') {
     event.preventDefault();
     const urlInput = document.getElementById('url');
     if (urlInput) {
@@ -700,7 +794,7 @@ document.addEventListener('keydown', (event) => {
   }
   
   
-  if (event.ctrlKey && event.key === ',') {
+  if (modifierPressed && event.key === ',') {
     event.preventDefault();
     toggleSettingsModal();
   }
