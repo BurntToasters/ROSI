@@ -85,8 +85,9 @@ body {
 
 .container {
   width: 100%;
-  max-width: 600px;
-  padding: 2rem;
+  max-width: 700px;
+  padding: 2rem 2.5rem; 
+  padding-bottom: 3.5rem;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -99,6 +100,8 @@ body {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 
               inset 0 1px 0 rgba(255, 255, 255, 0.1);
   animation: slideInUp 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  max-height: 85vh;
+  overflow: hidden;
 }
 
 @keyframes slideInUp {
@@ -114,13 +117,13 @@ body {
 
 
 .app-header {
-  margin-bottom: 2rem;
+  margin-bottom: 1.25rem;
 }
 
 .app-logo {
-  width: 80px;
-  height: 80px;
-  margin-bottom: 1rem;
+  width: 70px;
+  height: 70px;
+  margin-bottom: 0.75rem;
 }
 
 .app-header h1 {
@@ -140,8 +143,8 @@ body {
 
 .input-group {
   display: flex;
-  gap: 0.75rem;
-  margin-bottom: 1rem;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
   width: 100%;
 }
 
@@ -217,7 +220,6 @@ button.loading {
   to { transform: rotate(360deg); }
 }
 
-/* Format Options */
 #formatOptions {
   display: none;
   background: rgba(255, 255, 255, 0.05);
@@ -225,28 +227,33 @@ button.loading {
   -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 16px;
-  padding: 1.5rem;
-  margin-bottom: 1rem;
+  padding: 0.4rem;
+  margin-bottom: 0.5rem;
   transition: all 0.3s ease;
+  width: 100%; 
+  box-sizing: border-box;
 }
 
 #formatOptions button {
   width: 100%;
-  margin-bottom: 1rem;
+  margin-bottom: 0.3rem;
+  padding: 0.6rem 1rem;
 }
 
 .format-selects {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 1rem;
+  gap: 0.5rem;
+  width: 100%;
 }
 
 .format-selects label {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.2rem;
   font-size: 0.9rem;
   color: var(--text-secondary);
+  min-width: 0;
 }
 
 select {
@@ -260,6 +267,8 @@ select {
   color: var(--text-primary);
   cursor: pointer;
   transition: all 0.3s ease;
+  width: 100%; 
+  min-width: 0;
 }
 
 select:focus {
@@ -276,11 +285,11 @@ select option {
 .console-output {
   display: none;
   width: 100%;
-  max-height: 300px;
+  max-height: 450px;
   overflow-y: auto;
   margin-top: 1rem;
-  margin-bottom: 1rem;
-  padding: 1rem;
+  margin-bottom: 2.5rem;
+  padding: 0.75rem;
   font-family: var(--font-mono);
   font-size: 0.85rem;
   background: rgba(17, 17, 17, 0.9);
@@ -293,6 +302,24 @@ select option {
   word-break: break-word;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3),
               inset 0 0 20px rgba(0, 255, 127, 0.05);
+}
+
+.console-output::-webkit-scrollbar {
+  width: 8px;
+}
+
+.console-output::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+}
+
+.console-output::-webkit-scrollbar-thumb {
+  background: rgba(0, 255, 127, 0.5);
+  border-radius: 4px;
+}
+
+.console-output::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 255, 127, 0.7);
 }
 
 #settings-modal {
@@ -493,7 +520,7 @@ select option {
 
 .app-footer {
   position: absolute;
-  bottom: 1rem;
+  bottom: 0.6rem;
   display: flex;
   gap: 0.75rem;
   font-size: 0.85rem;
@@ -572,6 +599,29 @@ select option {
   margin-bottom: 1.5rem;
   color: var(--text-secondary);
   line-height: 1.6;
+}
+
+.modal-box .toggle-label {
+  display: flex;
+  align-items: center;
+  padding: 0.6rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  transition: all 0.3s ease;
+  cursor: pointer;
+  font-size: 0.9rem;
+  justify-content: flex-start;
+}
+
+.modal-box .toggle-label:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.modal-box .toggle-label input[type="checkbox"] {
+  margin-right: 0.75rem;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
 }
 
 #modal-buttons {
