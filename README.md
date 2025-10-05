@@ -5,14 +5,19 @@ ROSI is an Electron GUI for yt-dlp
 
 <img width="700" alt="ROSI" src="https://github.com/user-attachments/assets/52694114-57a3-487e-837b-6bf5d4960ba3" />
 
-___
+# ROSI LTS Version
+
+There is an LTS version of the previous stable full release of ROSI (which is now `v1.x.x`) which can be found at <b>[➡️ROSI-LTS's Repo](https://github.com/BurntToasters/ROSI-LTS)</b>
+
+This is mainly for people who perfered the previous look of ROSI, or has a current issue with a newlery released major version.
+
+The LTS version only provides yt-dlp updates and minor bug fixes. No feature additions will happen with LTS versions. Whatever features were added to that version before it became LTS are the last features it will receive.
 
 # LICENSES
 
 - Rosi includes the official YT-DLP binary which on its own uses the [unlicense] license, however there are bundled third party packages. Read [THIRD‑PARTY‑NOTICES](THIRD‑PARTY‑NOTICES.md) for more.
 - Please make sure to also read the [license](LICENSE) for the source of this project (excluding third part binaries and packages).
 
-___
 
 # Requirements
 
