@@ -56,6 +56,7 @@ if (!fs.existsSync(ytdlpPath)) {
     app.quit();
 }
 
+
 ipcMain.handle('get-app-version', () => app.getVersion());
 
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
@@ -102,6 +103,25 @@ function saveSettings(newSettings) {
 }
 
 let mainWindow = null;
+let splashWindow = null;
+
+function createSplashWindow() {
+  splashWindow = new BrowserWindow({
+    width: 400,
+    height: 300,
+    transparent: true,
+    frame: false,
+    alwaysOnTop: true,
+    icon: path.join(__dirname, 'app.png'),
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false
+    },
+    roundedCorners: true
+  });
+  splashWindow.loadFile('splash.html');
+  splashWindow.center();
+}
 
 // create main window, set icon, menu bar, devtools
 function createWindow() {
@@ -122,7 +142,8 @@ function createWindow() {
       devTools: isDev,
     },
     autoHideMenuBar: !isDev,
-    menuBarVisible: isDev
+    menuBarVisible: isDev,
+    show: false // Don't show window until ready
   });
   mainWindow.loadFile('index.html');
   
@@ -132,9 +153,30 @@ function createWindow() {
   if (!isDev) {
     mainWindow.removeMenu();
   }
+  
+  // When main window is ready, close splash and show main window
+  mainWindow.once('ready-to-show', () => {
+    setTimeout(() => {
+      if (splashWindow && !splashWindow.isDestroyed()) {
+        splashWindow.close();
+        splashWindow = null;
+      }
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    }, 800); // Small delay for smoother transition
+  });
 }
 
-app.whenReady().then(createWindow);
+// First show splash, then create main window
+app.whenReady().then(() => {
+  createSplashWindow();
+  setTimeout(() => {
+    createWindow();
+  }, 300); // Small delay to ensure splash shows first
+});
+
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 
