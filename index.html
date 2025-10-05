@@ -734,8 +734,8 @@ function hideLicenses() {
 
     if (settings.firstLaunch) {
       showModal({
-        title: "FFMPEG Required for Conversion",
-        message: "ROSI uses FFMPEG for converting files to MP4.<br>If you plan to use the MP4 conversion feature, please ensure FFMPEG is installed and accessible in your system's PATH.<br>Click 'More Info' for guidance.",
+        title: "Dependency FFMPEG is Required for this app.",
+        message: "ROSI uses FFMPEG for yt-dlp and converting files to MP4.<br>For intended use and stability, Please ensure FFMPEG is installed and accessible in your system's PATH.<br>Click 'More Info' for guidance.",
         buttons: [
           { label: "More Info", action: () => window.api.openExternal('https://help.rosie.run/installing-ffmpeg') },
           { label: "OK" }
