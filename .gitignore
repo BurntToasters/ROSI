@@ -4,6 +4,6 @@ dist/
 .DS_Store
 *.bak
 *.env
-.cer
-.cert
-.pem
+*.cer
+*.cert
+*.pem
