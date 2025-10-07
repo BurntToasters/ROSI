@@ -1,6 +1,6 @@
 {
   "name": "rosi",
-  "version": "2.0.0-pre5",
+  "version": "2.0.0",
   "description": "Electron GUI for yt-dlp",
   "main": "main.js",
   "scripts": {
@@ -9,9 +9,9 @@
     "build": "electron-builder",
     "build:win:x64": "electron-builder --win --x64 --config.win.asarUnpack=yt-dlp.exe",
     "build:win:arm64": "electron-builder --win --arm64 --config.win.asarUnpack=yt-dlp_arm64.exe",
-    "build:mac:universal": "electron-builder --mac --universal",
+    "build:mac:universal": "dotenv -e .env -- electron-builder --mac --universal",
     "build:linux": "electron-builder --linux AppImage deb rpm",
-    "build:github": "cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml",
+    "build:github": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml",
     "build:msstore:x64": "cross-env CHANNEL=msstore node build-scripts/prepare-x64.js && electron-builder --win --x64 -c electron-builder.base.yml -c electron-builder.msstore.yml",
     "build:msstore:arm64": "cross-env CHANNEL=msstore node build-scripts/prepare-arm64.js && electron-builder --win --arm64 -c electron-builder.base.yml -c electron-builder.msstore.yml",
     "build:msstore": "npm run build:msstore:x64 && npm run build:msstore:arm64"
@@ -28,6 +28,7 @@
   "homepage": "https://github.com/BurntToasters/rosi#readme",
   "devDependencies": {
     "cross-env": "^10.1.0",
+    "dotenv-cli": "^10.0.0",
     "electron": "^38.2.1",
     "electron-builder": "^26.0.12"
   },
@@ -58,9 +59,15 @@
     "mac": {
       "target": "dmg",
       "icon": "build/app-icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
       "asarUnpack": [
         "yt-dlp_macos"
-      ]
+      ],
+      "identity": "${APPLE_IDENTITY}",
+      "notarize": true
     },
     "linux": {
       "target": [
