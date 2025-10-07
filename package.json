@@ -30,7 +30,8 @@
     "cross-env": "^10.1.0",
     "dotenv-cli": "^10.0.0",
     "electron": "^38.2.1",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "^26.0.12",
+    "js-yaml": "^4.1.0"
   },
   "dependencies": {
     "glob": "^11.0.1",
