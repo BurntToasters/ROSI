@@ -59,15 +59,9 @@
     "mac": {
       "target": "dmg",
       "icon": "build/app-icon.icns",
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false,
-      "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist",
       "asarUnpack": [
         "yt-dlp_macos"
-      ],
-      "identity": "${APPLE_IDENTITY}",
-      "notarize": true
+      ]
     },
     "linux": {
       "target": [
