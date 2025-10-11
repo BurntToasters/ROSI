@@ -52,7 +52,11 @@
     },
     "win": {
       "target": "nsis",
-      "icon": "build/app-icon.ico"
+      "icon": "build/app-icon.ico",
+      "asarUnpack": [
+        "yt-dlp.exe",
+        "yt-dlp_arm64.exe"
+      ]
     },
     "nsis": {
       "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
@@ -96,9 +100,6 @@
         "width": 648,
         "height": 480
       }
-    },
-    "asarUnpack": [
-      "yt-dlp.exe"
-    ]
+    }
   }
 }
