@@ -1,6 +1,6 @@
 {
   "name": "rosi",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Electron GUI for yt-dlp",
   "main": "main.js",
   "scripts": {
@@ -59,7 +59,7 @@
       ]
     },
     "nsis": {
-      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
+      "artifactName": "ROSI-Windows-${arch}.${ext}"
     },
     "mac": {
       "target": "dmg",
@@ -71,7 +71,8 @@
     "linux": {
       "target": [
         "AppImage",
-        "deb"
+        "deb",
+        "rpm"
       ],
       "icon": "build/app-icon.png",
       "category": "Utility",
@@ -79,7 +80,17 @@
         "yt-dlp_linux"
       ]
     },
+    "appImage": {
+      "artifactName": "ROSI-linux.${ext}"
+    },
+    "deb": {
+      "artifactName": "ROSI-linux_${arch}.${ext}"
+    },
+    "rpm": {
+      "artifactName": "ROSI-linux.${arch}.${ext}"
+    },
     "dmg": {
+      "artifactName": "ROSI-MacOS-universal.${ext}",
       "background": "build/dmg-background.png",
       "icon": "build/app-icon.png",
       "iconSize": 100,
