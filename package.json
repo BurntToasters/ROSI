@@ -1,19 +1,16 @@
 {
   "name": "rosi",
-  "version": "2.1.2",
+  "version": "2.1.1",
   "description": "Electron GUI for yt-dlp",
   "main": "main.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "electron": "electron .",
     "build": "electron-builder",
-    "build:win:x64": "node build-scripts/prepare-x64.js && electron-builder --win --x64",
-    "build:win:arm64": "node build-scripts/prepare-arm64.js && electron-builder --win --arm64",
+    "build:win:x64": "electron-builder --win --x64 --config.win.asarUnpack=yt-dlp.exe",
+    "build:win:arm64": "electron-builder --win --arm64 --config.win.asarUnpack=yt-dlp_arm64.exe",
     "build:mac:universal": "dotenv -e .env -- electron-builder --mac --universal",
-    "build:linux": "node build-scripts/prepare-linux-x64.js && electron-builder --linux --x64 AppImage deb rpm",
-    "build:linux:arm64": "node build-scripts/prepare-linux-arm64.js && electron-builder --linux --arm64 AppImage deb rpm",
-    "build:linux:native:x64": "node build-scripts/prepare-linux-x64.js && USE_SYSTEM_FPM=true electron-builder --linux --x64 AppImage deb rpm",
-    "build:linux:native:arm64": "node build-scripts/prepare-linux-arm64.js && USE_SYSTEM_FPM=true electron-builder --linux --arm64 AppImage deb rpm",
+    "build:linux": "electron-builder --linux AppImage deb rpm",
     "build:github": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml",
     "build:msstore:x64": "cross-env CHANNEL=msstore node build-scripts/prepare-x64.js && electron-builder --win --x64 -c electron-builder.base.yml -c electron-builder.msstore.yml",
     "build:msstore:arm64": "cross-env CHANNEL=msstore node build-scripts/prepare-arm64.js && electron-builder --win --arm64 -c electron-builder.base.yml -c electron-builder.msstore.yml",
@@ -80,8 +77,7 @@
       "icon": "build/app-icon.png",
       "category": "Utility",
       "asarUnpack": [
-        "yt-dlp_linux",
-        "yt-dlp_linux_aarch64"
+        "yt-dlp_linux"
       ]
     },
     "appImage": {
