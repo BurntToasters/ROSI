@@ -31,8 +31,8 @@ Download ROSI source code from source (main)
 1) Download zip of release source code (non-release source code are not recommended as they may contain issues not yet fixed for a release).
 2) Unzip the folder folder, place it in a good location on your computer.
 3) Install [NodeJS](https://nodejs.org/en/download) and [NPM](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm) *(Required to build ROSI)*.
-4) Open a terminal window within the project's folder and type `npm i --save-dev` to download the required electron packages.
-5) Check the package.json file to see how the electron-builder is setup.
+4) Open a terminal window within the project's folder and type `npm i --save-dev electron` to download the required electron packages. (May also need to run `npm i` on its own if other required packages were not installed).
+5) Run `npm run build` or `npm run build -- --[extra args]` to build ROSI for your Host OS.
 
 # ROSI LTS Version
 

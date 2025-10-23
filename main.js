@@ -6,16 +6,13 @@ const sanitize = require('sanitize-filename');
 
 const isWindows = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
-const isLinux = process.platform === 'linux';
 const isArm64 = process.arch === 'arm64';
 const isPackaged = app.isPackaged;
 const ytdlpBinary = isWindows
   ? (isArm64 ? 'yt-dlp_arm64.exe' : 'yt-dlp.exe')
   : isMac
     ? 'yt-dlp_macos'
-    : isLinux
-      ? (isArm64 ? 'yt-dlp_linux_aarch64' : 'yt-dlp_linux')
-      : 'yt-dlp_linux';
+    : 'yt-dlp_linux';
 
 let ytdlpPath;
 if (isPackaged) {
