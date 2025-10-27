@@ -19,9 +19,9 @@ Learn how to install ffmpeg: [https://help.rosie.run/installing-ffmpeg](https://
 - **MacOS:** `brew install ffmpeg`
 - **Windows:** `winget install ffmpeg`
 - **Linux:** 
-- - **Debian/Ubuntu:** `sudo apt install ffmpeg`
-  - **Fedora:** `sudo dnf install ffmpeg`
-  - **Arch:** `sudo pacman -S ffmpeg`
+- - **Debian/Ubuntu:** `sudo apt install ffmpeg -y`
+  - **Fedora:** `sudo dnf install ffmpeg -y`
+  - **Arch:** `sudo pacman -S ffmpeg -y`
 
 ## ℹ️ The Microsoft Store version of ROSI is now integreated into the main codebase. Its customizations are run via electron-builder when specifying to release for the ms store. 
 
@@ -31,8 +31,8 @@ Download ROSI source code from source (main)
 1) Download zip of release source code (non-release source code are not recommended as they may contain issues not yet fixed for a release).
 2) Unzip the folder folder, place it in a good location on your computer.
 3) Install [NodeJS](https://nodejs.org/en/download) and [NPM](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm) *(Required to build ROSI)*.
-4) Open a terminal window within the project's folder and type `npm i --save-dev electron` to download the required electron packages. (May also need to run `npm i` on its own if other required packages were not installed).
-5) Run `npm run build` or `npm run build -- --[extra args]` to build ROSI for your Host OS.
+4) Run `npm i --save-dev` to download the required electron packages.
+5) View the package.json file to see the `npm run build` commands available.
 
 # ROSI LTS Version
 
