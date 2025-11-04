@@ -1,6 +1,6 @@
 {
   "name": "rosi",
-  "version": "2.1.2",
+  "version": "2.2.0",
   "description": "Electron GUI for yt-dlp",
   "main": "main.js",
   "scripts": {
@@ -29,7 +29,7 @@
   "devDependencies": {
     "cross-env": "^10.1.0",
     "dotenv-cli": "^10.0.0",
-    "electron": "^38.2.2",
+    "electron": "^39.0.0",
     "electron-builder": "^26.0.12",
     "js-yaml": "^4.1.0"
   },
