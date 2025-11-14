@@ -199,19 +199,21 @@ ipcMain.handle('check-deno-installed', async () => {
 
 ipcMain.handle('install-deno', async () => {
   return new Promise((resolve, reject) => {
-    let installCmd, installArgs;
+    let installCmd, installArgs, spawnOptions;
     
     if (isWindows) {
       // Windows: irm https://deno.land/install.ps1 | iex
-      installCmd = 'powershell';
-      installArgs = ['-Command', 'irm https://deno.land/install.ps1 | iex'];
+      installCmd = 'powershell.exe';
+      installArgs = ['-ExecutionPolicy', 'Bypass', '-Command', 'irm https://deno.land/install.ps1 | iex'];
+      spawnOptions = {};
     } else {
       // Mac/Linux: curl -fsSL https://deno.land/install.sh | sh
       installCmd = 'sh';
       installArgs = ['-c', 'curl -fsSL https://deno.land/install.sh | sh'];
+      spawnOptions = {};
     }
     
-    const proc = spawn(installCmd, installArgs, { shell: true });
+    const proc = spawn(installCmd, installArgs, spawnOptions);
     let output = '';
     let error = '';
     
