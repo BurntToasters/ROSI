@@ -188,11 +188,36 @@ ipcMain.handle('check-deno-installed', async () => {
   return new Promise((resolve) => {
     const checkCmd = isWindows ? 'where' : 'which';
     const proc = spawn(checkCmd, ['deno']);
+    
     proc.on('close', (code) => {
-      resolve(code === 0);
+      if (code === 0) {
+        resolve(true);
+        return;
+      }
+
+      if (isWindows) {
+        const denoPath = path.join(process.env.USERPROFILE || '', '.deno', 'bin', 'deno.exe');
+        resolve(fs.existsSync(denoPath));
+      } else if (isMac) {
+        const denoPath = path.join(process.env.HOME || '', '.deno', 'bin', 'deno');
+        resolve(fs.existsSync(denoPath));
+      } else {
+        const denoPath = path.join(process.env.HOME || '', '.deno', 'bin', 'deno');
+        resolve(fs.existsSync(denoPath));
+      }
     });
+    
     proc.on('error', () => {
-      resolve(false);
+      if (isWindows) {
+        const denoPath = path.join(process.env.USERPROFILE || '', '.deno', 'bin', 'deno.exe');
+        resolve(fs.existsSync(denoPath));
+      } else if (isMac) {
+        const denoPath = path.join(process.env.HOME || '', '.deno', 'bin', 'deno');
+        resolve(fs.existsSync(denoPath));
+      } else {
+        const denoPath = path.join(process.env.HOME || '', '.deno', 'bin', 'deno');
+        resolve(fs.existsSync(denoPath));
+      }
     });
   });
 });
