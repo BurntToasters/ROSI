@@ -69,7 +69,8 @@ const defaultSettings = {
   firstLaunch: true,
   hookBrowser: false,
   browserChoice: "Chrome",
-  animateBackground: true
+  animateBackground: true,
+  denoReminderDismissed: false
 };
 
 // [!] The console debugger uses emojis to easily identify messages. If you see any issues with emojis, please ensure your terminal supports them or disable the console output in settings.
@@ -181,6 +182,60 @@ app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 
 // --- IPC Handlers ---
+
+
+ipcMain.handle('check-deno-installed', async () => {
+  return new Promise((resolve) => {
+    const checkCmd = isWindows ? 'where' : 'which';
+    const proc = spawn(checkCmd, ['deno']);
+    proc.on('close', (code) => {
+      resolve(code === 0);
+    });
+    proc.on('error', () => {
+      resolve(false);
+    });
+  });
+});
+
+ipcMain.handle('install-deno', async () => {
+  return new Promise((resolve, reject) => {
+    let installCmd, installArgs;
+    
+    if (isWindows) {
+      // Windows: irm https://deno.land/install.ps1 | iex
+      installCmd = 'powershell';
+      installArgs = ['-Command', 'irm https://deno.land/install.ps1 | iex'];
+    } else {
+      // Mac/Linux: curl -fsSL https://deno.land/install.sh | sh
+      installCmd = 'sh';
+      installArgs = ['-c', 'curl -fsSL https://deno.land/install.sh | sh'];
+    }
+    
+    const proc = spawn(installCmd, installArgs, { shell: true });
+    let output = '';
+    let error = '';
+    
+    proc.stdout.on('data', (data) => {
+      output += data.toString();
+    });
+    
+    proc.stderr.on('data', (data) => {
+      error += data.toString();
+    });
+    
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve({ success: true, output });
+      } else {
+        reject({ success: false, error: error || output });
+      }
+    });
+    
+    proc.on('error', (err) => {
+      reject({ success: false, error: err.message });
+    });
+  });
+});
 
 // get settings from file
 ipcMain.handle('get-settings', () => loadSettings());

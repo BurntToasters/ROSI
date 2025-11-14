@@ -340,6 +340,64 @@ function hideLicenses() {
     }
   }
 
+  // check for Deno
+  async function checkDenoInstallation(settings) {
+    if (settings.denoReminderDismissed) {
+      return;
+    }
+    
+    try {
+      const isInstalled = await window.api.checkDenoInstalled();
+      
+      if (!isInstalled) {
+        showModal({
+          title: "Deno Required for Full YouTube Functionality",
+          message: "Recent updates to yt-dlp require Deno for full YouTube functionality.<br><br>Would you like to install Deno now?",
+          buttons: [
+            { 
+              label: "Install", 
+              action: async () => {
+                showModal({
+                  title: "Installing Deno...",
+                  message: "Please wait while Deno is being installed. This may take a moment.",
+                  buttons: []
+                });
+                
+                try {
+                  await window.api.installDeno();
+                  showModal({
+                    title: "Installation Complete",
+                    message: "Deno has been successfully installed!<br>You may need to restart your terminal or system for changes to take effect.",
+                    buttons: [{ label: "OK" }]
+                  });
+                } catch (error) {
+                  showModal({
+                    title: "Installation Failed",
+                    message: `Failed to install Deno automatically.<br><br>Please install manually:<br>Mac/Linux: curl -fsSL https://deno.land/install.sh | sh<br>Windows: irm https://deno.land/install.ps1 | iex<br><br>Error: ${error.error || 'Unknown error'}`,
+                    buttons: [
+                      { label: "Open Deno Website", action: () => window.api.openExternal('https://deno.land') },
+                      { label: "OK" }
+                    ]
+                  });
+                }
+              }
+            },
+            { label: "Later" },
+            { 
+              label: "No, don't remind me", 
+              action: () => {
+                settings.denoReminderDismissed = true;
+                window.api.saveSettings(settings);
+              }
+            }
+          ]
+        });
+      }
+    } catch (error) {
+      console.error("Error checking Deno installation:", error);
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', async () => {
     let settings;
     try {
@@ -610,11 +668,14 @@ function hideLicenses() {
         message: "ROSI uses FFMPEG for yt-dlp and converting files to MP4.<br>For intended use and stability, Please ensure FFMPEG is installed and accessible in your system's PATH.<br>Click 'More Info' for guidance.",
         buttons: [
           { label: "More Info", action: () => window.api.openExternal('https://help.rosie.run/installing-ffmpeg') },
-          { label: "OK" }
+          { label: "OK", action: () => checkDenoInstallation(settings) }
         ]
       });
       settings.firstLaunch = false;
       window.api.saveSettings(settings);
+    } else {
+      // check Deno
+      checkDenoInstallation(settings);
     }
 
 
