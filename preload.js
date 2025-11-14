@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('api', {
   downloadVideo: (options) => ipcRenderer.send('download-video', options),
   cancelDownload: () => ipcRenderer.send('cancel-download'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  checkDenoInstalled: () => ipcRenderer.invoke('check-deno-installed'),
+  installDeno: () => ipcRenderer.invoke('install-deno'),
   onProgress: (callback) => {
     const listener = (_, message) => callback(message);
     ipcRenderer.on('progress', listener);
