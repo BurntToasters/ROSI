@@ -352,7 +352,7 @@ function hideLicenses() {
       if (!isInstalled) {
         showModal({
           title: "Deno Required for Full YouTube Functionality",
-          message: "Recent updates to yt-dlp require Deno for full YouTube functionality.<br><br>Would you like to install Deno now?",
+          message: "Recent updates to yt-dlp require Deno for full YouTube functionality.<br><br>Would you like to install Deno now?<br><br> ℹ️If you have NodeJS installed, you can ignore this message (yt-dlp will use nodejs instead).",
           buttons: [
             { 
               label: "Install", 
