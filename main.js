@@ -186,38 +186,74 @@ app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) creat
 
 ipcMain.handle('check-deno-installed', async () => {
   return new Promise((resolve) => {
-    const checkCmd = isWindows ? 'where' : 'which';
-    const proc = spawn(checkCmd, ['deno']);
+    const commonPaths = [];
     
-    proc.on('close', (code) => {
-      if (code === 0) {
+    if (isWindows) {
+      const userProfile = process.env.USERPROFILE || '';
+      const localAppData = process.env.LOCALAPPDATA || '';
+      commonPaths.push(
+        path.join(userProfile, '.deno', 'bin', 'deno.exe'),
+        path.join(localAppData, 'deno', 'bin', 'deno.exe'),
+        'C:\\Program Files\\deno\\deno.exe',
+        'C:\\deno\\deno.exe'
+      );
+    } else {
+      const homeDir = process.env.HOME || '';
+      commonPaths.push(
+        path.join(homeDir, '.deno', 'bin', 'deno'),
+        '/usr/local/bin/deno',
+        '/opt/homebrew/bin/deno',
+        '/usr/bin/deno',
+        '/home/linuxbrew/.linuxbrew/bin/deno',
+        path.join(homeDir, '.local', 'bin', 'deno')
+      );
+    }
+
+    for (const denoPath of commonPaths) {
+      if (fs.existsSync(denoPath)) {
         resolve(true);
         return;
       }
+    }
 
-      if (isWindows) {
-        const denoPath = path.join(process.env.USERPROFILE || '', '.deno', 'bin', 'deno.exe');
-        resolve(fs.existsSync(denoPath));
-      } else if (isMac) {
-        const denoPath = path.join(process.env.HOME || '', '.deno', 'bin', 'deno');
-        resolve(fs.existsSync(denoPath));
-      } else {
-        const denoPath = path.join(process.env.HOME || '', '.deno', 'bin', 'deno');
-        resolve(fs.existsSync(denoPath));
-      }
+    const checkCmd = isWindows ? 'where' : 'which';
+    const spawnOptions = {};
+    
+    if (isWindows) {
+      const userProfile = process.env.USERPROFILE || '';
+      const localAppData = process.env.LOCALAPPDATA || '';
+      const enhancedPath = [
+        path.join(userProfile, '.deno', 'bin'),
+        path.join(localAppData, 'deno', 'bin'),
+        'C:\\Program Files\\deno',
+        'C:\\deno',
+        process.env.PATH || ''
+      ].join(';');
+      
+      spawnOptions.env = { ...process.env, PATH: enhancedPath };
+    } else {
+      const homeDir = process.env.HOME || '';
+      const enhancedPath = [
+        path.join(homeDir, '.deno', 'bin'),
+        '/usr/local/bin',
+        '/opt/homebrew/bin',
+        '/usr/bin',
+        '/home/linuxbrew/.linuxbrew/bin',
+        path.join(homeDir, '.local', 'bin'),
+        process.env.PATH || ''
+      ].join(':');
+      
+      spawnOptions.env = { ...process.env, PATH: enhancedPath };
+    }
+    
+    const proc = spawn(checkCmd, ['deno'], spawnOptions);
+    
+    proc.on('close', (code) => {
+      resolve(code === 0);
     });
     
     proc.on('error', () => {
-      if (isWindows) {
-        const denoPath = path.join(process.env.USERPROFILE || '', '.deno', 'bin', 'deno.exe');
-        resolve(fs.existsSync(denoPath));
-      } else if (isMac) {
-        const denoPath = path.join(process.env.HOME || '', '.deno', 'bin', 'deno');
-        resolve(fs.existsSync(denoPath));
-      } else {
-        const denoPath = path.join(process.env.HOME || '', '.deno', 'bin', 'deno');
-        resolve(fs.existsSync(denoPath));
-      }
+      resolve(false);
     });
   });
 });
