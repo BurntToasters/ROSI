@@ -20,6 +20,30 @@ contextBridge.exposeInMainWorld('api', {
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   checkDenoInstalled: () => ipcRenderer.invoke('check-deno-installed'),
   installDeno: () => ipcRenderer.invoke('install-deno'),
+  
+  // Auto-updater APIs
+  isPackaged: () => ipcRenderer.invoke('is-packaged'),
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  installUpdate: () => ipcRenderer.send('install-update'),
+  onUpdaterStatus: (callback) => {
+    const listener = (_, data) => callback(data);
+    ipcRenderer.on('updater-status', listener);
+    return () => ipcRenderer.removeListener('updater-status', listener);
+  },
+  onUpdaterProgress: (callback) => {
+    const listener = (_, data) => callback(data);
+    ipcRenderer.on('updater-progress', listener);
+    return () => ipcRenderer.removeListener('updater-progress', listener);
+  },
+  
+  // dl progress
+  onDownloadProgress: (callback) => {
+    const listener = (_, data) => callback(data);
+    ipcRenderer.on('download-progress', listener);
+    return () => ipcRenderer.removeListener('download-progress', listener);
+  },
+  
   onProgress: (callback) => {
     const listener = (_, message) => callback(message);
     ipcRenderer.on('progress', listener);

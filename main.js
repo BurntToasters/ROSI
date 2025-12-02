@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const sanitize = require('sanitize-filename');
+const { autoUpdater } = require('electron-updater');
 
 const isWindows = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
@@ -180,6 +181,91 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+
+// Auto Updater Setup
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = true;
+
+autoUpdater.on('checking-for-update', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater-status', { status: 'checking' });
+  }
+});
+
+autoUpdater.on('update-available', (info) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater-status', { 
+      status: 'available', 
+      version: info.version,
+      releaseNotes: info.releaseNotes 
+    });
+  }
+});
+
+autoUpdater.on('update-not-available', (info) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater-status', { 
+      status: 'not-available',
+      version: info.version 
+    });
+  }
+});
+
+autoUpdater.on('error', (err) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater-status', { 
+      status: 'error', 
+      message: err.message 
+    });
+  }
+});
+
+autoUpdater.on('download-progress', (progressObj) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater-progress', {
+      percent: progressObj.percent,
+      bytesPerSecond: progressObj.bytesPerSecond,
+      transferred: progressObj.transferred,
+      total: progressObj.total
+    });
+  }
+});
+
+autoUpdater.on('update-downloaded', (info) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater-status', { 
+      status: 'downloaded',
+      version: info.version 
+    });
+  }
+});
+
+ipcMain.handle('is-packaged', () => isPackaged);
+
+ipcMain.handle('check-for-updates', async () => {
+  if (!isPackaged) {
+    return { error: 'dev-mode', message: 'Update checking is not available in development mode.' };
+  }
+  
+  try {
+    return await autoUpdater.checkForUpdates();
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
+ipcMain.handle('download-update', async () => {
+  try {
+    await autoUpdater.downloadUpdate();
+    return { success: true };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
+ipcMain.on('install-update', () => {
+  autoUpdater.quitAndInstall(false, true);
+});
 
 // --- IPC Handlers ---
 

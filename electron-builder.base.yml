@@ -8,11 +8,20 @@ files:
 - '!**/dist'
 directories:
   output: dist/${arch}
+
+publish:
+  provider: github
+  owner: BurntToasters
+  repo: ROSI
+
 win:
   target: nsis
   icon: build/app-icon.ico
 nsis:
   artifactName: ROSI-Windows-${arch}.${ext}
+  allowToChangeInstallationDirectory: false
+  oneClick: false
+  perMachine: false
 mac:
   target: dmg
   icon: build/app-icon.icns

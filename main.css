@@ -830,3 +830,120 @@ label.disabled {
 label.disabled input[type="checkbox"] {
   cursor: not-allowed;
 }
+
+.progress-container {
+  width: 100%;
+  margin-bottom: 1rem;
+  padding: 1rem 1.25rem;
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(15px);
+  -webkit-backdrop-filter: blur(15px);
+  border: 1.5px solid rgba(255, 255, 255, 0.15);
+  border-radius: 16px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+  animation: slideInUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+}
+
+#progress-status {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+#progress-percent {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.progress-bar-wrapper {
+  width: 100%;
+  height: 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover), #b388ff);
+  background-size: 200% 100%;
+  border-radius: 6px;
+  transition: width 0.3s ease-out;
+  animation: progressGlow 2s ease infinite;
+  box-shadow: 0 0 20px var(--accent-glow),
+              0 0 40px rgba(124, 77, 255, 0.3);
+}
+
+@keyframes progressGlow {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+.progress-bar.indeterminate {
+  width: 100% !important;
+  background: linear-gradient(90deg, 
+    transparent 0%,
+    var(--accent) 25%,
+    var(--accent-hover) 50%,
+    var(--accent) 75%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: indeterminateProgress 1.5s linear infinite;
+}
+
+@keyframes indeterminateProgress {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.progress-details {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.update-progress-container {
+  margin: 1rem 0;
+}
+
+.update-progress-bar-wrapper {
+  width: 100%;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.update-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--success), var(--success-hover));
+  border-radius: 4px;
+  transition: width 0.3s ease-out;
+}
+
+.update-progress-info {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}

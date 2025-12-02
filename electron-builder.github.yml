@@ -1,5 +1,11 @@
 extends: ./electron-builder.base.yml
 
+publish:
+  provider: github
+  owner: BurntToasters
+  repo: ROSI
+  releaseType: release
+
 mac:
   hardenedRuntime: true
   gatekeeperAssess: false
