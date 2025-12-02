@@ -7,13 +7,23 @@ const { autoUpdater } = require('electron-updater');
 
 const isWindows = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
+const isLinux = process.platform === 'linux';
 const isArm64 = process.arch === 'arm64';
 const isPackaged = app.isPackaged;
-const ytdlpBinary = isWindows
-  ? (isArm64 ? 'yt-dlp_arm64.exe' : 'yt-dlp.exe')
-  : isMac
-    ? 'yt-dlp_macos'
-    : 'yt-dlp_linux';
+
+// Select the appropriate arch yt-dlp
+function getYtdlpBinaryName() {
+  if (isWindows) {
+    return isArm64 ? 'yt-dlp_arm64.exe' : 'yt-dlp.exe';
+  } else if (isMac) {
+    return 'yt-dlp_macos';
+  } else if (isLinux) {
+    return isArm64 ? 'yt-dlp_linux_aarch64' : 'yt-dlp_linux';
+  }
+  return 'yt-dlp_linux';
+}
+
+const ytdlpBinary = getYtdlpBinaryName();
 
 let ytdlpPath;
 if (isPackaged) {

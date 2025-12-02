@@ -11,7 +11,9 @@
     "build:win:x64": "electron-builder --win --x64",
     "build:win:arm64": "electron-builder --win --arm64",
     "build:mac:universal": "dotenv -e .env -- electron-builder --mac --universal",
-    "build:linux": "electron-builder --linux AppImage deb rpm",
+    "build:linux": "electron-builder --linux AppImage deb rpm --x64 --arm64",
+    "build:linux:x64": "node build-scripts/prepare-linux-x64.js && electron-builder --linux AppImage deb rpm --x64",
+    "build:linux:arm64": "node build-scripts/prepare-linux-arm64.js && electron-builder --linux AppImage deb rpm --arm64",
     "build:github": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --x64 --arm64",
     "build:github:win": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --x64 --arm64",
     "build:github:mac": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --mac --universal",
@@ -81,11 +83,12 @@
       "icon": "build/app-icon.png",
       "category": "Utility",
       "asarUnpack": [
-        "yt-dlp_linux"
+        "yt-dlp_linux",
+        "yt-dlp_linux_aarch64"
       ]
     },
     "appImage": {
-      "artifactName": "ROSI-linux.${ext}"
+      "artifactName": "ROSI-Linux-${arch}.${ext}"
     },
     "deb": {
       "artifactName": "ROSI-linux_${arch}.${ext}"
