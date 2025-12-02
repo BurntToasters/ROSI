@@ -913,10 +913,19 @@ if (closeBtn) {
   closeBtn.addEventListener('click', hideLicenses);
 }
 
-// esc key
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
-    hideLicenses();
+    const licensesOverlay = document.getElementById('licenses-overlay');
+    if (licensesOverlay && licensesOverlay.classList.contains('active')) {
+      hideLicenses();
+      return;
+    }
+
+    const appModal = document.getElementById('app-modal');
+    if (appModal && appModal.classList.contains('active')) {
+      hideModal(appModal);
+      return;
+    }
   }
 });
 
