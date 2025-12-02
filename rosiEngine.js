@@ -227,31 +227,131 @@ function testmsg () {
         });
 }
 
-  // Check updates
+  function showProgressBar(status = 'Downloading...') {
+    const container = document.getElementById('progress-container');
+    const statusEl = document.getElementById('progress-status');
+    const percentEl = document.getElementById('progress-percent');
+    const bar = document.getElementById('progress-bar');
+    const details = document.getElementById('progress-details');
+    
+    if (container) {
+      container.style.display = 'block';
+    }
+    if (statusEl) statusEl.textContent = status;
+    if (percentEl) percentEl.textContent = '0%';
+    if (bar) {
+      bar.style.width = '0%';
+      bar.classList.remove('indeterminate');
+    }
+    if (details) details.textContent = '';
+  }
+
+  function updateProgressBar(percent, statusText = null, detailsText = null) {
+    const statusEl = document.getElementById('progress-status');
+    const percentEl = document.getElementById('progress-percent');
+    const bar = document.getElementById('progress-bar');
+    const details = document.getElementById('progress-details');
+    
+    if (percentEl) percentEl.textContent = `${Math.round(percent)}%`;
+    if (bar) {
+      bar.style.width = `${percent}%`;
+      bar.classList.remove('indeterminate');
+    }
+    if (statusText && statusEl) statusEl.textContent = statusText;
+    if (detailsText && details) details.textContent = detailsText;
+  }
+
+  function setProgressIndeterminate(status = 'Processing...') {
+    const statusEl = document.getElementById('progress-status');
+    const percentEl = document.getElementById('progress-percent');
+    const bar = document.getElementById('progress-bar');
+    const details = document.getElementById('progress-details');
+    
+    if (statusEl) statusEl.textContent = status;
+    if (percentEl) percentEl.textContent = '';
+    if (bar) bar.classList.add('indeterminate');
+    if (details) details.textContent = '';
+  }
+
+  function hideProgressBar() {
+    const container = document.getElementById('progress-container');
+    if (container) {
+      container.style.display = 'none';
+    }
+  }
+
+  function parseYtdlpProgress(message) {
+    const progressMatch = message.match(/\[download\]\s+(\d+\.?\d*)%\s+of\s+~?(\S+)\s+at\s+(\S+)\s+ETA\s+(\S+)/);
+    if (progressMatch) {
+      return {
+        percent: parseFloat(progressMatch[1]),
+        totalSize: progressMatch[2],
+        speed: progressMatch[3],
+        eta: progressMatch[4]
+      };
+    }
+
+    const simpleMatch = message.match(/\[download\]\s+(\d+\.?\d*)%\s+of\s+~?(\S+)/);
+    if (simpleMatch) {
+      return {
+        percent: parseFloat(simpleMatch[1]),
+        totalSize: simpleMatch[2],
+        speed: null,
+        eta: null
+      };
+    }
+    
+    return null;
+  }
+
+  function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
   async function checkForUpdates() {
-    try {
-      const res = await fetch('https://api.github.com/repos/BurntToasters/ROSI/releases/latest', {
-        headers: { 'User-Agent': 'ROSI-Updater' }
+    const channel = window.api.getChannel();
+
+    if (channel === 'msstore') {
+      showModal({
+        title: "Microsoft Store Version",
+        message: "Updates for the Microsoft Store version are managed through the Microsoft Store app.",
+        buttons: [
+          { label: "Open Store", action: () => window.api.openExternal('ms-windows-store://pdp/?ProductId=9N0BQSTFL4SV') },
+          { label: "OK" }
+        ]
       });
-      if (!res.ok) throw new Error('Failed to fetch release info');
-      const release = await res.json();
-      const latestVersion = release.tag_name.replace(/^v/, '');
-      const currentVersion = await window.api.getAppVersion();
-      if (compareVersions(latestVersion, currentVersion) > 0) {
+      return;
+    }
+
+    try {
+      showModal({
+        title: "Checking for Updates",
+        message: "Please wait while we check for updates...",
+        buttons: []
+      });
+      
+      const result = await window.api.checkForUpdates();
+
+      if (result && result.error === 'dev-mode') {
         showModal({
-          title: "Update Available!",
-          message: `A new version (v${latestVersion}) of ROSI is available!`,
-          buttons: [
-            { label: "Update", action: () => window.api.openExternal(release.html_url) },
-            { label: "No thanks" }
-          ]
-        });
-      } else {
-        showModal({
-          title: "ROSI is up to date!",
-          message: `You are running the latest version (v${currentVersion}).`,
+          title: "Development Mode",
+          message: "Update checking is not available when running in development mode.<br><br>Build and package the app to test auto-updates.",
           buttons: [{ label: "OK" }]
         });
+        return;
+      }
+
+      if (result && result.error && result.error !== 'dev-mode') {
+        showModal({
+          title: "Update Check Failed",
+          message: `Could not check for updates.<br><br>Error: ${result.error}`,
+          buttons: [{ label: "OK" }]
+        });
+        return;
       }
     } catch (e) {
       showModal({
@@ -261,6 +361,91 @@ function testmsg () {
       });
     }
   }
+
+  function setupAutoUpdater() {
+    let updateVersion = '';
+    
+    window.api.onUpdaterStatus((data) => {
+      switch (data.status) {
+        case 'checking':
+          break;
+          
+        case 'available':
+          updateVersion = data.version;
+          showModal({
+            title: "Update Available!",
+            message: `A new version (v${data.version}) of ROSI is available!\n\nWould you like to download and install it?`,
+            buttons: [
+              { 
+                label: "Download & Install", 
+                action: async () => {
+                  showModal({
+                    title: "Downloading Update",
+                    message: `<div class="update-progress-container">
+                      <div class="update-progress-bar-wrapper">
+                        <div id="update-progress-bar" class="update-progress-bar"></div>
+                      </div>
+                      <div id="update-progress-info" class="update-progress-info">Starting download...</div>
+                    </div>`,
+                    buttons: []
+                  });
+                  await window.api.downloadUpdate();
+                }
+              },
+              { label: "Later" }
+            ]
+          });
+          break;
+          
+        case 'not-available':
+          showModal({
+            title: "ROSI is up to date!",
+            message: `You are running the latest version (v${data.version}).`,
+            buttons: [{ label: "OK" }]
+          });
+          break;
+          
+        case 'error':
+          showModal({
+            title: "Update Error",
+            message: `An error occurred while checking for updates:\n${data.message}`,
+            buttons: [{ label: "OK" }]
+          });
+          break;
+          
+        case 'downloaded':
+          showModal({
+            title: "Update Ready!",
+            message: `Version ${data.version} has been downloaded.\n\nThe update will be installed when you restart ROSI.`,
+            buttons: [
+              { 
+                label: "Restart Now", 
+                action: () => window.api.installUpdate()
+              },
+              { label: "Later" }
+            ]
+          });
+          break;
+      }
+    });
+    
+    window.api.onUpdaterProgress((data) => {
+      const progressBar = document.getElementById('update-progress-bar');
+      const progressInfo = document.getElementById('update-progress-info');
+      
+      if (progressBar) {
+        progressBar.style.width = `${data.percent}%`;
+      }
+      
+      if (progressInfo) {
+        const speed = formatBytes(data.bytesPerSecond) + '/s';
+        const downloaded = formatBytes(data.transferred);
+        const total = formatBytes(data.total);
+        progressInfo.textContent = `${downloaded} / ${total} (${speed}) - ${Math.round(data.percent)}%`;
+      }
+    });
+  }
+
 /*
       // License popup
 function showLicenses() {
@@ -409,6 +594,7 @@ function hideLicenses() {
       };
       showModal({ title: "Settings Error", message: "Could not load settings. Using defaults.", buttons: [{ label: "OK" }] });
     }
+    setupAutoUpdater();
     const consoleToggle = document.getElementById('consoleToggle');
     const advancedToggle = document.getElementById('advancedToggle');
     const keepOriginalToggle = document.getElementById('keepOriginalToggle');
@@ -620,7 +806,11 @@ function hideLicenses() {
         setButtonLoading(downloadBtn, true, () => {
           window.api.cancelDownload();
           downloadAbort();
+          hideProgressBar();
         });
+
+        showProgressBar('Starting download...');
+        
         const videoFormat = settings.advancedOptions ? videoSelect.value : null;
         const audioFormat = settings.advancedOptions ? audioSelect.value : null;
         const convertFormat = settings.convertEnabled ? convertFormatSelect.value : null;
@@ -640,11 +830,38 @@ function hideLicenses() {
       if (!outputEl) return;
       outputEl.textContent += message + '\n';
       outputEl.scrollTop = outputEl.scrollHeight;
+
+      const progress = parseYtdlpProgress(message);
+      if (progress) {
+        let detailsText = '';
+        if (progress.speed && progress.eta) {
+          detailsText = `${progress.totalSize} • ${progress.speed} • ETA: ${progress.eta}`;
+        } else if (progress.totalSize) {
+          detailsText = `Size: ${progress.totalSize}`;
+        }
+        updateProgressBar(progress.percent, 'Downloading...', detailsText);
+      } else if (message.includes('[download] Destination:')) {
+        setProgressIndeterminate('Preparing download...');
+      } else if (message.includes('Merging formats')) {
+        setProgressIndeterminate('Merging video and audio...');
+      } else if (message.includes('Converting') || message.includes('[ffmpeg]')) {
+        setProgressIndeterminate('Converting...');
+      } else if (message.includes('100%')) {
+        updateProgressBar(100, 'Download complete!', '');
+      }
     });
     window.api.onComplete((statusMessage) => {
       if (downloadBtn) {
         isDownloading = false;
         setButtonLoading(downloadBtn, false);
+
+        if (statusMessage.includes('✅') || statusMessage.includes('complete')) {
+          updateProgressBar(100, 'Complete!', '');
+        }
+        
+        setTimeout(() => {
+          hideProgressBar();
+        }, 2000);
         
         const originalText = downloadBtn.dataset.defaultText || "Download";
         downloadBtn.innerHTML = "✅ Download Complete!";
