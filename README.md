@@ -36,7 +36,7 @@ Download ROSI source code from source (main)
 
 # ROSI LTS Version
 
-There is an LTS version of the previous stable full release of ROSI (which is now `v1.x.x`) which can be found at <b>[➡️ROSI-LTS's Repo](https://github.com/BurntToasters/ROSI-LTS)</b>
+There is an LTS version of the previous stable full release of ROSI (which is now `v2.x.x`) which can be found at <b>[➡️ROSI-LTS's Repo](https://github.com/BurntToasters/ROSI-LTS)</b>
 
 This is mainly for people who perfered the previous look of ROSI, or has a current issue with a newly released major version.
 
