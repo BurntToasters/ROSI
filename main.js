@@ -129,12 +129,12 @@ function createSplashWindow() {
 function createWindow() {
   const isDev = process.env.NODE_ENV === 'development' || process.argv.includes('--dev');
   mainWindow = new BrowserWindow({
-    width: 1000,
-    height: 700,
-    minWidth: 800,
-    minHeight: 650,
-    maxWidth: 1400,
-    maxHeight: 1000,
+    width: 1200,
+    height: 900,
+    minWidth: 900,
+    minHeight: 700,
+    maxWidth: 1800,
+    maxHeight: 1400,
     icon: path.join(__dirname, 'app.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

@@ -7,7 +7,7 @@ files:
 - '!**/package-devonly.js'
 - '!**/dist'
 directories:
-  output: dist/${arch}
+  output: dist
 
 publish:
   provider: github
@@ -17,6 +17,9 @@ publish:
 win:
   target: nsis
   icon: build/app-icon.ico
+  asarUnpack:
+    - yt-dlp.exe
+    - yt-dlp_arm64.exe
 nsis:
   artifactName: ROSI-Windows-${arch}.${ext}
   allowToChangeInstallationDirectory: false
