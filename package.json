@@ -12,14 +12,15 @@
     "build:win:arm64": "electron-builder --win --arm64",
     "build:mac:universal": "dotenv -e .env -- electron-builder --mac --universal",
     "build:linux": "electron-builder --linux AppImage deb rpm --x64 --arm64",
-    "build:linux:x64": "node build-scripts/prepare-linux-x64.js && electron-builder --linux AppImage deb rpm --x64",
-    "build:linux:arm64": "node build-scripts/prepare-linux-arm64.js && electron-builder --linux AppImage deb rpm --arm64",
+    "build:linux:x64": "node build-scripts/prepare-linux-x64.js && electron-builder --linux AppImage deb rpm --x64 && node build-scripts/restore-binaries.js",
+    "build:linux:arm64": "node build-scripts/prepare-linux-arm64.js && electron-builder --linux AppImage deb rpm --arm64 && node build-scripts/restore-binaries.js",
     "build:github": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --x64 --arm64",
     "build:github:win": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --x64 --arm64",
     "build:github:mac": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --mac --universal",
-    "build:msstore:x64": "cross-env CHANNEL=msstore node build-scripts/prepare-x64.js && electron-builder --win --x64 -c electron-builder.base.yml -c electron-builder.msstore.yml",
-    "build:msstore:arm64": "cross-env CHANNEL=msstore node build-scripts/prepare-arm64.js && electron-builder --win --arm64 -c electron-builder.base.yml -c electron-builder.msstore.yml",
-    "build:msstore": "npm run build:msstore:x64 && npm run build:msstore:arm64"
+    "build:msstore:x64": "cross-env CHANNEL=msstore node build-scripts/prepare-x64.js && electron-builder --win --x64 -c electron-builder.base.yml -c electron-builder.msstore.yml && node build-scripts/restore-binaries.js",
+    "build:msstore:arm64": "cross-env CHANNEL=msstore node build-scripts/prepare-arm64.js && electron-builder --win --arm64 -c electron-builder.base.yml -c electron-builder.msstore.yml && node build-scripts/restore-binaries.js",
+    "build:msstore": "npm run build:msstore:x64 && npm run build:msstore:arm64",
+    "restore-binaries": "node build-scripts/restore-binaries.js"
   },
   "repository": {
     "type": "git",
