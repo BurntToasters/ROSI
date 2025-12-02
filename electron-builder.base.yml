@@ -1,19 +1,17 @@
 appId: com.burnttoasters.rosi
 productName: Rosi
 files:
-- '**/*'
-- '!**/node_modules/*/{test,__tests__,tests}/**'
-- '!**/*.md'
-- '!**/package-devonly.js'
-- '!**/dist'
+  - '**/*'
+  - '!**/node_modules/*/{test,__tests__,tests}/**'
+  - '!**/*.md'
+  - '!**/package-devonly.js'
+  - '!**/dist'
 directories:
   output: dist
-
 publish:
   provider: github
   owner: BurntToasters
   repo: ROSI
-
 win:
   target: nsis
   icon: build/app-icon.ico
@@ -29,17 +27,17 @@ mac:
   target: dmg
   icon: build/app-icon.icns
   asarUnpack:
-  - yt-dlp_macos
+    - yt-dlp_macos
 linux:
   target:
-  - AppImage
-  - deb
-  - rpm
+    - AppImage
+    - deb
+    - rpm
   icon: build/app-icon.png
   category: Utility
   asarUnpack:
-  - yt-dlp_linux
-  - yt-dlp_linux_aarch64
+    - yt-dlp_linux
+    - yt-dlp_linux_aarch64
 appImage:
   artifactName: ROSI-Linux-${arch}.${ext}
 deb:
@@ -52,13 +50,13 @@ dmg:
   icon: build/app-icon.png
   iconSize: 100
   contents:
-  - x: 120
-    y: 300
-    type: file
-  - x: 546
-    y: 300
-    type: link
-    path: /Applications
+    - x: 120
+      'y': 300
+      type: file
+    - x: 546
+      'y': 300
+      type: link
+      path: /Applications
   window:
     width: 648
     height: 480
