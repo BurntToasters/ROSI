@@ -183,19 +183,7 @@
         "licenseUrl": "https://github.com/DefinitelyTyped/DefinitelyTyped/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "@types/plist@3.0.5": {
-        "licenses": "MIT",
-        "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped",
-        "licenseUrl": "https://github.com/DefinitelyTyped/DefinitelyTyped/raw/master/LICENSE",
-        "parents": "rosi"
-    },
     "@types/responselike@1.0.3": {
-        "licenses": "MIT",
-        "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped",
-        "licenseUrl": "https://github.com/DefinitelyTyped/DefinitelyTyped/raw/master/LICENSE",
-        "parents": "rosi"
-    },
-    "@types/verror@1.10.11": {
         "licenses": "MIT",
         "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped",
         "licenseUrl": "https://github.com/DefinitelyTyped/DefinitelyTyped/raw/master/LICENSE",
@@ -295,18 +283,6 @@
         "licenses": "Python-2.0",
         "repository": "https://github.com/nodeca/argparse",
         "licenseUrl": "https://github.com/nodeca/argparse/raw/master/LICENSE",
-        "parents": "rosi"
-    },
-    "assert-plus@1.0.0": {
-        "licenses": "MIT",
-        "repository": "https://github.com/mcavage/node-assert-plus",
-        "licenseUrl": "https://github.com/mcavage/node-assert-plus",
-        "parents": "rosi"
-    },
-    "astral-regex@2.0.0": {
-        "licenses": "MIT",
-        "repository": "https://github.com/kevva/astral-regex",
-        "licenseUrl": "https://github.com/kevva/astral-regex/raw/master/license",
         "parents": "rosi"
     },
     "async-exit-hook@2.0.1": {
@@ -465,12 +441,6 @@
         "licenseUrl": "https://github.com/sindresorhus/cli-spinners/raw/master/license",
         "parents": "rosi"
     },
-    "cli-truncate@2.1.0": {
-        "licenses": "MIT",
-        "repository": "https://github.com/sindresorhus/cli-truncate",
-        "licenseUrl": "https://github.com/sindresorhus/cli-truncate/raw/master/license",
-        "parents": "rosi"
-    },
     "cliui@8.0.1": {
         "licenses": "ISC",
         "repository": "https://github.com/yargs/cliui",
@@ -535,18 +505,6 @@
         "licenses": "MIT",
         "repository": "https://github.com/mighdoll/config-file-ts",
         "licenseUrl": "https://github.com/mighdoll/config-file-ts/raw/master/LICENSE",
-        "parents": "rosi"
-    },
-    "core-util-is@1.0.2": {
-        "licenses": "MIT",
-        "repository": "https://github.com/isaacs/core-util-is",
-        "licenseUrl": "https://github.com/isaacs/core-util-is/raw/master/LICENSE",
-        "parents": "rosi"
-    },
-    "crc@3.8.0": {
-        "licenses": "MIT",
-        "repository": "https://github.com/alexgorbatchev/node-crc",
-        "licenseUrl": "https://github.com/alexgorbatchev/node-crc/raw/master/LICENSE",
         "parents": "rosi"
     },
     "cross-dirname@0.1.0": {
@@ -633,12 +591,6 @@
         "licenseUrl": "https://github.com/electron-userland/electron-builder",
         "parents": "rosi"
     },
-    "dmg-license@1.0.11": {
-        "licenses": "MIT",
-        "repository": "https://github.com/argv-minus-one/dmg-license",
-        "licenseUrl": "https://github.com/argv-minus-one/dmg-license/raw/master/LICENSE",
-        "parents": "rosi"
-    },
     "dotenv-cli@10.0.0": {
         "licenses": "MIT",
         "repository": "https://github.com/entropitor/dotenv-cli",
@@ -705,7 +657,7 @@
         "licenseUrl": "https://github.com/electron/windows-installer/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "electron@39.1.2": {
+    "electron@39.2.4": {
         "licenses": "MIT",
         "repository": "https://github.com/electron/electron",
         "licenseUrl": "https://github.com/electron/electron/raw/master/LICENSE",
@@ -801,12 +753,6 @@
         "licenseUrl": "https://github.com/maxogden/extract-zip/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "extsprintf@1.4.1": {
-        "licenses": "MIT",
-        "repository": "https://github.com/davepacheco/node-extsprintf",
-        "licenseUrl": "https://github.com/davepacheco/node-extsprintf/raw/master/LICENSE",
-        "parents": "rosi"
-    },
     "fast-deep-equal@3.1.3": {
         "licenses": "MIT",
         "repository": "https://github.com/epoberezkin/fast-deep-equal",
@@ -837,7 +783,7 @@
         "licenseUrl": "https://github.com/tapjs/foreground-child/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "form-data@4.0.4": {
+    "form-data@4.0.5": {
         "licenses": "MIT",
         "repository": "https://github.com/form-data/form-data",
         "licenseUrl": "https://github.com/form-data/form-data/raw/master/License",
@@ -915,16 +861,16 @@
         "licenseUrl": "https://github.com/sindresorhus/get-stream/raw/master/license",
         "parents": "rosi"
     },
-    "glob@10.4.5": {
+    "glob@10.5.0": {
         "licenses": "ISC",
         "repository": "https://github.com/isaacs/node-glob",
         "licenseUrl": "https://github.com/isaacs/node-glob/raw/master/LICENSE",
         "parents": "config-file-ts:rosi"
     },
-    "glob@11.0.3": {
-        "licenses": "ISC",
+    "glob@11.1.0": {
+        "licenses": "BlueOak-1.0.0",
         "repository": "https://github.com/isaacs/node-glob",
-        "licenseUrl": "https://github.com/isaacs/node-glob/raw/master/LICENSE",
+        "licenseUrl": "https://github.com/isaacs/node-glob/raw/master/LICENSE.md",
         "parents": "rosi"
     },
     "glob@7.2.3": {
@@ -1045,12 +991,6 @@
         "licenses": "MIT",
         "repository": "https://github.com/node-modules/humanize-ms",
         "licenseUrl": "https://github.com/node-modules/humanize-ms/raw/master/LICENSE",
-        "parents": "rosi"
-    },
-    "iconv-corefoundation@1.1.7": {
-        "licenses": "MIT",
-        "repository": "https://github.com/argv-minus-one/iconv-corefoundation",
-        "licenseUrl": "https://github.com/argv-minus-one/iconv-corefoundation/raw/master/LICENSE",
         "parents": "rosi"
     },
     "iconv-lite@0.6.3": {
@@ -1245,10 +1185,10 @@
         "licenseUrl": "https://github.com/isaacs/node-lru-cache/raw/master/LICENSE",
         "parents": "config-file-ts:rosi"
     },
-    "lru-cache@11.2.2": {
-        "licenses": "ISC",
+    "lru-cache@11.2.4": {
+        "licenses": "BlueOak-1.0.0",
         "repository": "https://github.com/isaacs/node-lru-cache",
-        "licenseUrl": "https://github.com/isaacs/node-lru-cache/raw/master/LICENSE",
+        "licenseUrl": "https://github.com/isaacs/node-lru-cache/raw/master/LICENSE.md",
         "parents": "path-scurry:rosi"
     },
     "lru-cache@6.0.0": {
@@ -1425,12 +1365,6 @@
         "licenses": "MIT",
         "repository": "https://github.com/electron/node-abi",
         "licenseUrl": "https://github.com/electron/node-abi/raw/master/LICENSE",
-        "parents": "rosi"
-    },
-    "node-addon-api@1.7.2": {
-        "licenses": "MIT",
-        "repository": "https://github.com/nodejs/node-addon-api",
-        "licenseUrl": "https://github.com/nodejs/node-addon-api/raw/master/LICENSE.md",
         "parents": "rosi"
     },
     "node-api-version@0.2.1": {
@@ -1661,7 +1595,7 @@
         "licenseUrl": "https://github.com/gajus/roarr/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "rosi@2.2.0": {
+    "rosi@3.0.0": {
         "licenses": "MPL-2.0",
         "repository": "https://github.com/BurntToasters/rosi",
         "licenseUrl": "https://github.com/BurntToasters/rosi/raw/master/LICENSE",
@@ -1749,12 +1683,6 @@
         "licenses": "MIT",
         "repository": "https://github.com/alexbrazier/simple-update-notifier",
         "licenseUrl": "https://github.com/alexbrazier/simple-update-notifier/raw/master/LICENSE",
-        "parents": "rosi"
-    },
-    "slice-ansi@3.0.0": {
-        "licenses": "MIT",
-        "repository": "https://github.com/chalk/slice-ansi",
-        "licenseUrl": "https://github.com/chalk/slice-ansi/raw/master/license",
         "parents": "rosi"
     },
     "smart-buffer@4.2.0": {
@@ -1947,12 +1875,6 @@
         "licenses": "MIT",
         "repository": "https://github.com/TooTallNate/util-deprecate",
         "licenseUrl": "https://github.com/TooTallNate/util-deprecate/raw/master/LICENSE",
-        "parents": "rosi"
-    },
-    "verror@1.10.1": {
-        "licenses": "MIT",
-        "repository": "https://github.com/joyent/node-verror",
-        "licenseUrl": "https://github.com/joyent/node-verror/raw/master/LICENSE",
         "parents": "rosi"
     },
     "wcwidth@1.0.1": {
