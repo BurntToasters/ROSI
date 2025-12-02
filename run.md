@@ -11,3 +11,6 @@ npm run build:mac:universal
 
 # Linux
 npm run build:linux
+
+# Licenses
+npx npm-license-crawler --json licenses.json
