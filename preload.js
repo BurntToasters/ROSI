@@ -47,9 +47,11 @@ contextBridge.exposeInMainWorld('api', {
   onProgress: (callback) => {
     const listener = (_, message) => callback(message);
     ipcRenderer.on('progress', listener);
+    return () => ipcRenderer.removeListener('progress', listener);
   },
   onComplete: (callback) => {
     const listener = (_, message) => callback(message);
     ipcRenderer.on('complete', listener);
+    return () => ipcRenderer.removeListener('complete', listener);
   },
 });

@@ -107,12 +107,6 @@
     }, 200);
   }
   
-  function updateKeepOriginalToggleState() {
-    const keepOriginalToggle = document.getElementById('keepOriginalToggle');
-    const keepOriginalLabel = keepOriginalToggle ? keepOriginalToggle.closest('label') : null;
-  }
-
-
   function showKeyboardShortcuts() {
     const modKey = getModifierKeyName();
     showModal({
@@ -224,18 +218,6 @@
     }
     return 0;
   }
-
-function testmsg () {
-          showModal({
-          title: "Test!",
-          message: `ATest`,
-          buttons: [
-            { label: "Action", action: () => window.api.openExternal('https://google.com') },
-            { label: "No thanks" },
-            { label: "Test 3" }
-          ]
-        });
-}
 
   function showProgressBar(status = 'Downloading...') {
     const container = document.getElementById('progress-container');
@@ -756,11 +738,6 @@ function hideLicenses() {
       settings.convertFormat = e.target.value;
       window.api.saveSettings(settings);
     });
-    if (keepOriginalToggle) keepOriginalToggle.addEventListener('change', (e) => {
-      settings.keepOriginalAfterConvert = e.target.checked;
-      window.api.saveSettings(settings);
-    });
-    
     // Animate Background toggle
     if (animateBackgroundToggle) {
       animateBackgroundToggle.addEventListener('change', (e) => {
