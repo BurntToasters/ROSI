@@ -39,12 +39,13 @@ linux:
   category: Utility
   asarUnpack:
   - yt-dlp_linux
+  - yt-dlp_linux_aarch64
 appImage:
-  artifactName: ROSI-linux.${ext}
+  artifactName: ROSI-Linux-${arch}.${ext}
 deb:
-  artifactName: ROSI-linux_${arch}.${ext}
+  artifactName: ROSI-Linux-${arch}.${ext}
 rpm:
-  artifactName: ROSI-linux.${arch}.${ext}
+  artifactName: ROSI-Linux-${arch}.${ext}
 dmg:
   artifactName: ROSI-MacOS-universal.${ext}
   background: build/dmg-background.png

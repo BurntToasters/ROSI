@@ -9,8 +9,14 @@ npm run build:win:msstore:arm64
 # macOS Universal
 npm run build:mac:universal
 
-# Linux
+# Linux x64 & arm64 (all formats)
 npm run build:linux
+
+# Linux x64 only
+npm run build:linux:x64
+
+# Linux arm64 only
+npm run build:linux:arm64
 
 # Licenses
 npx npm-license-crawler --json licenses.json
