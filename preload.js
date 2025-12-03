@@ -54,4 +54,6 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('complete', listener);
     return () => ipcRenderer.removeListener('complete', listener);
   },
+  openFileLocation: (filePath) => ipcRenderer.send('open-file-location', filePath),
+  showNotification: (options) => ipcRenderer.send('show-notification', options),
 });

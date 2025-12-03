@@ -284,6 +284,16 @@ body.animate-bg {
   font-size: 0.85rem;
 }
 
+.toggle-switch.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.toggle-switch.disabled .toggle-slider {
+  background: var(--surface-2);
+}
+
 .sub-option {
   display: none;
   padding: var(--spacing-md);

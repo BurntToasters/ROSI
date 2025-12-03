@@ -27,6 +27,12 @@
         <h3 class="settings-section-title">Download Options</h3>
         
         <label class="toggle-switch">
+          <input type="checkbox" id="audioOnlyToggle">
+          <span class="toggle-slider"></span>
+          <span class="toggle-text">Audio-only mode</span>
+        </label>
+
+        <label class="toggle-switch">
           <input type="checkbox" id="advancedToggle">
           <span class="toggle-slider"></span>
           <span class="toggle-text">Advanced format selection</span>
@@ -95,6 +101,12 @@
           <span class="toggle-slider"></span>
           <span class="toggle-text">Animate background</span>
         </label>
+
+        <label class="toggle-switch">
+          <input type="checkbox" id="notificationsToggle">
+          <span class="toggle-slider"></span>
+          <span class="toggle-text">Download notifications</span>
+        </label>
       </section>
 
       <section class="settings-section">
@@ -128,7 +140,7 @@
         Reset All Settings
       </button>
       <div class="version-info">
-        <a href="#" onclick="window.api.openExternal('https://github.com/BurntToasters/ROSI/releases/tag/v3.0.0-beta2'); return false;">v3.0.0-beta2</a>
+        <a href="#" onclick="window.api.openExternal('https://github.com/BurntToasters/ROSI/releases/tag/v3.0.0-beta.3'); return false;">v3.0.0-beta.3</a>
       </div>
     </div>
   </aside>

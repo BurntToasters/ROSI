@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -74,6 +74,7 @@ const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 const defaultSettings = {
   showConsoleOutput: false,
   advancedOptions: false,
+  audioOnly: false,
   convertEnabled: false,
   convertFormat: "mp4",
   keepOriginalAfterConvert: true,
@@ -81,6 +82,7 @@ const defaultSettings = {
   hookBrowser: false,
   browserChoice: "Chrome",
   animateBackground: true,
+  notifications: true,
   denoReminderDismissed: false
 };
 
@@ -513,6 +515,12 @@ ipcMain.on('download-video', async (event, options) => {
         url
     ];
 
+    // Audio-only mode
+    if (settings.audioOnly) {
+      ytdlpArgs.splice(-1, 0, '-x', '--audio-format', 'mp3', '--audio-quality', '0');
+      safeSend('progress', '🎵 Audio-only mode enabled');
+    }
+
     if (settings.hookBrowser && settings.browserChoice) {
       ytdlpArgs.splice(-1, 0, '--cookies-from-browser', settings.browserChoice);
     }
@@ -554,7 +562,7 @@ ipcMain.on('download-video', async (event, options) => {
           if (!downloadedFilePath) {
               throw new Error("Could not find a valid filepath in yt-dlp's output.");
           }
-          safeSend('progress', `✅ Download finished. Identified file: ${path.basename(downloadedFilePath)}`);
+          safeSend('progress', `✅ Download finished. Identified file: ${downloadedFilePath}`);
       } catch (extractError) {
           safeSend('progress', `❌ Error determining downloaded file path after download.`);
           safeSend('progress', `   Error: ${extractError.message}`);
@@ -629,7 +637,7 @@ ipcMain.on('download-video', async (event, options) => {
           ffmpegProcess.on('close', (ffmpegCode) => {
             ffmpegProcess = null;
             if (ffmpegCode === 0) {
-              safeSend('progress', `🎉 Successfully converted to ${outputFilename}`);
+              safeSend('progress', `🎉 Successfully converted to ${outputPath}`);
               const shouldDelete = !currentSettings.keepOriginalAfterConvert;
               const pathsDiffer = inputPath.toLowerCase() !== outputPath.toLowerCase();
               if (shouldDelete && pathsDiffer) {
@@ -716,4 +724,39 @@ ipcMain.on('cancel-download', () => {
 ipcMain.handle('restart-app', () => {
   app.relaunch();
   app.exit(0);
+});
+
+// file location via system file mgr
+ipcMain.on('open-file-location', (_, filePath) => {
+  if (filePath && typeof filePath === 'string' && fs.existsSync(filePath)) {
+    shell.showItemInFolder(filePath);
+  } else if (filePath && typeof filePath === 'string') {
+    const dir = path.dirname(filePath);
+    if (fs.existsSync(dir)) {
+      shell.openPath(dir);
+    }
+  }
+});
+
+ipcMain.on('show-notification', (_, options) => {
+  if (Notification.isSupported()) {
+    const notification = new Notification({
+      title: options.title || 'ROSI',
+      body: options.body || '',
+      icon: path.join(__dirname, 'app.png'),
+      silent: false
+    });
+    
+    notification.on('click', () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+      }
+      if (options.filePath) {
+        shell.showItemInFolder(options.filePath);
+      }
+    });
+    
+    notification.show();
+  }
 });
