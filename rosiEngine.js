@@ -206,6 +206,7 @@
   // handles download button logic
   let isDownloading = false;
   let downloadAbort = null;
+  let lastDownloadedFilePath = null;
 
   // Version compare helper
   function compareVersions(a, b) {
@@ -571,6 +572,8 @@ function hideLicenses() {
     const downloadBtn = document.getElementById('downloadBtn');
     const checkUpdateBtn = document.getElementById('checkUpdateBtn');
     const animateBackgroundToggle = document.getElementById('animateBackgroundToggle');
+    const audioOnlyToggle = document.getElementById('audioOnlyToggle');
+    const notificationsToggle = document.getElementById('notificationsToggle');
     
     const settingsBtn = document.getElementById('settingsBtn');
     const closeSidebarBtn = document.getElementById('closeSidebar');
@@ -633,6 +636,31 @@ function hideLicenses() {
         animateBackgroundToggle.checked = settings.animateBackground ?? true;
         updateBackgroundAnimation(settings.animateBackground ?? true);
       }
+      if (audioOnlyToggle) {
+        audioOnlyToggle.checked = settings.audioOnly ?? false;
+        audioOnlyToggle.disabled = settings.advancedOptions ?? false;
+        if (audioOnlyToggle.disabled) {
+          audioOnlyToggle.parentElement.classList.add('disabled');
+          audioOnlyToggle.parentElement.title = 'Disabled when Advanced format selection is enabled';
+        } else {
+          audioOnlyToggle.parentElement.classList.remove('disabled');
+          audioOnlyToggle.parentElement.title = '';
+        }
+      }
+      // disable convert when audio-only is enabled
+      if (convertToggle) {
+        convertToggle.disabled = settings.audioOnly ?? false;
+        if (settings.audioOnly) {
+          convertToggle.parentElement.classList.add('disabled');
+          convertToggle.parentElement.title = 'Disabled when Audio-only mode is enabled (audio already extracted as MP3)';
+        } else {
+          convertToggle.parentElement.classList.remove('disabled');
+          convertToggle.parentElement.title = '';
+        }
+      }
+      if (notificationsToggle) {
+        notificationsToggle.checked = settings.notifications ?? true;
+      }
     };
     updateUIFromSettings();
 
@@ -694,6 +722,26 @@ function hideLicenses() {
     if (advancedToggle) advancedToggle.addEventListener('change', (e) => {
       settings.advancedOptions = e.target.checked;
       toggleAdvancedUI(e.target.checked);
+      
+      if (audioOnlyToggle) {
+        audioOnlyToggle.disabled = e.target.checked;
+        if (e.target.checked) {
+          audioOnlyToggle.checked = false;
+          settings.audioOnly = false;
+          audioOnlyToggle.parentElement.classList.add('disabled');
+          audioOnlyToggle.parentElement.title = 'Disabled when Advanced format selection is enabled';
+
+          if (convertToggle) {
+            convertToggle.disabled = false;
+            convertToggle.parentElement.classList.remove('disabled');
+            convertToggle.parentElement.title = '';
+          }
+        } else {
+          audioOnlyToggle.parentElement.classList.remove('disabled');
+          audioOnlyToggle.parentElement.title = '';
+        }
+      }
+      
       window.api.saveSettings(settings);
     });
     if (keepOriginalToggle) keepOriginalToggle.addEventListener('change', (e) => {
@@ -743,6 +791,38 @@ function hideLicenses() {
       animateBackgroundToggle.addEventListener('change', (e) => {
         settings.animateBackground = e.target.checked;
         updateBackgroundAnimation(e.target.checked);
+        window.api.saveSettings(settings);
+      });
+    }
+    
+    // Audio-only toggle
+    if (audioOnlyToggle) {
+      audioOnlyToggle.addEventListener('change', (e) => {
+        settings.audioOnly = e.target.checked;
+
+        if (convertToggle) {
+          convertToggle.disabled = e.target.checked;
+          if (e.target.checked) {
+            convertToggle.checked = false;
+            settings.convertEnabled = false;
+            convertToggle.parentElement.classList.add('disabled');
+            convertToggle.parentElement.title = 'Disabled when Audio-only mode is enabled (audio already extracted as MP3)';
+            if (convertFormatContainer) convertFormatContainer.classList.remove('visible');
+            if (keepOriginalLabel) keepOriginalLabel.classList.remove('visible');
+          } else {
+            convertToggle.parentElement.classList.remove('disabled');
+            convertToggle.parentElement.title = '';
+          }
+        }
+        
+        window.api.saveSettings(settings);
+      });
+    }
+    
+    // Notifications toggle
+    if (notificationsToggle) {
+      notificationsToggle.addEventListener('change', (e) => {
+        settings.notifications = e.target.checked;
         window.api.saveSettings(settings);
       });
     }
@@ -836,14 +916,31 @@ function hideLicenses() {
       } else if (message.includes('100%')) {
         updateProgressBar(100, 'Download complete!', '');
       }
+
+      if (message.includes('Identified file:') || message.includes('Successfully converted to')) {
+        const fileMatch = message.match(/(?:Identified file:|Successfully converted to)\s*(.+)$/);
+        if (fileMatch && fileMatch[1]) {
+          lastDownloadedFilePath = fileMatch[1].trim();
+        }
+      }
     });
     window.api.onComplete((statusMessage) => {
       if (downloadBtn) {
         isDownloading = false;
         setButtonLoading(downloadBtn, false);
 
-        if (statusMessage.includes('✅') || statusMessage.includes('complete')) {
+        const isSuccess = statusMessage.includes('✅') || statusMessage.includes('complete');
+        
+        if (isSuccess) {
           updateProgressBar(100, 'Complete!', '');
+
+          if (settings.notifications) {
+            window.api.showNotification({
+              title: 'Download Complete!',
+              body: lastDownloadedFilePath ? `Saved: ${lastDownloadedFilePath.split(/[/\\]/).pop()}` : 'Your download has finished.',
+              filePath: lastDownloadedFilePath
+            });
+          }
         }
         
         setTimeout(() => {
@@ -851,12 +948,28 @@ function hideLicenses() {
         }, 2000);
         
         const originalText = downloadBtn.dataset.defaultText || "Download";
-        downloadBtn.innerHTML = "✅ Download Complete!";
-        downloadBtn.disabled = true;
-        setTimeout(() => {
-          downloadBtn.innerHTML = originalText;
+        
+        if (isSuccess && lastDownloadedFilePath) {
+          downloadBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg><span>Open File Location</span>`;
           downloadBtn.disabled = false;
-        }, 4000);
+          downloadBtn.onclick = () => {
+            window.api.openFileLocation(lastDownloadedFilePath);
+          };
+          setTimeout(() => {
+            downloadBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span>${originalText}</span>`;
+            downloadBtn.disabled = false;
+            downloadBtn.onclick = downloadBtn._originalClick;
+            lastDownloadedFilePath = null;
+          }, 8000);
+        } else {
+          downloadBtn.innerHTML = isSuccess ? "✅ Download Complete!" : originalText;
+          downloadBtn.disabled = isSuccess;
+          setTimeout(() => {
+            downloadBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span>${originalText}</span>`;
+            downloadBtn.disabled = false;
+            downloadBtn.onclick = downloadBtn._originalClick;
+          }, 4000);
+        }
       }
       if (fetchFormatsBtn) setButtonLoading(fetchFormatsBtn, false);
       if (outputEl) {
