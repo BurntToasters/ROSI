@@ -651,13 +651,19 @@
         "licenseUrl": "https://github.com/electron-userland/electron-builder/raw/master/LICENSE",
         "parents": "rosi"
     },
+    "electron-updater@6.6.2": {
+        "licenses": "MIT",
+        "repository": "https://github.com/electron-userland/electron-builder",
+        "licenseUrl": "https://github.com/electron-userland/electron-builder/raw/master/LICENSE",
+        "parents": "rosi"
+    },
     "electron-winstaller@5.4.0": {
         "licenses": "MIT",
         "repository": "https://github.com/electron/windows-installer",
         "licenseUrl": "https://github.com/electron/windows-installer/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "electron@39.2.4": {
+    "electron@39.2.5": {
         "licenses": "MIT",
         "repository": "https://github.com/electron/electron",
         "licenseUrl": "https://github.com/electron/electron/raw/master/LICENSE",
@@ -793,7 +799,7 @@
         "licenses": "MIT",
         "repository": "https://github.com/jprichardson/node-fs-extra",
         "licenseUrl": "https://github.com/jprichardson/node-fs-extra/raw/master/LICENSE",
-        "parents": "@electron/osx-sign:rosi"
+        "parents": "electron-updater:rosi"
     },
     "fs-extra@11.3.2": {
         "licenses": "MIT",
@@ -1147,7 +1153,7 @@
         "licenses": "MIT",
         "repository": "https://github.com/jprichardson/node-jsonfile",
         "licenseUrl": "https://github.com/jprichardson/node-jsonfile/raw/master/LICENSE",
-        "parents": "@electron/fuses:rosi"
+        "parents": "electron-updater:rosi"
     },
     "keyv@4.5.4": {
         "licenses": "MIT",
@@ -1159,6 +1165,18 @@
         "licenses": "MIT",
         "repository": "https://github.com/develar/lazy-val",
         "licenseUrl": "https://github.com/develar/lazy-val",
+        "parents": "rosi"
+    },
+    "lodash.escaperegexp@4.1.2": {
+        "licenses": "MIT",
+        "repository": "https://github.com/lodash/lodash",
+        "licenseUrl": "https://github.com/lodash/lodash/raw/master/LICENSE",
+        "parents": "rosi"
+    },
+    "lodash.isequal@4.5.0": {
+        "licenses": "MIT",
+        "repository": "https://github.com/lodash/lodash",
+        "licenseUrl": "https://github.com/lodash/lodash/raw/master/LICENSE",
         "parents": "rosi"
     },
     "lodash@4.17.21": {
@@ -1595,7 +1613,7 @@
         "licenseUrl": "https://github.com/gajus/roarr/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "rosi@3.0.0": {
+    "rosi@3.0.0-beta.4": {
         "licenses": "MPL-2.0",
         "repository": "https://github.com/BurntToasters/rosi",
         "licenseUrl": "https://github.com/BurntToasters/rosi/raw/master/LICENSE",
@@ -1647,7 +1665,7 @@
         "licenses": "ISC",
         "repository": "https://github.com/npm/node-semver",
         "licenseUrl": "https://github.com/npm/node-semver/raw/master/LICENSE",
-        "parents": "@npmcli/fs:rosi"
+        "parents": "electron-updater:rosi"
     },
     "serialize-error@7.0.1": {
         "licenses": "MIT",
@@ -1799,6 +1817,12 @@
         "licenseUrl": "https://github.com/rxaviers/async-pool/raw/master/LICENSE-MIT",
         "parents": "rosi"
     },
+    "tiny-typed-emitter@2.1.0": {
+        "licenses": "MIT",
+        "repository": "https://github.com/binier/tiny-typed-emitter",
+        "licenseUrl": "https://github.com/binier/tiny-typed-emitter/raw/master/LICENSE",
+        "parents": "rosi"
+    },
     "tmp-promise@3.0.3": {
         "licenses": "MIT",
         "repository": "https://github.com/benjamingr/tmp-promise",
@@ -1857,7 +1881,7 @@
         "licenses": "MIT",
         "repository": "https://github.com/RyanZim/universalify",
         "licenseUrl": "https://github.com/RyanZim/universalify/raw/master/LICENSE",
-        "parents": "@electron/fuses:rosi"
+        "parents": "electron-updater:rosi"
     },
     "uri-js@4.4.1": {
         "licenses": "BSD-2-Clause",

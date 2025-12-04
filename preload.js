@@ -3,7 +3,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 console.log("✅ PRELOAD IS RUNNING!");
 
 contextBridge.exposeInMainWorld('api', {
-  convertToMp4: (value) => ipcRenderer.send('toggle-convert-mp4'),
   restartApp: () => ipcRenderer.invoke('restart-app'),
   // get active distribution channel
   getChannel: () => (process.env.CHANNEL === 'msstore' || process.windowsStore ? 'msstore' : 'github'),

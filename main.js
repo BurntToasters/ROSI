@@ -515,8 +515,22 @@ ipcMain.on('download-video', async (event, options) => {
         url
     ];
 
-    // Audio-only mode
-    if (settings.audioOnly) {
+    // Advanced format selection
+    const videoFormat = options?.videoFormat;
+    const audioFormat = options?.audioFormat;
+    if (videoFormat && audioFormat) {
+      ytdlpArgs.splice(-1, 0, '-f', `${videoFormat}+${audioFormat}`);
+      safeSend('progress', `📹 Using formats: video=${videoFormat}, audio=${audioFormat}`);
+    } else if (videoFormat) {
+      ytdlpArgs.splice(-1, 0, '-f', videoFormat);
+      safeSend('progress', `📹 Using video format: ${videoFormat}`);
+    } else if (audioFormat) {
+      ytdlpArgs.splice(-1, 0, '-f', audioFormat);
+      safeSend('progress', `🎵 Using audio format: ${audioFormat}`);
+    }
+
+    // Audio-only mode (only applies when not using advanced format selection)
+    if (settings.audioOnly && !videoFormat && !audioFormat) {
       ytdlpArgs.splice(-1, 0, '-x', '--audio-format', 'mp3', '--audio-quality', '0');
       safeSend('progress', '🎵 Audio-only mode enabled');
     }
@@ -575,7 +589,16 @@ ipcMain.on('download-video', async (event, options) => {
         safeSend('progress', '⏳ Checking if conversion is needed...');
         try {
           const originalInputPath = downloadedFilePath;
-          const sanitizedFileName = sanitize(path.basename(originalInputPath));
+          const originalFileName = path.basename(originalInputPath);
+          let sanitizedFileName = sanitize(originalFileName);
+          
+          // edge case
+          if (!sanitizedFileName || sanitizedFileName.trim() === '') {
+            const ext = path.extname(originalFileName) || '.mp4';
+            sanitizedFileName = `download_${Date.now()}${ext}`;
+            safeSend('progress', `⚠️ Original filename contained only invalid characters. Using: ${sanitizedFileName}`);
+          }
+          
           const sanitizedInputPath = path.join(path.dirname(originalInputPath), sanitizedFileName);
 
           // Rename downloaded file -> sanitized version
