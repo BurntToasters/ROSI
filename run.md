@@ -19,4 +19,4 @@ npm run build:linux:x64
 npm run build:linux:arm64
 
 # Licenses
-npx npm-license-crawler --json licenses.json
+npx npm-license-crawler --production --json licenses.json

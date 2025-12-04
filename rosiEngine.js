@@ -10,6 +10,15 @@
     return isMac() ? 'Cmd' : 'Ctrl';
   }
 
+  function isValidUrl(string) {
+    try {
+      const url = new URL(string);
+      return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch (_) {
+      return false;
+    }
+  }
+
   // toggles console output visibility
   function updateConsoleVisibility(show) {
     const consoleSection = document.getElementById('console-section');
@@ -26,13 +35,16 @@
   function setButtonLoading(button, isLoading, onCancel) {
     if (!button) return;
     if (isLoading) {
+      if (!button.dataset.defaultText) {
+        button.dataset.defaultText = button.textContent.trim();
+      }
       button.classList.add('loading');
       button.innerHTML = `<img src="loader.svg" class="loader-icon" alt="Loading...">`;
       button.disabled = false;
       button.onclick = onCancel;
     } else {
       button.classList.remove('loading');
-      button.innerHTML = button.dataset.defaultText || button.textContent;
+      button.innerHTML = button.dataset.defaultText || 'Action';
       button.disabled = false;
       button.onclick = button._originalClick;
     }
@@ -132,6 +144,17 @@
       showModal({ title: "Input Error", message: "Please enter a video URL first.", buttons: [{ label: "OK" }] });
       return;
     }
+    
+    // Validate URL format
+    if (!isValidUrl(videoUrl.trim())) {
+      showModal({ 
+        title: "Invalid URL", 
+        message: "Please enter a valid URL starting with http:// or https://", 
+        buttons: [{ label: "OK" }] 
+      });
+      return;
+    }
+    
     if (isFetchingFormats) return;
     isFetchingFormats = true;
     fetchFormatsAbort = () => {
@@ -207,18 +230,6 @@
   let isDownloading = false;
   let downloadAbort = null;
   let lastDownloadedFilePath = null;
-
-  // Version compare helper
-  function compareVersions(a, b) {
-    const pa = a.split('.').map(Number);
-    const pb = b.split('.').map(Number);
-    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-      const na = pa[i] || 0, nb = pb[i] || 0;
-      if (na > nb) return 1;
-      if (na < nb) return -1;
-    }
-    return 0;
-  }
 
   function showProgressBar(status = 'Downloading...') {
     const container = document.getElementById('progress-container');
@@ -586,19 +597,6 @@ function hideLicenses() {
     if (fetchFormatsBtn) fetchFormatsBtn._originalClick = fetchFormats;
     if (downloadBtn) downloadBtn._originalClick = null;
 
-    // userAgent
-    const isWindows = navigator.userAgent.includes('Windows');
-
-    // Filter browser options for Windows
-    if (isWindows && browserChoiceSelect) {
-      // Only keep Firefox
-      Array.from(browserChoiceSelect.options).forEach(opt => {
-        if (opt.value !== "Firefox") browserChoiceSelect.removeChild(opt);
-      });
-      //Firefox
-      browserChoiceSelect.value = "Firefox";
-    }
-
     // update UI from settings
     const updateUIFromSettings = () => {
       if (
@@ -708,12 +706,6 @@ function hideLicenses() {
       });
     }
 
-    document.addEventListener('keydown', (event) => {
-      const sidebar = document.getElementById('sidebar');
-      if (event.key === 'Escape' && sidebar && sidebar.classList.contains('open')) {
-        closeSidebar();
-      }
-    });
     if (consoleToggle) consoleToggle.addEventListener('change', (e) => {
       settings.showConsoleOutput = e.target.checked;
       window.api.saveSettings(settings);
@@ -853,6 +845,17 @@ function hideLicenses() {
           showModal({ title: "Input Error", message: "Please enter a video URL.", buttons: [{ label: "OK" }] });
           return;
         }
+        
+        // Validate URL format
+        if (!isValidUrl(url.trim())) {
+          showModal({ 
+            title: "Invalid URL", 
+            message: "Please enter a valid URL starting with http:// or https://", 
+            buttons: [{ label: "OK" }] 
+          });
+          return;
+        }
+        
         const videoSelect = document.getElementById('videoFormat');
         const audioSelect = document.getElementById('audioFormat');
         if (settings.advancedOptions && (!videoSelect || !audioSelect || !videoSelect.value || !audioSelect.value)) {
@@ -980,6 +983,10 @@ function hideLicenses() {
 
 
     if (settings.firstLaunch) {
+      // Save immediately - change
+      settings.firstLaunch = false;
+      window.api.saveSettings(settings);
+      
       showModal({
         title: "Dependency FFMPEG is Required for this app.",
         message: "ROSI uses FFMPEG for yt-dlp and converting files to MP4.<br>For intended use and stability, Please ensure FFMPEG is installed and accessible in your system's PATH.<br>Click 'More Info' for guidance.",
@@ -988,8 +995,6 @@ function hideLicenses() {
           { label: "OK", action: () => checkDenoInstallation(settings) }
         ]
       });
-      settings.firstLaunch = false;
-      window.api.saveSettings(settings);
     } else {
       // check Deno
       checkDenoInstallation(settings);
@@ -1004,24 +1009,28 @@ if (closeBtn) {
 }
 
 document.addEventListener('keydown', (event) => {
+  const modifierPressed = isMac() ? event.metaKey : event.ctrlKey;
+  
+  // esc
   if (event.key === 'Escape') {
     const licensesOverlay = document.getElementById('licenses-overlay');
     if (licensesOverlay && licensesOverlay.classList.contains('active')) {
       hideLicenses();
       return;
     }
-
+    
     const appModal = document.getElementById('app-modal');
     if (appModal && appModal.classList.contains('active')) {
       hideModal(appModal);
       return;
     }
-  }
-});
 
-// Keyboard shortcuts
-document.addEventListener('keydown', (event) => {
-  const modifierPressed = isMac() ? event.metaKey : event.ctrlKey;
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar && sidebar.classList.contains('open')) {
+      closeSidebar();
+      return;
+    }
+  }
   
   if (modifierPressed && event.key === 'd') {
     event.preventDefault();
@@ -1043,12 +1052,10 @@ document.addEventListener('keydown', (event) => {
       urlInput.select();
     }
   }
-  
-  
+
   if (modifierPressed && event.key === ',') {
     event.preventDefault();
     toggleSidebar();
   }
-  
 });
   });
