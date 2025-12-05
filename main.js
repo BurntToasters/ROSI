@@ -83,7 +83,9 @@ const defaultSettings = {
   browserChoice: "Chrome",
   animateBackground: true,
   notifications: true,
-  denoReminderDismissed: false
+  denoReminderDismissed: false,
+  gpuAcceleration: false,
+  gpuType: "auto"
 };
 
 // [!] The console debugger uses emojis to easily identify messages. If you see any issues with emojis, please ensure your terminal supports them or disable the console output in settings.
@@ -406,6 +408,31 @@ ipcMain.on('save-settings', (_, data) => {
     saveSettings(data);
 });
 
+// detect available GPU encoders
+ipcMain.handle('detect-gpu', async () => {
+  const result = { nvidia: false, amd: false, intel: false };
+  
+  try {
+    // NVIDIA NVENC
+    const nvencTest = spawn('ffmpeg', ['-hide_banner', '-encoders'], { shell: isWindows });
+    const nvencOutput = await new Promise((resolve) => {
+      let output = '';
+      nvencTest.stdout.on('data', (data) => output += data.toString());
+      nvencTest.stderr.on('data', (data) => output += data.toString());
+      nvencTest.on('close', () => resolve(output));
+      nvencTest.on('error', () => resolve(''));
+    });
+    
+    result.nvidia = nvencOutput.includes('h264_nvenc');
+    result.amd = nvencOutput.includes('h264_amf');
+    result.intel = nvencOutput.includes('h264_qsv');
+  } catch (err) {
+    console.error('GPU detection error:', err);
+  }
+  
+  return result;
+});
+
 // reset settings and restart app
 ipcMain.on('reset-settings', (event) => {
   saveSettings(defaultSettings);
@@ -627,12 +654,29 @@ ipcMain.on('download-video', async (event, options) => {
 
           safeSend('progress', `🎬 Converting ${inputFilename} to ${targetFormat.toUpperCase()}...`);
 
+          const getVideoEncoder = () => {
+            if (!currentSettings.gpuAcceleration) return 'copy';
+            
+            const gpuType = currentSettings.gpuType || 'auto';
+            if (gpuType === 'nvidia') return 'h264_nvenc';
+            if (gpuType === 'amd') return 'h264_amf';
+            if (gpuType === 'intel') return 'h264_qsv';
+            return 'h264_nvenc';
+          };
+
+          const videoEncoder = getVideoEncoder();
+          const useGpu = currentSettings.gpuAcceleration && videoEncoder !== 'copy';
+          
+          if (useGpu) {
+            safeSend('progress', `🖥️ Using GPU acceleration (${videoEncoder})`);
+          }
+
           if (isWindows) {
               let ffmpegCommand;
               if (targetFormat === "mp3" || targetFormat === "m4a") {
                 ffmpegCommand = `ffmpeg -i "${inputPath}" -vn -c:a ${targetFormat === "mp3" ? 'libmp3lame' : 'aac'} -y "${outputPath}"`;
               } else {
-                ffmpegCommand = `ffmpeg -i "${inputPath}" -c:v copy -c:a aac -movflags +faststart -y "${outputPath}"`;
+                ffmpegCommand = `ffmpeg -i "${inputPath}" -c:v ${videoEncoder} -c:a aac -movflags +faststart -y "${outputPath}"`;
               }
               ffmpegProcess = spawn(ffmpegCommand, { shell: true });
           } else {
@@ -640,7 +684,7 @@ ipcMain.on('download-video', async (event, options) => {
               if (targetFormat === "mp3" || targetFormat === "m4a") {
                 ffmpegArgs = ['-i', inputPath, '-vn', '-c:a', targetFormat === "mp3" ? 'libmp3lame' : 'aac', '-y', outputPath];
               } else {
-                ffmpegArgs = ['-i', inputPath, '-c:v', 'copy', '-c:a', 'aac', '-movflags', '+faststart', '-y', outputPath];
+                ffmpegArgs = ['-i', inputPath, '-c:v', videoEncoder, '-c:a', 'aac', '-movflags', '+faststart', '-y', outputPath];
               }
               ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
           }

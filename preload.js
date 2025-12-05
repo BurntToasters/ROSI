@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('api', {
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   checkDenoInstalled: () => ipcRenderer.invoke('check-deno-installed'),
   installDeno: () => ipcRenderer.invoke('install-deno'),
+  detectGpu: () => ipcRenderer.invoke('detect-gpu'),
   
   // Auto-updater APIs
   isPackaged: () => ipcRenderer.invoke('is-packaged'),
