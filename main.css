@@ -284,6 +284,21 @@ body.animate-bg {
   font-size: 0.85rem;
 }
 
+#keepOriginalLabel,
+#gpuAccelerationLabel {
+  display: none;
+}
+
+#keepOriginalLabel.visible,
+#gpuAccelerationLabel.visible {
+  display: flex;
+}
+
+#gpuTypeContainer {
+  margin-left: 0;
+  margin-top: var(--spacing-sm);
+}
+
 .toggle-switch.disabled {
   opacity: 0.5;
   cursor: not-allowed;

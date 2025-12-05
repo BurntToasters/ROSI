@@ -577,6 +577,10 @@ function hideLicenses() {
     const convertFormatContainer = document.getElementById('convertFormatContainer');
     const convertFormatSelect = document.getElementById('convertFormat');
     const keepOriginalLabel = document.getElementById('keepOriginalLabel');
+    const gpuAccelerationToggle = document.getElementById('gpuAccelerationToggle');
+    const gpuAccelerationLabel = document.getElementById('gpuAccelerationLabel');
+    const gpuTypeContainer = document.getElementById('gpuTypeContainer');
+    const gpuTypeSelect = document.getElementById('gpuType');
     const outputEl = document.getElementById('output');
     const resetSettingsBtn = document.getElementById('resetSettings');
     const fetchFormatsBtn = document.getElementById('fetchFormatsBtn');
@@ -626,10 +630,28 @@ function hideLicenses() {
       if (convertToggle.checked) {
         convertFormatContainer.classList.add('visible');
         keepOriginalLabel.classList.add('visible');
+        if (gpuAccelerationLabel) gpuAccelerationLabel.classList.add('visible');
       } else {
         convertFormatContainer.classList.remove('visible');
         keepOriginalLabel.classList.remove('visible');
+        if (gpuAccelerationLabel) gpuAccelerationLabel.classList.remove('visible');
       }
+      
+      // GPU acceleration settings
+      if (gpuAccelerationToggle) {
+        gpuAccelerationToggle.checked = settings.gpuAcceleration ?? false;
+      }
+      if (gpuTypeSelect) {
+        gpuTypeSelect.value = settings.gpuType ?? 'auto';
+      }
+      if (gpuTypeContainer) {
+        if (settings.gpuAcceleration) {
+          gpuTypeContainer.classList.add('visible');
+        } else {
+          gpuTypeContainer.classList.remove('visible');
+        }
+      }
+      
       if (settings.hookBrowser) {
         browserChoiceContainer.classList.add('visible');
       } else {
@@ -774,9 +796,12 @@ function hideLicenses() {
       if (e.target.checked) {
         convertFormatContainer.classList.add('visible');
         keepOriginalLabel.classList.add('visible');
+        if (gpuAccelerationLabel) gpuAccelerationLabel.classList.add('visible');
       } else {
         convertFormatContainer.classList.remove('visible');
         keepOriginalLabel.classList.remove('visible');
+        if (gpuAccelerationLabel) gpuAccelerationLabel.classList.remove('visible');
+        if (gpuTypeContainer) gpuTypeContainer.classList.remove('visible');
       }
       if (!e.target.checked) {
         settings.keepOriginalAfterConvert = true;
@@ -788,6 +813,26 @@ function hideLicenses() {
       settings.convertFormat = e.target.value;
       window.api.saveSettings(settings);
     });
+    // GPU acceleration toggle
+    if (gpuAccelerationToggle) {
+      gpuAccelerationToggle.addEventListener('change', (e) => {
+        settings.gpuAcceleration = e.target.checked;
+        if (gpuTypeContainer) {
+          if (e.target.checked) {
+            gpuTypeContainer.classList.add('visible');
+          } else {
+            gpuTypeContainer.classList.remove('visible');
+          }
+        }
+        window.api.saveSettings(settings);
+      });
+    }
+    if (gpuTypeSelect) {
+      gpuTypeSelect.addEventListener('change', (e) => {
+        settings.gpuType = e.target.value;
+        window.api.saveSettings(settings);
+      });
+    }
     // Animate Background toggle
     if (animateBackgroundToggle) {
       animateBackgroundToggle.addEventListener('change', (e) => {

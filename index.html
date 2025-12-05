@@ -59,6 +59,22 @@
             <span class="toggle-slider"></span>
             <span class="toggle-text">Keep original file</span>
           </label>
+          <label class="toggle-switch small" id="gpuAccelerationLabel">
+            <input type="checkbox" id="gpuAccelerationToggle">
+            <span class="toggle-slider"></span>
+            <span class="toggle-text">GPU acceleration</span>
+          </label>
+          <div id="gpuTypeContainer" class="sub-option">
+            <label class="select-label">
+              <span>GPU:</span>
+              <select id="gpuType">
+                <option value="auto">Auto-detect</option>
+                <option value="nvidia">NVIDIA (NVENC)</option>
+                <option value="amd">AMD (AMF)</option>
+                <option value="intel">Intel (Quick Sync)</option>
+              </select>
+            </label>
+          </div>
         </div>
       </section>
 
