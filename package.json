@@ -15,6 +15,7 @@
     "build:linux": "electron-builder --linux AppImage deb rpm --x64 --arm64",
     "build:linux:x64": "node build-scripts/prepare-linux-x64.js && electron-builder --linux AppImage deb rpm --x64 && node build-scripts/restore-binaries.js",
     "build:linux:arm64": "node build-scripts/prepare-linux-arm64.js && electron-builder --linux AppImage deb rpm --arm64 && node build-scripts/restore-binaries.js",
+    "build:linux:all": "npm run build:linux:x64 && npm run build:linux:arm64",
     "build:github": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --x64 --arm64",
     "build:github:win": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --x64 --arm64",
     "build:github:mac": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --mac --universal",
