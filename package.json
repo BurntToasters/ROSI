@@ -10,6 +10,7 @@
     "build:win": "electron-builder --win --x64 --arm64",
     "build:win:x64": "electron-builder --win --x64",
     "build:win:arm64": "electron-builder --win --arm64",
+    "build:win:all": "npm run build:win && npm run build:win:x64 && npm run build:win:arm64",
     "build:mac:universal": "dotenv -e .env -- electron-builder --mac --universal",
     "build:linux": "electron-builder --linux AppImage deb rpm --x64 --arm64",
     "build:linux:x64": "node build-scripts/prepare-linux-x64.js && electron-builder --linux AppImage deb rpm --x64 && node build-scripts/restore-binaries.js",
