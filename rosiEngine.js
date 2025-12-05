@@ -597,6 +597,16 @@ function hideLicenses() {
     if (fetchFormatsBtn) fetchFormatsBtn._originalClick = fetchFormats;
     if (downloadBtn) downloadBtn._originalClick = null;
 
+    const isWindows = navigator.userAgent.includes('Windows');
+    if (isWindows && browserChoiceSelect) {
+      Array.from(browserChoiceSelect.options).forEach(opt => {
+        if (opt.value !== "Firefox") {
+          browserChoiceSelect.removeChild(opt);
+        }
+      });
+      browserChoiceSelect.value = "Firefox";
+    }
+
     // update UI from settings
     const updateUIFromSettings = () => {
       if (
