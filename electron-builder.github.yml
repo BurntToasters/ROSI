@@ -4,7 +4,7 @@ publish:
   provider: github
   owner: BurntToasters
   repo: ROSI
-  releaseType: release
+  releaseType: draft
 
 mac:
   hardenedRuntime: true
