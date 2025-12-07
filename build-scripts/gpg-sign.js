@@ -34,10 +34,11 @@ const SIGNABLE_EXTENSIONS = [
 ];
 
 function getPlatformName() {
+  const arch = process.arch; // x64 arm64
   switch (process.platform) {
     case 'darwin': return 'macOS';
     case 'win32': return 'Windows';
-    case 'linux': return 'Linux';
+    case 'linux': return 'Linux-' + arch;
     default: return process.platform;
   }
 }
