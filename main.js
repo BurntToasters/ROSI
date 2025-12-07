@@ -85,7 +85,8 @@ const defaultSettings = {
   notifications: true,
   denoReminderDismissed: false,
   gpuAcceleration: false,
-  gpuType: "auto"
+  gpuType: "auto",
+  hideSupportModal: false
 };
 
 // [!] The console debugger uses emojis to easily identify messages. If you see any issues with emojis, please ensure your terminal supports them or disable the console output in settings.
@@ -435,27 +436,54 @@ ipcMain.handle('detect-gpu', async () => {
 
 // reset settings and restart app
 ipcMain.on('reset-settings', (event) => {
-  saveSettings(defaultSettings);
-  app.relaunch();
-  app.exit();
+  try {
+    saveSettings(defaultSettings);
+    app.relaunch();
+    app.exit();
+  } catch (error) {
+    console.error('Error resetting settings:', error);
+    app.relaunch();
+    app.exit();
+  }
 });
 
 // open external links in browser
 ipcMain.on('open-external', (_, url) => {
-    if (url && typeof url === 'string' && (url.startsWith('http:') || url.startsWith('https:'))) {
-        shell.openExternal(url);
+    try {
+      if (url && typeof url === 'string' && (url.startsWith('http:') || url.startsWith('https:') || url.startsWith('ms-windows-store:'))) {
+          shell.openExternal(url).catch(err => {
+            console.error('Failed to open external URL:', err);
+          });
+      }
+    } catch (error) {
+      console.error('Error in open-external handler:', error);
     }
 });
 
 // open folder dialog for download location
 ipcMain.handle('select-download-location', async () => {
-  const focusedWindow = BrowserWindow.getFocusedWindow();
-  if (!focusedWindow) return null;
-  const { canceled, filePaths } = await dialog.showOpenDialog(focusedWindow, {
-    title: 'Select Download Folder',
-    properties: ['openDirectory', 'createDirectory']
-  });
-  return canceled ? null : filePaths[0];
+  try {
+    const focusedWindow = BrowserWindow.getFocusedWindow();
+    if (!focusedWindow) {
+      // Fallback to main
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+          title: 'Select Download Folder',
+          properties: ['openDirectory', 'createDirectory']
+        });
+        return canceled ? null : filePaths[0];
+      }
+      return null;
+    }
+    const { canceled, filePaths } = await dialog.showOpenDialog(focusedWindow, {
+      title: 'Select Download Folder',
+      properties: ['openDirectory', 'createDirectory']
+    });
+    return canceled ? null : filePaths[0];
+  } catch (error) {
+    console.error('Error in select-download-location:', error);
+    return null;
+  }
 });
 
 // get available formats from yt-dlp
@@ -661,7 +689,7 @@ ipcMain.on('download-video', async (event, options) => {
             if (gpuType === 'nvidia') return 'h264_nvenc';
             if (gpuType === 'amd') return 'h264_amf';
             if (gpuType === 'intel') return 'h264_qsv';
-            return 'h264_nvenc';
+            return 'copy';
           };
 
           const videoEncoder = getVideoEncoder();
@@ -771,20 +799,32 @@ ipcMain.on('download-video', async (event, options) => {
 
 // handle cancel-download, kill yt-dlp and ffmpeg if running
 ipcMain.on('cancel-download', () => {
-  let wasCancelled = false;
-  if (ffmpegProcess) {
-    ffmpegProcess.kill();
-    ffmpegProcess = null;
-    wasCancelled = true;
-  }
-  if (ytdlpProcess) {
-    ytdlpProcess.kill();
-    ytdlpProcess = null;
-    wasCancelled = true;
-  }
-  if (wasCancelled && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('progress', '⏹️ Download/Conversion cancelled by user.');
-      mainWindow.webContents.send('complete', '⏹️ Cancelled.');
+  try {
+    let wasCancelled = false;
+    if (ffmpegProcess) {
+      try {
+        ffmpegProcess.kill();
+      } catch (killErr) {
+        console.error('Error killing ffmpeg process:', killErr);
+      }
+      ffmpegProcess = null;
+      wasCancelled = true;
+    }
+    if (ytdlpProcess) {
+      try {
+        ytdlpProcess.kill();
+      } catch (killErr) {
+        console.error('Error killing yt-dlp process:', killErr);
+      }
+      ytdlpProcess = null;
+      wasCancelled = true;
+    }
+    if (wasCancelled && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('progress', '⏹️ Download/Conversion cancelled by user.');
+        mainWindow.webContents.send('complete', '⏹️ Cancelled.');
+    }
+  } catch (error) {
+    console.error('Error in cancel-download handler:', error);
   }
 });
 
@@ -795,35 +835,49 @@ ipcMain.handle('restart-app', () => {
 
 // file location via system file mgr
 ipcMain.on('open-file-location', (_, filePath) => {
-  if (filePath && typeof filePath === 'string' && fs.existsSync(filePath)) {
-    shell.showItemInFolder(filePath);
-  } else if (filePath && typeof filePath === 'string') {
-    const dir = path.dirname(filePath);
-    if (fs.existsSync(dir)) {
-      shell.openPath(dir);
+  try {
+    if (filePath && typeof filePath === 'string' && fs.existsSync(filePath)) {
+      shell.showItemInFolder(filePath);
+    } else if (filePath && typeof filePath === 'string') {
+      const dir = path.dirname(filePath);
+      if (fs.existsSync(dir)) {
+        shell.openPath(dir).catch(err => {
+          console.error('Error opening directory:', err);
+        });
+      }
     }
+  } catch (error) {
+    console.error('Error in open-file-location handler:', error);
   }
 });
 
 ipcMain.on('show-notification', (_, options) => {
-  if (Notification.isSupported()) {
-    const notification = new Notification({
-      title: options.title || 'ROSI',
-      body: options.body || '',
-      icon: path.join(__dirname, 'app.png'),
-      silent: false
-    });
-    
-    notification.on('click', () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.focus();
-      }
-      if (options.filePath) {
-        shell.showItemInFolder(options.filePath);
-      }
-    });
-    
-    notification.show();
+  try {
+    if (Notification.isSupported()) {
+      const notification = new Notification({
+        title: options?.title || 'ROSI',
+        body: options?.body || '',
+        icon: path.join(__dirname, 'app.png'),
+        silent: false
+      });
+      
+      notification.on('click', () => {
+        try {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.focus();
+          }
+          if (options?.filePath) {
+            shell.showItemInFolder(options.filePath);
+          }
+        } catch (clickErr) {
+          console.error('Error handling notification click:', clickErr);
+        }
+      });
+      
+      notification.show();
+    }
+  } catch (error) {
+    console.error('Error showing notification:', error);
   }
 });

@@ -1,6 +1,6 @@
 {
   "name": "rosi",
-  "version": "3.0.0-beta.4",
+  "version": "3.0.0-beta.5",
   "description": "Electron GUI for yt-dlp",
   "main": "main.js",
   "scripts": {
@@ -22,7 +22,16 @@
     "build:msstore:x64": "cross-env CHANNEL=msstore node build-scripts/prepare-x64.js && electron-builder --win --x64 -c electron-builder.base.yml -c electron-builder.msstore.yml && node build-scripts/restore-binaries.js",
     "build:msstore:arm64": "cross-env CHANNEL=msstore node build-scripts/prepare-arm64.js && electron-builder --win --arm64 -c electron-builder.base.yml -c electron-builder.msstore.yml && node build-scripts/restore-binaries.js",
     "build:msstore": "npm run build:msstore:x64 && npm run build:msstore:arm64",
-    "restore-binaries": "node build-scripts/restore-binaries.js"
+    "restore-binaries": "node build-scripts/restore-binaries.js",
+    "sign:gpg": "node build-scripts/gpg-sign.js",
+    "release:win": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --x64 --arm64 --publish always && npm run sign:gpg",
+    "release:win:x64": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --x64 --publish always && npm run sign:gpg",
+    "release:win:arm64": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --arm64 --publish always && npm run sign:gpg",
+    "release:mac": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --mac --universal --publish always && npm run sign:gpg",
+    "release:linux": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --x64 --arm64 --publish always && npm run sign:gpg",
+    "release:linux:x64": "node build-scripts/prepare-linux-x64.js && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --x64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg",
+    "release:linux:arm64": "node build-scripts/prepare-linux-arm64.js && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --arm64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg",
+    "release:all": "npm run release:mac && npm run release:win && npm run release:linux"
   },
   "repository": {
     "type": "git",

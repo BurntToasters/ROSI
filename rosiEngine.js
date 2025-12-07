@@ -58,10 +58,10 @@
     const isOpen = sidebar.classList.contains('open');
     if (isOpen) {
       sidebar.classList.remove('open');
-      if (overlay) overlay.classList.remove('visible');
+      if (overlay) overlay.classList.remove('active');
     } else {
       sidebar.classList.add('open');
-      if (overlay) overlay.classList.add('visible');
+      if (overlay) overlay.classList.add('active');
     }
   }
   
@@ -69,7 +69,7 @@
     const sidebar = document.getElementById('sidebar');
     const overlay = document.getElementById('sidebar-overlay');
     if (sidebar) sidebar.classList.remove('open');
-    if (overlay) overlay.classList.remove('visible');
+    if (overlay) overlay.classList.remove('active');
   }
   function toggleAdvancedUI(show) {
     const formatSection = document.getElementById('formatOptions');
@@ -140,89 +140,101 @@
     const btn = document.getElementById('fetchFormatsBtn');
     const urlInput = document.getElementById('url');
     const videoUrl = urlInput ? urlInput.value : null;
-    if (!btn || !videoUrl || videoUrl.trim() === "") {
-      showModal({ title: "Input Error", message: "Please enter a video URL first.", buttons: [{ label: "OK" }] });
-      return;
-    }
     
-    // Validate URL format
-    if (!isValidUrl(videoUrl.trim())) {
-      showModal({ 
-        title: "Invalid URL", 
-        message: "Please enter a valid URL starting with http:// or https://", 
-        buttons: [{ label: "OK" }] 
-      });
-      return;
-    }
-    
-    if (isFetchingFormats) return;
-    isFetchingFormats = true;
-    fetchFormatsAbort = () => {
-      isFetchingFormats = false;
-      setButtonLoading(btn, false);
-    };
-    setButtonLoading(btn, true, () => {
-      window.api.cancelDownload();
-      fetchFormatsAbort();
-    });
-    const videoSelect = document.getElementById('videoFormat');
-    const audioSelect = document.getElementById('audioFormat');
-    if (videoSelect) videoSelect.innerHTML = '<option value="">Loading...</option>';
-    if (audioSelect) audioSelect.innerHTML = '<option value="">Loading...</option>';
     try {
-      const output = await window.api.getFormats(videoUrl);
-      const lines = output.split('\n');
-      if (videoSelect) videoSelect.innerHTML = '<option value="">Select Video Format</option>';
-      if (audioSelect) audioSelect.innerHTML = '<option value="">Select Audio Format</option>';
-      let videoFormatsFound = 0, audioFormatsFound = 0;
-      lines.forEach(line => {
-        if (/^\s*\d+\s+[a-zA-Z0-9]+/.test(line.trim())) {
-          const parts = line.trim().split(/\s+/);
-          const formatId = parts[0];
-          const option = document.createElement('option');
-          option.value = formatId;
-          let labelText = line.trim();
-          const resolutionMatch = labelText.match(/(\d{3,4}x\d{3,4}|\d{3,4}p)/);
-          const fpsMatch = labelText.match(/@\s*(\d+fps)/);
-          const sizeMatch = labelText.match(/(\d+(\.\d+)?(MiB|GiB|KiB))/);
-          const codecMatch = line.match(/(avc1|vp9|av01|h264|h265|opus|mp4a|aac|vorbis)/i);
-          let cleanLabel = `ID: ${formatId}`;
-          if (resolutionMatch) cleanLabel += ` ${resolutionMatch[0]}`;
-          if (fpsMatch) cleanLabel += ` ${fpsMatch[1]}`;
-          if (codecMatch) cleanLabel += ` (${codecMatch[0]})`;
-          if (sizeMatch) cleanLabel += ` ~${sizeMatch[0]}`;
-          option.text = cleanLabel;
-          option.title = line.trim();
-          const isVideo = /video/.test(line.toLowerCase()) && !/audio only/i.test(line);
-          const isAudio = /audio/.test(line.toLowerCase()) && !/video only/i.test(line);
-          const isVideoOnly = /video only/i.test(line);
-          const isAudioOnly = /audio only/i.test(line);
-          if (isVideoOnly || (isVideo && !isAudio)) {
-            if (videoSelect) videoSelect.appendChild(option);
-            videoFormatsFound++;
-          } else if (isAudioOnly || (isAudio && !isVideo)) {
-            if (audioSelect) audioSelect.appendChild(option);
-            audioFormatsFound++;
-          } else if (isVideo && isAudio) {
-            if (videoSelect) videoSelect.appendChild(option);
-            videoFormatsFound++;
-          }
-        }
+      if (!btn || !videoUrl || videoUrl.trim() === "") {
+        showModal({ title: "Input Error", message: "Please enter a video URL first.", buttons: [{ label: "OK" }] });
+        return;
+      }
+      
+      // Validate URL format
+      if (!isValidUrl(videoUrl.trim())) {
+        showModal({ 
+          title: "Invalid URL", 
+          message: "Please enter a valid URL starting with http:// or https://", 
+          buttons: [{ label: "OK" }] 
+        });
+        return;
+      }
+      
+      if (isFetchingFormats) return;
+      isFetchingFormats = true;
+      fetchFormatsAbort = () => {
+        isFetchingFormats = false;
+        setButtonLoading(btn, false);
+      };
+      setButtonLoading(btn, true, () => {
+        window.api.cancelDownload();
+        fetchFormatsAbort();
       });
-      if (videoFormatsFound === 0 && videoSelect) videoSelect.innerHTML = '<option value="">No video formats found</option>';
-      if (audioFormatsFound === 0 && audioSelect) audioSelect.innerHTML = '<option value="">No audio formats found</option>';
-    } catch (e) {
-      const errorMessage = typeof e === 'string' ? e : (e.message || 'Unknown error');
-      if (videoSelect) videoSelect.innerHTML = '<option value="">Error loading formats</option>';
-      if (audioSelect) audioSelect.innerHTML = '<option value="">Error loading formats</option>';
+      const videoSelect = document.getElementById('videoFormat');
+      const audioSelect = document.getElementById('audioFormat');
+      if (videoSelect) videoSelect.innerHTML = '<option value="">Loading...</option>';
+      if (audioSelect) audioSelect.innerHTML = '<option value="">Loading...</option>';
+      try {
+        const output = await window.api.getFormats(videoUrl);
+        const lines = output.split('\n');
+        if (videoSelect) videoSelect.innerHTML = '<option value="">Select Video Format</option>';
+        if (audioSelect) audioSelect.innerHTML = '<option value="">Select Audio Format</option>';
+        let videoFormatsFound = 0, audioFormatsFound = 0;
+        lines.forEach(line => {
+          if (/^\s*\d+\s+[a-zA-Z0-9]+/.test(line.trim())) {
+            const parts = line.trim().split(/\s+/);
+            const formatId = parts[0];
+            const option = document.createElement('option');
+            option.value = formatId;
+            let labelText = line.trim();
+            const resolutionMatch = labelText.match(/(\d{3,4}x\d{3,4}|\d{3,4}p)/);
+            const fpsMatch = labelText.match(/@\s*(\d+fps)/);
+            const sizeMatch = labelText.match(/(\d+(\.\d+)?(MiB|GiB|KiB))/);
+            const codecMatch = line.match(/(avc1|vp9|av01|h264|h265|opus|mp4a|aac|vorbis)/i);
+            let cleanLabel = `ID: ${formatId}`;
+            if (resolutionMatch) cleanLabel += ` ${resolutionMatch[0]}`;
+            if (fpsMatch) cleanLabel += ` ${fpsMatch[1]}`;
+            if (codecMatch) cleanLabel += ` (${codecMatch[0]})`;
+            if (sizeMatch) cleanLabel += ` ~${sizeMatch[0]}`;
+            option.text = cleanLabel;
+            option.title = line.trim();
+            const isVideo = /video/.test(line.toLowerCase()) && !/audio only/i.test(line);
+            const isAudio = /audio/.test(line.toLowerCase()) && !/video only/i.test(line);
+            const isVideoOnly = /video only/i.test(line);
+            const isAudioOnly = /audio only/i.test(line);
+            if (isVideoOnly || (isVideo && !isAudio)) {
+              if (videoSelect) videoSelect.appendChild(option);
+              videoFormatsFound++;
+            } else if (isAudioOnly || (isAudio && !isVideo)) {
+              if (audioSelect) audioSelect.appendChild(option);
+              audioFormatsFound++;
+            } else if (isVideo && isAudio) {
+              if (videoSelect) videoSelect.appendChild(option);
+              videoFormatsFound++;
+            }
+          }
+        });
+        if (videoFormatsFound === 0 && videoSelect) videoSelect.innerHTML = '<option value="">No video formats found</option>';
+        if (audioFormatsFound === 0 && audioSelect) audioSelect.innerHTML = '<option value="">No audio formats found</option>';
+      } catch (e) {
+        const errorMessage = typeof e === 'string' ? e : (e.message || 'Unknown error');
+        if (videoSelect) videoSelect.innerHTML = '<option value="">Error loading formats</option>';
+        if (audioSelect) audioSelect.innerHTML = '<option value="">Error loading formats</option>';
+        showModal({
+          title: "Format Fetch Failed",
+          message: `Could not retrieve formats.\nError: ${errorMessage}`,
+          buttons: [{ label: "OK" }]
+        });
+      } finally {
+        isFetchingFormats = false;
+        setButtonLoading(btn, false);
+      }
+    } catch (outerError) {
+      console.error('Unexpected error in fetchFormats:', outerError);
+      isFetchingFormats = false;
+      if (btn) setButtonLoading(btn, false);
       showModal({
-        title: "Format Fetch Failed",
-        message: `Could not retrieve formats.\nError: ${errorMessage}`,
+        title: "Unexpected Error",
+        message: "An unexpected error occurred while fetching formats. Please try again.",
         buttons: [{ label: "OK" }]
       });
-    } finally {
-      isFetchingFormats = false;
-      setButtonLoading(btn, false);
     }
   }
 
@@ -566,7 +578,27 @@ function hideLicenses() {
       };
       showModal({ title: "Settings Error", message: "Could not load settings. Using defaults.", buttons: [{ label: "OK" }] });
     }
-    setupAutoUpdater();
+
+    try {
+      const version = await window.api.getAppVersion();
+      const versionLink = document.getElementById('versionLink');
+      if (versionLink && version) {
+        versionLink.textContent = `v${version}`;
+        versionLink.onclick = () => {
+          window.api.openExternal(`https://github.com/BurntToasters/ROSI/releases/tag/v${version}`);
+          return false;
+        };
+      }
+    } catch (e) {
+      console.error('Could not get app version:', e);
+    }
+    
+    try {
+      setupAutoUpdater();
+    } catch (e) {
+      console.error('Failed to setup auto-updater:', e);
+    }
+    
     const consoleToggle = document.getElementById('consoleToggle');
     const advancedToggle = document.getElementById('advancedToggle');
     const keepOriginalToggle = document.getElementById('keepOriginalToggle');
@@ -609,6 +641,10 @@ function hideLicenses() {
         }
       });
       browserChoiceSelect.value = "Firefox";
+      if (settings.browserChoice !== "Firefox") {
+        settings.browserChoice = "Firefox";
+        window.api.saveSettings(settings);
+      }
     }
 
     // update UI from settings
@@ -692,7 +728,12 @@ function hideLicenses() {
         notificationsToggle.checked = settings.notifications ?? true;
       }
     };
-    updateUIFromSettings();
+    
+    try {
+      updateUIFromSettings();
+    } catch (e) {
+      console.error('Failed to update UI from settings:', e);
+    }
 
 
     if (!settings.hideSupportModal) {
@@ -893,46 +934,56 @@ function hideLicenses() {
     // download button
     if (downloadBtn) {
       downloadBtn._originalClick = async function () {
-        if (isDownloading) return;
-        const urlInput = document.getElementById('url');
-        const url = urlInput ? urlInput.value : null;
-        if (!url || url.trim() === "") {
-          showModal({ title: "Input Error", message: "Please enter a video URL.", buttons: [{ label: "OK" }] });
-          return;
-        }
-        
-        // Validate URL format
-        if (!isValidUrl(url.trim())) {
-          showModal({ 
-            title: "Invalid URL", 
-            message: "Please enter a valid URL starting with http:// or https://", 
-            buttons: [{ label: "OK" }] 
+        try {
+          if (isDownloading) return;
+          const urlInput = document.getElementById('url');
+          const url = urlInput ? urlInput.value : null;
+          if (!url || url.trim() === "") {
+            showModal({ title: "Input Error", message: "Please enter a video URL.", buttons: [{ label: "OK" }] });
+            return;
+          }
+          
+          // Validate URL format
+          if (!isValidUrl(url.trim())) {
+            showModal({ 
+              title: "Invalid URL", 
+              message: "Please enter a valid URL starting with http:// or https://", 
+              buttons: [{ label: "OK" }] 
+            });
+            return;
+          }
+          
+          const videoSelect = document.getElementById('videoFormat');
+          const audioSelect = document.getElementById('audioFormat');
+          if (settings.advancedOptions && (!videoSelect || !audioSelect || !videoSelect.value || !audioSelect.value)) {
+            showModal({ title: "Format Selection Needed", message: "Please check resolutions and select video/audio formats first.", buttons: [{ label: "OK" }] });
+            return;
+          }
+          
+          let savePath;
+          try {
+            savePath = await window.api.selectDownloadLocation();
+          } catch (dialogError) {
+            console.error('Error opening save dialog:', dialogError);
+            showModal({ title: "Error", message: "Could not open the save location dialog. Please try again.", buttons: [{ label: "OK" }] });
+            return;
+          }
+          
+          if (!savePath) {
+            if (outputEl) outputEl.textContent = "⚠️ Download cancelled: No save location selected.";
+            return;
+          }
+          if (outputEl) outputEl.textContent = "";
+          isDownloading = true;
+          downloadAbort = () => {
+            isDownloading = false;
+            setButtonLoading(downloadBtn, false);
+          };
+          setButtonLoading(downloadBtn, true, () => {
+            window.api.cancelDownload();
+            downloadAbort();
+            hideProgressBar();
           });
-          return;
-        }
-        
-        const videoSelect = document.getElementById('videoFormat');
-        const audioSelect = document.getElementById('audioFormat');
-        if (settings.advancedOptions && (!videoSelect || !audioSelect || !videoSelect.value || !audioSelect.value)) {
-          showModal({ title: "Format Selection Needed", message: "Please check resolutions and select video/audio formats first.", buttons: [{ label: "OK" }] });
-          return;
-        }
-        const savePath = await window.api.selectDownloadLocation();
-        if (!savePath) {
-          if (outputEl) outputEl.textContent = "⚠️ Download cancelled: No save location selected.";
-          return;
-        }
-        if (outputEl) outputEl.textContent = "";
-        isDownloading = true;
-        downloadAbort = () => {
-          isDownloading = false;
-          setButtonLoading(downloadBtn, false);
-        };
-        setButtonLoading(downloadBtn, true, () => {
-          window.api.cancelDownload();
-          downloadAbort();
-          hideProgressBar();
-        });
 
         showProgressBar('Starting download...');
         
@@ -941,6 +992,17 @@ function hideLicenses() {
         const convertFormat = settings.convertEnabled ? convertFormatSelect.value : null;
         const keepOriginal = settings.convertEnabled ? keepOriginalToggle.checked : null;
         window.api.downloadVideo({ url, videoFormat, audioFormat, outputPath: savePath, convertFormat, keepOriginal });
+        } catch (downloadError) {
+          console.error('Unexpected error starting download:', downloadError);
+          isDownloading = false;
+          setButtonLoading(downloadBtn, false);
+          hideProgressBar();
+          showModal({
+            title: "Download Error",
+            message: "An unexpected error occurred while starting the download. Please try again.",
+            buttons: [{ label: "OK" }]
+          });
+        }
       };
       downloadBtn.onclick = downloadBtn._originalClick;
     }
