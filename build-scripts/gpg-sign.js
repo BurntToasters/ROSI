@@ -21,6 +21,10 @@ const packageJson = require('../package.json');
 const VERSION = packageJson.version;
 const TAG_NAME = 'v' + VERSION;
 
+const args = process.argv.slice(2);
+const archArgIndex = args.findIndex(arg => arg === '--arch');
+const TARGET_ARCH = archArgIndex !== -1 && args[archArgIndex + 1] ? args[archArgIndex + 1] : null;
+
 const SIGNABLE_EXTENSIONS = [
   '.dmg',
   '.zip',
@@ -33,14 +37,28 @@ const SIGNABLE_EXTENSIONS = [
   '.msix'
 ];
 
-function getPlatformName() {
-  const arch = process.arch; // x64 arm64
+const ARCH_PATTERNS = {
+  'x64': ['-x86_64', '-amd64', '-x64', '_x64', '_amd64'],
+  'arm64': ['-arm64', '-aarch64', '_arm64', '_aarch64']
+};
+
+function getPlatformName(arch) {
   switch (process.platform) {
     case 'darwin': return 'macOS';
     case 'win32': return 'Windows';
-    case 'linux': return 'Linux-' + arch;
+    case 'linux': return arch ? 'Linux-' + arch : 'Linux';
     default: return process.platform;
   }
+}
+
+function getFileArch(filename) {
+  const lowerFile = filename.toLowerCase();
+  for (const [arch, patterns] of Object.entries(ARCH_PATTERNS)) {
+    if (patterns.some(pattern => lowerFile.includes(pattern))) {
+      return arch;
+    }
+  }
+  return null;
 }
 
 function getFilesToSign() {
@@ -57,7 +75,15 @@ function getFilesToSign() {
     if (!fs.statSync(fullPath).isFile()) return false;
 
     const lowerFile = file.toLowerCase();
-    return SIGNABLE_EXTENSIONS.some(ext => lowerFile.endsWith(ext));
+    const hasSignableExt = SIGNABLE_EXTENSIONS.some(ext => lowerFile.endsWith(ext));
+    
+    if (!hasSignableExt) return false;
+    if (TARGET_ARCH) {
+      const fileArch = getFileArch(file);
+      return fileArch === TARGET_ARCH || fileArch === null;
+    }
+    
+    return true;
   });
 }
 
@@ -291,11 +317,14 @@ async function uploadSignatures(release, filesToUpload) {
 }
 
 async function main() {
-  const platform = getPlatformName();
+  const platform = getPlatformName(TARGET_ARCH);
   
   console.log('═'.repeat(60));
   console.log('GPG Sign & Upload - ROSI ' + VERSION);
   console.log('Platform: ' + platform);
+  if (TARGET_ARCH) {
+    console.log('Target Arch: ' + TARGET_ARCH + ' (filtering files)');
+  }
   console.log('═'.repeat(60));
 
   try {
@@ -345,6 +374,9 @@ async function main() {
   if (checksumSig) signatureFiles.push(checksumSig);
 
   const filesToUpload = [...signatureFiles, checksumFile];
+
+  console.log('\nFiles queued for upload:');
+  filesToUpload.forEach(f => console.log('   • ' + path.basename(f)));
 
   if (GH_TOKEN) {
     try {
