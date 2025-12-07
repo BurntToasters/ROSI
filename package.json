@@ -24,13 +24,15 @@
     "build:msstore": "npm run build:msstore:x64 && npm run build:msstore:arm64",
     "restore-binaries": "node build-scripts/restore-binaries.js",
     "sign:gpg": "node build-scripts/gpg-sign.js",
+    "sign:gpg:x64": "node build-scripts/gpg-sign.js --arch x64",
+    "sign:gpg:arm64": "node build-scripts/gpg-sign.js --arch arm64",
     "release:win": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --x64 --arm64 --publish always && npm run sign:gpg",
     "release:win:x64": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --x64 --publish always && npm run sign:gpg",
     "release:win:arm64": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --arm64 --publish always && npm run sign:gpg",
     "release:mac": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --mac --universal --publish always && npm run sign:gpg",
     "release:linux": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --x64 --arm64 --publish always && npm run sign:gpg",
-    "release:linux:x64": "node build-scripts/prepare-linux-x64.js && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --x64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg",
-    "release:linux:arm64": "node build-scripts/prepare-linux-arm64.js && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --arm64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg",
+    "release:linux:x64": "node build-scripts/prepare-linux-x64.js && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --x64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:x64",
+    "release:linux:arm64": "node build-scripts/prepare-linux-arm64.js && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --arm64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:arm64",
     "release:all": "npm run release:mac && npm run release:win && npm run release:linux"
   },
   "repository": {
