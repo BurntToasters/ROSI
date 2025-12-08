@@ -1,18 +1,29 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const sanitize = require('sanitize-filename');
+const { autoUpdater } = require('electron-updater');
 
 const isWindows = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
+const isLinux = process.platform === 'linux';
 const isArm64 = process.arch === 'arm64';
 const isPackaged = app.isPackaged;
-const ytdlpBinary = isWindows
-  ? (isArm64 ? 'yt-dlp_arm64.exe' : 'yt-dlp.exe')
-  : isMac
-    ? 'yt-dlp_macos'
-    : 'yt-dlp_linux';
+
+// Select the appropriate arch yt-dlp
+function getYtdlpBinaryName() {
+  if (isWindows) {
+    return isArm64 ? 'yt-dlp_arm64.exe' : 'yt-dlp.exe';
+  } else if (isMac) {
+    return 'yt-dlp_macos';
+  } else if (isLinux) {
+    return isArm64 ? 'yt-dlp_linux_aarch64' : 'yt-dlp_linux';
+  }
+  return 'yt-dlp_linux';
+}
+
+const ytdlpBinary = getYtdlpBinaryName();
 
 let ytdlpPath;
 if (isPackaged) {
@@ -63,6 +74,7 @@ const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 const defaultSettings = {
   showConsoleOutput: false,
   advancedOptions: false,
+  audioOnly: false,
   convertEnabled: false,
   convertFormat: "mp4",
   keepOriginalAfterConvert: true,
@@ -70,7 +82,11 @@ const defaultSettings = {
   hookBrowser: false,
   browserChoice: "Chrome",
   animateBackground: true,
-  denoReminderDismissed: false
+  notifications: true,
+  denoReminderDismissed: false,
+  gpuAcceleration: false,
+  gpuType: "auto",
+  hideSupportModal: false
 };
 
 // [!] The console debugger uses emojis to easily identify messages. If you see any issues with emojis, please ensure your terminal supports them or disable the console output in settings.
@@ -128,12 +144,12 @@ function createSplashWindow() {
 function createWindow() {
   const isDev = process.env.NODE_ENV === 'development' || process.argv.includes('--dev');
   mainWindow = new BrowserWindow({
-    width: 1000,
-    height: 700,
-    minWidth: 800,
-    minHeight: 650,
-    maxWidth: 1400,
-    maxHeight: 1000,
+    width: 1200,
+    height: 900,
+    minWidth: 900,
+    minHeight: 700,
+    maxWidth: 1800,
+    maxHeight: 1400,
     icon: path.join(__dirname, 'app.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -180,6 +196,91 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+
+// Auto Updater Setup
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = true;
+
+autoUpdater.on('checking-for-update', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater-status', { status: 'checking' });
+  }
+});
+
+autoUpdater.on('update-available', (info) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater-status', { 
+      status: 'available', 
+      version: info.version,
+      releaseNotes: info.releaseNotes 
+    });
+  }
+});
+
+autoUpdater.on('update-not-available', (info) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater-status', { 
+      status: 'not-available',
+      version: info.version 
+    });
+  }
+});
+
+autoUpdater.on('error', (err) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater-status', { 
+      status: 'error', 
+      message: err.message 
+    });
+  }
+});
+
+autoUpdater.on('download-progress', (progressObj) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater-progress', {
+      percent: progressObj.percent,
+      bytesPerSecond: progressObj.bytesPerSecond,
+      transferred: progressObj.transferred,
+      total: progressObj.total
+    });
+  }
+});
+
+autoUpdater.on('update-downloaded', (info) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater-status', { 
+      status: 'downloaded',
+      version: info.version 
+    });
+  }
+});
+
+ipcMain.handle('is-packaged', () => isPackaged);
+
+ipcMain.handle('check-for-updates', async () => {
+  if (!isPackaged) {
+    return { error: 'dev-mode', message: 'Update checking is not available in development mode.' };
+  }
+  
+  try {
+    return await autoUpdater.checkForUpdates();
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
+ipcMain.handle('download-update', async () => {
+  try {
+    await autoUpdater.downloadUpdate();
+    return { success: true };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
+ipcMain.on('install-update', () => {
+  autoUpdater.quitAndInstall(false, true);
+});
 
 // --- IPC Handlers ---
 
@@ -308,29 +409,81 @@ ipcMain.on('save-settings', (_, data) => {
     saveSettings(data);
 });
 
+// detect available GPU encoders
+ipcMain.handle('detect-gpu', async () => {
+  const result = { nvidia: false, amd: false, intel: false };
+  
+  try {
+    // NVIDIA NVENC
+    const nvencTest = spawn('ffmpeg', ['-hide_banner', '-encoders'], { shell: isWindows });
+    const nvencOutput = await new Promise((resolve) => {
+      let output = '';
+      nvencTest.stdout.on('data', (data) => output += data.toString());
+      nvencTest.stderr.on('data', (data) => output += data.toString());
+      nvencTest.on('close', () => resolve(output));
+      nvencTest.on('error', () => resolve(''));
+    });
+    
+    result.nvidia = nvencOutput.includes('h264_nvenc');
+    result.amd = nvencOutput.includes('h264_amf');
+    result.intel = nvencOutput.includes('h264_qsv');
+  } catch (err) {
+    console.error('GPU detection error:', err);
+  }
+  
+  return result;
+});
+
 // reset settings and restart app
 ipcMain.on('reset-settings', (event) => {
-  saveSettings(defaultSettings);
-  app.relaunch();
-  app.exit();
+  try {
+    saveSettings(defaultSettings);
+    app.relaunch();
+    app.exit();
+  } catch (error) {
+    console.error('Error resetting settings:', error);
+    app.relaunch();
+    app.exit();
+  }
 });
 
 // open external links in browser
 ipcMain.on('open-external', (_, url) => {
-    if (url && typeof url === 'string' && (url.startsWith('http:') || url.startsWith('https:'))) {
-        shell.openExternal(url);
+    try {
+      if (url && typeof url === 'string' && (url.startsWith('http:') || url.startsWith('https:') || url.startsWith('ms-windows-store:'))) {
+          shell.openExternal(url).catch(err => {
+            console.error('Failed to open external URL:', err);
+          });
+      }
+    } catch (error) {
+      console.error('Error in open-external handler:', error);
     }
 });
 
 // open folder dialog for download location
 ipcMain.handle('select-download-location', async () => {
-  const focusedWindow = BrowserWindow.getFocusedWindow();
-  if (!focusedWindow) return null;
-  const { canceled, filePaths } = await dialog.showOpenDialog(focusedWindow, {
-    title: 'Select Download Folder',
-    properties: ['openDirectory', 'createDirectory']
-  });
-  return canceled ? null : filePaths[0];
+  try {
+    const focusedWindow = BrowserWindow.getFocusedWindow();
+    if (!focusedWindow) {
+      // Fallback to main
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+          title: 'Select Download Folder',
+          properties: ['openDirectory', 'createDirectory']
+        });
+        return canceled ? null : filePaths[0];
+      }
+      return null;
+    }
+    const { canceled, filePaths } = await dialog.showOpenDialog(focusedWindow, {
+      title: 'Select Download Folder',
+      properties: ['openDirectory', 'createDirectory']
+    });
+    return canceled ? null : filePaths[0];
+  } catch (error) {
+    console.error('Error in select-download-location:', error);
+    return null;
+  }
 });
 
 // get available formats from yt-dlp
@@ -417,6 +570,26 @@ ipcMain.on('download-video', async (event, options) => {
         url
     ];
 
+    // Advanced format selection
+    const videoFormat = options?.videoFormat;
+    const audioFormat = options?.audioFormat;
+    if (videoFormat && audioFormat) {
+      ytdlpArgs.splice(-1, 0, '-f', `${videoFormat}+${audioFormat}`);
+      safeSend('progress', `📹 Using formats: video=${videoFormat}, audio=${audioFormat}`);
+    } else if (videoFormat) {
+      ytdlpArgs.splice(-1, 0, '-f', videoFormat);
+      safeSend('progress', `📹 Using video format: ${videoFormat}`);
+    } else if (audioFormat) {
+      ytdlpArgs.splice(-1, 0, '-f', audioFormat);
+      safeSend('progress', `🎵 Using audio format: ${audioFormat}`);
+    }
+
+    // Audio-only mode (only applies when not using advanced format selection)
+    if (settings.audioOnly && !videoFormat && !audioFormat) {
+      ytdlpArgs.splice(-1, 0, '-x', '--audio-format', 'mp3', '--audio-quality', '0');
+      safeSend('progress', '🎵 Audio-only mode enabled');
+    }
+
     if (settings.hookBrowser && settings.browserChoice) {
       ytdlpArgs.splice(-1, 0, '--cookies-from-browser', settings.browserChoice);
     }
@@ -458,7 +631,7 @@ ipcMain.on('download-video', async (event, options) => {
           if (!downloadedFilePath) {
               throw new Error("Could not find a valid filepath in yt-dlp's output.");
           }
-          safeSend('progress', `✅ Download finished. Identified file: ${path.basename(downloadedFilePath)}`);
+          safeSend('progress', `✅ Download finished. Identified file: ${downloadedFilePath}`);
       } catch (extractError) {
           safeSend('progress', `❌ Error determining downloaded file path after download.`);
           safeSend('progress', `   Error: ${extractError.message}`);
@@ -471,7 +644,16 @@ ipcMain.on('download-video', async (event, options) => {
         safeSend('progress', '⏳ Checking if conversion is needed...');
         try {
           const originalInputPath = downloadedFilePath;
-          const sanitizedFileName = sanitize(path.basename(originalInputPath));
+          const originalFileName = path.basename(originalInputPath);
+          let sanitizedFileName = sanitize(originalFileName);
+          
+          // edge case
+          if (!sanitizedFileName || sanitizedFileName.trim() === '') {
+            const ext = path.extname(originalFileName) || '.mp4';
+            sanitizedFileName = `download_${Date.now()}${ext}`;
+            safeSend('progress', `⚠️ Original filename contained only invalid characters. Using: ${sanitizedFileName}`);
+          }
+          
           const sanitizedInputPath = path.join(path.dirname(originalInputPath), sanitizedFileName);
 
           // Rename downloaded file -> sanitized version
@@ -500,12 +682,29 @@ ipcMain.on('download-video', async (event, options) => {
 
           safeSend('progress', `🎬 Converting ${inputFilename} to ${targetFormat.toUpperCase()}...`);
 
+          const getVideoEncoder = () => {
+            if (!currentSettings.gpuAcceleration) return 'copy';
+            
+            const gpuType = currentSettings.gpuType || 'auto';
+            if (gpuType === 'nvidia') return 'h264_nvenc';
+            if (gpuType === 'amd') return 'h264_amf';
+            if (gpuType === 'intel') return 'h264_qsv';
+            return 'copy';
+          };
+
+          const videoEncoder = getVideoEncoder();
+          const useGpu = currentSettings.gpuAcceleration && videoEncoder !== 'copy';
+          
+          if (useGpu) {
+            safeSend('progress', `🖥️ Using GPU acceleration (${videoEncoder})`);
+          }
+
           if (isWindows) {
               let ffmpegCommand;
               if (targetFormat === "mp3" || targetFormat === "m4a") {
                 ffmpegCommand = `ffmpeg -i "${inputPath}" -vn -c:a ${targetFormat === "mp3" ? 'libmp3lame' : 'aac'} -y "${outputPath}"`;
               } else {
-                ffmpegCommand = `ffmpeg -i "${inputPath}" -c:v copy -c:a aac -movflags +faststart -y "${outputPath}"`;
+                ffmpegCommand = `ffmpeg -i "${inputPath}" -c:v ${videoEncoder} -c:a aac -movflags +faststart -y "${outputPath}"`;
               }
               ffmpegProcess = spawn(ffmpegCommand, { shell: true });
           } else {
@@ -513,7 +712,7 @@ ipcMain.on('download-video', async (event, options) => {
               if (targetFormat === "mp3" || targetFormat === "m4a") {
                 ffmpegArgs = ['-i', inputPath, '-vn', '-c:a', targetFormat === "mp3" ? 'libmp3lame' : 'aac', '-y', outputPath];
               } else {
-                ffmpegArgs = ['-i', inputPath, '-c:v', 'copy', '-c:a', 'aac', '-movflags', '+faststart', '-y', outputPath];
+                ffmpegArgs = ['-i', inputPath, '-c:v', videoEncoder, '-c:a', 'aac', '-movflags', '+faststart', '-y', outputPath];
               }
               ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
           }
@@ -533,7 +732,7 @@ ipcMain.on('download-video', async (event, options) => {
           ffmpegProcess.on('close', (ffmpegCode) => {
             ffmpegProcess = null;
             if (ffmpegCode === 0) {
-              safeSend('progress', `🎉 Successfully converted to ${outputFilename}`);
+              safeSend('progress', `🎉 Successfully converted to ${outputPath}`);
               const shouldDelete = !currentSettings.keepOriginalAfterConvert;
               const pathsDiffer = inputPath.toLowerCase() !== outputPath.toLowerCase();
               if (shouldDelete && pathsDiffer) {
@@ -600,24 +799,85 @@ ipcMain.on('download-video', async (event, options) => {
 
 // handle cancel-download, kill yt-dlp and ffmpeg if running
 ipcMain.on('cancel-download', () => {
-  let wasCancelled = false;
-  if (ffmpegProcess) {
-    ffmpegProcess.kill();
-    ffmpegProcess = null;
-    wasCancelled = true;
-  }
-  if (ytdlpProcess) {
-    ytdlpProcess.kill();
-    ytdlpProcess = null;
-    wasCancelled = true;
-  }
-  if (wasCancelled && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('progress', '⏹️ Download/Conversion cancelled by user.');
-      mainWindow.webContents.send('complete', '⏹️ Cancelled.');
+  try {
+    let wasCancelled = false;
+    if (ffmpegProcess) {
+      try {
+        ffmpegProcess.kill();
+      } catch (killErr) {
+        console.error('Error killing ffmpeg process:', killErr);
+      }
+      ffmpegProcess = null;
+      wasCancelled = true;
+    }
+    if (ytdlpProcess) {
+      try {
+        ytdlpProcess.kill();
+      } catch (killErr) {
+        console.error('Error killing yt-dlp process:', killErr);
+      }
+      ytdlpProcess = null;
+      wasCancelled = true;
+    }
+    if (wasCancelled && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('progress', '⏹️ Download/Conversion cancelled by user.');
+        mainWindow.webContents.send('complete', '⏹️ Cancelled.');
+    }
+  } catch (error) {
+    console.error('Error in cancel-download handler:', error);
   }
 });
 
 ipcMain.handle('restart-app', () => {
   app.relaunch();
   app.exit(0);
+});
+
+// file location via system file mgr
+ipcMain.on('open-file-location', (_, filePath) => {
+  try {
+    if (filePath && typeof filePath === 'string' && fs.existsSync(filePath)) {
+      shell.showItemInFolder(filePath);
+    } else if (filePath && typeof filePath === 'string') {
+      const dir = path.dirname(filePath);
+      if (fs.existsSync(dir)) {
+        shell.openPath(dir).catch(err => {
+          console.error('Error opening directory:', err);
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Error in open-file-location handler:', error);
+  }
+});
+
+ipcMain.on('show-notification', (_, options) => {
+  try {
+    if (Notification.isSupported()) {
+      const notification = new Notification({
+        title: options?.title || 'ROSI',
+        body: options?.body || '',
+        icon: path.join(__dirname, 'app.png'),
+        silent: false
+      });
+      
+      notification.on('click', () => {
+        try {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.focus();
+          }
+          if (options?.filePath) {
+            shell.showItemInFolder(options.filePath);
+          }
+        } catch (clickErr) {
+          console.error('Error handling notification click:', clickErr);
+        }
+      });
+      
+      notification.show();
+    }
+  } catch (error) {
+    console.error('Error showing notification:', error);
+  }
 });

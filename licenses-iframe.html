@@ -1503,7 +1503,85 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.</p>
           </div>
         </details>
       </div>
+      <div class="license-card" id="npm-licenses-section">
+        <div class="license-title">NPM Package Dependencies</div>
+        <div class="license-meta">
+          The following npm packages are used by ROSI and distributed under their respective licenses.
+        </div>
+        <div id="npm-licenses-container">
+          <p style="color: #999; font-style: italic;">Loading npm package licenses...</p>
+        </div>
+      </div>
     </div>
   </div>
+
+  <script>
+    // Fetch licenses.json
+    async function loadNpmLicenses() {
+      const container = document.getElementById('npm-licenses-container');
+      try {
+        const response = await fetch('licenses.json');
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const licenses = await response.json();
+        
+        // Group licenses by license type for better organization
+        const licenseGroups = {};
+        for (const [packageName, info] of Object.entries(licenses)) {
+          const licenseType = info.licenses || 'Unknown';
+          if (!licenseGroups[licenseType]) {
+            licenseGroups[licenseType] = [];
+          }
+          licenseGroups[licenseType].push({ name: packageName, ...info });
+        }
+
+        const sortedLicenseTypes = Object.keys(licenseGroups).sort();
+        
+        let html = '';
+
+        const totalPackages = Object.keys(licenses).length;
+        html += `<p style="margin-bottom: 16px; color: #d6cfc9;">Total packages: <strong>${totalPackages}</strong></p>`;
+
+        for (const licenseType of sortedLicenseTypes) {
+          const packages = licenseGroups[licenseType];
+          html += `
+            <details style="margin-bottom: 12px;">
+              <summary style="cursor: pointer; font-weight: 500; color: #b7e7b7;">
+                ${licenseType} (${packages.length} package${packages.length !== 1 ? 's' : ''})
+              </summary>
+              <div style="margin-top: 8px; padding-left: 12px;">
+          `;
+          
+          for (const pkg of packages.sort((a, b) => a.name.localeCompare(b.name))) {
+            const repoLink = pkg.repository ? 
+              `<a href="#" onclick="event.preventDefault(); window.parent?.api?.openExternal('${pkg.repository}') || window.open('${pkg.repository}', '_blank');" style="color: #b7e7b7; font-size: 0.9em;">Repository</a>` : '';
+            const licenseLink = pkg.licenseUrl ? 
+              `<a href="#" onclick="event.preventDefault(); window.parent?.api?.openExternal('${pkg.licenseUrl}') || window.open('${pkg.licenseUrl}', '_blank');" style="color: #b7e7b7; font-size: 0.9em;">License</a>` : '';
+            const links = [repoLink, licenseLink].filter(Boolean).join(' • ');
+            
+            html += `
+              <div style="margin-bottom: 8px; padding: 8px; background: rgba(0,0,0,0.15); border-radius: 6px;">
+                <div style="font-weight: 500; color: #ffe6c7; font-size: 0.95em;">${pkg.name}</div>
+                ${links ? `<div style="margin-top: 4px;">${links}</div>` : ''}
+              </div>
+            `;
+          }
+          
+          html += `
+              </div>
+            </details>
+          `;
+        }
+        
+        container.innerHTML = html;
+      } catch (error) {
+        container.innerHTML = `<p style="color: #ff9999;">Failed to load npm licenses: ${error.message}</p>`;
+        console.error('Error loading npm licenses:', error);
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadNpmLicenses);
+  </script>
 </body>
 </html>

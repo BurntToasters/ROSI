@@ -10,51 +10,75 @@
     return isMac() ? 'Cmd' : 'Ctrl';
   }
 
+  function isValidUrl(string) {
+    try {
+      const url = new URL(string);
+      return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch (_) {
+      return false;
+    }
+  }
+
   // toggles console output visibility
   function updateConsoleVisibility(show) {
-    const outputEl = document.getElementById('output');
-    outputEl.style.display = show ? 'block' : 'none';
+    const consoleSection = document.getElementById('console-section');
+    if (consoleSection) {
+      if (show) {
+        consoleSection.classList.add('visible');
+      } else {
+        consoleSection.classList.remove('visible');
+      }
+    }
   }
 
   // handles loader in button, swaps text for spinner, click cancels
   function setButtonLoading(button, isLoading, onCancel) {
     if (!button) return;
     if (isLoading) {
+      if (!button.dataset.defaultText) {
+        button.dataset.defaultText = button.textContent.trim();
+      }
       button.classList.add('loading');
       button.innerHTML = `<img src="loader.svg" class="loader-icon" alt="Loading...">`;
       button.disabled = false;
       button.onclick = onCancel;
     } else {
       button.classList.remove('loading');
-      button.innerHTML = button.dataset.defaultText || button.textContent;
+      button.innerHTML = button.dataset.defaultText || 'Action';
       button.disabled = false;
       button.onclick = button._originalClick;
     }
   }
 
-  function toggleSettingsModal() {
-    const modal = document.getElementById('settings-modal');
-    if (!modal) return;
-    if (modal.style.display !== 'flex') {
-      modal.classList.add('showing');
-      modal.style.display = 'flex';
-      // Force reflow
-      void modal.offsetWidth;
-      requestAnimationFrame(() => {
-        modal.classList.remove('showing');
-      });
+  function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    if (!sidebar) return;
+    
+    const isOpen = sidebar.classList.contains('open');
+    if (isOpen) {
+      sidebar.classList.remove('open');
+      if (overlay) overlay.classList.remove('active');
     } else {
-      modal.classList.add('hiding');
-      setTimeout(() => {
-        modal.style.display = 'none';
-        modal.classList.remove('hiding');
-      }, 150);
+      sidebar.classList.add('open');
+      if (overlay) overlay.classList.add('active');
     }
+  }
+  
+  function closeSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    if (sidebar) sidebar.classList.remove('open');
+    if (overlay) overlay.classList.remove('active');
   }
   function toggleAdvancedUI(show) {
     const formatSection = document.getElementById('formatOptions');
     if (formatSection) {
-      formatSection.style.display = show ? 'block' : 'none';
+      if (show) {
+        formatSection.classList.add('visible');
+      } else {
+        formatSection.classList.remove('visible');
+      }
     }
   }
   
@@ -70,10 +94,9 @@
     btnContainer.innerHTML = '';
     
     modal.classList.add('showing');
-    modal.style.display = 'flex';
-    
+    modal.classList.add('active');
+
     void modal.offsetWidth;
-    
     requestAnimationFrame(() => {
       modal.classList.remove('showing');
     });
@@ -91,18 +114,11 @@
   function hideModal(modal, action) {
     modal.classList.add('hiding');
     setTimeout(() => {
-      modal.style.display = 'none';
-      modal.classList.remove('hiding');
+      modal.classList.remove('active', 'hiding');
       if (typeof action === 'function') action();
-    }, 150);
+    }, 200);
   }
   
-  function updateKeepOriginalToggleState() {
-    const keepOriginalToggle = document.getElementById('keepOriginalToggle');
-    const keepOriginalLabel = keepOriginalToggle ? keepOriginalToggle.closest('label') : null;
-  }
-
-
   function showKeyboardShortcuts() {
     const modKey = getModifierKeyName();
     showModal({
@@ -124,134 +140,234 @@
     const btn = document.getElementById('fetchFormatsBtn');
     const urlInput = document.getElementById('url');
     const videoUrl = urlInput ? urlInput.value : null;
-    if (!btn || !videoUrl || videoUrl.trim() === "") {
-      showModal({ title: "Input Error", message: "Please enter a video URL first.", buttons: [{ label: "OK" }] });
-      return;
-    }
-    if (isFetchingFormats) return;
-    isFetchingFormats = true;
-    fetchFormatsAbort = () => {
-      isFetchingFormats = false;
-      setButtonLoading(btn, false);
-    };
-    setButtonLoading(btn, true, () => {
-      window.api.cancelDownload();
-      fetchFormatsAbort();
-    });
-    const videoSelect = document.getElementById('videoFormat');
-    const audioSelect = document.getElementById('audioFormat');
-    if (videoSelect) videoSelect.innerHTML = '<option value="">Loading...</option>';
-    if (audioSelect) audioSelect.innerHTML = '<option value="">Loading...</option>';
+    
     try {
-      const output = await window.api.getFormats(videoUrl);
-      const lines = output.split('\n');
-      if (videoSelect) videoSelect.innerHTML = '<option value="">Select Video Format</option>';
-      if (audioSelect) audioSelect.innerHTML = '<option value="">Select Audio Format</option>';
-      let videoFormatsFound = 0, audioFormatsFound = 0;
-      lines.forEach(line => {
-        if (/^\s*\d+\s+[a-zA-Z0-9]+/.test(line.trim())) {
-          const parts = line.trim().split(/\s+/);
-          const formatId = parts[0];
-          const option = document.createElement('option');
-          option.value = formatId;
-          let labelText = line.trim();
-          const resolutionMatch = labelText.match(/(\d{3,4}x\d{3,4}|\d{3,4}p)/);
-          const fpsMatch = labelText.match(/@\s*(\d+fps)/);
-          const sizeMatch = labelText.match(/(\d+(\.\d+)?(MiB|GiB|KiB))/);
-          const codecMatch = line.match(/(avc1|vp9|av01|h264|h265|opus|mp4a|aac|vorbis)/i);
-          let cleanLabel = `ID: ${formatId}`;
-          if (resolutionMatch) cleanLabel += ` ${resolutionMatch[0]}`;
-          if (fpsMatch) cleanLabel += ` ${fpsMatch[1]}`;
-          if (codecMatch) cleanLabel += ` (${codecMatch[0]})`;
-          if (sizeMatch) cleanLabel += ` ~${sizeMatch[0]}`;
-          option.text = cleanLabel;
-          option.title = line.trim();
-          const isVideo = /video/.test(line.toLowerCase()) && !/audio only/i.test(line);
-          const isAudio = /audio/.test(line.toLowerCase()) && !/video only/i.test(line);
-          const isVideoOnly = /video only/i.test(line);
-          const isAudioOnly = /audio only/i.test(line);
-          if (isVideoOnly || (isVideo && !isAudio)) {
-            if (videoSelect) videoSelect.appendChild(option);
-            videoFormatsFound++;
-          } else if (isAudioOnly || (isAudio && !isVideo)) {
-            if (audioSelect) audioSelect.appendChild(option);
-            audioFormatsFound++;
-          } else if (isVideo && isAudio) {
-            if (videoSelect) videoSelect.appendChild(option);
-            videoFormatsFound++;
-          }
-        }
+      if (!btn || !videoUrl || videoUrl.trim() === "") {
+        showModal({ title: "Input Error", message: "Please enter a video URL first.", buttons: [{ label: "OK" }] });
+        return;
+      }
+      
+      // Validate URL format
+      if (!isValidUrl(videoUrl.trim())) {
+        showModal({ 
+          title: "Invalid URL", 
+          message: "Please enter a valid URL starting with http:// or https://", 
+          buttons: [{ label: "OK" }] 
+        });
+        return;
+      }
+      
+      if (isFetchingFormats) return;
+      isFetchingFormats = true;
+      fetchFormatsAbort = () => {
+        isFetchingFormats = false;
+        setButtonLoading(btn, false);
+      };
+      setButtonLoading(btn, true, () => {
+        window.api.cancelDownload();
+        fetchFormatsAbort();
       });
-      if (videoFormatsFound === 0 && videoSelect) videoSelect.innerHTML = '<option value="">No video formats found</option>';
-      if (audioFormatsFound === 0 && audioSelect) audioSelect.innerHTML = '<option value="">No audio formats found</option>';
-    } catch (e) {
-      const errorMessage = typeof e === 'string' ? e : (e.message || 'Unknown error');
-      if (videoSelect) videoSelect.innerHTML = '<option value="">Error loading formats</option>';
-      if (audioSelect) audioSelect.innerHTML = '<option value="">Error loading formats</option>';
+      const videoSelect = document.getElementById('videoFormat');
+      const audioSelect = document.getElementById('audioFormat');
+      if (videoSelect) videoSelect.innerHTML = '<option value="">Loading...</option>';
+      if (audioSelect) audioSelect.innerHTML = '<option value="">Loading...</option>';
+      try {
+        const output = await window.api.getFormats(videoUrl);
+        const lines = output.split('\n');
+        if (videoSelect) videoSelect.innerHTML = '<option value="">Select Video Format</option>';
+        if (audioSelect) audioSelect.innerHTML = '<option value="">Select Audio Format</option>';
+        let videoFormatsFound = 0, audioFormatsFound = 0;
+        lines.forEach(line => {
+          if (/^\s*\d+\s+[a-zA-Z0-9]+/.test(line.trim())) {
+            const parts = line.trim().split(/\s+/);
+            const formatId = parts[0];
+            const option = document.createElement('option');
+            option.value = formatId;
+            let labelText = line.trim();
+            const resolutionMatch = labelText.match(/(\d{3,4}x\d{3,4}|\d{3,4}p)/);
+            const fpsMatch = labelText.match(/@\s*(\d+fps)/);
+            const sizeMatch = labelText.match(/(\d+(\.\d+)?(MiB|GiB|KiB))/);
+            const codecMatch = line.match(/(avc1|vp9|av01|h264|h265|opus|mp4a|aac|vorbis)/i);
+            let cleanLabel = `ID: ${formatId}`;
+            if (resolutionMatch) cleanLabel += ` ${resolutionMatch[0]}`;
+            if (fpsMatch) cleanLabel += ` ${fpsMatch[1]}`;
+            if (codecMatch) cleanLabel += ` (${codecMatch[0]})`;
+            if (sizeMatch) cleanLabel += ` ~${sizeMatch[0]}`;
+            option.text = cleanLabel;
+            option.title = line.trim();
+            const isVideo = /video/.test(line.toLowerCase()) && !/audio only/i.test(line);
+            const isAudio = /audio/.test(line.toLowerCase()) && !/video only/i.test(line);
+            const isVideoOnly = /video only/i.test(line);
+            const isAudioOnly = /audio only/i.test(line);
+            if (isVideoOnly || (isVideo && !isAudio)) {
+              if (videoSelect) videoSelect.appendChild(option);
+              videoFormatsFound++;
+            } else if (isAudioOnly || (isAudio && !isVideo)) {
+              if (audioSelect) audioSelect.appendChild(option);
+              audioFormatsFound++;
+            } else if (isVideo && isAudio) {
+              if (videoSelect) videoSelect.appendChild(option);
+              videoFormatsFound++;
+            }
+          }
+        });
+        if (videoFormatsFound === 0 && videoSelect) videoSelect.innerHTML = '<option value="">No video formats found</option>';
+        if (audioFormatsFound === 0 && audioSelect) audioSelect.innerHTML = '<option value="">No audio formats found</option>';
+      } catch (e) {
+        const errorMessage = typeof e === 'string' ? e : (e.message || 'Unknown error');
+        if (videoSelect) videoSelect.innerHTML = '<option value="">Error loading formats</option>';
+        if (audioSelect) audioSelect.innerHTML = '<option value="">Error loading formats</option>';
+        showModal({
+          title: "Format Fetch Failed",
+          message: `Could not retrieve formats.\nError: ${errorMessage}`,
+          buttons: [{ label: "OK" }]
+        });
+      } finally {
+        isFetchingFormats = false;
+        setButtonLoading(btn, false);
+      }
+    } catch (outerError) {
+      console.error('Unexpected error in fetchFormats:', outerError);
+      isFetchingFormats = false;
+      if (btn) setButtonLoading(btn, false);
       showModal({
-        title: "Format Fetch Failed",
-        message: `Could not retrieve formats.\nError: ${errorMessage}`,
+        title: "Unexpected Error",
+        message: "An unexpected error occurred while fetching formats. Please try again.",
         buttons: [{ label: "OK" }]
       });
-    } finally {
-      isFetchingFormats = false;
-      setButtonLoading(btn, false);
     }
   }
 
   // handles download button logic
   let isDownloading = false;
   let downloadAbort = null;
+  let lastDownloadedFilePath = null;
 
-  // Version compare helper
-  function compareVersions(a, b) {
-    const pa = a.split('.').map(Number);
-    const pb = b.split('.').map(Number);
-    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-      const na = pa[i] || 0, nb = pb[i] || 0;
-      if (na > nb) return 1;
-      if (na < nb) return -1;
+  function showProgressBar(status = 'Downloading...') {
+    const container = document.getElementById('progress-container');
+    const statusEl = document.getElementById('progress-status');
+    const percentEl = document.getElementById('progress-percent');
+    const bar = document.getElementById('progress-bar');
+    const details = document.getElementById('progress-details');
+    
+    if (container) {
+      container.classList.add('visible');
     }
-    return 0;
+    if (statusEl) statusEl.textContent = status;
+    if (percentEl) percentEl.textContent = '0%';
+    if (bar) {
+      bar.style.width = '0%';
+      bar.classList.remove('indeterminate');
+    }
+    if (details) details.textContent = '';
   }
 
-function testmsg () {
-          showModal({
-          title: "Test!",
-          message: `ATest`,
-          buttons: [
-            { label: "Action", action: () => window.api.openExternal('https://google.com') },
-            { label: "No thanks" },
-            { label: "Test 3" }
-          ]
-        });
-}
+  function updateProgressBar(percent, statusText = null, detailsText = null) {
+    const statusEl = document.getElementById('progress-status');
+    const percentEl = document.getElementById('progress-percent');
+    const bar = document.getElementById('progress-bar');
+    const details = document.getElementById('progress-details');
+    
+    if (percentEl) percentEl.textContent = `${Math.round(percent)}%`;
+    if (bar) {
+      bar.style.width = `${percent}%`;
+      bar.classList.remove('indeterminate');
+    }
+    if (statusText && statusEl) statusEl.textContent = statusText;
+    if (detailsText && details) details.textContent = detailsText;
+  }
 
-  // Check updates
+  function setProgressIndeterminate(status = 'Processing...') {
+    const statusEl = document.getElementById('progress-status');
+    const percentEl = document.getElementById('progress-percent');
+    const bar = document.getElementById('progress-bar');
+    const details = document.getElementById('progress-details');
+    
+    if (statusEl) statusEl.textContent = status;
+    if (percentEl) percentEl.textContent = '';
+    if (bar) bar.classList.add('indeterminate');
+    if (details) details.textContent = '';
+  }
+
+  function hideProgressBar() {
+    const container = document.getElementById('progress-container');
+    if (container) {
+      container.classList.remove('visible');
+    }
+  }
+
+  function parseYtdlpProgress(message) {
+    const progressMatch = message.match(/\[download\]\s+(\d+\.?\d*)%\s+of\s+~?(\S+)\s+at\s+(\S+)\s+ETA\s+(\S+)/);
+    if (progressMatch) {
+      return {
+        percent: parseFloat(progressMatch[1]),
+        totalSize: progressMatch[2],
+        speed: progressMatch[3],
+        eta: progressMatch[4]
+      };
+    }
+
+    const simpleMatch = message.match(/\[download\]\s+(\d+\.?\d*)%\s+of\s+~?(\S+)/);
+    if (simpleMatch) {
+      return {
+        percent: parseFloat(simpleMatch[1]),
+        totalSize: simpleMatch[2],
+        speed: null,
+        eta: null
+      };
+    }
+    
+    return null;
+  }
+
+  function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
   async function checkForUpdates() {
-    try {
-      const res = await fetch('https://api.github.com/repos/BurntToasters/ROSI/releases/latest', {
-        headers: { 'User-Agent': 'ROSI-Updater' }
+    const channel = window.api.getChannel();
+
+    if (channel === 'msstore') {
+      showModal({
+        title: "Microsoft Store Version",
+        message: "Updates for the Microsoft Store version are managed through the Microsoft Store app.",
+        buttons: [
+          { label: "Open Store", action: () => window.api.openExternal('ms-windows-store://pdp/?ProductId=9N0BQSTFL4SV') },
+          { label: "OK" }
+        ]
       });
-      if (!res.ok) throw new Error('Failed to fetch release info');
-      const release = await res.json();
-      const latestVersion = release.tag_name.replace(/^v/, '');
-      const currentVersion = await window.api.getAppVersion();
-      if (compareVersions(latestVersion, currentVersion) > 0) {
+      return;
+    }
+
+    try {
+      showModal({
+        title: "Checking for Updates",
+        message: "Please wait while we check for updates...",
+        buttons: []
+      });
+      
+      const result = await window.api.checkForUpdates();
+
+      if (result && result.error === 'dev-mode') {
         showModal({
-          title: "Update Available!",
-          message: `A new version (v${latestVersion}) of ROSI is available!`,
-          buttons: [
-            { label: "Update", action: () => window.api.openExternal(release.html_url) },
-            { label: "No thanks" }
-          ]
-        });
-      } else {
-        showModal({
-          title: "ROSI is up to date!",
-          message: `You are running the latest version (v${currentVersion}).`,
+          title: "Development Mode",
+          message: "Update checking is not available when running in development mode.<br><br>Build and package the app to test auto-updates.",
           buttons: [{ label: "OK" }]
         });
+        return;
+      }
+
+      if (result && result.error && result.error !== 'dev-mode') {
+        showModal({
+          title: "Update Check Failed",
+          message: `Could not check for updates.<br><br>Error: ${result.error}`,
+          buttons: [{ label: "OK" }]
+        });
+        return;
       }
     } catch (e) {
       showModal({
@@ -261,6 +377,91 @@ function testmsg () {
       });
     }
   }
+
+  function setupAutoUpdater() {
+    let updateVersion = '';
+    
+    window.api.onUpdaterStatus((data) => {
+      switch (data.status) {
+        case 'checking':
+          break;
+          
+        case 'available':
+          updateVersion = data.version;
+          showModal({
+            title: "Update Available!",
+            message: `A new version (v${data.version}) of ROSI is available!\n\nWould you like to download and install it?`,
+            buttons: [
+              { 
+                label: "Download & Install", 
+                action: async () => {
+                  showModal({
+                    title: "Downloading Update",
+                    message: `<div class="update-progress-container">
+                      <div class="update-progress-bar-wrapper">
+                        <div id="update-progress-bar" class="update-progress-bar"></div>
+                      </div>
+                      <div id="update-progress-info" class="update-progress-info">Starting download...</div>
+                    </div>`,
+                    buttons: []
+                  });
+                  await window.api.downloadUpdate();
+                }
+              },
+              { label: "Later" }
+            ]
+          });
+          break;
+          
+        case 'not-available':
+          showModal({
+            title: "ROSI is up to date!",
+            message: `You are running the latest version (v${data.version}).`,
+            buttons: [{ label: "OK" }]
+          });
+          break;
+          
+        case 'error':
+          showModal({
+            title: "Update Error",
+            message: `An error occurred while checking for updates:\n${data.message}`,
+            buttons: [{ label: "OK" }]
+          });
+          break;
+          
+        case 'downloaded':
+          showModal({
+            title: "Update Ready!",
+            message: `Version ${data.version} has been downloaded.\n\nThe update will be installed when you restart ROSI.`,
+            buttons: [
+              { 
+                label: "Restart Now", 
+                action: () => window.api.installUpdate()
+              },
+              { label: "Later" }
+            ]
+          });
+          break;
+      }
+    });
+    
+    window.api.onUpdaterProgress((data) => {
+      const progressBar = document.getElementById('update-progress-bar');
+      const progressInfo = document.getElementById('update-progress-info');
+      
+      if (progressBar) {
+        progressBar.style.width = `${data.percent}%`;
+      }
+      
+      if (progressInfo) {
+        const speed = formatBytes(data.bytesPerSecond) + '/s';
+        const downloaded = formatBytes(data.transferred);
+        const total = formatBytes(data.total);
+        progressInfo.textContent = `${downloaded} / ${total} (${speed}) - ${Math.round(data.percent)}%`;
+      }
+    });
+  }
+
 /*
       // License popup
 function showLicenses() {
@@ -284,59 +485,27 @@ function hideLicenses() {
 function showLicenses() {
   const licensesOverlay = document.getElementById('licenses-overlay');
   if (licensesOverlay) {
-    licensesOverlay.classList.add('showing');
-    licensesOverlay.style.display = 'flex';
+    licensesOverlay.classList.add('active');
     document.body.style.overflow = 'hidden';
-    void licensesOverlay.offsetWidth;
-    requestAnimationFrame(() => {
-      licensesOverlay.classList.remove('showing');
-    });
   }
 }
 
 function hideLicenses() {
   const licensesOverlay = document.getElementById('licenses-overlay');
   if (licensesOverlay) {
-    licensesOverlay.classList.add('hiding');
+    licensesOverlay.classList.remove('active');
     setTimeout(() => {
-      licensesOverlay.style.display = 'none';
-      licensesOverlay.classList.remove('hiding');
       document.body.style.overflow = '';
     }, 300);
   }
 }
 
-  function showAdditionalOptions() {
-    const modal = document.getElementById('additional-options-modal');
-    if (!modal) return;
-    
-    modal.classList.add('showing');
-    modal.style.display = 'flex';
-    
-    void modal.offsetWidth;
-    
-    requestAnimationFrame(() => {
-      modal.classList.remove('showing');
-    });
-  }
-
-  function hideAdditionalOptions() {
-    const modal = document.getElementById('additional-options-modal');
-    if (!modal) return;
-    
-    modal.classList.add('hiding');
-    setTimeout(() => {
-      modal.style.display = 'none';
-      modal.classList.remove('hiding');
-    }, 150);
-  }
-
   function updateBackgroundAnimation(animate) {
     const body = document.body;
     if (animate) {
-      body.style.animation = 'gradientFlow 30s ease infinite alternate';
+      body.classList.add('animate-bg');
     } else {
-      body.style.animation = 'none';
+      body.classList.remove('animate-bg');
     }
   }
 
@@ -409,6 +578,27 @@ function hideLicenses() {
       };
       showModal({ title: "Settings Error", message: "Could not load settings. Using defaults.", buttons: [{ label: "OK" }] });
     }
+
+    try {
+      const version = await window.api.getAppVersion();
+      const versionLink = document.getElementById('versionLink');
+      if (versionLink && version) {
+        versionLink.textContent = `v${version}`;
+        versionLink.onclick = () => {
+          window.api.openExternal(`https://github.com/BurntToasters/ROSI/releases/tag/v${version}`);
+          return false;
+        };
+      }
+    } catch (e) {
+      console.error('Could not get app version:', e);
+    }
+    
+    try {
+      setupAutoUpdater();
+    } catch (e) {
+      console.error('Failed to setup auto-updater:', e);
+    }
+    
     const consoleToggle = document.getElementById('consoleToggle');
     const advancedToggle = document.getElementById('advancedToggle');
     const keepOriginalToggle = document.getElementById('keepOriginalToggle');
@@ -419,31 +609,42 @@ function hideLicenses() {
     const convertFormatContainer = document.getElementById('convertFormatContainer');
     const convertFormatSelect = document.getElementById('convertFormat');
     const keepOriginalLabel = document.getElementById('keepOriginalLabel');
+    const gpuAccelerationToggle = document.getElementById('gpuAccelerationToggle');
+    const gpuAccelerationLabel = document.getElementById('gpuAccelerationLabel');
+    const gpuTypeContainer = document.getElementById('gpuTypeContainer');
+    const gpuTypeSelect = document.getElementById('gpuType');
     const outputEl = document.getElementById('output');
-    const settingsButton = document.getElementById('settings');
-    const settingsModal = document.getElementById('settings-modal');
     const resetSettingsBtn = document.getElementById('resetSettings');
     const fetchFormatsBtn = document.getElementById('fetchFormatsBtn');
     const downloadBtn = document.getElementById('downloadBtn');
     const checkUpdateBtn = document.getElementById('checkUpdateBtn');
-    const additionalOptionsBtn = document.getElementById('additionalOptionsBtn');
-    const closeAdditionalOptionsBtn = document.getElementById('closeAdditionalOptions');
     const animateBackgroundToggle = document.getElementById('animateBackgroundToggle');
+    const audioOnlyToggle = document.getElementById('audioOnlyToggle');
+    const notificationsToggle = document.getElementById('notificationsToggle');
+    
+    const settingsBtn = document.getElementById('settingsBtn');
+    const closeSidebarBtn = document.getElementById('closeSidebar');
+    const sidebarOverlay = document.getElementById('sidebar-overlay');
+    const shortcutsBtn = document.getElementById('shortcutsBtn');
+    const clearUrlBtn = document.getElementById('clearUrl');
+    const clearConsoleBtn = document.getElementById('clearConsole');
+    const urlInput = document.getElementById('url');
     
     if (fetchFormatsBtn) fetchFormatsBtn._originalClick = fetchFormats;
     if (downloadBtn) downloadBtn._originalClick = null;
 
-    // userAgent
     const isWindows = navigator.userAgent.includes('Windows');
-
-    // Filter browser options for Windows
     if (isWindows && browserChoiceSelect) {
-      // Only keep Firefox
       Array.from(browserChoiceSelect.options).forEach(opt => {
-        if (opt.value !== "Firefox") browserChoiceSelect.removeChild(opt);
+        if (opt.value !== "Firefox") {
+          browserChoiceSelect.removeChild(opt);
+        }
       });
-      //Firefox
       browserChoiceSelect.value = "Firefox";
+      if (settings.browserChoice !== "Firefox") {
+        settings.browserChoice = "Firefox";
+        window.api.saveSettings(settings);
+      }
     }
 
     // update UI from settings
@@ -461,9 +662,38 @@ function hideLicenses() {
       convertToggle.checked = settings.convertEnabled ?? false;
       convertFormatSelect.value = settings.convertFormat ?? "mp4";
       keepOriginalToggle.checked = settings.keepOriginalAfterConvert ?? true;
-      convertFormatContainer.style.display = convertToggle.checked ? 'block' : 'none';
-      keepOriginalLabel.style.display = convertToggle.checked ? 'inline-block' : 'none';
-      browserChoiceContainer.style.display = settings.hookBrowser ? 'block' : 'none';
+      
+      if (convertToggle.checked) {
+        convertFormatContainer.classList.add('visible');
+        keepOriginalLabel.classList.add('visible');
+        if (gpuAccelerationLabel) gpuAccelerationLabel.classList.add('visible');
+      } else {
+        convertFormatContainer.classList.remove('visible');
+        keepOriginalLabel.classList.remove('visible');
+        if (gpuAccelerationLabel) gpuAccelerationLabel.classList.remove('visible');
+      }
+      
+      // GPU acceleration settings
+      if (gpuAccelerationToggle) {
+        gpuAccelerationToggle.checked = settings.gpuAcceleration ?? false;
+      }
+      if (gpuTypeSelect) {
+        gpuTypeSelect.value = settings.gpuType ?? 'auto';
+      }
+      if (gpuTypeContainer) {
+        if (settings.gpuAcceleration) {
+          gpuTypeContainer.classList.add('visible');
+        } else {
+          gpuTypeContainer.classList.remove('visible');
+        }
+      }
+      
+      if (settings.hookBrowser) {
+        browserChoiceContainer.classList.add('visible');
+      } else {
+        browserChoiceContainer.classList.remove('visible');
+      }
+      
       updateConsoleVisibility(settings.showConsoleOutput);
       toggleAdvancedUI(settings.advancedOptions);
       
@@ -472,8 +702,38 @@ function hideLicenses() {
         animateBackgroundToggle.checked = settings.animateBackground ?? true;
         updateBackgroundAnimation(settings.animateBackground ?? true);
       }
+      if (audioOnlyToggle) {
+        audioOnlyToggle.checked = settings.audioOnly ?? false;
+        audioOnlyToggle.disabled = settings.advancedOptions ?? false;
+        if (audioOnlyToggle.disabled) {
+          audioOnlyToggle.parentElement.classList.add('disabled');
+          audioOnlyToggle.parentElement.title = 'Disabled when Advanced format selection is enabled';
+        } else {
+          audioOnlyToggle.parentElement.classList.remove('disabled');
+          audioOnlyToggle.parentElement.title = '';
+        }
+      }
+      // disable convert when audio-only is enabled
+      if (convertToggle) {
+        convertToggle.disabled = settings.audioOnly ?? false;
+        if (settings.audioOnly) {
+          convertToggle.parentElement.classList.add('disabled');
+          convertToggle.parentElement.title = 'Disabled when Audio-only mode is enabled (audio already extracted as MP3)';
+        } else {
+          convertToggle.parentElement.classList.remove('disabled');
+          convertToggle.parentElement.title = '';
+        }
+      }
+      if (notificationsToggle) {
+        notificationsToggle.checked = settings.notifications ?? true;
+      }
     };
-    updateUIFromSettings();
+    
+    try {
+      updateUIFromSettings();
+    } catch (e) {
+      console.error('Failed to update UI from settings:', e);
+    }
 
 
     if (!settings.hideSupportModal) {
@@ -495,20 +755,30 @@ function hideLicenses() {
       });
     }
 
+    // Sidebar controls
+    if (settingsBtn) settingsBtn.addEventListener('click', toggleSidebar);
+    if (closeSidebarBtn) closeSidebarBtn.addEventListener('click', closeSidebar);
+    if (sidebarOverlay) sidebarOverlay.addEventListener('click', closeSidebar);
+    if (shortcutsBtn) shortcutsBtn.addEventListener('click', showKeyboardShortcuts);
 
-    if (settingsButton) settingsButton.addEventListener('click', toggleSettingsModal);
-    document.addEventListener('click', (event) => {
-      if (settingsModal && settingsButton && settingsModal.style.display === 'flex' &&
-          !settingsModal.contains(event.target) &&
-          !settingsButton.contains(event.target)) {
-        settingsModal.style.display = 'none';
-      }
-    });
-    document.addEventListener('keydown', (event) => {
-      if (settingsModal && event.key === 'Escape' && settingsModal.style.display === 'flex') {
-        settingsModal.style.display = 'none';
-      }
-    });
+    if (clearUrlBtn && urlInput) {
+      clearUrlBtn.addEventListener('click', () => {
+        urlInput.value = '';
+        urlInput.focus();
+        clearUrlBtn.style.display = 'none';
+      });
+      urlInput.addEventListener('input', () => {
+        clearUrlBtn.style.display = urlInput.value.length > 0 ? 'flex' : 'none';
+      });
+      clearUrlBtn.style.display = urlInput.value.length > 0 ? 'flex' : 'none';
+    }
+
+    if (clearConsoleBtn && outputEl) {
+      clearConsoleBtn.addEventListener('click', () => {
+        outputEl.textContent = '';
+      });
+    }
+
     if (consoleToggle) consoleToggle.addEventListener('change', (e) => {
       settings.showConsoleOutput = e.target.checked;
       window.api.saveSettings(settings);
@@ -517,6 +787,26 @@ function hideLicenses() {
     if (advancedToggle) advancedToggle.addEventListener('change', (e) => {
       settings.advancedOptions = e.target.checked;
       toggleAdvancedUI(e.target.checked);
+      
+      if (audioOnlyToggle) {
+        audioOnlyToggle.disabled = e.target.checked;
+        if (e.target.checked) {
+          audioOnlyToggle.checked = false;
+          settings.audioOnly = false;
+          audioOnlyToggle.parentElement.classList.add('disabled');
+          audioOnlyToggle.parentElement.title = 'Disabled when Advanced format selection is enabled';
+
+          if (convertToggle) {
+            convertToggle.disabled = false;
+            convertToggle.parentElement.classList.remove('disabled');
+            convertToggle.parentElement.title = '';
+          }
+        } else {
+          audioOnlyToggle.parentElement.classList.remove('disabled');
+          audioOnlyToggle.parentElement.title = '';
+        }
+      }
+      
       window.api.saveSettings(settings);
     });
     if (keepOriginalToggle) keepOriginalToggle.addEventListener('change', (e) => {
@@ -529,7 +819,13 @@ function hideLicenses() {
     });
     if (hookBrowserToggle) hookBrowserToggle.addEventListener('change', (e) => {
       settings.hookBrowser = e.target.checked;
-      if (browserChoiceContainer) browserChoiceContainer.style.display = e.target.checked ? 'block' : 'none';
+      if (browserChoiceContainer) {
+        if (e.target.checked) {
+          browserChoiceContainer.classList.add('visible');
+        } else {
+          browserChoiceContainer.classList.remove('visible');
+        }
+      }
       window.api.saveSettings(settings);
     });
     if (browserChoiceSelect) browserChoiceSelect.addEventListener('change', (e) => {
@@ -538,8 +834,16 @@ function hideLicenses() {
     });
     if (convertToggle) convertToggle.addEventListener('change', (e) => {
       settings.convertEnabled = e.target.checked;
-      convertFormatContainer.style.display = e.target.checked ? 'block' : 'none';
-      keepOriginalLabel.style.display = e.target.checked ? 'inline-block' : 'none';
+      if (e.target.checked) {
+        convertFormatContainer.classList.add('visible');
+        keepOriginalLabel.classList.add('visible');
+        if (gpuAccelerationLabel) gpuAccelerationLabel.classList.add('visible');
+      } else {
+        convertFormatContainer.classList.remove('visible');
+        keepOriginalLabel.classList.remove('visible');
+        if (gpuAccelerationLabel) gpuAccelerationLabel.classList.remove('visible');
+        if (gpuTypeContainer) gpuTypeContainer.classList.remove('visible');
+      }
       if (!e.target.checked) {
         settings.keepOriginalAfterConvert = true;
         if (keepOriginalToggle) keepOriginalToggle.checked = true;
@@ -550,26 +854,63 @@ function hideLicenses() {
       settings.convertFormat = e.target.value;
       window.api.saveSettings(settings);
     });
-    if (keepOriginalToggle) keepOriginalToggle.addEventListener('change', (e) => {
-      settings.keepOriginalAfterConvert = e.target.checked;
-      window.api.saveSettings(settings);
-    });
-    
-    // Additional Options button
-    if (additionalOptionsBtn) {
-      additionalOptionsBtn.addEventListener('click', showAdditionalOptions);
+    // GPU acceleration toggle
+    if (gpuAccelerationToggle) {
+      gpuAccelerationToggle.addEventListener('change', (e) => {
+        settings.gpuAcceleration = e.target.checked;
+        if (gpuTypeContainer) {
+          if (e.target.checked) {
+            gpuTypeContainer.classList.add('visible');
+          } else {
+            gpuTypeContainer.classList.remove('visible');
+          }
+        }
+        window.api.saveSettings(settings);
+      });
     }
-    
-    // Close Additional Options modal
-    if (closeAdditionalOptionsBtn) {
-      closeAdditionalOptionsBtn.addEventListener('click', hideAdditionalOptions);
+    if (gpuTypeSelect) {
+      gpuTypeSelect.addEventListener('change', (e) => {
+        settings.gpuType = e.target.value;
+        window.api.saveSettings(settings);
+      });
     }
-    
     // Animate Background toggle
     if (animateBackgroundToggle) {
       animateBackgroundToggle.addEventListener('change', (e) => {
         settings.animateBackground = e.target.checked;
         updateBackgroundAnimation(e.target.checked);
+        window.api.saveSettings(settings);
+      });
+    }
+    
+    // Audio-only toggle
+    if (audioOnlyToggle) {
+      audioOnlyToggle.addEventListener('change', (e) => {
+        settings.audioOnly = e.target.checked;
+
+        if (convertToggle) {
+          convertToggle.disabled = e.target.checked;
+          if (e.target.checked) {
+            convertToggle.checked = false;
+            settings.convertEnabled = false;
+            convertToggle.parentElement.classList.add('disabled');
+            convertToggle.parentElement.title = 'Disabled when Audio-only mode is enabled (audio already extracted as MP3)';
+            if (convertFormatContainer) convertFormatContainer.classList.remove('visible');
+            if (keepOriginalLabel) keepOriginalLabel.classList.remove('visible');
+          } else {
+            convertToggle.parentElement.classList.remove('disabled');
+            convertToggle.parentElement.title = '';
+          }
+        }
+        
+        window.api.saveSettings(settings);
+      });
+    }
+    
+    // Notifications toggle
+    if (notificationsToggle) {
+      notificationsToggle.addEventListener('change', (e) => {
+        settings.notifications = e.target.checked;
         window.api.saveSettings(settings);
       });
     }
@@ -593,39 +934,75 @@ function hideLicenses() {
     // download button
     if (downloadBtn) {
       downloadBtn._originalClick = async function () {
-        if (isDownloading) return;
-        const urlInput = document.getElementById('url');
-        const url = urlInput ? urlInput.value : null;
-        if (!url || url.trim() === "") {
-          showModal({ title: "Input Error", message: "Please enter a video URL.", buttons: [{ label: "OK" }] });
-          return;
-        }
-        const videoSelect = document.getElementById('videoFormat');
-        const audioSelect = document.getElementById('audioFormat');
-        if (settings.advancedOptions && (!videoSelect || !audioSelect || !videoSelect.value || !audioSelect.value)) {
-          showModal({ title: "Format Selection Needed", message: "Please check resolutions and select video/audio formats first.", buttons: [{ label: "OK" }] });
-          return;
-        }
-        const savePath = await window.api.selectDownloadLocation();
-        if (!savePath) {
-          if (outputEl) outputEl.textContent = "⚠️ Download cancelled: No save location selected.";
-          return;
-        }
-        if (outputEl) outputEl.textContent = "";
-        isDownloading = true;
-        downloadAbort = () => {
-          isDownloading = false;
-          setButtonLoading(downloadBtn, false);
-        };
-        setButtonLoading(downloadBtn, true, () => {
-          window.api.cancelDownload();
-          downloadAbort();
-        });
+        try {
+          if (isDownloading) return;
+          const urlInput = document.getElementById('url');
+          const url = urlInput ? urlInput.value : null;
+          if (!url || url.trim() === "") {
+            showModal({ title: "Input Error", message: "Please enter a video URL.", buttons: [{ label: "OK" }] });
+            return;
+          }
+          
+          // Validate URL format
+          if (!isValidUrl(url.trim())) {
+            showModal({ 
+              title: "Invalid URL", 
+              message: "Please enter a valid URL starting with http:// or https://", 
+              buttons: [{ label: "OK" }] 
+            });
+            return;
+          }
+          
+          const videoSelect = document.getElementById('videoFormat');
+          const audioSelect = document.getElementById('audioFormat');
+          if (settings.advancedOptions && (!videoSelect || !audioSelect || !videoSelect.value || !audioSelect.value)) {
+            showModal({ title: "Format Selection Needed", message: "Please check resolutions and select video/audio formats first.", buttons: [{ label: "OK" }] });
+            return;
+          }
+          
+          let savePath;
+          try {
+            savePath = await window.api.selectDownloadLocation();
+          } catch (dialogError) {
+            console.error('Error opening save dialog:', dialogError);
+            showModal({ title: "Error", message: "Could not open the save location dialog. Please try again.", buttons: [{ label: "OK" }] });
+            return;
+          }
+          
+          if (!savePath) {
+            if (outputEl) outputEl.textContent = "⚠️ Download cancelled: No save location selected.";
+            return;
+          }
+          if (outputEl) outputEl.textContent = "";
+          isDownloading = true;
+          downloadAbort = () => {
+            isDownloading = false;
+            setButtonLoading(downloadBtn, false);
+          };
+          setButtonLoading(downloadBtn, true, () => {
+            window.api.cancelDownload();
+            downloadAbort();
+            hideProgressBar();
+          });
+
+        showProgressBar('Starting download...');
+        
         const videoFormat = settings.advancedOptions ? videoSelect.value : null;
         const audioFormat = settings.advancedOptions ? audioSelect.value : null;
         const convertFormat = settings.convertEnabled ? convertFormatSelect.value : null;
         const keepOriginal = settings.convertEnabled ? keepOriginalToggle.checked : null;
         window.api.downloadVideo({ url, videoFormat, audioFormat, outputPath: savePath, convertFormat, keepOriginal });
+        } catch (downloadError) {
+          console.error('Unexpected error starting download:', downloadError);
+          isDownloading = false;
+          setButtonLoading(downloadBtn, false);
+          hideProgressBar();
+          showModal({
+            title: "Download Error",
+            message: "An unexpected error occurred while starting the download. Please try again.",
+            buttons: [{ label: "OK" }]
+          });
+        }
       };
       downloadBtn.onclick = downloadBtn._originalClick;
     }
@@ -640,19 +1017,79 @@ function hideLicenses() {
       if (!outputEl) return;
       outputEl.textContent += message + '\n';
       outputEl.scrollTop = outputEl.scrollHeight;
+
+      const progress = parseYtdlpProgress(message);
+      if (progress) {
+        let detailsText = '';
+        if (progress.speed && progress.eta) {
+          detailsText = `${progress.totalSize} • ${progress.speed} • ETA: ${progress.eta}`;
+        } else if (progress.totalSize) {
+          detailsText = `Size: ${progress.totalSize}`;
+        }
+        updateProgressBar(progress.percent, 'Downloading...', detailsText);
+      } else if (message.includes('[download] Destination:')) {
+        setProgressIndeterminate('Preparing download...');
+      } else if (message.includes('Merging formats')) {
+        setProgressIndeterminate('Merging video and audio...');
+      } else if (message.includes('Converting') || message.includes('[ffmpeg]')) {
+        setProgressIndeterminate('Converting...');
+      } else if (message.includes('100%')) {
+        updateProgressBar(100, 'Download complete!', '');
+      }
+
+      if (message.includes('Identified file:') || message.includes('Successfully converted to')) {
+        const fileMatch = message.match(/(?:Identified file:|Successfully converted to)\s*(.+)$/);
+        if (fileMatch && fileMatch[1]) {
+          lastDownloadedFilePath = fileMatch[1].trim();
+        }
+      }
     });
     window.api.onComplete((statusMessage) => {
       if (downloadBtn) {
         isDownloading = false;
         setButtonLoading(downloadBtn, false);
+
+        const isSuccess = statusMessage.includes('✅') || statusMessage.includes('complete');
+        
+        if (isSuccess) {
+          updateProgressBar(100, 'Complete!', '');
+
+          if (settings.notifications) {
+            window.api.showNotification({
+              title: 'Download Complete!',
+              body: lastDownloadedFilePath ? `Saved: ${lastDownloadedFilePath.split(/[/\\]/).pop()}` : 'Your download has finished.',
+              filePath: lastDownloadedFilePath
+            });
+          }
+        }
+        
+        setTimeout(() => {
+          hideProgressBar();
+        }, 2000);
         
         const originalText = downloadBtn.dataset.defaultText || "Download";
-        downloadBtn.innerHTML = "✅ Download Complete!";
-        downloadBtn.disabled = true;
-        setTimeout(() => {
-          downloadBtn.innerHTML = originalText;
+        
+        if (isSuccess && lastDownloadedFilePath) {
+          downloadBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg><span>Open File Location</span>`;
           downloadBtn.disabled = false;
-        }, 4000);
+          downloadBtn.onclick = () => {
+            window.api.openFileLocation(lastDownloadedFilePath);
+          };
+          setTimeout(() => {
+            downloadBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span>${originalText}</span>`;
+            downloadBtn.disabled = false;
+            downloadBtn.onclick = downloadBtn._originalClick;
+            lastDownloadedFilePath = null;
+          }, 8000);
+        } else {
+          downloadBtn.innerHTML = isSuccess ? "✅ Download Complete!" : originalText;
+          downloadBtn.disabled = isSuccess;
+          setTimeout(() => {
+            downloadBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span>${originalText}</span>`;
+            downloadBtn.disabled = false;
+            downloadBtn.onclick = downloadBtn._originalClick;
+          }, 4000);
+        }
       }
       if (fetchFormatsBtn) setButtonLoading(fetchFormatsBtn, false);
       if (outputEl) {
@@ -663,6 +1100,10 @@ function hideLicenses() {
 
 
     if (settings.firstLaunch) {
+      // Save immediately - change
+      settings.firstLaunch = false;
+      window.api.saveSettings(settings);
+      
       showModal({
         title: "Dependency FFMPEG is Required for this app.",
         message: "ROSI uses FFMPEG for yt-dlp and converting files to MP4.<br>For intended use and stability, Please ensure FFMPEG is installed and accessible in your system's PATH.<br>Click 'More Info' for guidance.",
@@ -671,8 +1112,6 @@ function hideLicenses() {
           { label: "OK", action: () => checkDenoInstallation(settings) }
         ]
       });
-      settings.firstLaunch = false;
-      window.api.saveSettings(settings);
     } else {
       // check Deno
       checkDenoInstallation(settings);
@@ -686,16 +1125,29 @@ if (closeBtn) {
   closeBtn.addEventListener('click', hideLicenses);
 }
 
-// esc key
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') {
-    hideLicenses();
-  }
-});
-
-// Keyboard shortcuts
 document.addEventListener('keydown', (event) => {
   const modifierPressed = isMac() ? event.metaKey : event.ctrlKey;
+  
+  // esc
+  if (event.key === 'Escape') {
+    const licensesOverlay = document.getElementById('licenses-overlay');
+    if (licensesOverlay && licensesOverlay.classList.contains('active')) {
+      hideLicenses();
+      return;
+    }
+    
+    const appModal = document.getElementById('app-modal');
+    if (appModal && appModal.classList.contains('active')) {
+      hideModal(appModal);
+      return;
+    }
+
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar && sidebar.classList.contains('open')) {
+      closeSidebar();
+      return;
+    }
+  }
   
   if (modifierPressed && event.key === 'd') {
     event.preventDefault();
@@ -709,14 +1161,6 @@ document.addEventListener('keydown', (event) => {
     });
   }
   
-  /*
-  if (modifierPressed && event.key === 'o') {
-    event.preventDefault();
-    if (downloadBtn && !isDownloading) downloadBtn._originalClick();
-  }
- Test for possible future use
-  */
-  
   if (modifierPressed && event.key === 'f') {
     event.preventDefault();
     const urlInput = document.getElementById('url');
@@ -725,12 +1169,10 @@ document.addEventListener('keydown', (event) => {
       urlInput.select();
     }
   }
-  
-  
+
   if (modifierPressed && event.key === ',') {
     event.preventDefault();
-    toggleSettingsModal();
+    toggleSidebar();
   }
-  
 });
   });
