@@ -663,7 +663,7 @@
         "licenseUrl": "https://github.com/electron/windows-installer/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "electron@39.2.5": {
+    "electron@39.2.6": {
         "licenses": "MIT",
         "repository": "https://github.com/electron/electron",
         "licenseUrl": "https://github.com/electron/electron/raw/master/LICENSE",
@@ -1613,7 +1613,7 @@
         "licenseUrl": "https://github.com/gajus/roarr/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "rosi@3.0.0-beta.4": {
+    "rosi@3.0.0": {
         "licenses": "MPL-2.0",
         "repository": "https://github.com/BurntToasters/rosi",
         "licenseUrl": "https://github.com/BurntToasters/rosi/raw/master/LICENSE",
