@@ -44,7 +44,9 @@ deb:
   artifactName: ROSI-Linux-${arch}.${ext}
 rpm:
   artifactName: ROSI-Linux-${arch}.${ext}
-  compression: xz
+  fpm:
+    - "--rpm-compression"
+    - "none"
 dmg:
   artifactName: ROSI-MacOS-universal.${ext}
   background: build/dmg-background.png
