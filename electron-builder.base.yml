@@ -24,7 +24,9 @@ nsis:
   oneClick: false
   perMachine: false
 mac:
-  target: dmg
+  target:
+    - dmg
+    - zip
   icon: build/app-icon.icns
   asarUnpack:
     - yt-dlp_macos
@@ -60,3 +62,5 @@ dmg:
   window:
     width: 648
     height: 480
+zip:
+  artifactName: ROSI-MacOS-universal.${ext}
