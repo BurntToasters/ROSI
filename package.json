@@ -89,8 +89,9 @@
       "artifactName": "ROSI-Windows-${arch}.${ext}"
     },
     "mac": {
-      "target": "dmg",
+      "target": ["dmg", "zip"],
       "icon": "build/app-icon.icns",
+      "artifactName": "ROSI-MacOS-universal.${ext}",
       "asarUnpack": [
         "yt-dlp_macos"
       ]
