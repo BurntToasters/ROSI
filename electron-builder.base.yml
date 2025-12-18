@@ -28,6 +28,7 @@ mac:
     - dmg
     - zip
   icon: build/app-icon.icns
+  artifactName: ROSI-MacOS-universal.${ext}
   asarUnpack:
     - yt-dlp_macos
 linux:
@@ -47,7 +48,6 @@ deb:
 rpm:
   artifactName: ROSI-Linux-${arch}.${ext}
 dmg:
-  artifactName: ROSI-MacOS-universal.${ext}
   background: build/dmg-background.png
   icon: build/app-icon.png
   iconSize: 100
@@ -62,5 +62,3 @@ dmg:
   window:
     width: 648
     height: 480
-zip:
-  artifactName: ROSI-MacOS-universal.${ext}
