@@ -16,6 +16,10 @@
     "build:linux:x64": "node build-scripts/prepare-linux-x64.js && electron-builder --linux AppImage deb rpm --x64 && node build-scripts/restore-binaries.js",
     "build:linux:arm64": "node build-scripts/prepare-linux-arm64.js && electron-builder --linux AppImage deb rpm --arm64 && node build-scripts/restore-binaries.js",
     "build:linux:all": "npm run build:linux:x64 && npm run build:linux:arm64",
+    "build:linux:native": "node build-scripts/prepare-linux-x64.js && cross-env USE_SYSTEM_FPM=true electron-builder --linux AppImage deb rpm --x64 && node build-scripts/restore-binaries.js",
+    "build:linux:native:x64": "node build-scripts/prepare-linux-x64.js && cross-env USE_SYSTEM_FPM=true electron-builder --linux AppImage deb rpm --x64 && node build-scripts/restore-binaries.js",
+    "build:linux:native:arm64": "node build-scripts/prepare-linux-arm64.js && cross-env USE_SYSTEM_FPM=true electron-builder --linux AppImage deb rpm --arm64 && node build-scripts/restore-binaries.js",
+    "build:linux:native:all": "npm run build:linux:native:x64 && npm run build:linux:native:arm64",
     "build:github": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --x64 --arm64",
     "build:github:win": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --x64 --arm64",
     "build:github:mac": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --mac --universal",
@@ -33,6 +37,9 @@
     "release:linux": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --x64 --arm64 --publish always && npm run sign:gpg",
     "release:linux:x64": "node build-scripts/prepare-linux-x64.js && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --x64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:x64",
     "release:linux:arm64": "node build-scripts/prepare-linux-arm64.js && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --arm64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:arm64",
+    "release:linux:native": "node build-scripts/prepare-linux-x64.js && dotenv -e .env -- cross-env USE_SYSTEM_FPM=true CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --x64 --arm64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg",
+    "release:linux:native:x64": "node build-scripts/prepare-linux-x64.js && dotenv -e .env -- cross-env USE_SYSTEM_FPM=true CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --x64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:x64",
+    "release:linux:native:arm64": "node build-scripts/prepare-linux-arm64.js && dotenv -e .env -- cross-env USE_SYSTEM_FPM=true CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --arm64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:arm64",
     "release:all": "npm run release:mac && npm run release:win && npm run release:linux"
   },
   "repository": {
