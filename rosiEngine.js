@@ -378,109 +378,104 @@
     }
   }
 
+  let updaterCleanupFunctions = [];
+  
   function setupAutoUpdater() {
     let updateVersion = '';
     
-    window.api.onUpdaterStatus((data) => {
-      switch (data.status) {
-        case 'checking':
-          break;
-          
-        case 'available':
-          updateVersion = data.version;
-          showModal({
-            title: "Update Available!",
-            message: `A new version (v${data.version}) of ROSI is available!\n\nWould you like to download and install it?`,
-            buttons: [
-              { 
-                label: "Download & Install", 
-                action: async () => {
-                  showModal({
-                    title: "Downloading Update",
-                    message: `<div class="update-progress-container">
-                      <div class="update-progress-bar-wrapper">
-                        <div id="update-progress-bar" class="update-progress-bar"></div>
-                      </div>
-                      <div id="update-progress-info" class="update-progress-info">Starting download...</div>
-                    </div>`,
-                    buttons: []
-                  });
-                  await window.api.downloadUpdate();
-                }
-              },
-              { label: "Later" }
-            ]
-          });
-          break;
-          
-        case 'not-available':
-          showModal({
-            title: "ROSI is up to date!",
-            message: `You are running the latest version (v${data.version}).`,
-            buttons: [{ label: "OK" }]
-          });
-          break;
-          
-        case 'error':
-          showModal({
-            title: "Update Error",
-            message: `An error occurred while checking for updates:\n${data.message}`,
-            buttons: [{ label: "OK" }]
-          });
-          break;
-          
-        case 'downloaded':
-          showModal({
-            title: "Update Ready!",
-            message: `Version ${data.version} has been downloaded.\n\nThe update will be installed when you restart ROSI.`,
-            buttons: [
-              { 
-                label: "Restart Now", 
-                action: () => window.api.installUpdate()
-              },
-              { label: "Later" }
-            ]
-          });
-          break;
-      }
-    });
+    updaterCleanupFunctions.push(
+      window.api.onUpdaterStatus((data) => {
+        switch (data.status) {
+          case 'checking':
+            break;
+            
+          case 'available':
+            updateVersion = data.version;
+            showModal({
+              title: "Update Available!",
+              message: `A new version (v${data.version}) of ROSI is available!\n\nWould you like to download and install it?`,
+              buttons: [
+                { 
+                  label: "Download & Install", 
+                  action: async () => {
+                    showModal({
+                      title: "Downloading Update",
+                      message: `<div class="update-progress-container">
+                        <div class="update-progress-bar-wrapper">
+                          <div id="update-progress-bar" class="update-progress-bar"></div>
+                        </div>
+                        <div id="update-progress-info" class="update-progress-info">Starting download...</div>
+                      </div>`,
+                      buttons: []
+                    });
+                    await window.api.downloadUpdate();
+                  }
+                },
+                { label: "Later" }
+              ]
+            });
+            break;
+            
+          case 'not-available':
+            showModal({
+              title: "ROSI is up to date!",
+              message: `You are running the latest version (v${data.version}).`,
+              buttons: [{ label: "OK" }]
+            });
+            break;
+            
+          case 'error':
+            showModal({
+              title: "Update Error",
+              message: `An error occurred while checking for updates:\n${data.message}`,
+              buttons: [{ label: "OK" }]
+            });
+            break;
+            
+          case 'downloaded':
+            showModal({
+              title: "Update Ready!",
+              message: `Version ${data.version} has been downloaded.\n\nThe update will be installed when you restart ROSI.`,
+              buttons: [
+                { 
+                  label: "Restart Now", 
+                  action: () => window.api.installUpdate()
+                },
+                { label: "Later" }
+              ]
+            });
+            break;
+        }
+      })
+    );
     
-    window.api.onUpdaterProgress((data) => {
-      const progressBar = document.getElementById('update-progress-bar');
-      const progressInfo = document.getElementById('update-progress-info');
-      
-      if (progressBar) {
-        progressBar.style.width = `${data.percent}%`;
-      }
-      
-      if (progressInfo) {
-        const speed = formatBytes(data.bytesPerSecond) + '/s';
-        const downloaded = formatBytes(data.transferred);
-        const total = formatBytes(data.total);
-        progressInfo.textContent = `${downloaded} / ${total} (${speed}) - ${Math.round(data.percent)}%`;
+    updaterCleanupFunctions.push(
+      window.api.onUpdaterProgress((data) => {
+        const progressBar = document.getElementById('update-progress-bar');
+        const progressInfo = document.getElementById('update-progress-info');
+        
+        if (progressBar) {
+          progressBar.style.width = `${data.percent}%`;
+        }
+        
+        if (progressInfo) {
+          const speed = formatBytes(data.bytesPerSecond) + '/s';
+          const downloaded = formatBytes(data.transferred);
+          const total = formatBytes(data.total);
+          progressInfo.textContent = `${downloaded} / ${total} (${speed}) - ${Math.round(data.percent)}%`;
+        }
+      })
+    );
+  }
+
+  function cleanupUpdaterListeners() {
+    updaterCleanupFunctions.forEach(cleanup => {
+      if (typeof cleanup === 'function') {
+        try { cleanup(); } catch (e) { /* ignore */ }
       }
     });
+    updaterCleanupFunctions = [];
   }
-
-/*
-      // License popup
-function showLicenses() {
-  const licensesOverlay = document.getElementById('licenses-overlay');
-  if (licensesOverlay) {
-    licensesOverlay.style.display = 'flex';
-    document.body.style.overflow = 'hidden';
-  }
-}
-
-function hideLicenses() {
-  const licensesOverlay = document.getElementById('licenses-overlay');
-  if (licensesOverlay) {
-    licensesOverlay.style.display = 'none';
-    document.body.style.overflow = ''; // Restore scrolling
-  }
-}
-
-*/
 
 function showLicenses() {
   const licensesOverlay = document.getElementById('licenses-overlay');
@@ -936,15 +931,20 @@ function hideLicenses() {
       downloadBtn._originalClick = async function () {
         try {
           if (isDownloading) return;
+
+          isDownloading = true;
+          
           const urlInput = document.getElementById('url');
           const url = urlInput ? urlInput.value : null;
           if (!url || url.trim() === "") {
+            isDownloading = false;
             showModal({ title: "Input Error", message: "Please enter a video URL.", buttons: [{ label: "OK" }] });
             return;
           }
           
           // Validate URL format
           if (!isValidUrl(url.trim())) {
+            isDownloading = false;
             showModal({ 
               title: "Invalid URL", 
               message: "Please enter a valid URL starting with http:// or https://", 
@@ -956,6 +956,7 @@ function hideLicenses() {
           const videoSelect = document.getElementById('videoFormat');
           const audioSelect = document.getElementById('audioFormat');
           if (settings.advancedOptions && (!videoSelect || !audioSelect || !videoSelect.value || !audioSelect.value)) {
+            isDownloading = false;
             showModal({ title: "Format Selection Needed", message: "Please check resolutions and select video/audio formats first.", buttons: [{ label: "OK" }] });
             return;
           }
@@ -965,16 +966,17 @@ function hideLicenses() {
             savePath = await window.api.selectDownloadLocation();
           } catch (dialogError) {
             console.error('Error opening save dialog:', dialogError);
+            isDownloading = false;
             showModal({ title: "Error", message: "Could not open the save location dialog. Please try again.", buttons: [{ label: "OK" }] });
             return;
           }
           
           if (!savePath) {
+            isDownloading = false;
             if (outputEl) outputEl.textContent = "⚠️ Download cancelled: No save location selected.";
             return;
           }
           if (outputEl) outputEl.textContent = "";
-          isDownloading = true;
           downloadAbort = () => {
             isDownloading = false;
             setButtonLoading(downloadBtn, false);
@@ -1011,90 +1013,120 @@ function hideLicenses() {
     if (checkUpdateBtn) {
       checkUpdateBtn.onclick = checkForUpdates;
     }
+    const ipcCleanupFunctions = [];
 
-
-    window.api.onProgress((message) => {
-      if (!outputEl) return;
-      outputEl.textContent += message + '\n';
-      outputEl.scrollTop = outputEl.scrollHeight;
-
-      const progress = parseYtdlpProgress(message);
-      if (progress) {
-        let detailsText = '';
-        if (progress.speed && progress.eta) {
-          detailsText = `${progress.totalSize} • ${progress.speed} • ETA: ${progress.eta}`;
-        } else if (progress.totalSize) {
-          detailsText = `Size: ${progress.totalSize}`;
-        }
-        updateProgressBar(progress.percent, 'Downloading...', detailsText);
-      } else if (message.includes('[download] Destination:')) {
-        setProgressIndeterminate('Preparing download...');
-      } else if (message.includes('Merging formats')) {
-        setProgressIndeterminate('Merging video and audio...');
-      } else if (message.includes('Converting') || message.includes('[ffmpeg]')) {
-        setProgressIndeterminate('Converting...');
-      } else if (message.includes('100%')) {
-        updateProgressBar(100, 'Download complete!', '');
+    let saveSettingsTimeout = null;
+    const debouncedSaveSettings = (settingsObj) => {
+      if (saveSettingsTimeout) {
+        clearTimeout(saveSettingsTimeout);
       }
+      saveSettingsTimeout = setTimeout(() => {
+        window.api.saveSettings(settingsObj);
+        saveSettingsTimeout = null;
+      }, 300);
+    };
 
-      if (message.includes('Identified file:') || message.includes('Successfully converted to')) {
-        const fileMatch = message.match(/(?:Identified file:|Successfully converted to)\s*(.+)$/);
-        if (fileMatch && fileMatch[1]) {
-          lastDownloadedFilePath = fileMatch[1].trim();
+    ipcCleanupFunctions.push(
+      window.api.onProgress((message) => {
+        if (!outputEl) return;
+        outputEl.textContent += message + '\n';
+        outputEl.scrollTop = outputEl.scrollHeight;
+
+        const progress = parseYtdlpProgress(message);
+        if (progress) {
+          let detailsText = '';
+          if (progress.speed && progress.eta) {
+            detailsText = `${progress.totalSize} • ${progress.speed} • ETA: ${progress.eta}`;
+          } else if (progress.totalSize) {
+            detailsText = `Size: ${progress.totalSize}`;
+          }
+          updateProgressBar(progress.percent, 'Downloading...', detailsText);
+        } else if (message.includes('[download] Destination:')) {
+          setProgressIndeterminate('Preparing download...');
+        } else if (message.includes('Merging formats')) {
+          setProgressIndeterminate('Merging video and audio...');
+        } else if (message.includes('Converting') || message.includes('[ffmpeg]')) {
+          setProgressIndeterminate('Converting...');
+        } else if (message.includes('100%')) {
+          updateProgressBar(100, 'Download complete!', '');
         }
-      }
-    });
-    window.api.onComplete((statusMessage) => {
-      if (downloadBtn) {
-        isDownloading = false;
-        setButtonLoading(downloadBtn, false);
 
-        const isSuccess = statusMessage.includes('✅') || statusMessage.includes('complete');
-        
-        if (isSuccess) {
-          updateProgressBar(100, 'Complete!', '');
-
-          if (settings.notifications) {
-            window.api.showNotification({
-              title: 'Download Complete!',
-              body: lastDownloadedFilePath ? `Saved: ${lastDownloadedFilePath.split(/[/\\]/).pop()}` : 'Your download has finished.',
-              filePath: lastDownloadedFilePath
-            });
+        if (message.includes('Identified file:') || message.includes('Successfully converted to')) {
+          const fileMatch = message.match(/(?:Identified file:|Successfully converted to)\s*(.+)$/);
+          if (fileMatch && fileMatch[1]) {
+            lastDownloadedFilePath = fileMatch[1].trim();
           }
         }
-        
-        setTimeout(() => {
-          hideProgressBar();
-        }, 2000);
-        
-        const originalText = downloadBtn.dataset.defaultText || "Download";
-        
-        if (isSuccess && lastDownloadedFilePath) {
-          downloadBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg><span>Open File Location</span>`;
-          downloadBtn.disabled = false;
-          downloadBtn.onclick = () => {
-            window.api.openFileLocation(lastDownloadedFilePath);
-          };
+      })
+    );
+    
+    ipcCleanupFunctions.push(
+      window.api.onComplete((statusMessage) => {
+        if (downloadBtn) {
+          isDownloading = false;
+          setButtonLoading(downloadBtn, false);
+
+          const isSuccess = statusMessage.includes('✅') || statusMessage.includes('complete');
+          
+          if (isSuccess) {
+            updateProgressBar(100, 'Complete!', '');
+
+            if (settings.notifications) {
+              window.api.showNotification({
+                title: 'Download Complete!',
+                body: lastDownloadedFilePath ? `Saved: ${lastDownloadedFilePath.split(/[/\\]/).pop()}` : 'Your download has finished.',
+                filePath: lastDownloadedFilePath
+              });
+            }
+          }
+          
           setTimeout(() => {
-            downloadBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span>${originalText}</span>`;
+            hideProgressBar();
+          }, 2000);
+          
+          const originalText = downloadBtn.dataset.defaultText || "Download";
+          
+          if (isSuccess && lastDownloadedFilePath) {
+            downloadBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg><span>Open File Location</span>`;
             downloadBtn.disabled = false;
-            downloadBtn.onclick = downloadBtn._originalClick;
-            lastDownloadedFilePath = null;
-          }, 8000);
-        } else {
-          downloadBtn.innerHTML = isSuccess ? "✅ Download Complete!" : originalText;
-          downloadBtn.disabled = isSuccess;
-          setTimeout(() => {
-            downloadBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span>${originalText}</span>`;
-            downloadBtn.disabled = false;
-            downloadBtn.onclick = downloadBtn._originalClick;
-          }, 4000);
+            downloadBtn.onclick = () => {
+              window.api.openFileLocation(lastDownloadedFilePath);
+            };
+            setTimeout(() => {
+              downloadBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span>${originalText}</span>`;
+              downloadBtn.disabled = false;
+              downloadBtn.onclick = downloadBtn._originalClick;
+              lastDownloadedFilePath = null;
+            }, 8000);
+          } else {
+            downloadBtn.innerHTML = isSuccess ? "✅ Download Complete!" : originalText;
+            downloadBtn.disabled = isSuccess;
+            setTimeout(() => {
+              downloadBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span>${originalText}</span>`;
+              downloadBtn.disabled = false;
+              downloadBtn.onclick = downloadBtn._originalClick;
+            }, 4000);
+          }
         }
-      }
-      if (fetchFormatsBtn) setButtonLoading(fetchFormatsBtn, false);
-      if (outputEl) {
-        outputEl.textContent += statusMessage + '\n';
-        outputEl.scrollTop = outputEl.scrollHeight;
+        if (fetchFormatsBtn) setButtonLoading(fetchFormatsBtn, false);
+        if (outputEl) {
+          outputEl.textContent += statusMessage + '\n';
+          outputEl.scrollTop = outputEl.scrollHeight;
+        }
+      })
+    );
+
+    window.addEventListener('beforeunload', () => {
+      ipcCleanupFunctions.forEach(cleanup => {
+        if (typeof cleanup === 'function') {
+          try { cleanup(); } catch (e) {  }
+        }
+      });
+      cleanupUpdaterListeners();
+      
+      if (saveSettingsTimeout) {
+        clearTimeout(saveSettingsTimeout);
+        window.api.saveSettings(settings);
       }
     });
 

@@ -197,6 +197,17 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 
+app.on('before-quit', () => {
+  if (ytdlpProcess) {
+    try { ytdlpProcess.kill(); } catch (e) { }
+    ytdlpProcess = null;
+  }
+  if (ffmpegProcess) {
+    try { ffmpegProcess.kill(); } catch (e) {  }
+    ffmpegProcess = null;
+  }
+});
+
 // Auto Updater Setup
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
@@ -349,11 +360,19 @@ ipcMain.handle('check-deno-installed', async () => {
     
     const proc = spawn(checkCmd, ['deno'], spawnOptions);
     
+    // Add timeout to prevent hanging
+    const timeout = setTimeout(() => {
+      try { proc.kill(); } catch (e) { /* ignore */ }
+      resolve(false);
+    }, 10000); // 10 second timeout
+    
     proc.on('close', (code) => {
+      clearTimeout(timeout);
       resolve(code === 0);
     });
     
     proc.on('error', () => {
+      clearTimeout(timeout);
       resolve(false);
     });
   });
@@ -379,6 +398,12 @@ ipcMain.handle('install-deno', async () => {
     let output = '';
     let error = '';
     
+    // timeout install process
+    const timeout = setTimeout(() => {
+      try { proc.kill(); } catch (e) { }
+      reject({ success: false, error: 'Installation timed out after 2 minutes' });
+    }, 120000);
+    
     proc.stdout.on('data', (data) => {
       output += data.toString();
     });
@@ -388,6 +413,7 @@ ipcMain.handle('install-deno', async () => {
     });
     
     proc.on('close', (code) => {
+      clearTimeout(timeout);
       if (code === 0) {
         resolve({ success: true, output });
       } else {
@@ -396,6 +422,7 @@ ipcMain.handle('install-deno', async () => {
     });
     
     proc.on('error', (err) => {
+      clearTimeout(timeout);
       reject({ success: false, error: err.message });
     });
   });
@@ -418,10 +445,25 @@ ipcMain.handle('detect-gpu', async () => {
     const nvencTest = spawn('ffmpeg', ['-hide_banner', '-encoders'], { shell: isWindows });
     const nvencOutput = await new Promise((resolve) => {
       let output = '';
-      nvencTest.stdout.on('data', (data) => output += data.toString());
-      nvencTest.stderr.on('data', (data) => output += data.toString());
-      nvencTest.on('close', () => resolve(output));
-      nvencTest.on('error', () => resolve(''));
+      const timeout = setTimeout(() => {
+        try { nvencTest.kill(); } catch (e) { /* ignore */ }
+        resolve('');
+      }, 10000);
+      
+      nvencTest.stdout.on('data', (data) => {
+        if (output.length < 100000) output += data.toString();
+      });
+      nvencTest.stderr.on('data', (data) => {
+        if (output.length < 100000) output += data.toString();
+      });
+      nvencTest.on('close', () => {
+        clearTimeout(timeout);
+        resolve(output);
+      });
+      nvencTest.on('error', () => {
+        clearTimeout(timeout);
+        resolve('');
+      });
     });
     
     result.nvidia = nvencOutput.includes('h264_nvenc');
@@ -498,9 +540,20 @@ ipcMain.handle('getFormats', async (_, url) => {
       const proc = spawn(ytdlpPath, ['-F', url]);
       let outputData = '';
       let errorData = '';
-      proc.stdout.on('data', data => outputData += data);
-      proc.stderr.on('data', data => errorData += data);
+
+      const timeout = setTimeout(() => {
+        try { proc.kill(); } catch (e) {  }
+        reject('Format fetch timed out after 60 seconds. The server may be slow or unresponsive.');
+      }, 60000);
+      
+      proc.stdout.on('data', data => {
+        if (outputData.length < 500000) outputData += data;
+      });
+      proc.stderr.on('data', data => {
+        if (errorData.length < 100000) errorData += data;
+      });
       proc.on('close', (code) => {
+        clearTimeout(timeout);
         if (code === 0) {
             resolve(outputData);
         } else {
@@ -509,6 +562,7 @@ ipcMain.handle('getFormats', async (_, url) => {
         }
       });
       proc.on('error', (err) => {
+          clearTimeout(timeout);
           reject(`Failed to start yt-dlp: ${err.message}`);
       });
     });
@@ -521,11 +575,11 @@ let ffmpegProcess = null;
 // handle download-video, spawn yt-dlp
 ipcMain.on('download-video', async (event, options) => {
   if (ytdlpProcess) {
-    ytdlpProcess.kill();
+    try { ytdlpProcess.kill(); } catch (e) { /* Process may have already exited */ }
     ytdlpProcess = null;
   }
   if (ffmpegProcess) {
-    ffmpegProcess.kill();
+    try { ffmpegProcess.kill(); } catch (e) { /* Process may have already exited */ }
     ffmpegProcess = null;
   }
 
@@ -600,15 +654,21 @@ ipcMain.on('download-video', async (event, options) => {
 
     let downloadOutputData = '';
     let downloadErrorData = '';
+    const MAX_BUFFER_SIZE = 500000;
 
     ytdlpProcess.stdout.on('data', (data) => {
         const message = data.toString();
+        if (downloadOutputData.length > MAX_BUFFER_SIZE) {
+            downloadOutputData = downloadOutputData.slice(-MAX_BUFFER_SIZE / 2);
+        }
         downloadOutputData += message;
         safeSend('progress', message.trim());
     });
     ytdlpProcess.stderr.on('data', (data) => {
         const message = data.toString();
-        downloadErrorData += message;
+        if (downloadErrorData.length < MAX_BUFFER_SIZE) {
+            downloadErrorData += message;
+        }
         safeSend('progress', `[yt-dlp stderr] ${message.trim()}`);
     });
 
