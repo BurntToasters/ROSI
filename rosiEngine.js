@@ -89,7 +89,6 @@
   
   function showModal({ title, message, buttons = [], priority = false }) {
     const modalData = { title, message, buttons, priority };
-    
     if (priority && isModalActive) {
       const modal = document.getElementById('app-modal');
       if (modal) {
@@ -97,13 +96,14 @@
       }
       isModalActive = false;
       currentModalData = null;
+    }
+    if (priority) {
       modalQueue.unshift(modalData);
-      displayNextModal();
     } else {
       modalQueue.push(modalData);
-      if (!isModalActive) {
-        displayNextModal();
-      }
+    }
+    if (!isModalActive) {
+      displayNextModal();
     }
   }
   
@@ -154,8 +154,12 @@
     currentModalData = null; // Clear current modal data
     setTimeout(() => {
       modal.classList.remove('active', 'hiding');
+      isModalActive = false; // Reset before action
       if (typeof action === 'function') action();
-      displayNextModal();
+      // display next action if previous modal is done
+      if (!isModalActive) {
+        displayNextModal();
+      }
     }, 200);
   }
   
