@@ -86,10 +86,9 @@ const defaultSettings = {
   denoReminderDismissed: false,
   gpuAcceleration: false,
   gpuType: "auto",
-  hideSupportModal: false
+  hideSupportModal: false,
+  checkUpdatesOnStartup: true
 };
-
-// [!] The console debugger uses emojis to easily identify messages. If you see any issues with emojis, please ensure your terminal supports them or disable the console output in settings.
 
 // load settings from file or use defaults
 function loadSettings() {
@@ -282,10 +281,27 @@ ipcMain.handle('check-for-updates', async () => {
 
 ipcMain.handle('download-update', async () => {
   try {
-    await autoUpdater.downloadUpdate();
+    // update cancellation token
+    global.updateDownloadCancellationToken = new (require('electron-updater').CancellationToken)();
+    await autoUpdater.downloadUpdate(global.updateDownloadCancellationToken);
+    global.updateDownloadCancellationToken = null;
     return { success: true };
   } catch (error) {
+    global.updateDownloadCancellationToken = null;
+    if (error.message && error.message.includes('cancelled')) {
+      return { cancelled: true };
+    }
     return { error: error.message };
+  }
+});
+
+ipcMain.on('cancel-update-download', () => {
+  if (global.updateDownloadCancellationToken) {
+    global.updateDownloadCancellationToken.cancel();
+    global.updateDownloadCancellationToken = null;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('updater-status', { status: 'cancelled' });
+    }
   }
 });
 

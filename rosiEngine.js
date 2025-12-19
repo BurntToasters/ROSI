@@ -82,12 +82,50 @@
     }
   }
   
-  function showModal({ title, message, buttons = [] }) {
+  // Modal queue system
+  const modalQueue = [];
+  let isModalActive = false;
+  let currentModalData = null; // Track modals
+  
+  function showModal({ title, message, buttons = [], priority = false }) {
+    const modalData = { title, message, buttons, priority };
+    if (priority && isModalActive) {
+      const modal = document.getElementById('app-modal');
+      if (modal) {
+        modal.classList.remove('active', 'showing', 'hiding');
+      }
+      isModalActive = false;
+      currentModalData = null;
+    }
+    if (priority) {
+      modalQueue.unshift(modalData);
+    } else {
+      modalQueue.push(modalData);
+    }
+    if (!isModalActive) {
+      displayNextModal();
+    }
+  }
+  
+  function displayNextModal() {
+    if (modalQueue.length === 0) {
+      isModalActive = false;
+      currentModalData = null;
+      return;
+    }
+    
+    isModalActive = true;
+    currentModalData = modalQueue.shift();
+    const { title, message, buttons } = currentModalData;
+    
     const modal = document.getElementById('app-modal');
     const titleEl = document.getElementById('modal-title');
     const msgEl = document.getElementById('modal-message');
     const btnContainer = document.getElementById('modal-buttons');
-    if (!modal || !titleEl || !msgEl || !btnContainer) return;
+    if (!modal || !titleEl || !msgEl || !btnContainer) {
+      displayNextModal();
+      return;
+    }
     
     titleEl.textContent = title;
     msgEl.innerHTML = message.replace(/\n/g, '<br>');
@@ -113,9 +151,15 @@
 
   function hideModal(modal, action) {
     modal.classList.add('hiding');
+    currentModalData = null; // Clear current modal data
     setTimeout(() => {
       modal.classList.remove('active', 'hiding');
+      isModalActive = false; // Reset before action
       if (typeof action === 'function') action();
+      // display next action if previous modal is done
+      if (!isModalActive) {
+        displayNextModal();
+      }
     }, 200);
   }
   
@@ -328,6 +372,8 @@
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 
+  let isManualUpdateCheck = false;
+
   async function checkForUpdates() {
     const channel = window.api.getChannel();
 
@@ -343,11 +389,15 @@
       return;
     }
 
+    isManualUpdateCheck = true;
+    
     try {
       showModal({
         title: "Checking for Updates",
         message: "Please wait while we check for updates...",
-        buttons: []
+        buttons: [
+          { label: "Cancel", action: () => { isManualUpdateCheck = false; } }
+        ]
       });
       
       const result = await window.api.checkForUpdates();
@@ -356,8 +406,10 @@
         showModal({
           title: "Development Mode",
           message: "Update checking is not available when running in development mode.<br><br>Build and package the app to test auto-updates.",
-          buttons: [{ label: "OK" }]
+          buttons: [{ label: "OK" }],
+          priority: isManualUpdateCheck
         });
+        isManualUpdateCheck = false;
         return;
       }
 
@@ -365,16 +417,20 @@
         showModal({
           title: "Update Check Failed",
           message: `Could not check for updates.<br><br>Error: ${result.error}`,
-          buttons: [{ label: "OK" }]
+          buttons: [{ label: "OK" }],
+          priority: isManualUpdateCheck
         });
+        isManualUpdateCheck = false;
         return;
       }
     } catch (e) {
       showModal({
         title: "Update Check Failed",
         message: "Could not check for updates. Please try again later.",
-        buttons: [{ label: "OK" }]
+        buttons: [{ label: "OK" }],
+        priority: isManualUpdateCheck
       });
+      isManualUpdateCheck = false;
     }
   }
 
@@ -391,9 +447,12 @@
             
           case 'available':
             updateVersion = data.version;
+            const wasManualCheck = isManualUpdateCheck;
+            isManualUpdateCheck = false;
             showModal({
               title: "Update Available!",
               message: `A new version (v${data.version}) of ROSI is available!\n\nWould you like to download and install it?`,
+              priority: wasManualCheck,
               buttons: [
                 { 
                   label: "Download & Install", 
@@ -406,7 +465,14 @@
                         </div>
                         <div id="update-progress-info" class="update-progress-info">Starting download...</div>
                       </div>`,
-                      buttons: []
+                      buttons: [
+                        {
+                          label: "Cancel",
+                          action: () => {
+                            window.api.cancelUpdateDownload();
+                          }
+                        }
+                      ]
                     });
                     await window.api.downloadUpdate();
                   }
@@ -420,15 +486,28 @@
             showModal({
               title: "ROSI is up to date!",
               message: `You are running the latest version (v${data.version}).`,
-              buttons: [{ label: "OK" }]
+              buttons: [{ label: "OK" }],
+              priority: isManualUpdateCheck
             });
+            isManualUpdateCheck = false;
             break;
             
           case 'error':
             showModal({
               title: "Update Error",
               message: `An error occurred while checking for updates:\n${data.message}`,
-              buttons: [{ label: "OK" }]
+              buttons: [{ label: "OK" }],
+              priority: isManualUpdateCheck
+            });
+            isManualUpdateCheck = false;
+            break;
+          
+          case 'cancelled':
+            showModal({
+              title: "Download Cancelled",
+              message: "The update download was cancelled.",
+              buttons: [{ label: "OK" }],
+              priority: true
             });
             break;
             
@@ -442,7 +521,8 @@
                   action: () => window.api.installUpdate()
                 },
                 { label: "Later" }
-              ]
+              ],
+              priority: true
             });
             break;
         }
@@ -524,7 +604,8 @@ function hideLicenses() {
                 showModal({
                   title: "Installing Deno...",
                   message: "Please wait while Deno is being installed. This may take a moment.",
-                  buttons: []
+                  buttons: [],
+                  priority: true
                 });
                 
                 try {
@@ -532,7 +613,8 @@ function hideLicenses() {
                   showModal({
                     title: "Installation Complete",
                     message: "Deno has been successfully installed!<br>You may need to restart your terminal or system for changes to take effect.",
-                    buttons: [{ label: "OK" }]
+                    buttons: [{ label: "OK" }],
+                    priority: true
                   });
                 } catch (error) {
                   showModal({
@@ -541,7 +623,8 @@ function hideLicenses() {
                     buttons: [
                       { label: "Open Deno Website", action: () => window.api.openExternal('https://deno.land') },
                       { label: "OK" }
-                    ]
+                    ],
+                    priority: true
                   });
                 }
               }
@@ -616,6 +699,8 @@ function hideLicenses() {
     const animateBackgroundToggle = document.getElementById('animateBackgroundToggle');
     const audioOnlyToggle = document.getElementById('audioOnlyToggle');
     const notificationsToggle = document.getElementById('notificationsToggle');
+    const checkUpdatesOnStartupToggle = document.getElementById('checkUpdatesOnStartupToggle');
+    const checkUpdatesOnStartupLabel = document.getElementById('checkUpdatesOnStartupLabel');
     
     const settingsBtn = document.getElementById('settingsBtn');
     const closeSidebarBtn = document.getElementById('closeSidebar');
@@ -721,6 +806,14 @@ function hideLicenses() {
       }
       if (notificationsToggle) {
         notificationsToggle.checked = settings.notifications ?? true;
+      }
+
+      const channel = window.api.getChannel();
+      if (checkUpdatesOnStartupToggle) {
+        checkUpdatesOnStartupToggle.checked = settings.checkUpdatesOnStartup ?? true;
+        if (channel === 'msstore' && checkUpdatesOnStartupLabel) {
+          checkUpdatesOnStartupLabel.style.display = 'none';
+        }
       }
     };
     
@@ -906,6 +999,14 @@ function hideLicenses() {
     if (notificationsToggle) {
       notificationsToggle.addEventListener('change', (e) => {
         settings.notifications = e.target.checked;
+        window.api.saveSettings(settings);
+      });
+    }
+    
+    // Check updates on startup
+    if (checkUpdatesOnStartupToggle) {
+      checkUpdatesOnStartupToggle.addEventListener('change', (e) => {
+        settings.checkUpdatesOnStartup = e.target.checked;
         window.api.saveSettings(settings);
       });
     }
@@ -1131,6 +1232,24 @@ function hideLicenses() {
     });
 
 
+    // Check for updates on startup
+    async function checkUpdatesOnStartup() {
+      const channel = window.api.getChannel();
+      if (channel === 'msstore') return;
+      if (!settings.checkUpdatesOnStartup) return;
+      
+      try {
+        const isPackaged = await window.api.isPackaged();
+        if (!isPackaged) return;
+
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        await window.api.checkForUpdates();
+
+      } catch (e) {
+        console.error('Startup update check failed:', e);
+      }
+    }
+
     if (settings.firstLaunch) {
       // Save immediately - change
       settings.firstLaunch = false;
@@ -1141,12 +1260,16 @@ function hideLicenses() {
         message: "ROSI uses FFMPEG for yt-dlp and converting files to MP4.<br>For intended use and stability, Please ensure FFMPEG is installed and accessible in your system's PATH.<br>Click 'More Info' for guidance.",
         buttons: [
           { label: "More Info", action: () => window.api.openExternal('https://help.rosie.run/installing-ffmpeg') },
-          { label: "OK", action: () => checkDenoInstallation(settings) }
+          { label: "OK", action: () => {
+            checkDenoInstallation(settings);
+            checkUpdatesOnStartup();
+          }}
         ]
       });
     } else {
       // check Deno
       checkDenoInstallation(settings);
+      checkUpdatesOnStartup();
     }
 
 
@@ -1170,7 +1293,7 @@ document.addEventListener('keydown', (event) => {
     
     const appModal = document.getElementById('app-modal');
     if (appModal && appModal.classList.contains('active')) {
-      hideModal(appModal);
+      hideModal(appModal, null);
       return;
     }
 

@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('api', {
   isPackaged: () => ipcRenderer.invoke('is-packaged'),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  cancelUpdateDownload: () => ipcRenderer.send('cancel-update-download'),
   installUpdate: () => ipcRenderer.send('install-update'),
   onUpdaterStatus: (callback) => {
     const listener = (_, data) => callback(data);
