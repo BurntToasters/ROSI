@@ -637,25 +637,29 @@ ipcMain.on('download-video', async (event, options) => {
         '--no-playlist',
         '--print', 'after_move:filepath',
         '--newline',
+        '-f', 'best[ext=mp4]/best[ext=webm]/best',
         url
     ];
 
     // Advanced format selection
     const videoFormat = options?.videoFormat;
     const audioFormat = options?.audioFormat;
+    const formatFlagIndex = ytdlpArgs.indexOf('-f');
+    
     if (videoFormat && audioFormat) {
-      ytdlpArgs.splice(-1, 0, '-f', `${videoFormat}+${audioFormat}`);
+      ytdlpArgs[formatFlagIndex + 1] = `${videoFormat}+${audioFormat}`;
       safeSend('progress', `📹 Using formats: video=${videoFormat}, audio=${audioFormat}`);
     } else if (videoFormat) {
-      ytdlpArgs.splice(-1, 0, '-f', videoFormat);
+      ytdlpArgs[formatFlagIndex + 1] = videoFormat;
       safeSend('progress', `📹 Using video format: ${videoFormat}`);
     } else if (audioFormat) {
-      ytdlpArgs.splice(-1, 0, '-f', audioFormat);
+      ytdlpArgs[formatFlagIndex + 1] = audioFormat;
       safeSend('progress', `🎵 Using audio format: ${audioFormat}`);
     }
 
     // Audio-only mode (only applies when not using advanced format selection)
     if (settings.audioOnly && !videoFormat && !audioFormat) {
+      ytdlpArgs.splice(formatFlagIndex, 2);
       ytdlpArgs.splice(-1, 0, '-x', '--audio-format', 'mp3', '--audio-quality', '0');
       safeSend('progress', '🎵 Audio-only mode enabled');
     }
