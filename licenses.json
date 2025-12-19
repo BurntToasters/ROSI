@@ -801,7 +801,7 @@
         "licenseUrl": "https://github.com/jprichardson/node-fs-extra/raw/master/LICENSE",
         "parents": "electron-updater:rosi"
     },
-    "fs-extra@11.3.2": {
+    "fs-extra@11.3.3": {
         "licenses": "MIT",
         "repository": "https://github.com/jprichardson/node-fs-extra",
         "licenseUrl": "https://github.com/jprichardson/node-fs-extra/raw/master/LICENSE",
@@ -1613,7 +1613,7 @@
         "licenseUrl": "https://github.com/gajus/roarr/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "rosi@3.0.1": {
+    "rosi@3.1.0": {
         "licenses": "MPL-2.0",
         "repository": "https://github.com/BurntToasters/rosi",
         "licenseUrl": "https://github.com/BurntToasters/rosi/raw/master/LICENSE",
