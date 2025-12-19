@@ -483,22 +483,26 @@
             break;
             
           case 'not-available':
-            showModal({
-              title: "ROSI is up to date!",
-              message: `You are running the latest version (v${data.version}).`,
-              buttons: [{ label: "OK" }],
-              priority: isManualUpdateCheck
-            });
+            if (isManualUpdateCheck) {
+              showModal({
+                title: "ROSI is up to date!",
+                message: `You are running the latest version (v${data.version}).`,
+                buttons: [{ label: "OK" }],
+                priority: true
+              });
+            }
             isManualUpdateCheck = false;
             break;
             
           case 'error':
-            showModal({
-              title: "Update Error",
-              message: `An error occurred while checking for updates:\n${data.message}`,
-              buttons: [{ label: "OK" }],
-              priority: isManualUpdateCheck
-            });
+            if (isManualUpdateCheck) {
+              showModal({
+                title: "Update Error",
+                message: `An error occurred while checking for updates:\n${data.message}`,
+                buttons: [{ label: "OK" }],
+                priority: true
+              });
+            }
             isManualUpdateCheck = false;
             break;
           
