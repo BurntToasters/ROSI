@@ -86,10 +86,9 @@ const defaultSettings = {
   denoReminderDismissed: false,
   gpuAcceleration: false,
   gpuType: "auto",
-  hideSupportModal: false
+  hideSupportModal: false,
+  checkUpdatesOnStartup: true
 };
-
-// [!] The console debugger uses emojis to easily identify messages. If you see any issues with emojis, please ensure your terminal supports them or disable the console output in settings.
 
 // load settings from file or use defaults
 function loadSettings() {

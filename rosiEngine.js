@@ -616,6 +616,8 @@ function hideLicenses() {
     const animateBackgroundToggle = document.getElementById('animateBackgroundToggle');
     const audioOnlyToggle = document.getElementById('audioOnlyToggle');
     const notificationsToggle = document.getElementById('notificationsToggle');
+    const checkUpdatesOnStartupToggle = document.getElementById('checkUpdatesOnStartupToggle');
+    const checkUpdatesOnStartupLabel = document.getElementById('checkUpdatesOnStartupLabel');
     
     const settingsBtn = document.getElementById('settingsBtn');
     const closeSidebarBtn = document.getElementById('closeSidebar');
@@ -721,6 +723,14 @@ function hideLicenses() {
       }
       if (notificationsToggle) {
         notificationsToggle.checked = settings.notifications ?? true;
+      }
+
+      const channel = window.api.getChannel();
+      if (checkUpdatesOnStartupToggle) {
+        checkUpdatesOnStartupToggle.checked = settings.checkUpdatesOnStartup ?? true;
+        if (channel === 'msstore' && checkUpdatesOnStartupLabel) {
+          checkUpdatesOnStartupLabel.style.display = 'none';
+        }
       }
     };
     
@@ -906,6 +916,14 @@ function hideLicenses() {
     if (notificationsToggle) {
       notificationsToggle.addEventListener('change', (e) => {
         settings.notifications = e.target.checked;
+        window.api.saveSettings(settings);
+      });
+    }
+    
+    // Check updates on startup
+    if (checkUpdatesOnStartupToggle) {
+      checkUpdatesOnStartupToggle.addEventListener('change', (e) => {
+        settings.checkUpdatesOnStartup = e.target.checked;
         window.api.saveSettings(settings);
       });
     }
@@ -1131,6 +1149,24 @@ function hideLicenses() {
     });
 
 
+    // Check for updates on startup
+    async function checkUpdatesOnStartup() {
+      const channel = window.api.getChannel();
+      if (channel === 'msstore') return;
+      if (!settings.checkUpdatesOnStartup) return;
+      
+      try {
+        const isPackaged = await window.api.isPackaged();
+        if (!isPackaged) return;
+
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        await window.api.checkForUpdates();
+
+      } catch (e) {
+        console.error('Startup update check failed:', e);
+      }
+    }
+
     if (settings.firstLaunch) {
       // Save immediately - change
       settings.firstLaunch = false;
@@ -1141,12 +1177,16 @@ function hideLicenses() {
         message: "ROSI uses FFMPEG for yt-dlp and converting files to MP4.<br>For intended use and stability, Please ensure FFMPEG is installed and accessible in your system's PATH.<br>Click 'More Info' for guidance.",
         buttons: [
           { label: "More Info", action: () => window.api.openExternal('https://help.rosie.run/installing-ffmpeg') },
-          { label: "OK", action: () => checkDenoInstallation(settings) }
+          { label: "OK", action: () => {
+            checkDenoInstallation(settings);
+            checkUpdatesOnStartup();
+          }}
         ]
       });
     } else {
       // check Deno
       checkDenoInstallation(settings);
+      checkUpdatesOnStartup();
     }
 
 
