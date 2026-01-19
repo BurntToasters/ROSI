@@ -1,9 +1,10 @@
 {
   "name": "rosi",
-  "version": "3.1.1",
+  "version": "3.1.2",
   "description": "Electron GUI for yt-dlp",
   "main": "main.js",
   "scripts": {
+    "postinstall": "patch-package",
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "electron .",
     "build": "electron-builder",
@@ -42,6 +43,9 @@
     "release:linux:native:arm64": "node build-scripts/prepare-linux-arm64.js && dotenv -e .env -- cross-env USE_SYSTEM_FPM=true CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --arm64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:arm64",
     "release:all": "npm run release:mac && npm run release:win && npm run release:linux"
   },
+  "overrides": {
+    "tar": "^7.5.3"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/BurntToasters/rosi.git"
@@ -55,9 +59,10 @@
   "devDependencies": {
     "cross-env": "^10.1.0",
     "dotenv-cli": "^10.0.0",
-    "electron": "^39.0.0",
+    "electron": "^40.0.0",
     "electron-builder": "^26.0.12",
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.1.0",
+    "patch-package": "^8.0.1"
   },
   "dependencies": {
     "electron-updater": "^6.3.9",
@@ -89,7 +94,10 @@
       "artifactName": "ROSI-Windows-${arch}.${ext}"
     },
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "build/app-icon.icns",
       "artifactName": "ROSI-MacOS-universal.${ext}",
       "asarUnpack": [

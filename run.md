@@ -20,3 +20,6 @@ npm run build:linux:arm64
 
 # Licenses
 npx npm-license-crawler --production --json licenses.json
+
+# Temporary until elctron rebuild updates:
+npx patch-package
