@@ -521,12 +521,14 @@ ipcMain.on('open-external', (_, url) => {
 // open folder dialog for download location
 ipcMain.handle('select-download-location', async () => {
   try {
+    const defaultPath = app.getPath('downloads');
     const focusedWindow = BrowserWindow.getFocusedWindow();
     if (!focusedWindow) {
       // Fallback to main
       if (mainWindow && !mainWindow.isDestroyed()) {
         const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
           title: 'Select Download Folder',
+          defaultPath: defaultPath,
           properties: ['openDirectory', 'createDirectory']
         });
         return canceled ? null : filePaths[0];
@@ -535,6 +537,7 @@ ipcMain.handle('select-download-location', async () => {
     }
     const { canceled, filePaths } = await dialog.showOpenDialog(focusedWindow, {
       title: 'Select Download Folder',
+      defaultPath: defaultPath,
       properties: ['openDirectory', 'createDirectory']
     });
     return canceled ? null : filePaths[0];
