@@ -31,6 +31,16 @@
     }
   }
 
+  // Toggle console collapsed state
+  function toggleConsoleCollapse() {
+    const consoleSection = document.getElementById('console-section');
+    if (consoleSection) {
+      consoleSection.classList.toggle('collapsed');
+      return consoleSection.classList.contains('collapsed');
+    }
+    return false;
+  }
+
   // handles loader in button, swaps text for spinner, click cancels
   function setButtonLoading(button, isLoading, onCancel) {
     if (!button) return;
@@ -818,8 +828,15 @@ function hideLicenses() {
       }
       
       updateConsoleVisibility(settings.showConsoleOutput);
+
+      // Restore console collapsed state
+      if (settings.consoleCollapsed) {
+        const consoleSection = document.getElementById('console-section');
+        if (consoleSection) consoleSection.classList.add('collapsed');
+      }
+
       toggleAdvancedUI(settings.advancedOptions);
-      
+
       // Update additional options
       if (animateBackgroundToggle) {
         animateBackgroundToggle.checked = settings.animateBackground ?? true;
@@ -937,6 +954,20 @@ function hideLicenses() {
       window.api.saveSettings(settings);
       updateConsoleVisibility(settings.showConsoleOutput);
     });
+
+    // Console collapse toggle
+    const consoleHeader = document.getElementById('consoleHeader');
+    if (consoleHeader) {
+      consoleHeader.addEventListener('click', (e) => {
+        // Don't collapse if clicking the clear button
+        if (e.target.closest('#clearConsole')) return;
+
+        const isCollapsed = toggleConsoleCollapse();
+        settings.consoleCollapsed = isCollapsed;
+        window.api.saveSettings(settings);
+      });
+    }
+
     if (advancedToggle) advancedToggle.addEventListener('change', (e) => {
       settings.advancedOptions = e.target.checked;
       toggleAdvancedUI(e.target.checked);

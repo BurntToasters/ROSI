@@ -73,6 +73,7 @@ ipcMain.handle('get-app-version', () => app.getVersion());
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 const defaultSettings = {
   showConsoleOutput: false,
+  consoleCollapsed: false,
   advancedOptions: false,
   audioOnly: false,
   convertEnabled: false,
