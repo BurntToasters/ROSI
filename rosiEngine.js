@@ -87,8 +87,8 @@
   let isModalActive = false;
   let currentModalData = null; // Track modals
   
-  function showModal({ title, message, buttons = [], priority = false }) {
-    const modalData = { title, message, buttons, priority };
+  function showModal({ title, message, buttons = [], priority = false, extra = null }) {
+    const modalData = { title, message, buttons, priority, extra };
     if (priority && isModalActive) {
       const modal = document.getElementById('app-modal');
       if (modal) {
@@ -116,19 +116,30 @@
     
     isModalActive = true;
     currentModalData = modalQueue.shift();
-    const { title, message, buttons } = currentModalData;
+    const { title, message, buttons, extra } = currentModalData;
     
     const modal = document.getElementById('app-modal');
     const titleEl = document.getElementById('modal-title');
     const msgEl = document.getElementById('modal-message');
     const btnContainer = document.getElementById('modal-buttons');
+    const extraEl = document.getElementById('modal-extra');
     if (!modal || !titleEl || !msgEl || !btnContainer) {
       displayNextModal();
       return;
     }
     
     titleEl.textContent = title;
-    msgEl.innerHTML = message.replace(/\n/g, '<br>');
+    const safeMessage = typeof message === 'string' ? message : (message == null ? '' : String(message));
+    msgEl.textContent = safeMessage;
+    if (extraEl) {
+      extraEl.textContent = '';
+      if (extra) {
+        const extraNode = typeof extra === 'function' ? extra() : extra;
+        if (extraNode && extraNode.nodeType) {
+          extraEl.appendChild(extraNode);
+        }
+      }
+    }
     btnContainer.innerHTML = '';
     
     modal.classList.add('showing');
@@ -167,13 +178,7 @@
     const modKey = getModifierKeyName();
     showModal({
       title: "Keyboard Shortcuts",
-      message: `
-        <ul style="text-align: left; list-style: none;">
-          <li><strong>${modKey}+D:</strong> Restart application</li>
-          <li><strong>${modKey}+F:</strong> Focus URL input field</li>
-          <li><strong>${modKey}+,:</strong> Open settings</li>
-        </ul>
-      `,
+      message: `${modKey}+D - Restart application\n${modKey}+F - Focus URL input field\n${modKey}+, - Open settings`,
       buttons: [{ label: "OK" }]
     });
   }
@@ -203,12 +208,16 @@
       
       if (isFetchingFormats) return;
       isFetchingFormats = true;
+      let wasCancelled = false;
       fetchFormatsAbort = () => {
+        wasCancelled = true;
         isFetchingFormats = false;
         setButtonLoading(btn, false);
       };
       setButtonLoading(btn, true, () => {
-        window.api.cancelDownload();
+        if (window.api.cancelFormats) {
+          window.api.cancelFormats();
+        }
         fetchFormatsAbort();
       });
       const videoSelect = document.getElementById('videoFormat');
@@ -217,6 +226,7 @@
       if (audioSelect) audioSelect.innerHTML = '<option value="">Loading...</option>';
       try {
         const output = await window.api.getFormats(videoUrl);
+        if (wasCancelled) return;
         const lines = output.split('\n');
         if (videoSelect) videoSelect.innerHTML = '<option value="">Select Video Format</option>';
         if (audioSelect) audioSelect.innerHTML = '<option value="">Select Audio Format</option>';
@@ -259,6 +269,8 @@
         if (audioFormatsFound === 0 && audioSelect) audioSelect.innerHTML = '<option value="">No audio formats found</option>';
       } catch (e) {
         const errorMessage = typeof e === 'string' ? e : (e.message || 'Unknown error');
+        const cancelled = wasCancelled || (typeof errorMessage === 'string' && errorMessage.toLowerCase().includes('cancel'));
+        if (cancelled) return;
         if (videoSelect) videoSelect.innerHTML = '<option value="">Error loading formats</option>';
         if (audioSelect) audioSelect.innerHTML = '<option value="">Error loading formats</option>';
         showModal({
@@ -267,8 +279,10 @@
           buttons: [{ label: "OK" }]
         });
       } finally {
-        isFetchingFormats = false;
-        setButtonLoading(btn, false);
+        if (!wasCancelled) {
+          isFetchingFormats = false;
+          setButtonLoading(btn, false);
+        }
       }
     } catch (outerError) {
       console.error('Unexpected error in fetchFormats:', outerError);
@@ -402,10 +416,10 @@
       
       const result = await window.api.checkForUpdates();
 
-      if (result && result.error === 'dev-mode') {
+  if (result && result.error === 'dev-mode') {
         showModal({
           title: "Development Mode",
-          message: "Update checking is not available when running in development mode.<br><br>Build and package the app to test auto-updates.",
+          message: "Update checking is not available when running in development mode.\n\nBuild and package the app to test auto-updates.",
           buttons: [{ label: "OK" }],
           priority: isManualUpdateCheck
         });
@@ -416,7 +430,7 @@
       if (result && result.error && result.error !== 'dev-mode') {
         showModal({
           title: "Update Check Failed",
-          message: `Could not check for updates.<br><br>Error: ${result.error}`,
+          message: `Could not check for updates.\n\nError: ${result.error}`,
           buttons: [{ label: "OK" }],
           priority: isManualUpdateCheck
         });
@@ -436,6 +450,29 @@
 
   let updaterCleanupFunctions = [];
   
+  function buildUpdateProgressContent() {
+    const container = document.createElement('div');
+    container.className = 'update-progress-container';
+    
+    const barWrapper = document.createElement('div');
+    barWrapper.className = 'update-progress-bar-wrapper';
+    
+    const bar = document.createElement('div');
+    bar.id = 'update-progress-bar';
+    bar.className = 'update-progress-bar';
+    
+    const info = document.createElement('div');
+    info.id = 'update-progress-info';
+    info.className = 'update-progress-info';
+    info.textContent = 'Starting download...';
+    
+    barWrapper.appendChild(bar);
+    container.appendChild(barWrapper);
+    container.appendChild(info);
+    
+    return container;
+  }
+
   function setupAutoUpdater() {
     let updateVersion = '';
     
@@ -459,12 +496,8 @@
                   action: async () => {
                     showModal({
                       title: "Downloading Update",
-                      message: `<div class="update-progress-container">
-                        <div class="update-progress-bar-wrapper">
-                          <div id="update-progress-bar" class="update-progress-bar"></div>
-                        </div>
-                        <div id="update-progress-info" class="update-progress-info">Starting download...</div>
-                      </div>`,
+                      message: "Downloading the update. You can cancel if needed.",
+                      extra: buildUpdateProgressContent,
                       buttons: [
                         {
                           label: "Cancel",
@@ -600,7 +633,7 @@ function hideLicenses() {
       if (!isInstalled) {
         showModal({
           title: "Deno Required for Full YouTube Functionality",
-          message: "Recent updates to yt-dlp require Deno for full YouTube functionality.<br><br>Would you like to install Deno now?<br><br>Deno is the default JS interpreter for yt-dlp and is recommended due to its lightweight nature.",
+          message: "Recent updates to yt-dlp require Deno for full YouTube functionality.\n\nWould you like to install Deno now?\n\nDeno is the default JS interpreter for yt-dlp and is recommended due to its lightweight nature.",
           buttons: [
             { 
               label: "Install", 
@@ -616,14 +649,14 @@ function hideLicenses() {
                   await window.api.installDeno();
                   showModal({
                     title: "Installation Complete",
-                    message: "Deno has been successfully installed!<br>You may need to restart your terminal or system for changes to take effect.",
+                    message: "Deno has been successfully installed!\nYou may need to restart your terminal or system for changes to take effect.",
                     buttons: [{ label: "OK" }],
                     priority: true
                   });
                 } catch (error) {
                   showModal({
                     title: "Installation Failed",
-                    message: `Failed to install Deno automatically.<br><br>Please install manually:<br>Mac/Linux: curl -fsSL https://deno.land/install.sh | sh<br>Windows: irm https://deno.land/install.ps1 | iex<br><br>Error: ${error.error || 'Unknown error'}`,
+                    message: `Failed to install Deno automatically.\n\nPlease install manually:\nMac/Linux: curl -fsSL https://deno.land/install.sh | sh\nWindows: irm https://deno.land/install.ps1 | iex\n\nError: ${error.error || 'Unknown error'}`,
                     buttons: [
                       { label: "Open Deno Website", action: () => window.api.openExternal('https://deno.land') },
                       { label: "OK" }
@@ -666,10 +699,10 @@ function hideLicenses() {
       const versionLink = document.getElementById('versionLink');
       if (versionLink && version) {
         versionLink.textContent = `v${version}`;
-        versionLink.onclick = () => {
+        versionLink.addEventListener('click', (event) => {
+          event.preventDefault();
           window.api.openExternal(`https://github.com/BurntToasters/ROSI/releases/tag/v${version}`);
-          return false;
-        };
+        });
       }
     } catch (e) {
       console.error('Could not get app version:', e);
@@ -713,6 +746,12 @@ function hideLicenses() {
     const clearUrlBtn = document.getElementById('clearUrl');
     const clearConsoleBtn = document.getElementById('clearConsole');
     const urlInput = document.getElementById('url');
+    const browserCookiesHelp = document.getElementById('browserCookiesHelp');
+    const helpLink = document.getElementById('helpLink');
+    const supportLink = document.getElementById('supportLink');
+    const websiteLink = document.getElementById('websiteLink');
+    const supportProjectLink = document.getElementById('supportProjectLink');
+    const licensesLink = document.getElementById('licensesLink');
     
     if (fetchFormatsBtn) fetchFormatsBtn._originalClick = fetchFormats;
     if (downloadBtn) downloadBtn._originalClick = null;
@@ -831,7 +870,7 @@ function hideLicenses() {
     if (!settings.hideSupportModal) {
       showModal({
         title: "Support This Project?",
-        message: "Would you like to support the development of ROSI?<br>Your help keeps this project alive!",
+        message: "Would you like to support the development of ROSI?\nYour help keeps this project alive!",
         buttons: [
           { label: "❤️ Yes Support!", action: () => { 
             window.api.openExternal('https://rosie.run/support')
@@ -852,6 +891,28 @@ function hideLicenses() {
     if (closeSidebarBtn) closeSidebarBtn.addEventListener('click', closeSidebar);
     if (sidebarOverlay) sidebarOverlay.addEventListener('click', closeSidebar);
     if (shortcutsBtn) shortcutsBtn.addEventListener('click', showKeyboardShortcuts);
+    
+    const bindExternalLink = (element, url) => {
+      if (element) {
+        element.addEventListener('click', (event) => {
+          event.preventDefault();
+          window.api.openExternal(url);
+        });
+      }
+    };
+    
+    bindExternalLink(browserCookiesHelp, 'https://help.rosie.run/about-browser-cookies');
+    bindExternalLink(helpLink, 'https://help.rosie.run/rosi/en-us/faq');
+    bindExternalLink(supportLink, 'https://rosie.run/support');
+    bindExternalLink(websiteLink, 'https://rosie.run');
+    bindExternalLink(supportProjectLink, 'https://rosie.run');
+    
+    if (licensesLink) {
+      licensesLink.addEventListener('click', (event) => {
+        event.preventDefault();
+        showLicenses();
+      });
+    }
 
     if (clearUrlBtn && urlInput) {
       clearUrlBtn.addEventListener('click', () => {
@@ -1261,7 +1322,7 @@ function hideLicenses() {
       
       showModal({
         title: "Dependency FFMPEG is Required for this app.",
-        message: "ROSI uses FFMPEG for yt-dlp and converting files to MP4.<br>For intended use and stability, Please ensure FFMPEG is installed and accessible in your system's PATH.<br>Click 'More Info' for guidance.",
+        message: "ROSI uses FFMPEG for yt-dlp and converting files to MP4.\nFor intended use and stability, please ensure FFMPEG is installed and accessible in your system's PATH.\nClick \"More Info\" for guidance.",
         buttons: [
           { label: "More Info", action: () => window.api.openExternal('https://help.rosie.run/installing-ffmpeg') },
           { label: "OK", action: () => {

@@ -2,6 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self';">
   <title>Rosi</title>
   <link rel="stylesheet" href="main.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -86,7 +87,7 @@
           <span class="toggle-slider"></span>
           <span class="toggle-text">
             Hook into web browser
-            <a href="#" class="help-icon" title="Learn more" onclick="window.api.openExternal('https://help.rosie.run/about-browser-cookies'); return false;">?</a>
+            <a href="#" id="browserCookiesHelp" class="help-icon" title="Learn more">?</a>
           </span>
         </label>
 
@@ -162,7 +163,7 @@
         Reset All Settings
       </button>
       <div class="version-info">
-        <a id="versionLink" href="#" onclick="return false;">Loading...</a>
+        <a id="versionLink" href="#">Loading...</a>
       </div>
     </div>
   </aside>
@@ -182,14 +183,14 @@
       </div>
 
       <div class="top-bar-links">
-        <a href="#" onclick="window.api.openExternal('https://help.rosie.run/rosi/en-us/faq'); return false;" title="Help">
+        <a href="#" id="helpLink" title="Help">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10"></circle>
             <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
             <line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
         </a>
-        <a href="#" onclick="window.api.openExternal('https://rosie.run/support'); return false;" title="Support">
+        <a href="#" id="supportLink" title="Support">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
           </svg>
@@ -278,11 +279,11 @@
     </section>
 
     <footer class="main-footer">
-      <a href="#" onclick="showLicenses(); return false;">Licenses</a>
+      <a href="#" id="licensesLink">Licenses</a>
       <span class="footer-divider">•</span>
-      <a href="#" onclick="window.api.openExternal('https://rosie.run'); return false;">Website</a>
+      <a href="#" id="websiteLink">Website</a>
       <span class="footer-divider">•</span>
-      <a href="#" onclick="window.api.openExternal('https://rosie.run'); return false;">Support This Project</a>
+      <a href="#" id="supportProjectLink">Support This Project</a>
       <span class="footer-divider">•</span>
       <span class="footer-credit">Made with ❤️ by BurntToasters</span>
     </footer>
@@ -292,6 +293,7 @@
     <div class="modal-box">
       <h3 id="modal-title">Modal Title</h3>
       <div id="modal-message" class="modal-message">Modal message goes here...</div>
+      <div id="modal-extra" class="modal-extra"></div>
       <div id="modal-buttons" class="modal-buttons"></div>
     </div>
   </div>
