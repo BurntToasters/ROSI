@@ -997,6 +997,11 @@ select option {
   text-align: center;
   margin-bottom: var(--spacing-xl);
   line-height: 1.7;
+  white-space: pre-line;
+}
+
+.modal-extra:empty {
+  display: none;
 }
 
 .modal-buttons {
