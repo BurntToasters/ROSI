@@ -147,7 +147,7 @@
         "licenseUrl": "https://github.com/DefinitelyTyped/DefinitelyTyped/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "@types/http-cache-semantics@4.0.4": {
+    "@types/http-cache-semantics@4.2.0": {
         "licenses": "MIT",
         "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped",
         "licenseUrl": "https://github.com/DefinitelyTyped/DefinitelyTyped/raw/master/LICENSE",
@@ -421,6 +421,12 @@
         "licenses": "MIT",
         "repository": "github:watson/ci-info",
         "licenseUrl": "github:watson/ci-info",
+        "parents": "app-builder-lib:rosi"
+    },
+    "ci-info@4.4.0": {
+        "licenses": "MIT",
+        "repository": "github:watson/ci-info",
+        "licenseUrl": "github:watson/ci-info",
         "parents": "rosi"
     },
     "cli-cursor@3.1.0": {
@@ -651,7 +657,7 @@
         "licenseUrl": "https://github.com/electron/windows-installer/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "electron@40.0.0": {
+    "electron@40.1.0": {
         "licenses": "MIT",
         "repository": "https://github.com/electron/electron",
         "licenseUrl": "https://github.com/electron/electron/raw/master/LICENSE",
@@ -1191,7 +1197,7 @@
         "licenseUrl": "https://github.com/lodash/lodash/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "lodash@4.17.21": {
+    "lodash@4.17.23": {
         "licenses": "MIT",
         "repository": "https://github.com/lodash/lodash",
         "licenseUrl": "https://github.com/lodash/lodash/raw/master/LICENSE",
@@ -1215,7 +1221,7 @@
         "licenseUrl": "https://github.com/isaacs/node-lru-cache/raw/master/LICENSE",
         "parents": "@npmcli/agent:rosi"
     },
-    "lru-cache@11.2.4": {
+    "lru-cache@11.2.5": {
         "licenses": "BlueOak-1.0.0",
         "repository": "https://github.com/isaacs/node-lru-cache",
         "licenseUrl": "https://github.com/isaacs/node-lru-cache/raw/master/LICENSE.md",
@@ -1381,7 +1387,7 @@
         "licenseUrl": "https://github.com/jshttp/negotiator/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "node-abi@4.25.0": {
+    "node-abi@4.26.0": {
         "licenses": "MIT",
         "repository": "https://github.com/electron/node-abi",
         "licenseUrl": "https://github.com/electron/node-abi/raw/master/LICENSE",
@@ -1633,7 +1639,7 @@
         "licenseUrl": "https://github.com/gajus/roarr/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "rosi@3.1.2": {
+    "rosi@3.2.0": {
         "licenses": "MPL-2.0",
         "repository": "https://github.com/BurntToasters/rosi",
         "licenseUrl": "https://github.com/BurntToasters/rosi/raw/master/LICENSE",
@@ -1825,7 +1831,7 @@
         "licenseUrl": "https://github.com/chalk/supports-color/raw/master/license",
         "parents": "rosi"
     },
-    "tar@7.5.4": {
+    "tar@7.5.7": {
         "licenses": "BlueOak-1.0.0",
         "repository": "https://github.com/isaacs/node-tar",
         "licenseUrl": "https://github.com/isaacs/node-tar/raw/master/LICENSE.md",

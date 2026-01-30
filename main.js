@@ -73,6 +73,7 @@ ipcMain.handle('get-app-version', () => app.getVersion());
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 const defaultSettings = {
   showConsoleOutput: false,
+  consoleCollapsed: false,
   advancedOptions: false,
   audioOnly: false,
   convertEnabled: false,
@@ -120,6 +121,7 @@ function saveSettings(newSettings) {
 
 let mainWindow = null;
 let splashWindow = null;
+let formatsProcess = null;
 
 function createSplashWindow() {
   splashWindow = new BrowserWindow({
@@ -556,12 +558,16 @@ ipcMain.handle('getFormats', async (_, url) => {
       if (!fs.existsSync(ytdlpPath)) {
           return reject(`yt-dlp binary not found at ${ytdlpPath}`);
       }
+      if (formatsProcess && formatsProcess.proc && !formatsProcess.proc.killed) {
+          try { formatsProcess.cancelled = true; formatsProcess.proc.kill(); } catch (e) { /* ignore */ }
+      }
       const proc = spawn(ytdlpPath, ['-F', url]);
+      formatsProcess = { proc, cancelled: false };
       let outputData = '';
       let errorData = '';
 
       const timeout = setTimeout(() => {
-        try { proc.kill(); } catch (e) {  }
+        try { formatsProcess.cancelled = true; proc.kill(); } catch (e) {  }
         reject('Format fetch timed out after 60 seconds. The server may be slow or unresponsive.');
       }, 60000);
       
@@ -573,6 +579,14 @@ ipcMain.handle('getFormats', async (_, url) => {
       });
       proc.on('close', (code) => {
         clearTimeout(timeout);
+        const wasCancelled = formatsProcess && formatsProcess.proc === proc && formatsProcess.cancelled;
+        if (formatsProcess && formatsProcess.proc === proc) {
+          formatsProcess = null;
+        }
+        if (wasCancelled) {
+          reject('Format fetch cancelled.');
+          return;
+        }
         if (code === 0) {
             resolve(outputData);
         } else {
@@ -582,9 +596,19 @@ ipcMain.handle('getFormats', async (_, url) => {
       });
       proc.on('error', (err) => {
           clearTimeout(timeout);
+          if (formatsProcess && formatsProcess.proc === proc) {
+            formatsProcess = null;
+          }
           reject(`Failed to start yt-dlp: ${err.message}`);
       });
     });
+});
+
+ipcMain.on('cancel-formats', () => {
+  if (formatsProcess && formatsProcess.proc && !formatsProcess.proc.killed) {
+    formatsProcess.cancelled = true;
+    try { formatsProcess.proc.kill(); } catch (e) { /* ignore */ }
+  }
 });
 
 // --- Download Video ---
@@ -604,8 +628,21 @@ ipcMain.on('download-video', async (event, options) => {
 
   const sender = event.sender;
   const settings = loadSettings();
-  const url = options?.url;
-  const downloadDir = options?.outputPath;
+  const requestOptions = options || {};
+  const url = requestOptions.url;
+  const downloadDir = requestOptions.outputPath;
+  const effectiveSettings = { ...settings };
+  if (Object.prototype.hasOwnProperty.call(requestOptions, 'convertFormat')) {
+    if (typeof requestOptions.convertFormat === 'string' && requestOptions.convertFormat.trim() !== '') {
+      effectiveSettings.convertFormat = requestOptions.convertFormat;
+      effectiveSettings.convertEnabled = true;
+    } else {
+      effectiveSettings.convertEnabled = false;
+    }
+  }
+  if (typeof requestOptions.keepOriginal === 'boolean') {
+    effectiveSettings.keepOriginalAfterConvert = requestOptions.keepOriginal;
+  }
 
   const safeSend = (channel, ...args) => {
       if (!sender.isDestroyed()) {
@@ -645,8 +682,8 @@ ipcMain.on('download-video', async (event, options) => {
     ];
 
     // Advanced format selection
-    const videoFormat = options?.videoFormat;
-    const audioFormat = options?.audioFormat;
+    const videoFormat = requestOptions.videoFormat;
+    const audioFormat = requestOptions.audioFormat;
     const formatFlagIndex = ytdlpArgs.indexOf('-f');
     
     if (videoFormat && audioFormat) {
@@ -661,14 +698,14 @@ ipcMain.on('download-video', async (event, options) => {
     }
 
     // Audio-only mode (only applies when not using advanced format selection)
-    if (settings.audioOnly && !videoFormat && !audioFormat) {
+    if (effectiveSettings.audioOnly && !videoFormat && !audioFormat) {
       ytdlpArgs.splice(formatFlagIndex, 2);
       ytdlpArgs.splice(-1, 0, '-x', '--audio-format', 'mp3', '--audio-quality', '0');
       safeSend('progress', '🎵 Audio-only mode enabled');
     }
 
-    if (settings.hookBrowser && settings.browserChoice) {
-      ytdlpArgs.splice(-1, 0, '--cookies-from-browser', settings.browserChoice);
+    if (effectiveSettings.hookBrowser && effectiveSettings.browserChoice) {
+      ytdlpArgs.splice(-1, 0, '--cookies-from-browser', effectiveSettings.browserChoice);
     }
 
     safeSend('progress', `🚀 Starting download: ${url}`);
@@ -697,7 +734,7 @@ ipcMain.on('download-video', async (event, options) => {
 
     ytdlpProcess.on('close', async (code) => {
       ytdlpProcess = null;
-      const currentSettings = settings;
+      const currentSettings = effectiveSettings;
       if (code !== 0) {
           safeSend('progress', `❌ Download failed: yt-dlp process exited with code ${code}`);
           safeSend('progress', `   Check console and stderr output above for details.`);
@@ -782,23 +819,13 @@ ipcMain.on('download-video', async (event, options) => {
             safeSend('progress', `🖥️ Using GPU acceleration (${videoEncoder})`);
           }
 
-          if (isWindows) {
-              let ffmpegCommand;
-              if (targetFormat === "mp3" || targetFormat === "m4a") {
-                ffmpegCommand = `ffmpeg -i "${inputPath}" -vn -c:a ${targetFormat === "mp3" ? 'libmp3lame' : 'aac'} -y "${outputPath}"`;
-              } else {
-                ffmpegCommand = `ffmpeg -i "${inputPath}" -c:v ${videoEncoder} -c:a aac -movflags +faststart -y "${outputPath}"`;
-              }
-              ffmpegProcess = spawn(ffmpegCommand, { shell: true });
+          let ffmpegArgs;
+          if (targetFormat === "mp3" || targetFormat === "m4a") {
+            ffmpegArgs = ['-i', inputPath, '-vn', '-c:a', targetFormat === "mp3" ? 'libmp3lame' : 'aac', '-y', outputPath];
           } else {
-              let ffmpegArgs;
-              if (targetFormat === "mp3" || targetFormat === "m4a") {
-                ffmpegArgs = ['-i', inputPath, '-vn', '-c:a', targetFormat === "mp3" ? 'libmp3lame' : 'aac', '-y', outputPath];
-              } else {
-                ffmpegArgs = ['-i', inputPath, '-c:v', videoEncoder, '-c:a', 'aac', '-movflags', '+faststart', '-y', outputPath];
-              }
-              ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+            ffmpegArgs = ['-i', inputPath, '-c:v', videoEncoder, '-c:a', 'aac', '-movflags', '+faststart', '-y', outputPath];
           }
+          ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
 
           let ffmpegOutput = '';
           ffmpegProcess.stdout.on('data', (data) => {

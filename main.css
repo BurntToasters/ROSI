@@ -78,7 +78,8 @@ body {
   min-height: 100vh;
   color: var(--text-primary);
   line-height: 1.5;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 body.animate-bg {
@@ -542,6 +543,7 @@ select option {
   align-items: center;
   justify-content: center;
   padding: var(--spacing-xl);
+  min-height: 400px;
 }
 
 .download-card {
@@ -837,10 +839,12 @@ select option {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .console-section.visible {
-  display: block;
+  display: flex;
+  flex-direction: column;
 }
 
 .console-header {
@@ -850,6 +854,30 @@ select option {
   padding: var(--spacing-sm) var(--spacing-md);
   background: rgba(0, 0, 0, 0.3);
   border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  user-select: none;
+  transition: var(--transition-fast);
+}
+
+.console-header:hover {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.console-header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.console-collapse-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--text-tertiary);
+  transition: transform var(--transition-normal);
+}
+
+.console-section.collapsed .console-collapse-icon {
+  transform: rotate(-90deg);
 }
 
 .console-title {
@@ -884,7 +912,7 @@ select option {
 }
 
 .console-output {
-  height: 200px;
+  height: 150px;
   padding: var(--spacing-md);
   font-family: var(--font-mono);
   font-size: 0.8rem;
@@ -893,6 +921,14 @@ select option {
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.6;
+  transition: height var(--transition-normal), padding var(--transition-normal);
+}
+
+.console-section.collapsed .console-output {
+  height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  overflow: hidden;
 }
 
 .console-output::-webkit-scrollbar {
@@ -997,6 +1033,11 @@ select option {
   text-align: center;
   margin-bottom: var(--spacing-xl);
   line-height: 1.7;
+  white-space: pre-line;
+}
+
+.modal-extra:empty {
+  display: none;
 }
 
 .modal-buttons {
@@ -1127,4 +1168,26 @@ select option {
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   border: 0;
+}
+
+/* Responsive adjustments for smaller windows */
+@media (max-height: 800px) {
+  .download-section {
+    min-height: 350px;
+    padding: var(--spacing-md);
+  }
+
+  .console-output {
+    height: 120px;
+  }
+}
+
+@media (max-height: 700px) {
+  .download-section {
+    min-height: 300px;
+  }
+
+  .console-output {
+    height: 100px;
+  }
 }
