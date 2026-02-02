@@ -4,7 +4,6 @@
   "description": "Electron GUI for yt-dlp",
   "main": "main.js",
   "scripts": {
-    "postinstall": "patch-package",
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "electron .",
     "build": "electron-builder",
