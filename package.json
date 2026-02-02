@@ -61,8 +61,7 @@
     "dotenv-cli": "^10.0.0",
     "electron": "^40.0.0",
     "electron-builder": "^26.0.12",
-    "js-yaml": "^4.1.0",
-    "patch-package": "^8.0.1"
+    "js-yaml": "^4.1.0"
   },
   "dependencies": {
     "electron-updater": "^6.3.9",
