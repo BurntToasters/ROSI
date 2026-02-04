@@ -43,7 +43,8 @@
     "release:all": "npm run release:mac && npm run release:win && npm run release:linux"
   },
   "overrides": {
-    "tar": "^7.5.3"
+    "tar": "^7.5.3",
+    "@isaacs/brace-expansion": "^5.0.1"
   },
   "repository": {
     "type": "git",
