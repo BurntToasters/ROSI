@@ -17,4 +17,4 @@ appx:
   customManifestPath: build/appx/appxmanifest.xml
   artifactName: ROSI-${version}-${arch}.${ext}
 asarUnpack:
-  - yt-dlp.exe
+  - assets/yt-dlp.exe

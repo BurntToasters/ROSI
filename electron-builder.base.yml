@@ -16,8 +16,8 @@ win:
   target: nsis
   icon: build/app-icon.ico
   asarUnpack:
-    - yt-dlp.exe
-    - yt-dlp_arm64.exe
+    - assets/yt-dlp.exe
+    - assets/yt-dlp_arm64.exe
 nsis:
   artifactName: ROSI-Windows-${arch}.${ext}
   allowToChangeInstallationDirectory: false
@@ -30,7 +30,7 @@ mac:
   icon: build/app-icon.icns
   artifactName: ROSI-MacOS-universal.${ext}
   asarUnpack:
-    - yt-dlp_macos
+    - assets/yt-dlp_macos
 linux:
   target:
     - AppImage
@@ -39,8 +39,8 @@ linux:
   icon: build/app-icon.png
   category: Utility
   asarUnpack:
-    - yt-dlp_linux
-    - yt-dlp_linux_aarch64
+    - assets/yt-dlp_linux
+    - assets/yt-dlp_linux_aarch64
 appImage:
   artifactName: ROSI-Linux-${arch}.${ext}
 deb:

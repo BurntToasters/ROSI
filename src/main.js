@@ -28,10 +28,10 @@ const ytdlpBinary = getYtdlpBinaryName();
 let ytdlpPath;
 if (isPackaged) {
   const possiblePaths = [
-    path.join(process.resourcesPath, 'app.asar.unpacked', ytdlpBinary),
-    path.join(process.resourcesPath, ytdlpBinary),
-    path.join(__dirname, '..', ytdlpBinary),
-    path.join(__dirname, ytdlpBinary)
+    path.join(process.resourcesPath, 'app.asar.unpacked', 'assets', ytdlpBinary),
+    path.join(process.resourcesPath, 'assets', ytdlpBinary),
+    path.join(__dirname, '..', 'assets', ytdlpBinary),
+    path.join(__dirname, 'assets', ytdlpBinary)
   ];
   
   for (const tryPath of possiblePaths) {
@@ -45,11 +45,11 @@ if (isPackaged) {
   
   if (!ytdlpPath) {
     console.error(`Could not find ${ytdlpBinary} in any expected location`);
-    ytdlpPath = path.join(process.resourcesPath, 'app.asar.unpacked', ytdlpBinary); // Default for error reporting
+    ytdlpPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'assets', ytdlpBinary); // Default for error reporting
   }
 } else {
   // DEV
-  ytdlpPath = path.join(__dirname, ytdlpBinary);
+  ytdlpPath = path.join(__dirname, '..', 'assets', ytdlpBinary);
 }
 
 // yt-dlp binary executable on macOS/Linux
@@ -130,14 +130,14 @@ function createSplashWindow() {
     transparent: true,
     frame: false,
     alwaysOnTop: true,
-    icon: path.join(__dirname, 'app.png'),
+    icon: path.join(__dirname, 'renderer', 'app.png'),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false
     },
     roundedCorners: true
   });
-  splashWindow.loadFile('splash.html');
+  splashWindow.loadFile(path.join(__dirname, 'renderer', 'splash.html'));
   splashWindow.center();
 }
 
@@ -151,7 +151,7 @@ function createWindow() {
     minHeight: 700,
     maxWidth: 1800,
     maxHeight: 1400,
-    icon: path.join(__dirname, 'app.png'),
+    icon: path.join(__dirname, 'renderer', 'app.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -163,7 +163,7 @@ function createWindow() {
     menuBarVisible: isDev,
     show: false // Don't show window until ready
   });
-  mainWindow.loadFile('index.html');
+  mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   
   mainWindow.setMenuBarVisibility(isDev);
   mainWindow.setAutoHideMenuBar(!isDev);
@@ -967,7 +967,7 @@ ipcMain.on('show-notification', (_, options) => {
       const notification = new Notification({
         title: options?.title || 'ROSI',
         body: options?.body || '',
-        icon: path.join(__dirname, 'app.png'),
+        icon: path.join(__dirname, 'renderer', 'app.png'),
         silent: false
       });
       

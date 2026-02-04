@@ -29,6 +29,12 @@
         "licenseUrl": "https://github.com/electron/get/raw/master/LICENSE",
         "parents": "rosi"
     },
+    "@electron/get@3.1.0": {
+        "licenses": "MIT",
+        "repository": "https://github.com/electron/get",
+        "licenseUrl": "https://github.com/electron/get/raw/master/LICENSE",
+        "parents": "app-builder-lib:rosi"
+    },
     "@electron/notarize@2.5.0": {
         "licenses": "MIT",
         "repository": "https://github.com/electron/notarize",
@@ -41,7 +47,7 @@
         "licenseUrl": "https://github.com/electron/osx-sign/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "@electron/rebuild@4.0.1": {
+    "@electron/rebuild@4.0.3": {
         "licenses": "MIT",
         "repository": "https://github.com/electron/rebuild",
         "licenseUrl": "https://github.com/electron/rebuild/raw/master/LICENSE",
@@ -71,7 +77,7 @@
         "licenseUrl": "https://github.com/isaacs/balanced-match/raw/master/LICENSE.md",
         "parents": "rosi"
     },
-    "@isaacs/brace-expansion@5.0.0": {
+    "@isaacs/brace-expansion@5.0.1": {
         "licenses": "MIT",
         "parents": "rosi"
     },
@@ -165,7 +171,7 @@
         "licenseUrl": "https://github.com/DefinitelyTyped/DefinitelyTyped/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "@types/node@24.10.9": {
+    "@types/node@24.10.10": {
         "licenses": "MIT",
         "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped",
         "licenseUrl": "https://github.com/DefinitelyTyped/DefinitelyTyped/raw/master/LICENSE",
@@ -187,12 +193,6 @@
         "licenses": "MIT",
         "repository": "https://github.com/xmldom/xmldom",
         "licenseUrl": "https://github.com/xmldom/xmldom/raw/master/LICENSE",
-        "parents": "rosi"
-    },
-    "@yarnpkg/lockfile@1.1.0": {
-        "licenses": "BSD-2-Clause",
-        "repository": "https://github.com/yarnpkg/yarn/blob/master/packages/lockfile",
-        "licenseUrl": "https://github.com/yarnpkg/yarn/blob/master/packages/lockfile",
         "parents": "rosi"
     },
     "abbrev@3.0.1": {
@@ -249,7 +249,7 @@
         "licenseUrl": "https://github.com/develar/app-builder/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "app-builder-lib@26.4.0": {
+    "app-builder-lib@26.7.0": {
         "licenses": "MIT",
         "repository": "https://github.com/electron-userland/electron-builder",
         "licenseUrl": "https://github.com/electron-userland/electron-builder",
@@ -321,12 +321,6 @@
         "licenseUrl": "https://github.com/juliangruber/brace-expansion/raw/master/LICENSE",
         "parents": "cacache:rosi"
     },
-    "braces@3.0.3": {
-        "licenses": "MIT",
-        "repository": "https://github.com/micromatch/braces",
-        "licenseUrl": "https://github.com/micromatch/braces/raw/master/LICENSE",
-        "parents": "rosi"
-    },
     "buffer-crc32@0.2.13": {
         "licenses": "MIT",
         "repository": "https://github.com/brianloveswords/buffer-crc32",
@@ -351,7 +345,7 @@
         "licenseUrl": "https://github.com/electron-userland/electron-builder/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "builder-util@26.3.4": {
+    "builder-util@26.4.1": {
         "licenses": "MIT",
         "repository": "https://github.com/electron-userland/electron-builder",
         "licenseUrl": "https://github.com/electron-userland/electron-builder/raw/master/LICENSE",
@@ -381,18 +375,6 @@
         "licenseUrl": "https://github.com/ljharb/call-bind-apply-helpers/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "call-bind@1.0.8": {
-        "licenses": "MIT",
-        "repository": "https://github.com/ljharb/call-bind",
-        "licenseUrl": "https://github.com/ljharb/call-bind/raw/master/LICENSE",
-        "parents": "rosi"
-    },
-    "call-bound@1.0.4": {
-        "licenses": "MIT",
-        "repository": "https://github.com/ljharb/call-bound",
-        "licenseUrl": "https://github.com/ljharb/call-bound/raw/master/LICENSE",
-        "parents": "rosi"
-    },
     "chalk@4.1.2": {
         "licenses": "MIT",
         "repository": "https://github.com/chalk/chalk",
@@ -410,12 +392,6 @@
         "repository": "https://github.com/electron/node-chromium-pickle-js",
         "licenseUrl": "https://github.com/electron/node-chromium-pickle-js",
         "parents": "rosi"
-    },
-    "ci-info@3.9.0": {
-        "licenses": "MIT",
-        "repository": "https://github.com/watson/ci-info",
-        "licenseUrl": "https://github.com/watson/ci-info/raw/master/LICENSE",
-        "parents": "patch-package:rosi"
     },
     "ci-info@4.3.1": {
         "licenses": "MIT",
@@ -579,7 +555,7 @@
         "licenseUrl": "https://github.com/gliviu/dir-compare/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "dmg-builder@26.4.0": {
+    "dmg-builder@26.7.0": {
         "licenses": "MIT",
         "repository": "https://github.com/electron-userland/electron-builder",
         "licenseUrl": "https://github.com/electron-userland/electron-builder",
@@ -627,19 +603,19 @@
         "licenseUrl": "https://github.com/mde/ejs/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "electron-builder-squirrel-windows@26.4.0": {
+    "electron-builder-squirrel-windows@26.7.0": {
         "licenses": "MIT",
         "repository": "https://github.com/electron-userland/electron-builder",
         "licenseUrl": "https://github.com/electron-userland/electron-builder/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "electron-builder@26.4.0": {
+    "electron-builder@26.7.0": {
         "licenses": "MIT",
         "repository": "https://github.com/electron-userland/electron-builder",
         "licenseUrl": "https://github.com/electron-userland/electron-builder/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "electron-publish@26.3.4": {
+    "electron-publish@26.6.0": {
         "licenses": "MIT",
         "repository": "https://github.com/electron-userland/electron-builder",
         "licenseUrl": "https://github.com/electron-userland/electron-builder/raw/master/LICENSE",
@@ -775,24 +751,12 @@
         "licenses": "MIT",
         "repository": "https://github.com/thecodrr/fdir",
         "licenseUrl": "https://github.com/thecodrr/fdir/raw/master/LICENSE",
-        "parents": "tinyglobby:rosi"
+        "parents": "rosi"
     },
     "filelist@1.0.4": {
         "licenses": "Apache-2.0",
         "repository": "https://github.com/mde/filelist",
         "licenseUrl": "https://github.com/mde/filelist",
-        "parents": "rosi"
-    },
-    "fill-range@7.1.1": {
-        "licenses": "MIT",
-        "repository": "https://github.com/jonschlinkert/fill-range",
-        "licenseUrl": "https://github.com/jonschlinkert/fill-range/raw/master/LICENSE",
-        "parents": "rosi"
-    },
-    "find-yarn-workspace-root@2.0.0": {
-        "licenses": "Apache-2.0",
-        "repository": "https://github.com/square/find-yarn-workspace-root",
-        "licenseUrl": "https://github.com/square/find-yarn-workspace-root/raw/master/LICENSE",
         "parents": "rosi"
     },
     "foreground-child@3.3.1": {
@@ -1023,12 +987,6 @@
         "licenseUrl": "https://github.com/beaugunderson/ip-address/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "is-docker@2.2.1": {
-        "licenses": "MIT",
-        "repository": "https://github.com/sindresorhus/is-docker",
-        "licenseUrl": "https://github.com/sindresorhus/is-docker/raw/master/license",
-        "parents": "rosi"
-    },
     "is-fullwidth-code-point@3.0.0": {
         "licenses": "MIT",
         "repository": "https://github.com/sindresorhus/is-fullwidth-code-point",
@@ -1041,28 +999,10 @@
         "licenseUrl": "https://github.com/sindresorhus/is-interactive/raw/master/license",
         "parents": "rosi"
     },
-    "is-number@7.0.0": {
-        "licenses": "MIT",
-        "repository": "https://github.com/jonschlinkert/is-number",
-        "licenseUrl": "https://github.com/jonschlinkert/is-number/raw/master/LICENSE",
-        "parents": "rosi"
-    },
     "is-unicode-supported@0.1.0": {
         "licenses": "MIT",
         "repository": "https://github.com/sindresorhus/is-unicode-supported",
         "licenseUrl": "https://github.com/sindresorhus/is-unicode-supported/raw/master/license",
-        "parents": "rosi"
-    },
-    "is-wsl@2.2.0": {
-        "licenses": "MIT",
-        "repository": "https://github.com/sindresorhus/is-wsl",
-        "licenseUrl": "https://github.com/sindresorhus/is-wsl/raw/master/license",
-        "parents": "rosi"
-    },
-    "isarray@2.0.5": {
-        "licenses": "MIT",
-        "repository": "https://github.com/juliangruber/isarray",
-        "licenseUrl": "https://github.com/juliangruber/isarray/raw/master/LICENSE",
         "parents": "rosi"
     },
     "isbinaryfile@4.0.10": {
@@ -1131,12 +1071,6 @@
         "licenseUrl": "https://github.com/epoberezkin/json-schema-traverse/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "json-stable-stringify@1.3.0": {
-        "licenses": "MIT",
-        "repository": "https://github.com/ljharb/json-stable-stringify",
-        "licenseUrl": "https://github.com/ljharb/json-stable-stringify/raw/master/LICENSE",
-        "parents": "rosi"
-    },
     "json-stringify-safe@5.0.1": {
         "licenses": "ISC",
         "repository": "https://github.com/isaacs/json-stringify-safe",
@@ -1161,22 +1095,10 @@
         "licenseUrl": "https://github.com/jprichardson/node-jsonfile/raw/master/LICENSE",
         "parents": "electron-updater:rosi"
     },
-    "jsonify@0.0.1": {
-        "licenses": "Public Domain",
-        "repository": "https://github.com/ljharb/jsonify",
-        "licenseUrl": "https://github.com/ljharb/jsonify",
-        "parents": "rosi"
-    },
     "keyv@4.5.4": {
         "licenses": "MIT",
         "repository": "https://github.com/jaredwray/keyv",
         "licenseUrl": "https://github.com/jaredwray/keyv",
-        "parents": "rosi"
-    },
-    "klaw-sync@6.0.0": {
-        "licenses": "MIT",
-        "repository": "https://github.com/manidlou/node-klaw-sync",
-        "licenseUrl": "https://github.com/manidlou/node-klaw-sync/raw/master/LICENSE",
         "parents": "rosi"
     },
     "lazy-val@1.0.5": {
@@ -1251,12 +1173,6 @@
         "licenseUrl": "https://github.com/es-shims/math-intrinsics/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "micromatch@4.0.8": {
-        "licenses": "MIT",
-        "repository": "https://github.com/micromatch/micromatch",
-        "licenseUrl": "https://github.com/micromatch/micromatch/raw/master/LICENSE",
-        "parents": "rosi"
-    },
     "mime-db@1.52.0": {
         "licenses": "MIT",
         "repository": "https://github.com/jshttp/mime-db",
@@ -1293,7 +1209,7 @@
         "licenseUrl": "https://github.com/sindresorhus/mimic-response/raw/master/license",
         "parents": "decompress-response:rosi"
     },
-    "minimatch@10.1.1": {
+    "minimatch@10.1.2": {
         "licenses": "BlueOak-1.0.0",
         "repository": "https://github.com/isaacs/minimatch",
         "licenseUrl": "https://github.com/isaacs/minimatch/raw/master/LICENSE.md",
@@ -1435,12 +1351,6 @@
         "licenseUrl": "https://github.com/sindresorhus/onetime/raw/master/license",
         "parents": "rosi"
     },
-    "open@7.4.2": {
-        "licenses": "MIT",
-        "repository": "https://github.com/sindresorhus/open",
-        "licenseUrl": "https://github.com/sindresorhus/open/raw/master/license",
-        "parents": "rosi"
-    },
     "ora@5.4.1": {
         "licenses": "MIT",
         "repository": "https://github.com/sindresorhus/ora",
@@ -1469,12 +1379,6 @@
         "licenses": "BlueOak-1.0.0",
         "repository": "https://github.com/isaacs/package-json-from-dist",
         "licenseUrl": "https://github.com/isaacs/package-json-from-dist/raw/master/LICENSE.md",
-        "parents": "rosi"
-    },
-    "patch-package@8.0.1": {
-        "licenses": "MIT",
-        "repository": "github:ds300/patch-package",
-        "licenseUrl": "github:ds300/patch-package",
         "parents": "rosi"
     },
     "path-is-absolute@1.0.1": {
@@ -1519,17 +1423,11 @@
         "licenseUrl": "https://github.com/alexeyraspopov/picocolors/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "picomatch@2.3.1": {
-        "licenses": "MIT",
-        "repository": "https://github.com/micromatch/picomatch",
-        "licenseUrl": "https://github.com/micromatch/picomatch/raw/master/LICENSE",
-        "parents": "rosi"
-    },
     "picomatch@4.0.3": {
         "licenses": "MIT",
         "repository": "https://github.com/micromatch/picomatch",
         "licenseUrl": "https://github.com/micromatch/picomatch/raw/master/LICENSE",
-        "parents": "tinyglobby:rosi"
+        "parents": "rosi"
     },
     "plist@3.1.0": {
         "licenses": "MIT",
@@ -1559,6 +1457,12 @@
         "licenses": "MIT",
         "repository": "https://github.com/IndigoUnited/node-promise-retry",
         "licenseUrl": "https://github.com/IndigoUnited/node-promise-retry/raw/master/LICENSE",
+        "parents": "rosi"
+    },
+    "proper-lockfile@4.1.2": {
+        "licenses": "MIT",
+        "repository": "https://github.com/moxystudio/node-proper-lockfile",
+        "licenseUrl": "https://github.com/moxystudio/node-proper-lockfile/raw/master/LICENSE",
         "parents": "rosi"
     },
     "pump@3.0.3": {
@@ -1639,7 +1543,7 @@
         "licenseUrl": "https://github.com/gajus/roarr/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "rosi@3.2.0": {
+    "rosi@3.2.1": {
         "licenses": "MPL-2.0",
         "repository": "https://github.com/BurntToasters/rosi",
         "licenseUrl": "https://github.com/BurntToasters/rosi/raw/master/LICENSE",
@@ -1699,12 +1603,6 @@
         "licenseUrl": "https://github.com/sindresorhus/serialize-error/raw/master/license",
         "parents": "rosi"
     },
-    "set-function-length@1.2.2": {
-        "licenses": "MIT",
-        "repository": "https://github.com/ljharb/set-function-length",
-        "licenseUrl": "https://github.com/ljharb/set-function-length/raw/master/LICENSE",
-        "parents": "rosi"
-    },
     "shebang-command@2.0.0": {
         "licenses": "MIT",
         "repository": "https://github.com/kevva/shebang-command",
@@ -1733,12 +1631,6 @@
         "licenses": "MIT",
         "repository": "https://github.com/alexbrazier/simple-update-notifier",
         "licenseUrl": "https://github.com/alexbrazier/simple-update-notifier/raw/master/LICENSE",
-        "parents": "rosi"
-    },
-    "slash@2.0.0": {
-        "licenses": "MIT",
-        "repository": "https://github.com/sindresorhus/slash",
-        "licenseUrl": "https://github.com/sindresorhus/slash/raw/master/license",
         "parents": "rosi"
     },
     "smart-buffer@4.2.0": {
@@ -1879,12 +1771,6 @@
         "licenseUrl": "https://github.com/raszi/node-tmp/raw/master/LICENSE",
         "parents": "rosi"
     },
-    "to-regex-range@5.0.1": {
-        "licenses": "MIT",
-        "repository": "https://github.com/micromatch/to-regex-range",
-        "licenseUrl": "https://github.com/micromatch/to-regex-range/raw/master/LICENSE",
-        "parents": "rosi"
-    },
     "truncate-utf8-bytes@1.0.2": {
         "licenses": "WTFPL",
         "repository": "https://github.com/parshap/truncate-utf8-bytes",
@@ -2004,12 +1890,6 @@
         "repository": "https://github.com/isaacs/yallist",
         "licenseUrl": "https://github.com/isaacs/yallist/raw/master/LICENSE.md",
         "parents": "tar:rosi"
-    },
-    "yaml@2.8.2": {
-        "licenses": "ISC",
-        "repository": "github:eemeli/yaml",
-        "licenseUrl": "github:eemeli/yaml",
-        "parents": "rosi"
     },
     "yargs-parser@21.1.1": {
         "licenses": "ISC",
