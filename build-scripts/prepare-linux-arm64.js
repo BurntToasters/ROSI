@@ -4,8 +4,8 @@ const yaml = require('js-yaml');
 
 const projectRoot = path.resolve(__dirname, '..');
 const buildScriptsDir = __dirname;
-const x64Binary = path.join(projectRoot, 'yt-dlp_linux');
-const arm64Binary = path.join(projectRoot, 'yt-dlp_linux_aarch64');
+const x64Binary = path.join(projectRoot, 'assets', 'yt-dlp_linux');
+const arm64Binary = path.join(projectRoot, 'assets', 'yt-dlp_linux_aarch64');
 const x64BackupPath = path.join(buildScriptsDir, 'yt-dlp_linux.bak');
 
 const packageJsonPath = path.join(projectRoot, 'package.json');
@@ -38,14 +38,14 @@ if (!fs.existsSync(arm64Binary)) {
 
 // Update package.json asarUnpack for Linux ARM64
 const packageJson = require(packageJsonPath);
-packageJson.build.linux.asarUnpack = ['yt-dlp_linux_aarch64'];
+packageJson.build.linux.asarUnpack = ['assets/yt-dlp_linux_aarch64'];
 fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
 
 // Update electron-builder.base.yml if it exists
 if (fs.existsSync(baseConfigPath)) {
   const config = yaml.load(fs.readFileSync(baseConfigPath, 'utf8'));
   if (config.linux) {
-    config.linux.asarUnpack = ['yt-dlp_linux_aarch64'];
+    config.linux.asarUnpack = ['assets/yt-dlp_linux_aarch64'];
   }
   fs.writeFileSync(baseConfigPath, yaml.dump(config));
 }

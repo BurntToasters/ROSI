@@ -1520,7 +1520,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.</p>
     async function loadNpmLicenses() {
       const container = document.getElementById('npm-licenses-container');
       try {
-        const response = await fetch('licenses.json');
+        const response = await fetch('../../licenses.json');
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
