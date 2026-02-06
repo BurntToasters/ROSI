@@ -699,7 +699,7 @@ function hideLicenses() {
     } catch (error) {
       settings = {
         showConsoleOutput: false, advancedOptions: false,
-        convertToMp4: false, keepOriginalAfterConvert: true, firstLaunch: true
+        convertToMp4: false, keepOriginalAfterConvert: true, firstLaunch: true, ffmpegPath: ''
       };
       showModal({ title: "Settings Error", message: "Could not load settings. Using defaults.", buttons: [{ label: "OK" }] });
     }
@@ -738,6 +738,7 @@ function hideLicenses() {
     const gpuAccelerationLabel = document.getElementById('gpuAccelerationLabel');
     const gpuTypeContainer = document.getElementById('gpuTypeContainer');
     const gpuTypeSelect = document.getElementById('gpuType');
+    const ffmpegPathInput = document.getElementById('ffmpegPathInput');
     const outputEl = document.getElementById('output');
     const resetSettingsBtn = document.getElementById('resetSettings');
     const fetchFormatsBtn = document.getElementById('fetchFormatsBtn');
@@ -819,6 +820,10 @@ function hideLicenses() {
         } else {
           gpuTypeContainer.classList.remove('visible');
         }
+      }
+
+      if (ffmpegPathInput) {
+        ffmpegPathInput.value = settings.ffmpegPath ?? '';
       }
       
       if (settings.hookBrowser) {
@@ -1038,6 +1043,15 @@ function hideLicenses() {
       settings.convertFormat = e.target.value;
       window.api.saveSettings(settings);
     });
+    if (ffmpegPathInput) {
+      ffmpegPathInput.addEventListener('input', (e) => {
+        settings.ffmpegPath = e.target.value;
+      });
+      ffmpegPathInput.addEventListener('change', (e) => {
+        settings.ffmpegPath = e.target.value;
+        window.api.saveSettings(settings);
+      });
+    }
     // GPU acceleration toggle
     if (gpuAccelerationToggle) {
       gpuAccelerationToggle.addEventListener('change', (e) => {
@@ -1190,7 +1204,7 @@ function hideLicenses() {
         const audioFormat = settings.advancedOptions ? audioSelect.value : null;
         const convertFormat = settings.convertEnabled ? convertFormatSelect.value : null;
         const keepOriginal = settings.convertEnabled ? keepOriginalToggle.checked : null;
-        window.api.downloadVideo({ url, videoFormat, audioFormat, outputPath: savePath, convertFormat, keepOriginal });
+        window.api.downloadVideo({ url, videoFormat, audioFormat, outputPath: savePath, convertFormat, keepOriginal, ffmpegPath: settings.ffmpegPath });
         } catch (downloadError) {
           console.error('Unexpected error starting download:', downloadError);
           isDownloading = false;
@@ -1353,7 +1367,7 @@ function hideLicenses() {
       
       showModal({
         title: "Dependency FFMPEG is Required for this app.",
-        message: "ROSI uses FFMPEG for yt-dlp and converting files to MP4.\nFor intended use and stability, please ensure FFMPEG is installed and accessible in your system's PATH.\nClick \"More Info\" for guidance.",
+        message: "ROSI uses FFMPEG for yt-dlp and converting files to MP4.\nPlease ensure FFMPEG is installed and accessible in your system's PATH, or set a custom FFmpeg path in Settings.\nClick \"More Info\" for guidance.",
         buttons: [
           { label: "More Info", action: () => window.api.openExternal('https://help.rosie.run/installing-ffmpeg') },
           { label: "OK", action: () => {
