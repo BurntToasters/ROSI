@@ -11,6 +11,72 @@ const isLinux = process.platform === 'linux';
 const isArm64 = process.arch === 'arm64';
 const isPackaged = app.isPackaged;
 
+function buildEnhancedPath() {
+  const currentPath = process.env.PATH || '';
+
+  if (isWindows) {
+    const userProfile = process.env.USERPROFILE || '';
+    const localAppData = process.env.LOCALAPPDATA || '';
+    const extraPaths = [
+      path.join(userProfile, '.deno', 'bin'),
+      path.join(localAppData, 'deno', 'bin'),
+      'C:\\Program Files\\ffmpeg\\bin',
+      'C:\\ffmpeg\\bin',
+      'C:\\Program Files\\deno',
+      'C:\\deno'
+    ];
+    return [...extraPaths, currentPath].filter(Boolean).join(';');
+  }
+
+  const homeDir = process.env.HOME || '';
+  const extraPaths = [
+    path.join(homeDir, '.deno', 'bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin',
+    '/home/linuxbrew/.linuxbrew/bin',
+    path.join(homeDir, '.local', 'bin')
+  ];
+
+  return [...extraPaths, currentPath].filter(Boolean).join(':');
+}
+
+function spawnWithEnv(command, args, options = {}) {
+  return spawn(command, args, {
+    ...options,
+    env: { ...process.env, PATH: buildEnhancedPath() }
+  });
+}
+
+function resolveFfmpegPath(customPath) {
+  if (!customPath || typeof customPath !== 'string') return null;
+  const trimmed = customPath.trim();
+  if (!trimmed) return null;
+
+  let candidate = trimmed;
+
+  try {
+    if (fs.existsSync(candidate)) {
+      const stats = fs.statSync(candidate);
+      if (stats.isDirectory()) {
+        candidate = path.join(candidate, isWindows ? 'ffmpeg.exe' : 'ffmpeg');
+      }
+    } else if (isWindows && path.extname(candidate) === '') {
+      const withExe = `${candidate}.exe`;
+      if (fs.existsSync(withExe)) {
+        candidate = withExe;
+      }
+    }
+  } catch (err) {
+    return trimmed;
+  }
+
+  return candidate;
+}
+
 // Select the appropriate arch yt-dlp
 function getYtdlpBinaryName() {
   if (isWindows) {
@@ -86,6 +152,7 @@ const defaultSettings = {
   denoReminderDismissed: false,
   gpuAcceleration: false,
   gpuType: "auto",
+  ffmpegPath: "",
   hideSupportModal: false,
   checkUpdatesOnStartup: true
 };
@@ -456,10 +523,12 @@ ipcMain.on('save-settings', (_, data) => {
 // detect available GPU encoders
 ipcMain.handle('detect-gpu', async () => {
   const result = { nvidia: false, amd: false, intel: false };
+  const settings = loadSettings();
+  const ffmpegCommand = resolveFfmpegPath(settings.ffmpegPath) || 'ffmpeg';
   
   try {
     // NVIDIA NVENC
-    const nvencTest = spawn('ffmpeg', ['-hide_banner', '-encoders'], { shell: isWindows });
+    const nvencTest = spawnWithEnv(ffmpegCommand, ['-hide_banner', '-encoders'], { shell: isWindows });
     const nvencOutput = await new Promise((resolve) => {
       let output = '';
       const timeout = setTimeout(() => {
@@ -560,7 +629,7 @@ ipcMain.handle('getFormats', async (_, url) => {
       if (formatsProcess && formatsProcess.proc && !formatsProcess.proc.killed) {
           try { formatsProcess.cancelled = true; formatsProcess.proc.kill(); } catch (e) { /* ignore */ }
       }
-      const proc = spawn(ytdlpPath, ['-F', url]);
+      const proc = spawnWithEnv(ytdlpPath, ['-F', url]);
       formatsProcess = { proc, cancelled: false };
       let outputData = '';
       let errorData = '';
@@ -631,6 +700,8 @@ ipcMain.on('download-video', async (event, options) => {
   const url = requestOptions.url;
   const downloadDir = requestOptions.outputPath;
   const effectiveSettings = { ...settings };
+  const ffmpegLocation = resolveFfmpegPath(requestOptions.ffmpegPath || settings.ffmpegPath);
+  const ffmpegCommand = ffmpegLocation || 'ffmpeg';
   if (Object.prototype.hasOwnProperty.call(requestOptions, 'convertFormat')) {
     if (typeof requestOptions.convertFormat === 'string' && requestOptions.convertFormat.trim() !== '') {
       effectiveSettings.convertFormat = requestOptions.convertFormat;
@@ -679,6 +750,9 @@ ipcMain.on('download-video', async (event, options) => {
         '-f', 'best[ext=mp4]/best[ext=webm]/best',
         url
     ];
+    if (ffmpegLocation) {
+      ytdlpArgs.splice(ytdlpArgs.length - 1, 0, '--ffmpeg-location', ffmpegLocation);
+    }
 
     // Advanced format selection
     const videoFormat = requestOptions.videoFormat;
@@ -709,7 +783,7 @@ ipcMain.on('download-video', async (event, options) => {
 
     safeSend('progress', `🚀 Starting download: ${url}`);
     safeSend('progress', `   Command: ${ytdlpBinary} ${ytdlpArgs.join(' ')}`);
-    ytdlpProcess = spawn(ytdlpPath, ytdlpArgs);
+    ytdlpProcess = spawnWithEnv(ytdlpPath, ytdlpArgs);
 
     let downloadOutputData = '';
     let downloadErrorData = '';
@@ -824,7 +898,7 @@ ipcMain.on('download-video', async (event, options) => {
           } else {
             ffmpegArgs = ['-i', inputPath, '-c:v', videoEncoder, '-c:a', 'aac', '-movflags', '+faststart', '-y', outputPath];
           }
-          ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+          ffmpegProcess = spawnWithEnv(ffmpegCommand, ffmpegArgs);
 
           let ffmpegOutput = '';
           ffmpegProcess.stdout.on('data', (data) => {
@@ -868,14 +942,14 @@ ipcMain.on('download-video', async (event, options) => {
           ffmpegProcess.on('error', (err) => {
               ffmpegProcess = null;
               if (err.code === 'ENOENT') {
-                 safeSend('progress', `❌ Failed to start conversion: 'ffmpeg' command not found. Ensure FFMPEG is installed and in your system's PATH.`);
+                 safeSend('progress', `❌ Failed to start conversion: FFmpeg not found at ${ffmpegCommand}. Ensure FFMPEG is installed and accessible.`);
                  safeSend('complete', '❌ Conversion failed (FFMPEG not found).');
                  if (mainWindow && !mainWindow.isDestroyed()){
                      dialog.showMessageBox(mainWindow, {
                          type: 'error',
                          title: 'FFMPEG Error',
-                         message: "Failed to start conversion: 'ffmpeg' command not found.",
-                         detail: "Please ensure FFMPEG is installed and accessible in your system's PATH environment variable. See Help for more details."
+                         message: `Failed to start conversion: FFmpeg not found at ${ffmpegCommand}.`,
+                         detail: "Please ensure FFMPEG is installed and accessible, or set a custom FFmpeg path in Settings. See Help for more details."
                      });
                  }
               } else {
