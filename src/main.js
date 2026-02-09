@@ -4,46 +4,13 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 const sanitize = require('sanitize-filename');
 const { autoUpdater } = require('electron-updater');
+const { isSafeHttpUrl, isSafeExternalUrl, isAllowedNavigationUrl } = require('./utils/validation');
 
 const isWindows = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
 const isLinux = process.platform === 'linux';
 const isArm64 = process.arch === 'arm64';
 const isPackaged = app.isPackaged;
-
-function isSafeHttpUrl(value) {
-  if (typeof value !== 'string') return false;
-  const trimmed = value.trim();
-  if (!trimmed) return false;
-  try {
-    const url = new URL(trimmed);
-    return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch (_) {
-    return false;
-  }
-}
-
-function isSafeExternalUrl(value) {
-  if (typeof value !== 'string') return false;
-  const trimmed = value.trim();
-  if (!trimmed) return false;
-  try {
-    const url = new URL(trimmed);
-    return url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'ms-windows-store:';
-  } catch (_) {
-    return false;
-  }
-}
-
-function isAllowedNavigationUrl(value) {
-  if (typeof value !== 'string') return false;
-  try {
-    const url = new URL(value);
-    return url.protocol === 'file:';
-  } catch (_) {
-    return false;
-  }
-}
 
 function buildEnhancedPath() {
   const currentPath = process.env.PATH || '';

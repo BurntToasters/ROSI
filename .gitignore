@@ -10,3 +10,4 @@ dist/
 **/.*/
 !.github/
 licenses.json
+coverage/
