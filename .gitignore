@@ -9,3 +9,4 @@ dist/
 *.pem
 **/.*/
 !.github/
+licenses.json
