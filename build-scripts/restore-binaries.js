@@ -5,10 +5,10 @@ const projectRoot = path.resolve(__dirname, '..');
 const buildScriptsDir = __dirname;
 
 const binaryBackups = [
-  { backup: path.join(buildScriptsDir, 'yt-dlp.exe.bak'), original: path.join(projectRoot, 'yt-dlp.exe') },
-  { backup: path.join(buildScriptsDir, 'yt-dlp_arm64.exe.bak'), original: path.join(projectRoot, 'yt-dlp_arm64.exe') },
-  { backup: path.join(buildScriptsDir, 'yt-dlp_linux.bak'), original: path.join(projectRoot, 'yt-dlp_linux') },
-  { backup: path.join(buildScriptsDir, 'yt-dlp_linux_aarch64.bak'), original: path.join(projectRoot, 'yt-dlp_linux_aarch64') },
+  { backup: path.join(buildScriptsDir, 'yt-dlp.exe.bak'), original: path.join(projectRoot, 'assets', 'yt-dlp.exe') },
+  { backup: path.join(buildScriptsDir, 'yt-dlp_arm64.exe.bak'), original: path.join(projectRoot, 'assets', 'yt-dlp_arm64.exe') },
+  { backup: path.join(buildScriptsDir, 'yt-dlp_linux.bak'), original: path.join(projectRoot, 'assets', 'yt-dlp_linux') },
+  { backup: path.join(buildScriptsDir, 'yt-dlp_linux_aarch64.bak'), original: path.join(projectRoot, 'assets', 'yt-dlp_linux_aarch64') },
 ];
 
 const configBackups = [

@@ -3,17 +3,15 @@ const path = require('path');
 
 const projectRoot = path.resolve(__dirname, '..');
 const buildScriptsDir = __dirname;
-const x64Binary = path.join(projectRoot, 'yt-dlp.exe');
-const arm64Binary = path.join(projectRoot, 'yt-dlp_arm64.exe');
+const x64Binary = path.join(projectRoot, 'assets', 'yt-dlp.exe');
+const arm64Binary = path.join(projectRoot, 'assets', 'yt-dlp_arm64.exe');
 const x64BackupPath = path.join(buildScriptsDir, 'yt-dlp.exe.bak');
 
 const packageJsonPath = path.join(projectRoot, 'package.json');
 const packageJsonBackup = path.join(buildScriptsDir, 'package.json.bak');
 
-if (!fs.existsSync(packageJsonBackup)) {
-  console.log('Backing up package.json...');
-  fs.copyFileSync(packageJsonPath, packageJsonBackup);
-}
+console.log('Backing up package.json...');
+fs.copyFileSync(packageJsonPath, packageJsonBackup);
 
 if (fs.existsSync(x64Binary)) {
   console.log('Backing up x64 binary for ARM64 build...');
@@ -27,7 +25,7 @@ if (!fs.existsSync(arm64Binary)) {
 }
 
 const packageJson = require(packageJsonPath);
-packageJson.build.asarUnpack = ['yt-dlp_arm64.exe'];
+packageJson.build.asarUnpack = ['assets/yt-dlp_arm64.exe'];
 fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
 const appOutDir = path.join(projectRoot, 'dist', 'win-arm64-unpacked');
 if (fs.existsSync(appOutDir)) {
