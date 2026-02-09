@@ -11,6 +11,40 @@ const isLinux = process.platform === 'linux';
 const isArm64 = process.arch === 'arm64';
 const isPackaged = app.isPackaged;
 
+function isSafeHttpUrl(value) {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch (_) {
+    return false;
+  }
+}
+
+function isSafeExternalUrl(value) {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'ms-windows-store:';
+  } catch (_) {
+    return false;
+  }
+}
+
+function isAllowedNavigationUrl(value) {
+  if (typeof value !== 'string') return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'file:';
+  } catch (_) {
+    return false;
+  }
+}
+
 function buildEnhancedPath() {
   const currentPath = process.env.PATH || '';
 
@@ -230,6 +264,26 @@ function createWindow() {
     show: false // Don't show window until ready
   });
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isSafeExternalUrl(url)) {
+      shell.openExternal(url).catch(err => {
+        console.error('Failed to open external URL:', err);
+      });
+    }
+    return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!isAllowedNavigationUrl(url)) {
+      event.preventDefault();
+      if (isSafeExternalUrl(url)) {
+        shell.openExternal(url).catch(err => {
+          console.error('Failed to open external URL:', err);
+        });
+      }
+    }
+  });
   
   mainWindow.setMenuBarVisibility(isDev);
   mainWindow.setAutoHideMenuBar(!isDev);
@@ -463,16 +517,27 @@ ipcMain.handle('check-deno-installed', async () => {
 });
 
 ipcMain.handle('install-deno', async () => {
+  const parentWindow = BrowserWindow.getFocusedWindow() || mainWindow;
+  const confirm = await dialog.showMessageBox(parentWindow, {
+    type: 'warning',
+    buttons: ['Install', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    message: 'This will download and run the Deno installer from deno.land. Do you want to continue?'
+  });
+
+  if (confirm.response !== 0) {
+    return { cancelled: true };
+  }
+
   return new Promise((resolve, reject) => {
     let installCmd, installArgs, spawnOptions;
     
     if (isWindows) {
-      // Windows: irm https://deno.land/install.ps1 | iex
       installCmd = 'powershell.exe';
       installArgs = ['-ExecutionPolicy', 'Bypass', '-Command', 'irm https://deno.land/install.ps1 | iex'];
       spawnOptions = {};
     } else {
-      // Mac/Linux: curl -fsSL https://deno.land/install.sh | sh
       installCmd = 'sh';
       installArgs = ['-c', 'curl -fsSL https://deno.land/install.sh | sh'];
       spawnOptions = {};
@@ -482,7 +547,6 @@ ipcMain.handle('install-deno', async () => {
     let output = '';
     let error = '';
     
-    // timeout install process
     const timeout = setTimeout(() => {
       try { proc.kill(); } catch (e) { }
       reject({ success: false, error: 'Installation timed out after 2 minutes' });
@@ -528,7 +592,7 @@ ipcMain.handle('detect-gpu', async () => {
   
   try {
     // NVIDIA NVENC
-    const nvencTest = spawnWithEnv(ffmpegCommand, ['-hide_banner', '-encoders'], { shell: isWindows });
+    const nvencTest = spawnWithEnv(ffmpegCommand, ['-hide_banner', '-encoders'], { shell: false });
     const nvencOutput = await new Promise((resolve) => {
       let output = '';
       const timeout = setTimeout(() => {
@@ -578,7 +642,7 @@ ipcMain.on('reset-settings', (event) => {
 // open external links in browser
 ipcMain.on('open-external', (_, url) => {
     try {
-      if (url && typeof url === 'string' && (url.startsWith('http:') || url.startsWith('https:') || url.startsWith('ms-windows-store:'))) {
+      if (isSafeExternalUrl(url)) {
           shell.openExternal(url).catch(err => {
             console.error('Failed to open external URL:', err);
           });
@@ -619,7 +683,7 @@ ipcMain.handle('select-download-location', async () => {
 
 // get available formats from yt-dlp
 ipcMain.handle('getFormats', async (_, url) => {
-    if (!url || typeof url !== 'string') {
+    if (!isSafeHttpUrl(url)) {
         return Promise.reject('Invalid URL provided');
     }
     return new Promise((resolve, reject) => {
@@ -720,7 +784,7 @@ ipcMain.on('download-video', async (event, options) => {
       }
   };
 
-  if (!url || typeof url !== 'string' || url.trim() === "") {
+  if (!isSafeHttpUrl(url)) {
     safeSend('progress', '⚠️ Invalid or missing URL.');
     safeSend('complete', '❌ Failed (Invalid URL).');
     return;
@@ -737,13 +801,21 @@ ipcMain.on('download-video', async (event, options) => {
   }
 
   try {
-    if (!fs.existsSync(downloadDir)) {
-        safeSend('progress', `📂 Creating directory: ${downloadDir}`);
-        fs.mkdirSync(downloadDir, { recursive: true });
+    const normalizedDownloadDir = path.resolve(downloadDir);
+    if (!fs.existsSync(normalizedDownloadDir)) {
+        safeSend('progress', `📂 Creating directory: ${normalizedDownloadDir}`);
+        fs.mkdirSync(normalizedDownloadDir, { recursive: true });
+    } else {
+        const stats = fs.statSync(normalizedDownloadDir);
+        if (!stats.isDirectory()) {
+          safeSend('progress', `❌ Download path is not a directory: ${normalizedDownloadDir}`);
+          safeSend('complete', '❌ Failed (Invalid Folder).');
+          return;
+        }
     }
 
     const ytdlpArgs = [
-        '-P', downloadDir,
+        '-P', normalizedDownloadDir,
         '--no-playlist',
         '--print', 'after_move:filepath',
         '--newline',

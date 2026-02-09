@@ -31,6 +31,19 @@
     }
   }
 
+  const OUTPUT_MAX_CHARS = 200000;
+
+  function appendConsoleOutput(outputEl, text) {
+    if (!outputEl) return;
+    const nextText = outputEl.textContent + text + '\n';
+    if (nextText.length <= OUTPUT_MAX_CHARS) {
+      outputEl.textContent = nextText;
+    } else {
+      outputEl.textContent = nextText.slice(-OUTPUT_MAX_CHARS);
+    }
+    outputEl.scrollTop = outputEl.scrollHeight;
+  }
+
   // Toggle console collapsed state
   function toggleConsoleCollapse() {
     const consoleSection = document.getElementById('console-section');
@@ -656,11 +669,23 @@ function hideLicenses() {
                 });
                 
                 try {
-                  await window.api.installDeno();
+                  const result = await window.api.installDeno();
+                  if (result && result.cancelled) {
+                    showModal({
+                      title: "Installation Cancelled",
+                      message: "Deno installation was cancelled.",
+                      buttons: [{ label: "OK" }],
+                      priority: true
+                    });
+                    return;
+                  }
                   showModal({
                     title: "Installation Complete",
-                    message: "Deno has been successfully installed!\nYou may need to restart your terminal or system for changes to take effect.",
-                    buttons: [{ label: "OK" }],
+                    message: "Deno has been successfully installed!\nRestarting the app can help pick up the updated environment.",
+                    buttons: [
+                      { label: "Restart Now", action: () => window.api.restartApp() },
+                      { label: "Later" }
+                    ],
                     priority: true
                   });
                 } catch (error) {
@@ -1240,8 +1265,7 @@ function hideLicenses() {
     ipcCleanupFunctions.push(
       window.api.onProgress((message) => {
         if (!outputEl) return;
-        outputEl.textContent += message + '\n';
-        outputEl.scrollTop = outputEl.scrollHeight;
+        appendConsoleOutput(outputEl, message);
 
         const progress = parseYtdlpProgress(message);
         if (progress) {
@@ -1321,8 +1345,7 @@ function hideLicenses() {
         }
         if (fetchFormatsBtn) setButtonLoading(fetchFormatsBtn, false);
         if (outputEl) {
-          outputEl.textContent += statusMessage + '\n';
-          outputEl.scrollTop = outputEl.scrollHeight;
+          appendConsoleOutput(outputEl, statusMessage);
         }
       })
     );

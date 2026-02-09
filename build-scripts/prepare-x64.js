@@ -11,10 +11,8 @@ const arm64BackupPath = path.join(buildScriptsDir, 'yt-dlp_arm64.exe.bak');
 const packageJsonPath = path.join(projectRoot, 'package.json');
 const packageJsonBackup = path.join(buildScriptsDir, 'package.json.bak');
 
-if (!fs.existsSync(packageJsonBackup)) {
-  console.log('Backing up package.json...');
-  fs.copyFileSync(packageJsonPath, packageJsonBackup);
-}
+console.log('Backing up package.json...');
+fs.copyFileSync(packageJsonPath, packageJsonBackup);
 
 if (fs.existsSync(arm64Binary)) {
   console.log('Backing up ARM64 binary for x64 build...');

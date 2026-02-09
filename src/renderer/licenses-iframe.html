@@ -1516,9 +1516,9 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.</p>
   </div>
 
   <script>
-    // Fetch licenses.json
     async function loadNpmLicenses() {
       const container = document.getElementById('npm-licenses-container');
+      if (!container) return;
       try {
         const response = await fetch('../../licenses.json');
         if (!response.ok) {
@@ -1526,7 +1526,6 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.</p>
         }
         const licenses = await response.json();
         
-        // Group licenses by license type for better organization
         const licenseGroups = {};
         for (const [packageName, info] of Object.entries(licenses)) {
           const licenseType = info.licenses || 'Unknown';
@@ -1538,45 +1537,112 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.</p>
 
         const sortedLicenseTypes = Object.keys(licenseGroups).sort();
         
-        let html = '';
-
         const totalPackages = Object.keys(licenses).length;
-        html += `<p style="margin-bottom: 16px; color: #d6cfc9;">Total packages: <strong>${totalPackages}</strong></p>`;
+        const isSafeUrl = (value) => {
+          if (typeof value !== 'string') return false;
+          const trimmed = value.trim();
+          if (!trimmed) return false;
+          try {
+            const url = new URL(trimmed);
+            return url.protocol === 'http:' || url.protocol === 'https:';
+          } catch (_) {
+            return false;
+          }
+        };
+
+        const makeLink = (label, url) => {
+          if (!isSafeUrl(url)) return null;
+          const link = document.createElement('a');
+          link.href = '#';
+          link.textContent = label;
+          link.style.color = '#b7e7b7';
+          link.style.fontSize = '0.9em';
+          link.style.textDecoration = 'underline';
+          link.addEventListener('click', (event) => {
+            event.preventDefault();
+            if (window.parent?.api?.openExternal) {
+              window.parent.api.openExternal(url);
+            }
+          });
+          return link;
+        };
+
+        container.textContent = '';
+
+        const totalP = document.createElement('p');
+        totalP.style.marginBottom = '16px';
+        totalP.style.color = '#d6cfc9';
+        totalP.append('Total packages: ');
+        const totalStrong = document.createElement('strong');
+        totalStrong.textContent = String(totalPackages);
+        totalP.appendChild(totalStrong);
+        container.appendChild(totalP);
 
         for (const licenseType of sortedLicenseTypes) {
           const packages = licenseGroups[licenseType];
-          html += `
-            <details style="margin-bottom: 12px;">
-              <summary style="cursor: pointer; font-weight: 500; color: #b7e7b7;">
-                ${licenseType} (${packages.length} package${packages.length !== 1 ? 's' : ''})
-              </summary>
-              <div style="margin-top: 8px; padding-left: 12px;">
-          `;
-          
+          const details = document.createElement('details');
+          details.style.marginBottom = '12px';
+
+          const summary = document.createElement('summary');
+          summary.style.cursor = 'pointer';
+          summary.style.fontWeight = '500';
+          summary.style.color = '#b7e7b7';
+          summary.textContent = `${licenseType} (${packages.length} package${packages.length !== 1 ? 's' : ''})`;
+          details.appendChild(summary);
+
+          const list = document.createElement('div');
+          list.style.marginTop = '8px';
+          list.style.paddingLeft = '12px';
+
           for (const pkg of packages.sort((a, b) => a.name.localeCompare(b.name))) {
-            const repoLink = pkg.repository ? 
-              `<a href="#" onclick="event.preventDefault(); window.parent?.api?.openExternal('${pkg.repository}') || window.open('${pkg.repository}', '_blank');" style="color: #b7e7b7; font-size: 0.9em;">Repository</a>` : '';
-            const licenseLink = pkg.licenseUrl ? 
-              `<a href="#" onclick="event.preventDefault(); window.parent?.api?.openExternal('${pkg.licenseUrl}') || window.open('${pkg.licenseUrl}', '_blank');" style="color: #b7e7b7; font-size: 0.9em;">License</a>` : '';
-            const links = [repoLink, licenseLink].filter(Boolean).join(' • ');
-            
-            html += `
-              <div style="margin-bottom: 8px; padding: 8px; background: rgba(0,0,0,0.15); border-radius: 6px;">
-                <div style="font-weight: 500; color: #ffe6c7; font-size: 0.95em;">${pkg.name}</div>
-                ${links ? `<div style="margin-top: 4px;">${links}</div>` : ''}
-              </div>
-            `;
+            const card = document.createElement('div');
+            card.style.marginBottom = '8px';
+            card.style.padding = '8px';
+            card.style.background = 'rgba(0,0,0,0.15)';
+            card.style.borderRadius = '6px';
+
+            const nameDiv = document.createElement('div');
+            nameDiv.style.fontWeight = '500';
+            nameDiv.style.color = '#ffe6c7';
+            nameDiv.style.fontSize = '0.95em';
+            nameDiv.textContent = pkg.name;
+            card.appendChild(nameDiv);
+
+            const repoUrl = typeof pkg.repository === 'string'
+              ? pkg.repository
+              : (pkg.repository && typeof pkg.repository.url === 'string' ? pkg.repository.url : null);
+            const licenseUrl = typeof pkg.licenseUrl === 'string' ? pkg.licenseUrl : null;
+
+            const links = [];
+            const repoLink = makeLink('Repository', repoUrl);
+            if (repoLink) links.push(repoLink);
+            const licenseLink = makeLink('License', licenseUrl);
+            if (licenseLink) links.push(licenseLink);
+
+            if (links.length > 0) {
+              const linksDiv = document.createElement('div');
+              linksDiv.style.marginTop = '4px';
+              links.forEach((link, index) => {
+                if (index > 0) {
+                  linksDiv.appendChild(document.createTextNode(' • '));
+                }
+                linksDiv.appendChild(link);
+              });
+              card.appendChild(linksDiv);
+            }
+
+            list.appendChild(card);
           }
-          
-          html += `
-              </div>
-            </details>
-          `;
+
+          details.appendChild(list);
+          container.appendChild(details);
         }
-        
-        container.innerHTML = html;
       } catch (error) {
-        container.innerHTML = `<p style="color: #ff9999;">Failed to load npm licenses: ${error.message}</p>`;
+        container.textContent = '';
+        const errorP = document.createElement('p');
+        errorP.style.color = '#ff9999';
+        errorP.textContent = `Failed to load npm licenses: ${error.message}`;
+        container.appendChild(errorP);
         console.error('Error loading npm licenses:', error);
       }
     }
