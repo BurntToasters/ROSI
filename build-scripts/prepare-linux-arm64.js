@@ -13,12 +13,10 @@ const packageJsonBackup = path.join(buildScriptsDir, 'package.json.bak');
 const baseConfigPath = path.join(projectRoot, 'electron-builder.base.yml');
 const baseConfigBackup = path.join(buildScriptsDir, 'electron-builder.base.yml.bak');
 
-if (!fs.existsSync(packageJsonBackup)) {
-  console.log('Backing up package.json...');
-  fs.copyFileSync(packageJsonPath, packageJsonBackup);
-}
+console.log('Backing up package.json...');
+fs.copyFileSync(packageJsonPath, packageJsonBackup);
 
-if (fs.existsSync(baseConfigPath) && !fs.existsSync(baseConfigBackup)) {
+if (fs.existsSync(baseConfigPath)) {
   console.log('Backing up electron-builder.base.yml...');
   fs.copyFileSync(baseConfigPath, baseConfigBackup);
 }

@@ -1,4 +1,4 @@
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -105,19 +105,19 @@ function signFile(filePath) {
       fs.unlinkSync(ascFile);
     }
 
-    let gpgCmd = 'gpg --batch --yes --armor --detach-sign';
+    const gpgArgs = ['--batch', '--yes', '--armor', '--detach-sign'];
     
     if (GPG_KEY_ID) {
-      gpgCmd += ' --local-user "' + GPG_KEY_ID + '"';
+      gpgArgs.push('--local-user', GPG_KEY_ID);
     }
     
     if (GPG_PASSPHRASE) {
-      gpgCmd += ' --pinentry-mode loopback --passphrase "' + GPG_PASSPHRASE + '"';
+      gpgArgs.push('--pinentry-mode', 'loopback', '--passphrase', GPG_PASSPHRASE);
     }
     
-    gpgCmd += ' --output "' + ascFile + '" "' + filePath + '"';
+    gpgArgs.push('--output', ascFile, filePath);
     
-    execSync(gpgCmd, { stdio: 'pipe' });
+    execFileSync('gpg', gpgArgs, { stdio: 'pipe' });
     console.log('   ✓ Created ' + path.basename(ascFile));
     return ascFile;
   } catch (error) {
