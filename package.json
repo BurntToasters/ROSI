@@ -6,7 +6,10 @@
   "scripts": {
     "licenses": "npx npm-license-crawler --production --json licenses.json",
     "prebuild": "npm run licenses",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:all": "node build-scripts/test-all.js",
+    "test:cov": "vitest run --coverage",
     "start": "electron .",
     "build": "npm run prebuild && electron-builder",
     "build:win": "npm run prebuild && electron-builder --win --arm64 --x64",
@@ -63,7 +66,8 @@
     "dotenv-cli": "^10.0.0",
     "electron": "^40.0.0",
     "electron-builder": "^26.7.0",
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.1.0",
+    "vitest": "^4.0.16"
   },
   "dependencies": {
     "electron-updater": "^6.3.9",
