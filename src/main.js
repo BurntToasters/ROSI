@@ -4,12 +4,79 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 const sanitize = require('sanitize-filename');
 const { autoUpdater } = require('electron-updater');
+const { isSafeHttpUrl, isSafeExternalUrl, isAllowedNavigationUrl } = require('./utils/validation');
 
 const isWindows = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
 const isLinux = process.platform === 'linux';
 const isArm64 = process.arch === 'arm64';
 const isPackaged = app.isPackaged;
+
+function buildEnhancedPath() {
+  const currentPath = process.env.PATH || '';
+
+  if (isWindows) {
+    const userProfile = process.env.USERPROFILE || '';
+    const localAppData = process.env.LOCALAPPDATA || '';
+    const extraPaths = [
+      path.join(userProfile, '.deno', 'bin'),
+      path.join(localAppData, 'deno', 'bin'),
+      'C:\\Program Files\\ffmpeg\\bin',
+      'C:\\ffmpeg\\bin',
+      'C:\\Program Files\\deno',
+      'C:\\deno'
+    ];
+    return [...extraPaths, currentPath].filter(Boolean).join(';');
+  }
+
+  const homeDir = process.env.HOME || '';
+  const extraPaths = [
+    path.join(homeDir, '.deno', 'bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin',
+    '/home/linuxbrew/.linuxbrew/bin',
+    path.join(homeDir, '.local', 'bin')
+  ];
+
+  return [...extraPaths, currentPath].filter(Boolean).join(':');
+}
+
+function spawnWithEnv(command, args, options = {}) {
+  return spawn(command, args, {
+    ...options,
+    env: { ...process.env, PATH: buildEnhancedPath() }
+  });
+}
+
+function resolveFfmpegPath(customPath) {
+  if (!customPath || typeof customPath !== 'string') return null;
+  const trimmed = customPath.trim();
+  if (!trimmed) return null;
+
+  let candidate = trimmed;
+
+  try {
+    if (fs.existsSync(candidate)) {
+      const stats = fs.statSync(candidate);
+      if (stats.isDirectory()) {
+        candidate = path.join(candidate, isWindows ? 'ffmpeg.exe' : 'ffmpeg');
+      }
+    } else if (isWindows && path.extname(candidate) === '') {
+      const withExe = `${candidate}.exe`;
+      if (fs.existsSync(withExe)) {
+        candidate = withExe;
+      }
+    }
+  } catch (err) {
+    return trimmed;
+  }
+
+  return candidate;
+}
 
 // Select the appropriate arch yt-dlp
 function getYtdlpBinaryName() {
@@ -28,10 +95,9 @@ const ytdlpBinary = getYtdlpBinaryName();
 let ytdlpPath;
 if (isPackaged) {
   const possiblePaths = [
-    path.join(process.resourcesPath, 'app.asar.unpacked', ytdlpBinary),
-    path.join(process.resourcesPath, ytdlpBinary),
-    path.join(__dirname, '..', ytdlpBinary),
-    path.join(__dirname, ytdlpBinary)
+    path.join(process.resourcesPath, 'app.asar.unpacked', 'assets', ytdlpBinary),
+    path.join(process.resourcesPath, 'assets', ytdlpBinary),
+    path.join(__dirname, '..', 'assets', ytdlpBinary)
   ];
   
   for (const tryPath of possiblePaths) {
@@ -45,11 +111,11 @@ if (isPackaged) {
   
   if (!ytdlpPath) {
     console.error(`Could not find ${ytdlpBinary} in any expected location`);
-    ytdlpPath = path.join(process.resourcesPath, 'app.asar.unpacked', ytdlpBinary); // Default for error reporting
+    ytdlpPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'assets', ytdlpBinary); // Default for error reporting
   }
 } else {
   // DEV
-  ytdlpPath = path.join(__dirname, ytdlpBinary);
+  ytdlpPath = path.join(__dirname, '..', 'assets', ytdlpBinary);
 }
 
 // yt-dlp binary executable on macOS/Linux
@@ -87,6 +153,7 @@ const defaultSettings = {
   denoReminderDismissed: false,
   gpuAcceleration: false,
   gpuType: "auto",
+  ffmpegPath: "",
   hideSupportModal: false,
   checkUpdatesOnStartup: true
 };
@@ -130,14 +197,14 @@ function createSplashWindow() {
     transparent: true,
     frame: false,
     alwaysOnTop: true,
-    icon: path.join(__dirname, 'app.png'),
+    icon: path.join(__dirname, 'renderer', 'app.png'),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false
     },
     roundedCorners: true
   });
-  splashWindow.loadFile('splash.html');
+  splashWindow.loadFile(path.join(__dirname, 'renderer', 'splash.html'));
   splashWindow.center();
 }
 
@@ -151,7 +218,7 @@ function createWindow() {
     minHeight: 700,
     maxWidth: 1800,
     maxHeight: 1400,
-    icon: path.join(__dirname, 'app.png'),
+    icon: path.join(__dirname, 'renderer', 'app.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -163,7 +230,27 @@ function createWindow() {
     menuBarVisible: isDev,
     show: false // Don't show window until ready
   });
-  mainWindow.loadFile('index.html');
+  mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isSafeExternalUrl(url)) {
+      shell.openExternal(url).catch(err => {
+        console.error('Failed to open external URL:', err);
+      });
+    }
+    return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!isAllowedNavigationUrl(url)) {
+      event.preventDefault();
+      if (isSafeExternalUrl(url)) {
+        shell.openExternal(url).catch(err => {
+          console.error('Failed to open external URL:', err);
+        });
+      }
+    }
+  });
   
   mainWindow.setMenuBarVisibility(isDev);
   mainWindow.setAutoHideMenuBar(!isDev);
@@ -397,16 +484,27 @@ ipcMain.handle('check-deno-installed', async () => {
 });
 
 ipcMain.handle('install-deno', async () => {
+  const parentWindow = BrowserWindow.getFocusedWindow() || mainWindow;
+  const confirm = await dialog.showMessageBox(parentWindow, {
+    type: 'warning',
+    buttons: ['Install', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    message: 'This will download and run the Deno installer from deno.land. Do you want to continue?'
+  });
+
+  if (confirm.response !== 0) {
+    return { cancelled: true };
+  }
+
   return new Promise((resolve, reject) => {
     let installCmd, installArgs, spawnOptions;
     
     if (isWindows) {
-      // Windows: irm https://deno.land/install.ps1 | iex
       installCmd = 'powershell.exe';
       installArgs = ['-ExecutionPolicy', 'Bypass', '-Command', 'irm https://deno.land/install.ps1 | iex'];
       spawnOptions = {};
     } else {
-      // Mac/Linux: curl -fsSL https://deno.land/install.sh | sh
       installCmd = 'sh';
       installArgs = ['-c', 'curl -fsSL https://deno.land/install.sh | sh'];
       spawnOptions = {};
@@ -416,7 +514,6 @@ ipcMain.handle('install-deno', async () => {
     let output = '';
     let error = '';
     
-    // timeout install process
     const timeout = setTimeout(() => {
       try { proc.kill(); } catch (e) { }
       reject({ success: false, error: 'Installation timed out after 2 minutes' });
@@ -457,10 +554,12 @@ ipcMain.on('save-settings', (_, data) => {
 // detect available GPU encoders
 ipcMain.handle('detect-gpu', async () => {
   const result = { nvidia: false, amd: false, intel: false };
+  const settings = loadSettings();
+  const ffmpegCommand = resolveFfmpegPath(settings.ffmpegPath) || 'ffmpeg';
   
   try {
     // NVIDIA NVENC
-    const nvencTest = spawn('ffmpeg', ['-hide_banner', '-encoders'], { shell: isWindows });
+    const nvencTest = spawnWithEnv(ffmpegCommand, ['-hide_banner', '-encoders'], { shell: false });
     const nvencOutput = await new Promise((resolve) => {
       let output = '';
       const timeout = setTimeout(() => {
@@ -510,7 +609,7 @@ ipcMain.on('reset-settings', (event) => {
 // open external links in browser
 ipcMain.on('open-external', (_, url) => {
     try {
-      if (url && typeof url === 'string' && (url.startsWith('http:') || url.startsWith('https:') || url.startsWith('ms-windows-store:'))) {
+      if (isSafeExternalUrl(url)) {
           shell.openExternal(url).catch(err => {
             console.error('Failed to open external URL:', err);
           });
@@ -551,7 +650,7 @@ ipcMain.handle('select-download-location', async () => {
 
 // get available formats from yt-dlp
 ipcMain.handle('getFormats', async (_, url) => {
-    if (!url || typeof url !== 'string') {
+    if (!isSafeHttpUrl(url)) {
         return Promise.reject('Invalid URL provided');
     }
     return new Promise((resolve, reject) => {
@@ -561,7 +660,7 @@ ipcMain.handle('getFormats', async (_, url) => {
       if (formatsProcess && formatsProcess.proc && !formatsProcess.proc.killed) {
           try { formatsProcess.cancelled = true; formatsProcess.proc.kill(); } catch (e) { /* ignore */ }
       }
-      const proc = spawn(ytdlpPath, ['-F', url]);
+      const proc = spawnWithEnv(ytdlpPath, ['-F', url]);
       formatsProcess = { proc, cancelled: false };
       let outputData = '';
       let errorData = '';
@@ -632,6 +731,8 @@ ipcMain.on('download-video', async (event, options) => {
   const url = requestOptions.url;
   const downloadDir = requestOptions.outputPath;
   const effectiveSettings = { ...settings };
+  const ffmpegLocation = resolveFfmpegPath(requestOptions.ffmpegPath || settings.ffmpegPath);
+  const ffmpegCommand = ffmpegLocation || 'ffmpeg';
   if (Object.prototype.hasOwnProperty.call(requestOptions, 'convertFormat')) {
     if (typeof requestOptions.convertFormat === 'string' && requestOptions.convertFormat.trim() !== '') {
       effectiveSettings.convertFormat = requestOptions.convertFormat;
@@ -650,7 +751,7 @@ ipcMain.on('download-video', async (event, options) => {
       }
   };
 
-  if (!url || typeof url !== 'string' || url.trim() === "") {
+  if (!isSafeHttpUrl(url)) {
     safeSend('progress', '⚠️ Invalid or missing URL.');
     safeSend('complete', '❌ Failed (Invalid URL).');
     return;
@@ -667,19 +768,30 @@ ipcMain.on('download-video', async (event, options) => {
   }
 
   try {
-    if (!fs.existsSync(downloadDir)) {
-        safeSend('progress', `📂 Creating directory: ${downloadDir}`);
-        fs.mkdirSync(downloadDir, { recursive: true });
+    const normalizedDownloadDir = path.resolve(downloadDir);
+    if (!fs.existsSync(normalizedDownloadDir)) {
+        safeSend('progress', `📂 Creating directory: ${normalizedDownloadDir}`);
+        fs.mkdirSync(normalizedDownloadDir, { recursive: true });
+    } else {
+        const stats = fs.statSync(normalizedDownloadDir);
+        if (!stats.isDirectory()) {
+          safeSend('progress', `❌ Download path is not a directory: ${normalizedDownloadDir}`);
+          safeSend('complete', '❌ Failed (Invalid Folder).');
+          return;
+        }
     }
 
     const ytdlpArgs = [
-        '-P', downloadDir,
+        '-P', normalizedDownloadDir,
         '--no-playlist',
         '--print', 'after_move:filepath',
         '--newline',
         '-f', 'best[ext=mp4]/best[ext=webm]/best',
         url
     ];
+    if (ffmpegLocation) {
+      ytdlpArgs.splice(ytdlpArgs.length - 1, 0, '--ffmpeg-location', ffmpegLocation);
+    }
 
     // Advanced format selection
     const videoFormat = requestOptions.videoFormat;
@@ -710,7 +822,7 @@ ipcMain.on('download-video', async (event, options) => {
 
     safeSend('progress', `🚀 Starting download: ${url}`);
     safeSend('progress', `   Command: ${ytdlpBinary} ${ytdlpArgs.join(' ')}`);
-    ytdlpProcess = spawn(ytdlpPath, ytdlpArgs);
+    ytdlpProcess = spawnWithEnv(ytdlpPath, ytdlpArgs);
 
     let downloadOutputData = '';
     let downloadErrorData = '';
@@ -825,7 +937,7 @@ ipcMain.on('download-video', async (event, options) => {
           } else {
             ffmpegArgs = ['-i', inputPath, '-c:v', videoEncoder, '-c:a', 'aac', '-movflags', '+faststart', '-y', outputPath];
           }
-          ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+          ffmpegProcess = spawnWithEnv(ffmpegCommand, ffmpegArgs);
 
           let ffmpegOutput = '';
           ffmpegProcess.stdout.on('data', (data) => {
@@ -869,14 +981,14 @@ ipcMain.on('download-video', async (event, options) => {
           ffmpegProcess.on('error', (err) => {
               ffmpegProcess = null;
               if (err.code === 'ENOENT') {
-                 safeSend('progress', `❌ Failed to start conversion: 'ffmpeg' command not found. Ensure FFMPEG is installed and in your system's PATH.`);
+                 safeSend('progress', `❌ Failed to start conversion: FFmpeg not found at ${ffmpegCommand}. Ensure FFMPEG is installed and accessible.`);
                  safeSend('complete', '❌ Conversion failed (FFMPEG not found).');
                  if (mainWindow && !mainWindow.isDestroyed()){
                      dialog.showMessageBox(mainWindow, {
                          type: 'error',
                          title: 'FFMPEG Error',
-                         message: "Failed to start conversion: 'ffmpeg' command not found.",
-                         detail: "Please ensure FFMPEG is installed and accessible in your system's PATH environment variable. See Help for more details."
+                         message: `Failed to start conversion: FFmpeg not found at ${ffmpegCommand}.`,
+                         detail: "Please ensure FFMPEG is installed and accessible, or set a custom FFmpeg path in Settings. See Help for more details."
                      });
                  }
               } else {
@@ -967,7 +1079,7 @@ ipcMain.on('show-notification', (_, options) => {
       const notification = new Notification({
         title: options?.title || 'ROSI',
         body: options?.body || '',
-        icon: path.join(__dirname, 'app.png'),
+        icon: path.join(__dirname, 'renderer', 'app.png'),
         silent: false
       });
       

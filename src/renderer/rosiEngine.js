@@ -31,6 +31,19 @@
     }
   }
 
+  const OUTPUT_MAX_CHARS = 200000;
+
+  function appendConsoleOutput(outputEl, text) {
+    if (!outputEl) return;
+    const nextText = outputEl.textContent + text + '\n';
+    if (nextText.length <= OUTPUT_MAX_CHARS) {
+      outputEl.textContent = nextText;
+    } else {
+      outputEl.textContent = nextText.slice(-OUTPUT_MAX_CHARS);
+    }
+    outputEl.scrollTop = outputEl.scrollHeight;
+  }
+
   // Toggle console collapsed state
   function toggleConsoleCollapse() {
     const consoleSection = document.getElementById('console-section');
@@ -656,11 +669,23 @@ function hideLicenses() {
                 });
                 
                 try {
-                  await window.api.installDeno();
+                  const result = await window.api.installDeno();
+                  if (result && result.cancelled) {
+                    showModal({
+                      title: "Installation Cancelled",
+                      message: "Deno installation was cancelled.",
+                      buttons: [{ label: "OK" }],
+                      priority: true
+                    });
+                    return;
+                  }
                   showModal({
                     title: "Installation Complete",
-                    message: "Deno has been successfully installed!\nYou may need to restart your terminal or system for changes to take effect.",
-                    buttons: [{ label: "OK" }],
+                    message: "Deno has been successfully installed!\nRestarting the app can help pick up the updated environment.",
+                    buttons: [
+                      { label: "Restart Now", action: () => window.api.restartApp() },
+                      { label: "Later" }
+                    ],
                     priority: true
                   });
                 } catch (error) {
@@ -699,7 +724,7 @@ function hideLicenses() {
     } catch (error) {
       settings = {
         showConsoleOutput: false, advancedOptions: false,
-        convertToMp4: false, keepOriginalAfterConvert: true, firstLaunch: true
+        convertToMp4: false, keepOriginalAfterConvert: true, firstLaunch: true, ffmpegPath: ''
       };
       showModal({ title: "Settings Error", message: "Could not load settings. Using defaults.", buttons: [{ label: "OK" }] });
     }
@@ -738,6 +763,7 @@ function hideLicenses() {
     const gpuAccelerationLabel = document.getElementById('gpuAccelerationLabel');
     const gpuTypeContainer = document.getElementById('gpuTypeContainer');
     const gpuTypeSelect = document.getElementById('gpuType');
+    const ffmpegPathInput = document.getElementById('ffmpegPathInput');
     const outputEl = document.getElementById('output');
     const resetSettingsBtn = document.getElementById('resetSettings');
     const fetchFormatsBtn = document.getElementById('fetchFormatsBtn');
@@ -819,6 +845,10 @@ function hideLicenses() {
         } else {
           gpuTypeContainer.classList.remove('visible');
         }
+      }
+
+      if (ffmpegPathInput) {
+        ffmpegPathInput.value = settings.ffmpegPath ?? '';
       }
       
       if (settings.hookBrowser) {
@@ -1038,6 +1068,15 @@ function hideLicenses() {
       settings.convertFormat = e.target.value;
       window.api.saveSettings(settings);
     });
+    if (ffmpegPathInput) {
+      ffmpegPathInput.addEventListener('input', (e) => {
+        settings.ffmpegPath = e.target.value;
+      });
+      ffmpegPathInput.addEventListener('change', (e) => {
+        settings.ffmpegPath = e.target.value;
+        window.api.saveSettings(settings);
+      });
+    }
     // GPU acceleration toggle
     if (gpuAccelerationToggle) {
       gpuAccelerationToggle.addEventListener('change', (e) => {
@@ -1190,7 +1229,7 @@ function hideLicenses() {
         const audioFormat = settings.advancedOptions ? audioSelect.value : null;
         const convertFormat = settings.convertEnabled ? convertFormatSelect.value : null;
         const keepOriginal = settings.convertEnabled ? keepOriginalToggle.checked : null;
-        window.api.downloadVideo({ url, videoFormat, audioFormat, outputPath: savePath, convertFormat, keepOriginal });
+        window.api.downloadVideo({ url, videoFormat, audioFormat, outputPath: savePath, convertFormat, keepOriginal, ffmpegPath: settings.ffmpegPath });
         } catch (downloadError) {
           console.error('Unexpected error starting download:', downloadError);
           isDownloading = false;
@@ -1226,8 +1265,7 @@ function hideLicenses() {
     ipcCleanupFunctions.push(
       window.api.onProgress((message) => {
         if (!outputEl) return;
-        outputEl.textContent += message + '\n';
-        outputEl.scrollTop = outputEl.scrollHeight;
+        appendConsoleOutput(outputEl, message);
 
         const progress = parseYtdlpProgress(message);
         if (progress) {
@@ -1307,8 +1345,7 @@ function hideLicenses() {
         }
         if (fetchFormatsBtn) setButtonLoading(fetchFormatsBtn, false);
         if (outputEl) {
-          outputEl.textContent += statusMessage + '\n';
-          outputEl.scrollTop = outputEl.scrollHeight;
+          appendConsoleOutput(outputEl, statusMessage);
         }
       })
     );
@@ -1353,7 +1390,7 @@ function hideLicenses() {
       
       showModal({
         title: "Dependency FFMPEG is Required for this app.",
-        message: "ROSI uses FFMPEG for yt-dlp and converting files to MP4.\nFor intended use and stability, please ensure FFMPEG is installed and accessible in your system's PATH.\nClick \"More Info\" for guidance.",
+        message: "ROSI uses FFMPEG for yt-dlp and converting files to MP4.\nPlease ensure FFMPEG is installed and accessible in your system's PATH, or set a custom FFmpeg path in Settings.\nClick \"More Info\" for guidance.",
         buttons: [
           { label: "More Info", action: () => window.api.openExternal('https://help.rosie.run/installing-ffmpeg') },
           { label: "OK", action: () => {

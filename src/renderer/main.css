@@ -337,6 +337,7 @@ body.animate-bg {
 }
 
 .select-label select,
+.select-label input,
 .sidebar select {
   width: 100%;
   padding: var(--spacing-sm) var(--spacing-md);
@@ -350,11 +351,13 @@ body.animate-bg {
 }
 
 .select-label select:hover,
+.select-label input:hover,
 .sidebar select:hover {
   border-color: var(--border-default);
 }
 
 .select-label select:focus,
+.select-label input:focus,
 .sidebar select:focus {
   outline: none;
   border-color: var(--accent);
@@ -364,6 +367,14 @@ body.animate-bg {
 select option {
   background: var(--bg-gradient-mid);
   color: var(--text-primary);
+}
+
+.settings-hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: calc(var(--spacing-xs) * -1);
+  margin-bottom: var(--spacing-sm);
+  padding-left: var(--spacing-xs);
 }
 
 .help-icon {
