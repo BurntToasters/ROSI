@@ -16,6 +16,9 @@ const GPG_PASSPHRASE = process.env.GPG_PASSPHRASE;
 const GH_TOKEN = process.env.GH_TOKEN;
 const REPO_OWNER = 'BurntToasters';
 const REPO_NAME = 'ROSI';
+const GH_REQUEST_TIMEOUT_MS = Number.parseInt(process.env.GH_REQUEST_TIMEOUT_MS || '30000', 10);
+const GH_REQUEST_RETRIES = Number.parseInt(process.env.GH_REQUEST_RETRIES || '3', 10);
+const GH_REQUEST_RETRY_DELAY_MS = Number.parseInt(process.env.GH_REQUEST_RETRY_DELAY_MS || '1500', 10);
 
 const packageJson = require('../package.json');
 const VERSION = packageJson.version;
@@ -146,6 +149,35 @@ function generateChecksumFile(files, platform) {
   return checksumFile;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableGithubError(error) {
+  if (!error) return false;
+
+  const retryableStatusCodes = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+  const retryableCodes = new Set([
+    'ETIMEDOUT',
+    'ECONNRESET',
+    'ENOTFOUND',
+    'EAI_AGAIN',
+    'ECONNREFUSED',
+    'EPIPE'
+  ]);
+
+  if (typeof error.statusCode === 'number' && retryableStatusCodes.has(error.statusCode)) {
+    return true;
+  }
+
+  if (typeof error.code === 'string' && retryableCodes.has(error.code)) {
+    return true;
+  }
+
+  const msg = String(error.message || '').toLowerCase();
+  return msg.includes('timeout') || msg.includes('socket hang up') || msg.includes('aborted');
+}
+
 function githubRequest(method, endpoint, body) {
   return new Promise((resolve, reject) => {
     const options = {
@@ -166,19 +198,36 @@ function githubRequest(method, endpoint, body) {
 
     const req = https.request(options, (res) => {
       let data = '';
+      res.setEncoding('utf8');
       res.on('data', chunk => data += chunk);
+      res.on('aborted', () => {
+        const err = new Error('GitHub API response aborted for ' + method + ' ' + endpoint);
+        err.code = 'ECONNRESET';
+        reject(err);
+      });
       res.on('end', () => {
+        const statusCode = res.statusCode || 0;
         try {
-          const json = data ? JSON.parse(data) : {};
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            resolve(json);
+          if (statusCode >= 200 && statusCode < 300) {
+            resolve(data ? JSON.parse(data) : {});
           } else {
-            reject(new Error('GitHub API error ' + res.statusCode + ': ' + (json.message || data)));
+            const json = data ? JSON.parse(data) : {};
+            const err = new Error('GitHub API error ' + statusCode + ' for ' + method + ' ' + endpoint + ': ' + (json.message || data || 'unknown error'));
+            err.statusCode = statusCode;
+            reject(err);
           }
         } catch (e) {
-          resolve(data);
+          const err = new Error('GitHub API invalid JSON for ' + method + ' ' + endpoint + ': ' + e.message);
+          err.statusCode = statusCode;
+          reject(err);
         }
       });
+    });
+
+    req.setTimeout(GH_REQUEST_TIMEOUT_MS, () => {
+      const err = new Error('GitHub API timeout after ' + GH_REQUEST_TIMEOUT_MS + 'ms for ' + method + ' ' + endpoint);
+      err.code = 'ETIMEDOUT';
+      req.destroy(err);
     });
 
     req.on('error', reject);
@@ -188,6 +237,25 @@ function githubRequest(method, endpoint, body) {
     }
     req.end();
   });
+}
+
+async function githubRequestWithRetry(method, endpoint, body) {
+  const attempts = Math.max(1, GH_REQUEST_RETRIES);
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await githubRequest(method, endpoint, body);
+    } catch (error) {
+      const canRetry = attempt < attempts && isRetryableGithubError(error);
+      if (!canRetry) {
+        throw error;
+      }
+
+      const backoffMs = GH_REQUEST_RETRY_DELAY_MS * attempt;
+      console.log('   Retry ' + attempt + '/' + (attempts - 1) + ' in ' + backoffMs + 'ms (' + error.message + ')');
+      await sleep(backoffMs);
+    }
+  }
 }
 
 function uploadToRelease(uploadUrl, filePath) {
@@ -239,20 +307,29 @@ async function getOrCreateRelease() {
   console.log('\nLooking for release: ' + TAG_NAME);
 
   try {
-    const release = await githubRequest(
+    const release = await githubRequestWithRetry(
       'GET', 
       '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases/tags/' + TAG_NAME
     );
     console.log('   Found published release: ' + (release.name || TAG_NAME));
     return release;
   } catch (error) {
-    console.log('   Tag not published, searching draft releases...');
+    if (error.statusCode === 404) {
+      console.log('   Tag not published, searching draft releases...');
+    } else {
+      console.log('   Could not fetch release by tag: ' + error.message);
+      console.log('   Searching draft releases...');
+    }
 
     try {
-      const releases = await githubRequest(
+      const releases = await githubRequestWithRetry(
         'GET',
-        '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases?per_page=20'
+        '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases?per_page=100'
       );
+
+      if (!Array.isArray(releases)) {
+        throw new Error('Unexpected releases payload type');
+      }
       
       const matchingReleases = releases.filter(function(r) {
         return r.tag_name === TAG_NAME;
@@ -272,7 +349,7 @@ async function getOrCreateRelease() {
 
     console.log('   Creating draft release for ' + TAG_NAME + '...');
     try {
-      const release = await githubRequest(
+      const release = await githubRequestWithRetry(
         'POST',
         '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases',
         {
@@ -285,16 +362,33 @@ async function getOrCreateRelease() {
       console.log('   ✓ Created draft release: ' + release.name);
       return release;
     } catch (createError) {
+      if (createError.statusCode === 422) {
+        console.log('   Draft may already exist. Retrying release list...');
+        await sleep(2000);
+
+        const releases = await githubRequestWithRetry(
+          'GET',
+          '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases?per_page=100'
+        );
+
+        if (Array.isArray(releases)) {
+          const release = releases.find((r) => r.tag_name === TAG_NAME);
+          if (release) {
+            console.log('   Found release after retry: ' + (release.name || TAG_NAME));
+            return release;
+          }
+        }
+      }
+
       console.error('   ✗ FAILED: Could not create release:', createError.message);
-      return null;
+      throw createError;
     }
   }
 }
 
 async function uploadSignatures(release, filesToUpload) {
   if (!release || !release.upload_url) {
-    console.log('\n⚠ No release found, skipping upload');
-    return;
+    throw new Error('No release found for tag ' + TAG_NAME + ', cannot upload signatures');
   }
 
   console.log('\nUploading to GitHub release...');
@@ -318,6 +412,7 @@ async function uploadSignatures(release, filesToUpload) {
 
 async function main() {
   const platform = getPlatformName(TARGET_ARCH);
+  let uploadFailed = false;
   
   console.log('═'.repeat(60));
   console.log('GPG Sign & Upload - ROSI ' + VERSION);
@@ -384,6 +479,7 @@ async function main() {
       await uploadSignatures(release, filesToUpload);
     } catch (error) {
       console.error('\n✗ ERROR: GitHub upload failed:', error.message);
+      uploadFailed = true;
     }
   }
 
@@ -398,6 +494,10 @@ async function main() {
   
   if (!GH_TOKEN) {
     console.log('\n💡 TIP: To auto-upload, add GH_TOKEN to your .env file');
+  }
+
+  if (uploadFailed) {
+    process.exitCode = 1;
   }
 }
 
