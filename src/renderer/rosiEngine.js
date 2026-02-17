@@ -57,19 +57,24 @@
   // handles loader in button, swaps text for spinner, click cancels
   function setButtonLoading(button, isLoading, onCancel) {
     if (!button) return;
+    if (!button.dataset.defaultHtml) {
+      button.dataset.defaultHtml = button.innerHTML;
+    }
+    if (!button.dataset.defaultText) {
+      button.dataset.defaultText = button.textContent.trim();
+    }
     if (isLoading) {
-      if (!button.dataset.defaultText) {
-        button.dataset.defaultText = button.textContent.trim();
-      }
       button.classList.add('loading');
       button.innerHTML = `<img src="loader.svg" class="loader-icon" alt="Loading...">`;
       button.disabled = false;
-      button.onclick = onCancel;
+      button.setAttribute('aria-busy', 'true');
+      button.onclick = typeof onCancel === 'function' ? onCancel : null;
     } else {
       button.classList.remove('loading');
-      button.innerHTML = button.dataset.defaultText || 'Action';
+      button.innerHTML = button.dataset.defaultHtml || button.dataset.defaultText || 'Action';
       button.disabled = false;
-      button.onclick = button._originalClick;
+      button.removeAttribute('aria-busy');
+      button.onclick = button._originalClick || null;
     }
   }
 
@@ -1301,7 +1306,9 @@ function hideLicenses() {
           isDownloading = false;
           setButtonLoading(downloadBtn, false);
 
-          const isSuccess = statusMessage.includes('✅') || statusMessage.includes('complete');
+          const normalizedStatus = String(statusMessage || '').toLowerCase();
+          const isCancelled = normalizedStatus.includes('cancel');
+          const isSuccess = !isCancelled && (statusMessage.includes('✅') || normalizedStatus.includes('complete'));
           
           if (isSuccess) {
             updateProgressBar(100, 'Complete!', '');
@@ -1318,29 +1325,31 @@ function hideLicenses() {
           setTimeout(() => {
             hideProgressBar();
           }, 2000);
-          
-          const originalText = downloadBtn.dataset.defaultText || "Download";
+
+          const restoreDefaultDownloadButton = () => {
+            setButtonLoading(downloadBtn, false);
+          };
           
           if (isSuccess && lastDownloadedFilePath) {
+            const filePath = lastDownloadedFilePath;
             downloadBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg><span>Open File Location</span>`;
             downloadBtn.disabled = false;
             downloadBtn.onclick = () => {
-              window.api.openFileLocation(lastDownloadedFilePath);
+              window.api.openFileLocation(filePath);
             };
             setTimeout(() => {
-              downloadBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span>${originalText}</span>`;
-              downloadBtn.disabled = false;
-              downloadBtn.onclick = downloadBtn._originalClick;
+              restoreDefaultDownloadButton();
               lastDownloadedFilePath = null;
             }, 8000);
-          } else {
-            downloadBtn.innerHTML = isSuccess ? "✅ Download Complete!" : originalText;
-            downloadBtn.disabled = isSuccess;
+          } else if (isSuccess) {
+            downloadBtn.innerHTML = `✅ Download Complete!`;
+            downloadBtn.disabled = false;
             setTimeout(() => {
-              downloadBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span>${originalText}</span>`;
-              downloadBtn.disabled = false;
-              downloadBtn.onclick = downloadBtn._originalClick;
-            }, 4000);
+              restoreDefaultDownloadButton();
+            }, 2500);
+          } else {
+            restoreDefaultDownloadButton();
+            lastDownloadedFilePath = null;
           }
         }
         if (fetchFormatsBtn) setButtonLoading(fetchFormatsBtn, false);

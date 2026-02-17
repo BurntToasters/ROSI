@@ -9,5 +9,7 @@ dist/
 *.pem
 **/.*/
 !.github/
+!.husky/
+!.husky/**
 licenses.json
 coverage/

@@ -1,7 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-console.log("✅ PRELOAD IS RUNNING!");
-
 contextBridge.exposeInMainWorld('api', {
   restartApp: () => ipcRenderer.invoke('restart-app'),
   // get active distribution channel
