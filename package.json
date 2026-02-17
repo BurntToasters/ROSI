@@ -1,9 +1,11 @@
 {
   "name": "rosi",
-  "version": "3.3.0",
+  "version": "3.3.1",
   "description": "Electron GUI for yt-dlp",
   "main": "src/main.js",
   "scripts": {
+    "prepare": "node build-scripts/install-hooks.js",
+    "hooks:install": "node build-scripts/install-hooks.js",
     "licenses": "npx npm-license-crawler --production --json licenses.json",
     "prebuild": "npm run licenses",
     "test": "vitest run",
@@ -66,7 +68,10 @@
     "dotenv-cli": "^10.0.0",
     "electron": "^40.0.0",
     "electron-builder": "^26.7.0",
+    "husky": "^9.1.7",
+    "install": "^0.13.0",
     "js-yaml": "^4.1.0",
+    "npm": "^11.10.0",
     "vitest": "^4.0.16"
   },
   "dependencies": {

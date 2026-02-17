@@ -5,6 +5,13 @@ const { spawn } = require('child_process');
 const sanitize = require('sanitize-filename');
 const { autoUpdater } = require('electron-updater');
 const { isSafeHttpUrl, isSafeExternalUrl, isAllowedNavigationUrl } = require('./utils/validation');
+const {
+  createDownloadLifecycleState,
+  markDownloadCancelled,
+  shouldEmitTerminalEvent,
+  markTerminalEventEmitted,
+  classifyDownloadExit
+} = require('./utils/downloadLifecycle');
 
 const isWindows = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
@@ -713,19 +720,88 @@ ipcMain.on('cancel-formats', () => {
 // --- Download Video ---
 let ytdlpProcess = null;
 let ffmpegProcess = null;
+let activeDownloadSession = null;
+let downloadSessionCounter = 0;
+
+function isActiveDownloadSession(session) {
+  return Boolean(session && activeDownloadSession && activeDownloadSession.id === session.id);
+}
+
+function safeSendToSender(sender, channel, message) {
+  if (sender && !sender.isDestroyed()) {
+    sender.send(channel, message);
+  }
+}
+
+function sendSessionProgress(session, message) {
+  if (!session || !shouldEmitTerminalEvent(session.lifecycle)) return;
+  if (!isActiveDownloadSession(session)) return;
+  safeSendToSender(session.sender, 'progress', message);
+}
+
+function completeDownloadSession(session, statusMessage, progressMessage = null) {
+  if (!session || !isActiveDownloadSession(session)) return;
+  if (!shouldEmitTerminalEvent(session.lifecycle)) return;
+  session.lifecycle = markTerminalEventEmitted(session.lifecycle);
+  if (progressMessage) {
+    safeSendToSender(session.sender, 'progress', progressMessage);
+  }
+  safeSendToSender(session.sender, 'complete', statusMessage);
+  activeDownloadSession = null;
+  ytdlpProcess = null;
+  ffmpegProcess = null;
+}
+
+function killDownloadProcess(proc, label) {
+  if (!proc) return;
+  try {
+    proc.kill();
+  } catch (error) {
+    console.error(`Error killing ${label} process:`, error);
+  }
+}
+
+function cancelDownloadSession(session, notify = true) {
+  if (!session) return;
+  session.lifecycle = markDownloadCancelled(session.lifecycle);
+  killDownloadProcess(session.ffmpegProcess, 'ffmpeg');
+  killDownloadProcess(session.ytdlpProcess, 'yt-dlp');
+  session.ffmpegProcess = null;
+  session.ytdlpProcess = null;
+
+  if (!isActiveDownloadSession(session)) return;
+
+  if (notify) {
+    completeDownloadSession(session, '⏹️ Cancelled.', '⏹️ Download/Conversion cancelled by user.');
+    return;
+  }
+
+  session.lifecycle = markTerminalEventEmitted(session.lifecycle);
+  activeDownloadSession = null;
+  ytdlpProcess = null;
+  ffmpegProcess = null;
+}
+
+function createDownloadSession(sender) {
+  downloadSessionCounter += 1;
+  return {
+    id: downloadSessionCounter,
+    sender,
+    lifecycle: createDownloadLifecycleState(),
+    ytdlpProcess: null,
+    ffmpegProcess: null
+  };
+}
 
 // handle download-video, spawn yt-dlp
 ipcMain.on('download-video', async (event, options) => {
-  if (ytdlpProcess) {
-    try { ytdlpProcess.kill(); } catch (e) { /* Process may have already exited */ }
-    ytdlpProcess = null;
-  }
-  if (ffmpegProcess) {
-    try { ffmpegProcess.kill(); } catch (e) { /* Process may have already exited */ }
-    ffmpegProcess = null;
+  if (activeDownloadSession) {
+    cancelDownloadSession(activeDownloadSession, false);
   }
 
   const sender = event.sender;
+  const session = createDownloadSession(sender);
+  activeDownloadSession = session;
   const settings = loadSettings();
   const requestOptions = options || {};
   const url = requestOptions.url;
@@ -745,38 +821,32 @@ ipcMain.on('download-video', async (event, options) => {
     effectiveSettings.keepOriginalAfterConvert = requestOptions.keepOriginal;
   }
 
-  const safeSend = (channel, ...args) => {
-      if (!sender.isDestroyed()) {
-          sender.send(channel, ...args);
-      }
-  };
-
   if (!isSafeHttpUrl(url)) {
-    safeSend('progress', '⚠️ Invalid or missing URL.');
-    safeSend('complete', '❌ Failed (Invalid URL).');
+    sendSessionProgress(session, '⚠️ Invalid or missing URL.');
+    completeDownloadSession(session, '❌ Failed (Invalid URL).');
     return;
   }
   if (!downloadDir || typeof downloadDir !== 'string' || downloadDir.trim() === "") {
-    safeSend('progress', '⚠️ Invalid or missing download folder.');
-    safeSend('complete', '❌ Failed (Invalid Folder).');
+    sendSessionProgress(session, '⚠️ Invalid or missing download folder.');
+    completeDownloadSession(session, '❌ Failed (Invalid Folder).');
     return;
   }
   if (!fs.existsSync(ytdlpPath)) {
-    safeSend('progress', `❌ Error: yt-dlp binary not found at ${ytdlpPath}`);
-    safeSend('complete', '❌ Failed (Missing Dependency).');
+    sendSessionProgress(session, `❌ Error: yt-dlp binary not found at ${ytdlpPath}`);
+    completeDownloadSession(session, '❌ Failed (Missing Dependency).');
     return;
   }
 
   try {
     const normalizedDownloadDir = path.resolve(downloadDir);
     if (!fs.existsSync(normalizedDownloadDir)) {
-        safeSend('progress', `📂 Creating directory: ${normalizedDownloadDir}`);
+        sendSessionProgress(session, `📂 Creating directory: ${normalizedDownloadDir}`);
         fs.mkdirSync(normalizedDownloadDir, { recursive: true });
     } else {
         const stats = fs.statSync(normalizedDownloadDir);
         if (!stats.isDirectory()) {
-          safeSend('progress', `❌ Download path is not a directory: ${normalizedDownloadDir}`);
-          safeSend('complete', '❌ Failed (Invalid Folder).');
+          sendSessionProgress(session, `❌ Download path is not a directory: ${normalizedDownloadDir}`);
+          completeDownloadSession(session, '❌ Failed (Invalid Folder).');
           return;
         }
     }
@@ -800,57 +870,69 @@ ipcMain.on('download-video', async (event, options) => {
     
     if (videoFormat && audioFormat) {
       ytdlpArgs[formatFlagIndex + 1] = `${videoFormat}+${audioFormat}`;
-      safeSend('progress', `📹 Using formats: video=${videoFormat}, audio=${audioFormat}`);
+      sendSessionProgress(session, `📹 Using formats: video=${videoFormat}, audio=${audioFormat}`);
     } else if (videoFormat) {
       ytdlpArgs[formatFlagIndex + 1] = videoFormat;
-      safeSend('progress', `📹 Using video format: ${videoFormat}`);
+      sendSessionProgress(session, `📹 Using video format: ${videoFormat}`);
     } else if (audioFormat) {
       ytdlpArgs[formatFlagIndex + 1] = audioFormat;
-      safeSend('progress', `🎵 Using audio format: ${audioFormat}`);
+      sendSessionProgress(session, `🎵 Using audio format: ${audioFormat}`);
     }
 
     // Audio-only mode (only applies when not using advanced format selection)
     if (effectiveSettings.audioOnly && !videoFormat && !audioFormat) {
       ytdlpArgs.splice(formatFlagIndex, 2);
       ytdlpArgs.splice(-1, 0, '-x', '--audio-format', 'mp3', '--audio-quality', '0');
-      safeSend('progress', '🎵 Audio-only mode enabled');
+      sendSessionProgress(session, '🎵 Audio-only mode enabled');
     }
 
     if (effectiveSettings.hookBrowser && effectiveSettings.browserChoice) {
       ytdlpArgs.splice(-1, 0, '--cookies-from-browser', effectiveSettings.browserChoice);
     }
 
-    safeSend('progress', `🚀 Starting download: ${url}`);
-    safeSend('progress', `   Command: ${ytdlpBinary} ${ytdlpArgs.join(' ')}`);
+    sendSessionProgress(session, `🚀 Starting download: ${url}`);
+    sendSessionProgress(session, `   Command: ${ytdlpBinary} ${ytdlpArgs.join(' ')}`);
     ytdlpProcess = spawnWithEnv(ytdlpPath, ytdlpArgs);
+    session.ytdlpProcess = ytdlpProcess;
 
     let downloadOutputData = '';
     let downloadErrorData = '';
     const MAX_BUFFER_SIZE = 500000;
 
     ytdlpProcess.stdout.on('data', (data) => {
+        if (!isActiveDownloadSession(session)) return;
         const message = data.toString();
         if (downloadOutputData.length > MAX_BUFFER_SIZE) {
             downloadOutputData = downloadOutputData.slice(-MAX_BUFFER_SIZE / 2);
         }
         downloadOutputData += message;
-        safeSend('progress', message.trim());
+        sendSessionProgress(session, message.trim());
     });
     ytdlpProcess.stderr.on('data', (data) => {
+        if (!isActiveDownloadSession(session)) return;
         const message = data.toString();
         if (downloadErrorData.length < MAX_BUFFER_SIZE) {
             downloadErrorData += message;
         }
-        safeSend('progress', `[yt-dlp stderr] ${message.trim()}`);
+        sendSessionProgress(session, `[yt-dlp stderr] ${message.trim()}`);
     });
 
     ytdlpProcess.on('close', async (code) => {
+      if (!isActiveDownloadSession(session)) return;
+      session.ytdlpProcess = null;
       ytdlpProcess = null;
+
+      const exitType = classifyDownloadExit(session.lifecycle, code);
+      if (exitType === 'cancelled') {
+        completeDownloadSession(session, '⏹️ Cancelled.', '⏹️ Download/Conversion cancelled by user.');
+        return;
+      }
+
       const currentSettings = effectiveSettings;
-      if (code !== 0) {
-          safeSend('progress', `❌ Download failed: yt-dlp process exited with code ${code}`);
-          safeSend('progress', `   Check console and stderr output above for details.`);
-          safeSend('complete', '❌ Download failed.');
+      if (exitType === 'failed') {
+          sendSessionProgress(session, `❌ Download failed: yt-dlp process exited with code ${code}`);
+          sendSessionProgress(session, `   Check console and stderr output above for details.`);
+          completeDownloadSession(session, '❌ Download failed.');
           return;
       }
 
@@ -863,17 +945,17 @@ ipcMain.on('download-video', async (event, options) => {
           if (!downloadedFilePath) {
               throw new Error("Could not find a valid filepath in yt-dlp's output.");
           }
-          safeSend('progress', `✅ Download finished. Identified file: ${downloadedFilePath}`);
+          sendSessionProgress(session, `✅ Download finished. Identified file: ${downloadedFilePath}`);
       } catch (extractError) {
-          safeSend('progress', `❌ Error determining downloaded file path after download.`);
-          safeSend('progress', `   Error: ${extractError.message}`);
-          safeSend('complete', '❌ Failed (File Path Error).');
+          sendSessionProgress(session, `❌ Error determining downloaded file path after download.`);
+          sendSessionProgress(session, `   Error: ${extractError.message}`);
+          completeDownloadSession(session, '❌ Failed (File Path Error).');
           return;
       }
 
       // if convert enabled, run ffmpeg
       if (currentSettings.convertEnabled) {
-        safeSend('progress', '⏳ Checking if conversion is needed...');
+        sendSessionProgress(session, '⏳ Checking if conversion is needed...');
         try {
           const originalInputPath = downloadedFilePath;
           const originalFileName = path.basename(originalInputPath);
@@ -883,7 +965,7 @@ ipcMain.on('download-video', async (event, options) => {
           if (!sanitizedFileName || sanitizedFileName.trim() === '') {
             const ext = path.extname(originalFileName) || '.mp4';
             sanitizedFileName = `download_${Date.now()}${ext}`;
-            safeSend('progress', `⚠️ Original filename contained only invalid characters. Using: ${sanitizedFileName}`);
+            sendSessionProgress(session, `⚠️ Original filename contained only invalid characters. Using: ${sanitizedFileName}`);
           }
           
           const sanitizedInputPath = path.join(path.dirname(originalInputPath), sanitizedFileName);
@@ -891,7 +973,7 @@ ipcMain.on('download-video', async (event, options) => {
           // Rename downloaded file -> sanitized version
           if (originalInputPath !== sanitizedInputPath) {
             fs.renameSync(originalInputPath, sanitizedInputPath);
-            safeSend('progress', `Renamed to sanitized filename: ${sanitizedFileName}`);
+            sendSessionProgress(session, `Renamed to sanitized filename: ${sanitizedFileName}`);
           }
         
           const inputPath = sanitizedInputPath;
@@ -903,16 +985,16 @@ ipcMain.on('download-video', async (event, options) => {
 
           // Only convert if not already in target format
           if (inputFileExt.toLowerCase() === `.${targetFormat}`) {
-            safeSend('progress', `ℹ️ Downloaded file is already ${targetFormat.toUpperCase()} (${inputFilename}). Skipping conversion.`);
-            safeSend('complete', `✅ Done (Already ${targetFormat.toUpperCase()}).`);
+            sendSessionProgress(session, `ℹ️ Downloaded file is already ${targetFormat.toUpperCase()} (${inputFilename}). Skipping conversion.`);
+            completeDownloadSession(session, `✅ Done (Already ${targetFormat.toUpperCase()}).`);
             return;
           }
 
           if (fs.existsSync(outputPath)) {
-            safeSend('progress', `⚠️ Output file ${outputFilename} already exists. Overwriting.`);
+            sendSessionProgress(session, `⚠️ Output file ${outputFilename} already exists. Overwriting.`);
           }
 
-          safeSend('progress', `🎬 Converting ${inputFilename} to ${targetFormat.toUpperCase()}...`);
+          sendSessionProgress(session, `🎬 Converting ${inputFilename} to ${targetFormat.toUpperCase()}...`);
 
           const getVideoEncoder = () => {
             if (!currentSettings.gpuAcceleration) return 'copy';
@@ -928,7 +1010,7 @@ ipcMain.on('download-video', async (event, options) => {
           const useGpu = currentSettings.gpuAcceleration && videoEncoder !== 'copy';
           
           if (useGpu) {
-            safeSend('progress', `🖥️ Using GPU acceleration (${videoEncoder})`);
+            sendSessionProgress(session, `🖥️ Using GPU acceleration (${videoEncoder})`);
           }
 
           let ffmpegArgs;
@@ -938,51 +1020,68 @@ ipcMain.on('download-video', async (event, options) => {
             ffmpegArgs = ['-i', inputPath, '-c:v', videoEncoder, '-c:a', 'aac', '-movflags', '+faststart', '-y', outputPath];
           }
           ffmpegProcess = spawnWithEnv(ffmpegCommand, ffmpegArgs);
+          session.ffmpegProcess = ffmpegProcess;
 
           let ffmpegOutput = '';
           ffmpegProcess.stdout.on('data', (data) => {
+              if (!isActiveDownloadSession(session)) return;
               const msg = data.toString().trim();
               ffmpegOutput += msg + '\n';
-              safeSend('progress', `[ffmpeg] ${msg}`);
+              sendSessionProgress(session, `[ffmpeg] ${msg}`);
           });
           ffmpegProcess.stderr.on('data', (data) => {
+              if (!isActiveDownloadSession(session)) return;
               const msg = data.toString().trim();
               ffmpegOutput += msg + '\n';
-              safeSend('progress', `[ffmpeg] ${msg}`);
+              sendSessionProgress(session, `[ffmpeg] ${msg}`);
           });
 
           ffmpegProcess.on('close', (ffmpegCode) => {
+            if (!isActiveDownloadSession(session)) return;
+            session.ffmpegProcess = null;
             ffmpegProcess = null;
-            if (ffmpegCode === 0) {
-              safeSend('progress', `🎉 Successfully converted to ${outputPath}`);
+            const exitType = classifyDownloadExit(session.lifecycle, ffmpegCode);
+            if (exitType === 'cancelled') {
+              completeDownloadSession(session, '⏹️ Cancelled.', '⏹️ Download/Conversion cancelled by user.');
+              return;
+            }
+
+            if (exitType === 'success') {
+              sendSessionProgress(session, `🎉 Successfully converted to ${outputPath}`);
               const shouldDelete = !currentSettings.keepOriginalAfterConvert;
               const pathsDiffer = inputPath.toLowerCase() !== outputPath.toLowerCase();
               if (shouldDelete && pathsDiffer) {
-                safeSend('progress', `Attempting to delete original file: ${inputFilename}`);
+                sendSessionProgress(session, `Attempting to delete original file: ${inputFilename}`);
                 try {
                   fs.unlinkSync(inputPath);
-                  safeSend('progress', `🗑️ Deleted original file: ${inputFilename}`);
+                  sendSessionProgress(session, `🗑️ Deleted original file: ${inputFilename}`);
                 } catch (unlinkErr) {
-                  safeSend('progress', `⚠️ Could not delete original file: ${inputFilename} (${unlinkErr.message})`);
+                  sendSessionProgress(session, `⚠️ Could not delete original file: ${inputFilename} (${unlinkErr.message})`);
                 }
               } else if (currentSettings.keepOriginalAfterConvert) {
-                safeSend('progress', `ℹ️ Keeping original file (${inputFilename}) as per settings.`);
+                sendSessionProgress(session, `ℹ️ Keeping original file (${inputFilename}) as per settings.`);
               } else if (!pathsDiffer) {
-                safeSend('progress', `ℹ️ Input and output paths resolved to the same file (${inputPath}), cannot delete original.`);
+                sendSessionProgress(session, `ℹ️ Input and output paths resolved to the same file (${inputPath}), cannot delete original.`);
               }
-              safeSend('complete', '🎬 Conversion complete.');
+              completeDownloadSession(session, '🎬 Conversion complete.');
             } else {
-              safeSend('progress', `❌ Conversion failed: FFmpeg process exited with code ${ffmpegCode}`);
-              safeSend('progress', `   Check FFmpeg output above for details.`);
-              safeSend('complete', '❌ Conversion failed.');
+              sendSessionProgress(session, `❌ Conversion failed: FFmpeg process exited with code ${ffmpegCode}`);
+              sendSessionProgress(session, `   Check FFmpeg output above for details.`);
+              completeDownloadSession(session, '❌ Conversion failed.');
             }
           });
 
           ffmpegProcess.on('error', (err) => {
+              if (!isActiveDownloadSession(session)) return;
+              session.ffmpegProcess = null;
               ffmpegProcess = null;
+              if (classifyDownloadExit(session.lifecycle, 1) === 'cancelled') {
+                 completeDownloadSession(session, '⏹️ Cancelled.', '⏹️ Download/Conversion cancelled by user.');
+                 return;
+              }
               if (err.code === 'ENOENT') {
-                 safeSend('progress', `❌ Failed to start conversion: FFmpeg not found at ${ffmpegCommand}. Ensure FFMPEG is installed and accessible.`);
-                 safeSend('complete', '❌ Conversion failed (FFMPEG not found).');
+                 sendSessionProgress(session, `❌ Failed to start conversion: FFmpeg not found at ${ffmpegCommand}. Ensure FFMPEG is installed and accessible.`);
+                 completeDownloadSession(session, '❌ Conversion failed (FFMPEG not found).');
                  if (mainWindow && !mainWindow.isDestroyed()){
                      dialog.showMessageBox(mainWindow, {
                          type: 'error',
@@ -992,58 +1091,44 @@ ipcMain.on('download-video', async (event, options) => {
                      });
                  }
               } else {
-                 safeSend('progress', `❌ Failed to start conversion process: ${err.message}`);
-                 safeSend('complete', '❌ Conversion failed (ffmpeg spawn error).');
+                 sendSessionProgress(session, `❌ Failed to start conversion process: ${err.message}`);
+                 completeDownloadSession(session, '❌ Conversion failed (ffmpeg spawn error).');
               }
           });
 
         } catch (err) {
-          safeSend('progress', `❌ Error setting up conversion: ${err.message}`);
-          safeSend('complete', '❌ Conversion failed (setup error).');
+          sendSessionProgress(session, `❌ Error setting up conversion: ${err.message}`);
+          completeDownloadSession(session, '❌ Conversion failed (setup error).');
         }
       } else {
-        safeSend('progress', 'ℹ️ Conversion not enabled for this download.');
-        safeSend('complete', '✅ Download complete (no conversion).');
+        sendSessionProgress(session, 'ℹ️ Conversion not enabled for this download.');
+        completeDownloadSession(session, '✅ Download complete (no conversion).');
       }
     });
 
     ytdlpProcess.on('error', (err) => {
+        if (!isActiveDownloadSession(session)) return;
+        session.ytdlpProcess = null;
         ytdlpProcess = null;
-        safeSend('progress', `❌ Failed to start download process: ${err.message}`);
-        safeSend('complete', '❌ Download failed (process spawn error).');
+        if (classifyDownloadExit(session.lifecycle, 1) === 'cancelled') {
+          completeDownloadSession(session, '⏹️ Cancelled.', '⏹️ Download/Conversion cancelled by user.');
+          return;
+        }
+        sendSessionProgress(session, `❌ Failed to start download process: ${err.message}`);
+        completeDownloadSession(session, '❌ Download failed (process spawn error).');
     });
 
   } catch (error) {
-      safeSend('progress', `❌ Error before starting download: ${error.message}`);
-      safeSend('complete', '❌ Failed (Initial Setup Error).');
+      sendSessionProgress(session, `❌ Error before starting download: ${error.message}`);
+      completeDownloadSession(session, '❌ Failed (Initial Setup Error).');
   }
 });
 
 // handle cancel-download, kill yt-dlp and ffmpeg if running
 ipcMain.on('cancel-download', () => {
   try {
-    let wasCancelled = false;
-    if (ffmpegProcess) {
-      try {
-        ffmpegProcess.kill();
-      } catch (killErr) {
-        console.error('Error killing ffmpeg process:', killErr);
-      }
-      ffmpegProcess = null;
-      wasCancelled = true;
-    }
-    if (ytdlpProcess) {
-      try {
-        ytdlpProcess.kill();
-      } catch (killErr) {
-        console.error('Error killing yt-dlp process:', killErr);
-      }
-      ytdlpProcess = null;
-      wasCancelled = true;
-    }
-    if (wasCancelled && mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('progress', '⏹️ Download/Conversion cancelled by user.');
-        mainWindow.webContents.send('complete', '⏹️ Cancelled.');
+    if (activeDownloadSession) {
+      cancelDownloadSession(activeDownloadSession, true);
     }
   } catch (error) {
     console.error('Error in cancel-download handler:', error);
