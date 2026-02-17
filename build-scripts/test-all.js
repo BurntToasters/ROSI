@@ -1,4 +1,9 @@
 const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const yaml = require('js-yaml');
+const scriptVersion = '1.0.0';
+const testVersion = require('../package.json').version;
 
 const colors = {
   reset: '\x1b[0m',
@@ -6,72 +11,221 @@ const colors = {
   red: '\x1b[31m',
   yellow: '\x1b[33m',
   blue: '\x1b[34m',
-  bold: '\x1b[1m',
+  bold: '\x1b[1m'
 };
 
 const results = {
-  test: { status: 'pending', passed: 0, failed: 0 },
+  unit: { status: 'pending', passed: 0, failed: 0 },
+  syntax: { status: 'pending', checked: 0, failed: 0, failures: [] },
+  config: { status: 'pending', checks: 0, failed: 0, failures: [] }
 };
 
 function stripAnsi(value) {
   return value.replace(/\u001b\[[0-9;]*m/g, '');
 }
 
-function runCommand(name, command, parser) {
-  console.log(`${colors.blue}${colors.bold}Running ${name}...${colors.reset}`);
-  try {
-    const output = execSync(command, { encoding: 'utf8', stdio: 'pipe' });
-    results[name].status = 'passed';
-    if (parser) parser(output);
-    console.log(`${colors.green}✓ ${name} passed${colors.reset}\n`);
-    return true;
-  } catch (error) {
-    const output = error.stdout || error.stderr || '';
-    if (parser) parser(output);
-    results[name].status = 'failed';
-    console.log(`${colors.red}✗ ${name} failed${colors.reset}\n`);
-    return false;
-  }
+function printBanner(title) {
+  console.log(`${colors.bold}${colors.blue}
+╔══════════════════════════════════════╗
+║ ${title.padEnd(36, ' ')} ║
+╚══════════════════════════════════════╝
+ROSI Version: ${testVersion}
+Script Version: ${scriptVersion}
+${colors.reset}`);
 }
 
-function parseTest(output) {
+function parseUnitTests(output) {
   const clean = stripAnsi(output);
   const testsLine = clean.split(/\r?\n/).find((line) => line.trim().startsWith('Tests'));
   if (!testsLine) return;
   const passedMatch = testsLine.match(/(\d+)\s+passed/);
   const failedMatch = testsLine.match(/(\d+)\s+failed/);
-  results.test.passed = passedMatch ? parseInt(passedMatch[1], 10) : 0;
-  results.test.failed = failedMatch ? parseInt(failedMatch[1], 10) : 0;
+  results.unit.passed = passedMatch ? parseInt(passedMatch[1], 10) : 0;
+  results.unit.failed = failedMatch ? parseInt(failedMatch[1], 10) : 0;
 }
 
-console.log(`${colors.bold}${colors.blue}
-╔══════════════════════════════════════╗
-║        ROSI Test Suite              ║
-╚══════════════════════════════════════╝
-${colors.reset}`);
+function runCommand(name, command, parser) {
+  console.log(`${colors.blue}${colors.bold}Running ${name}...${colors.reset}`);
+  try {
+    const output = execSync(command, { encoding: 'utf8', stdio: 'pipe' });
+    if (parser) parser(output);
+    console.log(`${colors.green}✓ ${name} passed${colors.reset}\n`);
+    return { ok: true, output };
+  } catch (error) {
+    const output = `${error.stdout || ''}${error.stderr || ''}`;
+    if (parser) parser(output);
+    const details = stripAnsi(output).trim().split(/\r?\n/).slice(-12).join('\n');
+    if (details) console.log(`${colors.yellow}${details}${colors.reset}`);
+    console.log(`${colors.red}✗ ${name} failed${colors.reset}\n`);
+    return { ok: false, output };
+  }
+}
 
-runCommand('test', 'npm test', parseTest);
+function collectScriptFiles(rootDir) {
+  const out = [];
+  const skip = new Set(['node_modules', '.git', 'dist']);
 
-console.log(`${colors.bold}${colors.blue}
-╔══════════════════════════════════════╗
-║             SUMMARY                 ║
-╚══════════════════════════════════════╝
-${colors.reset}`);
+  function walk(currentDir) {
+    const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) {
+        if (entry.name !== '.github') continue;
+      }
+
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        if (skip.has(entry.name)) continue;
+        walk(fullPath);
+        continue;
+      }
+
+      if (entry.isFile() && /\.(cjs|mjs|js)$/.test(entry.name)) {
+        out.push(fullPath);
+      }
+    }
+  }
+
+  walk(rootDir);
+  return out;
+}
+
+function runSyntaxChecks() {
+  console.log(`${colors.blue}${colors.bold}Running syntax checks...${colors.reset}`);
+  const files = [
+    ...collectScriptFiles(path.join(process.cwd(), 'src')),
+    ...collectScriptFiles(path.join(process.cwd(), 'build-scripts')),
+    path.join(process.cwd(), 'vitest.config.js')
+  ];
+  const uniqueFiles = Array.from(new Set(files)).sort();
+
+  for (const filePath of uniqueFiles) {
+    results.syntax.checked += 1;
+    try {
+      execSync(`node --check "${filePath}"`, { stdio: 'pipe' });
+    } catch (error) {
+      results.syntax.failed += 1;
+      const relativePath = path.relative(process.cwd(), filePath);
+      const output = stripAnsi(`${error.stdout || ''}${error.stderr || ''}`).trim();
+      results.syntax.failures.push(`${relativePath}${output ? `\n${output}` : ''}`);
+    }
+  }
+
+  results.syntax.status = results.syntax.failed === 0 ? 'passed' : 'failed';
+  if (results.syntax.status === 'passed') {
+    console.log(`${colors.green}✓ syntax passed${colors.reset}\n`);
+  } else {
+    console.log(`${colors.red}✗ syntax failed${colors.reset}\n`);
+  }
+}
+
+function assertConfig(check, message) {
+  results.config.checks += 1;
+  if (!check) {
+    results.config.failed += 1;
+    results.config.failures.push(message);
+  }
+}
+
+function loadYaml(filePath) {
+  const raw = fs.readFileSync(filePath, 'utf8');
+  return yaml.load(raw);
+}
+
+function runConfigChecks() {
+  console.log(`${colors.blue}${colors.bold}Running config checks...${colors.reset}`);
+
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'));
+    assertConfig(Boolean(pkg.scripts && pkg.scripts.test), 'package.json: missing scripts.test');
+    assertConfig(Boolean(pkg.scripts && pkg.scripts['test:all']), 'package.json: missing scripts.test:all');
+    assertConfig(pkg.scripts['test:all'] === 'node build-scripts/test-all.js', 'package.json: scripts.test:all must run build-scripts/test-all.js');
+    assertConfig(pkg.main === 'src/main.js', 'package.json: main must be src/main.js');
+
+    const baseConfigPath = path.join(process.cwd(), 'electron-builder.base.yml');
+    const githubConfigPath = path.join(process.cwd(), 'electron-builder.github.yml');
+    const msstoreConfigPath = path.join(process.cwd(), 'electron-builder.msstore.yml');
+
+    const baseConfig = loadYaml(baseConfigPath);
+    const githubConfig = loadYaml(githubConfigPath);
+    const msstoreConfig = loadYaml(msstoreConfigPath);
+
+    assertConfig(Boolean(baseConfig.appId), 'electron-builder.base.yml: missing appId');
+    assertConfig(Boolean(baseConfig.win && baseConfig.mac && baseConfig.linux), 'electron-builder.base.yml: missing win/mac/linux sections');
+    assertConfig(Array.isArray(baseConfig.win?.asarUnpack) && baseConfig.win.asarUnpack.includes('assets/yt-dlp.exe') && baseConfig.win.asarUnpack.includes('assets/yt-dlp_arm64.exe'), 'electron-builder.base.yml: win.asarUnpack missing yt-dlp binaries');
+    assertConfig(Array.isArray(baseConfig.mac?.asarUnpack) && baseConfig.mac.asarUnpack.includes('assets/yt-dlp_macos'), 'electron-builder.base.yml: mac.asarUnpack missing yt-dlp_macos');
+    assertConfig(Array.isArray(baseConfig.linux?.asarUnpack) && baseConfig.linux.asarUnpack.includes('assets/yt-dlp_linux') && baseConfig.linux.asarUnpack.includes('assets/yt-dlp_linux_aarch64'), 'electron-builder.base.yml: linux.asarUnpack missing yt-dlp binaries');
+    assertConfig(githubConfig.extends === './electron-builder.base.yml', 'electron-builder.github.yml: extends must point to base config');
+    assertConfig(msstoreConfig.extends === './electron-builder.base.yml', 'electron-builder.msstore.yml: extends must point to base config');
+    assertConfig(msstoreConfig.win?.target === 'appx', 'electron-builder.msstore.yml: win.target must be appx');
+
+    const requiredFiles = [
+      'src/main.js',
+      'src/preload.js',
+      'src/renderer/index.html',
+      'assets/yt-dlp.exe',
+      'assets/yt-dlp_arm64.exe',
+      'assets/yt-dlp_macos',
+      'assets/yt-dlp_linux',
+      'assets/yt-dlp_linux_aarch64',
+      'build/app-icon.ico',
+      'build/app-icon.icns',
+      'build/app-icon.png',
+      'build/appx/appxmanifest.xml'
+    ];
+    for (const relativePath of requiredFiles) {
+      assertConfig(fs.existsSync(path.join(process.cwd(), relativePath)), `missing required file: ${relativePath}`);
+    }
+  } catch (error) {
+    assertConfig(false, `config parsing failed: ${error.message}`);
+  }
+
+  results.config.status = results.config.failed === 0 ? 'passed' : 'failed';
+  if (results.config.status === 'passed') {
+    console.log(`${colors.green}✓ config passed${colors.reset}\n`);
+  } else {
+    console.log(`${colors.red}✗ config failed${colors.reset}\n`);
+  }
+}
+
+printBanner('ROSI Full Test Suite');
+
+const unitResult = runCommand('unit', 'npm test', parseUnitTests);
+results.unit.status = unitResult.ok ? 'passed' : 'failed';
+
+runSyntaxChecks();
+runConfigChecks();
+
+printBanner('SUMMARY');
+
+const summaryLines = [
+  `${colors.bold}Unit:${colors.reset}    ${results.unit.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset} (${results.unit.passed} passed${results.unit.failed > 0 ? `, ${results.unit.failed} failed` : ''})`,
+  `${colors.bold}Syntax:${colors.reset}  ${results.syntax.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset} (${results.syntax.checked} checked${results.syntax.failed > 0 ? `, ${results.syntax.failed} failed` : ''})`,
+  `${colors.bold}Config:${colors.reset}  ${results.config.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset} (${results.config.checks} checks${results.config.failed > 0 ? `, ${results.config.failed} failed` : ''})`
+];
+for (const line of summaryLines) {
+  console.log(line);
+}
+
+if (results.syntax.failures.length > 0) {
+  console.log(`\n${colors.yellow}Syntax failures:${colors.reset}`);
+  for (const failure of results.syntax.failures) {
+    console.log(`- ${failure}`);
+  }
+}
+
+if (results.config.failures.length > 0) {
+  console.log(`\n${colors.yellow}Config failures:${colors.reset}`);
+  for (const failure of results.config.failures) {
+    console.log(`- ${failure}`);
+  }
+}
 
 const allPassed = Object.values(results).every((r) => r.status === 'passed');
-
-console.log(`${colors.bold}Tests:${colors.reset}      ${
-  results.test.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'
-}${colors.reset} (${results.test.passed} passed${
-  results.test.failed > 0 ? `, ${results.test.failed} failed` : ''
-})`);
-
 console.log('');
-
 if (allPassed) {
   console.log(`${colors.green}${colors.bold}✓ All checks passed!${colors.reset}`);
   process.exit(0);
-} else {
-  console.log(`${colors.red}${colors.bold}✗ Some checks failed.${colors.reset}`);
-  process.exit(1);
 }
+
+console.log(`${colors.red}${colors.bold}✗ Some checks failed.${colors.reset}`);
+process.exit(1);
