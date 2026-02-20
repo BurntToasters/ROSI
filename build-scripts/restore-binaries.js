@@ -23,12 +23,7 @@ const binaryBackups = [
   },
 ];
 
-const configBackups = [
-  {
-    backup: path.join(buildScriptsDir, 'electron-builder.base.yml.bak'),
-    original: path.join(projectRoot, 'electron-builder.base.yml'),
-  },
-];
+const configBackups = [];
 
 let restoredBinaries = 0;
 let restoredConfigs = 0;
