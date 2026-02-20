@@ -1,3 +1,5 @@
+extends: ./electron-builder.base.yml
+
 appId: BurntToasters.ROSI
 productName: ROSI
 win:

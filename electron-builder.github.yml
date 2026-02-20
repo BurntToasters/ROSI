@@ -1,3 +1,5 @@
+extends: ./electron-builder.base.yml
+
 publish:
   provider: github
   owner: BurntToasters

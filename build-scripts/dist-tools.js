@@ -14,6 +14,9 @@ const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
 const RELEASE = path.join(ROOT, 'release');
 
+const TS_OUTPUT_DIRS = ['main', 'utils'].map((d) => path.join(DIST, d));
+const TS_OUTPUT_FILES = ['types.js', 'types.d.ts'].map((f) => path.join(DIST, f));
+
 const command = process.argv[2];
 
 function rmdir(dir, label) {
@@ -38,7 +41,15 @@ function rmdir(dir, label) {
 }
 
 function clean() {
-  rmdir(DIST, 'dist');
+  for (const dir of TS_OUTPUT_DIRS) {
+    rmdir(dir, path.relative(ROOT, dir));
+  }
+  for (const file of TS_OUTPUT_FILES) {
+    if (fs.existsSync(file)) {
+      fs.rmSync(file, { force: true });
+      console.log(`  cleaned ${path.relative(ROOT, file)}`);
+    }
+  }
 }
 
 function cleanall() {
