@@ -759,10 +759,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     settings = {
       showConsoleOutput: false,
       advancedOptions: false,
-      convertToMp4: false,
+      convertEnabled: false,
+      convertFormat: 'mp4',
       keepOriginalAfterConvert: true,
       firstLaunch: true,
+      hookBrowser: false,
+      browserChoice: 'Chrome',
+      animateBackground: true,
+      notifications: true,
+      denoReminderDismissed: false,
+      gpuAcceleration: false,
+      gpuType: 'auto',
       ffmpegPath: '',
+      hideSupportModal: false,
+      checkUpdatesOnStartup: true,
+      updateChannel: 'auto',
+      audioOnly: false,
+      consoleCollapsed: false,
     };
     showModal({
       title: 'Settings Error',
@@ -1359,17 +1372,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     checkUpdateBtn.onclick = checkForUpdates;
   }
   const ipcCleanupFunctions = [];
-
-  let saveSettingsTimeout = null;
-  const debouncedSaveSettings = (settingsObj) => {
-    if (saveSettingsTimeout) {
-      clearTimeout(saveSettingsTimeout);
-    }
-    saveSettingsTimeout = setTimeout(() => {
-      window.api.saveSettings(settingsObj);
-      saveSettingsTimeout = null;
-    }, 300);
-  };
 
   ipcCleanupFunctions.push(
     window.api.onProgress((message) => {
