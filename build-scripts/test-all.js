@@ -167,21 +167,16 @@ function runConfigChecks() {
       'electron-builder.base.yml: missing win/mac/linux sections'
     );
     assertConfig(
-      Array.isArray(baseConfig.win?.asarUnpack) &&
-        baseConfig.win.asarUnpack.includes('assets/yt-dlp.exe') &&
-        baseConfig.win.asarUnpack.includes('assets/yt-dlp_arm64.exe'),
-      'electron-builder.base.yml: win.asarUnpack missing yt-dlp binaries'
+      Array.isArray(baseConfig.win?.extraResources),
+      'electron-builder.base.yml: win.extraResources missing for yt-dlp binaries'
     );
     assertConfig(
-      Array.isArray(baseConfig.mac?.asarUnpack) &&
-        baseConfig.mac.asarUnpack.includes('assets/yt-dlp_macos'),
-      'electron-builder.base.yml: mac.asarUnpack missing yt-dlp_macos'
+      Array.isArray(baseConfig.mac?.extraResources),
+      'electron-builder.base.yml: mac.extraResources missing for yt-dlp_macos'
     );
     assertConfig(
-      Array.isArray(baseConfig.linux?.asarUnpack) &&
-        baseConfig.linux.asarUnpack.includes('assets/yt-dlp_linux') &&
-        baseConfig.linux.asarUnpack.includes('assets/yt-dlp_linux_aarch64'),
-      'electron-builder.base.yml: linux.asarUnpack missing yt-dlp binaries'
+      Array.isArray(baseConfig.linux?.extraResources),
+      'electron-builder.base.yml: linux.extraResources missing for yt-dlp binaries'
     );
     assertConfig(
       Boolean(githubConfig.publish),

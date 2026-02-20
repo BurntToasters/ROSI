@@ -1,18 +1,11 @@
 const fs = require('fs');
 const path = require('path');
-const yaml = require('js-yaml');
 
 const projectRoot = path.resolve(__dirname, '..');
 const buildScriptsDir = __dirname;
 const x64Binary = path.join(projectRoot, 'assets', 'yt-dlp.exe');
 const arm64Binary = path.join(projectRoot, 'assets', 'yt-dlp_arm64.exe');
 const x64BackupPath = path.join(buildScriptsDir, 'yt-dlp.exe.bak');
-
-const baseConfigPath = path.join(projectRoot, 'electron-builder.base.yml');
-const baseConfigBackup = path.join(buildScriptsDir, 'electron-builder.base.yml.bak');
-
-console.log('Backing up electron-builder.base.yml...');
-fs.copyFileSync(baseConfigPath, baseConfigBackup);
 
 if (fs.existsSync(x64Binary)) {
   console.log('Backing up x64 binary for ARM64 build...');
@@ -25,9 +18,9 @@ if (!fs.existsSync(arm64Binary)) {
   process.exit(1);
 }
 
-const config = yaml.load(fs.readFileSync(baseConfigPath, 'utf8'));
-config.win.asarUnpack = ['assets/yt-dlp_arm64.exe'];
-fs.writeFileSync(baseConfigPath, yaml.dump(config));
+// extraResources uses a glob filter ('yt-dlp*.exe') so only the
+// binaries that remain in assets/ after the backup removal are copied.
+// No config patching needed — removing the x64 binary above is enough.
 
 const appOutDir = path.join(projectRoot, 'dist', 'win-arm64-unpacked');
 if (fs.existsSync(appOutDir)) {

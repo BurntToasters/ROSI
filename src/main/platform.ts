@@ -94,8 +94,8 @@ export function resolveYtdlpPath(): string {
 
   if (isPackaged) {
     const possiblePaths = [
-      path.join(process.resourcesPath, 'app.asar.unpacked', 'assets', ytdlpBinary),
       path.join(process.resourcesPath, 'assets', ytdlpBinary),
+      path.join(process.resourcesPath, 'app.asar.unpacked', 'assets', ytdlpBinary),
       path.join(__dirname, '..', '..', 'assets', ytdlpBinary),
     ];
 
