@@ -500,31 +500,35 @@ async function checkForUpdates() {
 
 let updaterCleanupFunctions = [];
 
-function buildUpdateProgressContent() {
-  const container = document.createElement('div');
-  container.className = 'update-progress-container';
+function showUpdateBanner() {
+  const banner = document.getElementById('update-banner');
+  const bar = document.getElementById('update-banner-bar');
+  const info = document.getElementById('update-banner-info');
+  const text = document.getElementById('update-banner-text');
+  if (bar) bar.style.width = '0%';
+  if (info) info.textContent = '';
+  if (text) text.textContent = 'Downloading update…';
+  if (banner) {
+    banner.classList.add('active');
+  }
+}
 
-  const barWrapper = document.createElement('div');
-  barWrapper.className = 'update-progress-bar-wrapper';
-
-  const bar = document.createElement('div');
-  bar.id = 'update-progress-bar';
-  bar.className = 'update-progress-bar';
-
-  const info = document.createElement('div');
-  info.id = 'update-progress-info';
-  info.className = 'update-progress-info';
-  info.textContent = 'Starting download...';
-
-  barWrapper.appendChild(bar);
-  container.appendChild(barWrapper);
-  container.appendChild(info);
-
-  return container;
+function hideUpdateBanner() {
+  const banner = document.getElementById('update-banner');
+  if (banner) {
+    banner.classList.remove('active');
+  }
 }
 
 function setupAutoUpdater() {
   let updateVersion = '';
+
+  const cancelBtn = document.getElementById('update-banner-cancel');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', () => {
+      window.api.cancelUpdateDownload();
+    });
+  }
 
   updaterCleanupFunctions.push(
     window.api.onUpdaterStatus((data) => {
@@ -544,19 +548,7 @@ function setupAutoUpdater() {
               {
                 label: 'Download & Install',
                 action: async () => {
-                  showModal({
-                    title: 'Downloading Update',
-                    message: 'Downloading the update. You can cancel if needed.',
-                    extra: buildUpdateProgressContent,
-                    buttons: [
-                      {
-                        label: 'Cancel',
-                        action: () => {
-                          window.api.cancelUpdateDownload();
-                        },
-                      },
-                    ],
-                  });
+                  showUpdateBanner();
                   await window.api.downloadUpdate();
                 },
               },
@@ -578,6 +570,7 @@ function setupAutoUpdater() {
           break;
 
         case 'error':
+          hideUpdateBanner();
           if (isManualUpdateCheck) {
             showModal({
               title: 'Update Error',
@@ -590,6 +583,7 @@ function setupAutoUpdater() {
           break;
 
         case 'cancelled':
+          hideUpdateBanner();
           showModal({
             title: 'Download Cancelled',
             message: 'The update download was cancelled.',
@@ -599,6 +593,7 @@ function setupAutoUpdater() {
           break;
 
         case 'downloaded':
+          hideUpdateBanner();
           showModal({
             title: 'Update Ready!',
             message: `Version ${data.version} has been downloaded.\n\nThe update will be installed when you restart ROSI.`,
@@ -618,8 +613,8 @@ function setupAutoUpdater() {
 
   updaterCleanupFunctions.push(
     window.api.onUpdaterProgress((data) => {
-      const progressBar = document.getElementById('update-progress-bar');
-      const progressInfo = document.getElementById('update-progress-info');
+      const progressBar = document.getElementById('update-banner-bar');
+      const progressInfo = document.getElementById('update-banner-info');
 
       if (progressBar) {
         progressBar.style.width = `${data.percent}%`;
@@ -629,7 +624,7 @@ function setupAutoUpdater() {
         const speed = formatBytes(data.bytesPerSecond) + '/s';
         const downloaded = formatBytes(data.transferred);
         const total = formatBytes(data.total);
-        progressInfo.textContent = `${downloaded} / ${total} (${speed}) - ${Math.round(data.percent)}%`;
+        progressInfo.textContent = `${downloaded} / ${total} (${speed}) — ${Math.round(data.percent)}%`;
       }
     })
   );
