@@ -1,6 +1,6 @@
 {
   "name": "rosi",
-  "version": "3.3.2",
+  "version": "3.4.0",
   "description": "Electron GUI for yt-dlp",
   "main": "src/main.js",
   "scripts": {
