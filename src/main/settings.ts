@@ -22,6 +22,7 @@ const defaultSettings: Settings = {
   denoReminderDismissed: false,
   gpuAcceleration: false,
   gpuType: 'auto',
+  bestQuality: false,
   ffmpegPath: '',
   hideSupportModal: false,
   checkUpdatesOnStartup: true,

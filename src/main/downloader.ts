@@ -431,8 +431,13 @@ export function startDownload(
       '--print',
       'after_move:filepath',
       '--newline',
+      '--progress',
+      '--progress-delta',
+      '1',
       '-f',
-      'best[ext=mp4]/best[ext=webm]/best',
+      effectiveSettings.bestQuality
+        ? 'bestvideo+bestaudio/best'
+        : 'best[ext=mp4]/best[ext=webm]/best',
       url,
     ];
     if (ffmpegLocation) {
@@ -467,7 +472,9 @@ export function startDownload(
 
     sendProgress(session, `🚀 Starting download: ${url}`);
     sendProgress(session, `   Command: ${ytdlpBinary} ${ytdlpArgs.join(' ')}`);
-    ytdlpProcess = spawnWithEnv(ytdlpPath, ytdlpArgs);
+    ytdlpProcess = spawnWithEnv(ytdlpPath, ytdlpArgs, {
+      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+    });
     session.ytdlpProcess = ytdlpProcess;
 
     let downloadOutputData = '';
