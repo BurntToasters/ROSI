@@ -17,9 +17,23 @@ const RELEASE = path.join(ROOT, 'release');
 const command = process.argv[2];
 
 function rmdir(dir, label) {
-  if (fs.existsSync(dir)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-    console.log(`  cleaned ${label}/`);
+  if (!fs.existsSync(dir)) return;
+  const maxRetries = 3;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 });
+      console.log(`  cleaned ${label}/`);
+      return;
+    } catch (err) {
+      if (attempt < maxRetries && (err.code === 'EPERM' || err.code === 'EBUSY')) {
+        console.warn(`  retrying ${label}/ removal (attempt ${attempt}/${maxRetries})...`);
+        const wait = attempt * 1000;
+        const end = Date.now() + wait;
+        while (Date.now() < end) {}
+      } else {
+        throw err;
+      }
+    }
   }
 }
 
