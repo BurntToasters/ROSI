@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import * as lifecycle from '../src/utils/downloadLifecycle.js';
+import * as lifecycle from '../utils/downloadLifecycle';
 
 describe('download lifecycle helpers', () => {
   it('starts as not-cancelled and not-completed', () => {

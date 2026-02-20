@@ -1,39 +1,35 @@
-function isSafeHttpUrl(value) {
+export function isSafeHttpUrl(value: unknown) {
   if (typeof value !== 'string') return false;
   const trimmed = value.trim();
   if (!trimmed) return false;
   try {
     const url = new URL(trimmed);
     return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch (_) {
+  } catch {
     return false;
   }
 }
 
-function isSafeExternalUrl(value) {
+export function isSafeExternalUrl(value: unknown) {
   if (typeof value !== 'string') return false;
   const trimmed = value.trim();
   if (!trimmed) return false;
   try {
     const url = new URL(trimmed);
-    return url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'ms-windows-store:';
-  } catch (_) {
+    return (
+      url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'ms-windows-store:'
+    );
+  } catch {
     return false;
   }
 }
 
-function isAllowedNavigationUrl(value) {
+export function isAllowedNavigationUrl(value: unknown) {
   if (typeof value !== 'string') return false;
   try {
     const url = new URL(value);
     return url.protocol === 'file:';
-  } catch (_) {
+  } catch {
     return false;
   }
 }
-
-module.exports = {
-  isSafeHttpUrl,
-  isSafeExternalUrl,
-  isAllowedNavigationUrl
-};

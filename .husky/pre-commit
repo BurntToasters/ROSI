@@ -1,10 +1,2 @@
 #!/usr/bin/env sh
-
-case "$(uname -s)" in
-  MINGW*|MSYS*|CYGWIN*)
-    npm.cmd test
-    ;;
-  *)
-    npm test
-    ;;
-esac
+lint-staged

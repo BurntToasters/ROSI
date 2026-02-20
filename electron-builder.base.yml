@@ -1,13 +1,13 @@
 appId: com.burnttoasters.rosi
 productName: Rosi
 files:
-  - '**/*'
+  - 'dist/**/*'
+  - 'src/renderer/**/*'
+  - 'assets/**/*'
   - '!**/node_modules/*/{test,__tests__,tests}/**'
   - '!**/*.md'
-  - '!**/package-devonly.js'
-  - '!**/dist'
 directories:
-  output: dist
+  output: release
 publish:
   provider: github
   owner: BurntToasters

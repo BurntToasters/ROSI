@@ -1,8 +1,5 @@
-extends: ./electron-builder.base.yml
 appId: BurntToasters.ROSI
 productName: ROSI
-directories:
-  output: dist
 win:
   target: appx
   icon: build/app-icon.png
