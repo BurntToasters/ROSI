@@ -21,7 +21,7 @@
     "clean": "node build-scripts/dist-tools.js cleanall",
     "licenses": "npx npm-license-crawler --production --json licenses.json",
     "compile": "node build-scripts/dist-tools.js clean && tsc --project tsconfig.main.json && node build-scripts/dist-tools.js copy",
-    "prebuild": "rm -r dist/ && npm run compile && npm run licenses",
+    "prebuild": "npm run compile && npm run licenses",
     "typecheck": "tsc --noEmit --project tsconfig.main.json",
     "watch": "node build-scripts/watch.js",
     "test": "vitest run",
