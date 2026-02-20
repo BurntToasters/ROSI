@@ -466,6 +466,10 @@ select option {
 .version-info {
   text-align: center;
   margin-top: var(--spacing-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
 }
 
 .version-info a {
@@ -477,6 +481,27 @@ select option {
 
 .version-info a:hover {
   color: var(--text-secondary);
+}
+
+.version-info a.beta-version {
+  color: #f59e0b;
+}
+
+.version-info a.beta-version:hover {
+  color: #fbbf24;
+}
+
+.beta-badge {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #fff;
+  line-height: 1.4;
 }
 
 .main-content {

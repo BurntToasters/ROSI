@@ -25,6 +25,7 @@ const defaultSettings: Settings = {
   ffmpegPath: '',
   hideSupportModal: false,
   checkUpdatesOnStartup: true,
+  updateChannel: 'auto',
 };
 
 export function getDefaultSettings(): Settings {

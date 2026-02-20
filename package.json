@@ -1,6 +1,6 @@
 {
   "name": "rosi",
-  "version": "3.4.0",
+  "version": "3.4.0-beta.1",
   "private": true,
   "description": "Electron GUI for yt-dlp",
   "keywords": [

@@ -162,6 +162,17 @@
             <span class="toggle-text">Auto check for updates</span>
           </label>
 
+          <div id="updateChannelContainer" class="sub-option visible">
+            <label class="select-label">
+              <span>Update Channel:</span>
+              <select id="updateChannelSelect">
+                <option value="auto">Auto (follows version)</option>
+                <option value="stable">Stable</option>
+                <option value="beta">Beta</option>
+              </select>
+            </label>
+          </div>
+
           <button id="checkUpdateBtn" class="settings-btn">
             <svg
               width="18"
@@ -222,6 +233,7 @@
         </button>
         <div class="version-info">
           <a id="versionLink" href="#">Loading...</a>
+          <span id="betaBadge" class="beta-badge" style="display:none">BETA</span>
         </div>
       </div>
     </aside>
