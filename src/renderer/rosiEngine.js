@@ -831,6 +831,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const downloadBtn = document.getElementById('downloadBtn');
   const checkUpdateBtn = document.getElementById('checkUpdateBtn');
   const animateBackgroundToggle = document.getElementById('animateBackgroundToggle');
+  const bestQualityToggle = document.getElementById('bestQualityToggle');
   const audioOnlyToggle = document.getElementById('audioOnlyToggle');
   const notificationsToggle = document.getElementById('notificationsToggle');
   const checkUpdatesOnStartupToggle = document.getElementById('checkUpdatesOnStartupToggle');
@@ -941,6 +942,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (animateBackgroundToggle) {
       animateBackgroundToggle.checked = settings.animateBackground ?? true;
       updateBackgroundAnimation(settings.animateBackground ?? true);
+    }
+    if (bestQualityToggle) {
+      bestQualityToggle.checked = settings.bestQuality ?? false;
+      const bestQualityDisabled =
+        (settings.advancedOptions ?? false) || (settings.audioOnly ?? false);
+      bestQualityToggle.disabled = bestQualityDisabled;
+      if (bestQualityDisabled) {
+        bestQualityToggle.parentElement.classList.add('disabled');
+        bestQualityToggle.parentElement.title = settings.audioOnly
+          ? 'Disabled when Audio-only mode is enabled'
+          : 'Disabled when Advanced format selection is enabled';
+      } else {
+        bestQualityToggle.parentElement.classList.remove('disabled');
+        bestQualityToggle.parentElement.title = '';
+      }
     }
     if (audioOnlyToggle) {
       audioOnlyToggle.checked = settings.audioOnly ?? false;
@@ -1088,6 +1104,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       settings.advancedOptions = e.target.checked;
       toggleAdvancedUI(e.target.checked);
 
+      if (bestQualityToggle) {
+        bestQualityToggle.disabled = e.target.checked;
+        if (e.target.checked) {
+          bestQualityToggle.checked = false;
+          settings.bestQuality = false;
+          bestQualityToggle.parentElement.classList.add('disabled');
+          bestQualityToggle.parentElement.title =
+            'Disabled when Advanced format selection is enabled';
+        } else {
+          bestQualityToggle.parentElement.classList.remove('disabled');
+          bestQualityToggle.parentElement.title = '';
+        }
+      }
+
       if (audioOnlyToggle) {
         audioOnlyToggle.disabled = e.target.checked;
         if (e.target.checked) {
@@ -1198,10 +1228,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  if (bestQualityToggle) {
+    bestQualityToggle.addEventListener('change', (e) => {
+      settings.bestQuality = e.target.checked;
+      window.api.saveSettings(settings);
+    });
+  }
+
   // Audio-only toggle
   if (audioOnlyToggle) {
     audioOnlyToggle.addEventListener('change', (e) => {
       settings.audioOnly = e.target.checked;
+
+      if (bestQualityToggle) {
+        bestQualityToggle.disabled = e.target.checked;
+        if (e.target.checked) {
+          bestQualityToggle.checked = false;
+          settings.bestQuality = false;
+          bestQualityToggle.parentElement.classList.add('disabled');
+          bestQualityToggle.parentElement.title = 'Disabled when Audio-only mode is enabled';
+        } else {
+          bestQualityToggle.parentElement.classList.remove('disabled');
+          bestQualityToggle.parentElement.title = '';
+        }
+      }
 
       if (convertToggle) {
         convertToggle.disabled = e.target.checked;

@@ -48,9 +48,10 @@ export function spawnWithEnv(
   args: string[],
   options: Record<string, unknown> = {}
 ) {
+  const baseEnv = (options.env as Record<string, string> | undefined) || {};
   return spawn(command, args, {
     ...options,
-    env: { ...process.env, PATH: buildEnhancedPath() },
+    env: { ...process.env, ...baseEnv, PATH: buildEnhancedPath() },
   } as Parameters<typeof spawn>[2]);
 }
 

@@ -14,6 +14,7 @@ export interface Settings {
   denoReminderDismissed: boolean;
   gpuAcceleration: boolean;
   gpuType: 'auto' | 'nvidia' | 'amd' | 'intel';
+  bestQuality: boolean;
   ffmpegPath: string;
   hideSupportModal: boolean;
   checkUpdatesOnStartup: boolean;
