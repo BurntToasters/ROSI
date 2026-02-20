@@ -1,2 +1,10 @@
 #!/usr/bin/env sh
-npm test
+
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    npm.cmd test
+    ;;
+  *)
+    npm test
+    ;;
+esac
