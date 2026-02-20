@@ -1,94 +1,36 @@
-/**
- * dist-tools.js — clean build artifacts and copy renderer assets after tsc
- *
- * Usage:
- *   node build-scripts/dist-tools.js clean      — remove dist/
- *   node build-scripts/dist-tools.js cleanall    — remove dist/ and release/
- *   node build-scripts/dist-tools.js copy         — copy renderer assets (no-op currently)
- */
-
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = path.resolve(__dirname, '..');
-const DIST = path.join(ROOT, 'dist');
-const RELEASE = path.join(ROOT, 'release');
-
-const TS_OUTPUT_DIRS = ['main', 'utils'].map((d) => path.join(DIST, d));
-const TS_OUTPUT_FILES = ['types.js', 'types.d.ts'].map((f) => path.join(DIST, f));
-
-const command = process.argv[2];
-
-function rmdir(dir, label) {
-  if (!fs.existsSync(dir)) return;
-  const maxRetries = 3;
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+function cleanBuildArtifacts() {
+  for (const dir of ['release', 'dist']) {
     try {
-      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 });
-      console.log(`  cleaned ${label}/`);
-      return;
-    } catch (err) {
-      if (attempt < maxRetries && (err.code === 'EPERM' || err.code === 'EBUSY')) {
-        console.warn(`  retrying ${label}/ removal (attempt ${attempt}/${maxRetries})...`);
-        const wait = attempt * 1000;
-        const end = Date.now() + wait;
-        while (Date.now() < end) {}
-      } else {
-        throw err;
-      }
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors — locked files from a previous build are harmless.
     }
   }
 }
 
-function clean() {
-  for (const dir of TS_OUTPUT_DIRS) {
-    rmdir(dir, path.relative(ROOT, dir));
-  }
-  for (const file of TS_OUTPUT_FILES) {
-    if (fs.existsSync(file)) {
-      fs.rmSync(file, { force: true });
-      console.log(`  cleaned ${path.relative(ROOT, file)}`);
-    }
-  }
+function copyFileEnsuringDir(src, dest) {
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.copyFileSync(src, dest);
 }
 
-function cleanall() {
-  rmdir(DIST, 'dist');
-  rmdir(RELEASE, 'release');
-}
-
-function copyDir(src, dest) {
-  fs.mkdirSync(dest, { recursive: true });
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    const srcPath = path.join(src, entry.name);
-    const destPath = path.join(dest, entry.name);
-    if (entry.isDirectory()) {
-      copyDir(srcPath, destPath);
-    } else {
-      fs.copyFileSync(srcPath, destPath);
-    }
-  }
-}
-
-function copy() {
-  // Renderer files are loaded via loadFile and stay as-is (no tsc).
-  // They are referenced from dist/main/main.js via relative path ../../src/renderer/
-  // so they don't need to be copied to dist/. But we keep this step for future flexibility.
+function copyRuntimeAssets() {
   console.log('  copy step complete (renderer files referenced in-place from src/)');
 }
 
-switch (command) {
-  case 'clean':
-    clean();
-    break;
-  case 'cleanall':
-    cleanall();
-    break;
-  case 'copy':
-    copy();
-    break;
-  default:
-    console.error(`Unknown command: ${command}`);
-    console.error('Usage: node build-scripts/dist-tools.js [clean|cleanall|copy]');
-    process.exit(1);
+const mode = process.argv[2];
+
+if (mode === 'clean') {
+  cleanBuildArtifacts();
+  process.exit(0);
 }
+
+if (mode === 'copy') {
+  copyRuntimeAssets();
+  process.exit(0);
+}
+
+console.error('Usage: node build-scripts/dist-tools.js <clean|copy>');
+process.exit(1);
