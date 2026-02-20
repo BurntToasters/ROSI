@@ -18,7 +18,7 @@
   "scripts": {
     "prepare": "node build-scripts/install-hooks.js",
     "hooks:install": "node build-scripts/install-hooks.js",
-    "clean": "node build-scripts/dist-tools.js cleanall",
+    "clean": "node build-scripts/dist-tools.js clean",
     "licenses": "npx npm-license-crawler --production --json licenses.json",
     "compile": "node build-scripts/dist-tools.js clean && tsc --project tsconfig.main.json && node build-scripts/dist-tools.js copy",
     "prebuild": "npm run compile && npm run licenses",
