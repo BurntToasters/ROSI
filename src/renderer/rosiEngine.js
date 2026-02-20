@@ -540,9 +540,12 @@ function setupAutoUpdater() {
           updateVersion = data.version;
           const wasManualCheck = isManualUpdateCheck;
           isManualUpdateCheck = false;
+          const isBetaUpdate = data.isBeta || /-(beta|alpha|rc)/i.test(data.version);
           showModal({
-            title: 'Update Available!',
-            message: `A new version (v${data.version}) of ROSI is available!\n\nWould you like to download and install it?`,
+            title: isBetaUpdate ? 'Beta Update Available!' : 'Update Available!',
+            message: isBetaUpdate
+              ? `A new beta version (v${data.version}) of ROSI is available!\n\nWould you like to download and install it?`
+              : `A new version (v${data.version}) of ROSI is available!\n\nWould you like to download and install it?`,
             priority: wasManualCheck,
             buttons: [
               {
@@ -771,12 +774,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     const version = await window.api.getAppVersion();
     const versionLink = document.getElementById('versionLink');
+    const betaBadge = document.getElementById('betaBadge');
     if (versionLink && version) {
       versionLink.textContent = `v${version}`;
       versionLink.addEventListener('click', (event) => {
         event.preventDefault();
         window.api.openExternal(`https://github.com/BurntToasters/ROSI/releases/tag/v${version}`);
       });
+      const isBeta = /-(beta|alpha|rc)/i.test(version);
+      if (isBeta) {
+        versionLink.classList.add('beta-version');
+        if (betaBadge) betaBadge.style.display = '';
+      }
     }
   } catch (e) {
     console.error('Could not get app version:', e);
@@ -813,6 +822,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const notificationsToggle = document.getElementById('notificationsToggle');
   const checkUpdatesOnStartupToggle = document.getElementById('checkUpdatesOnStartupToggle');
   const checkUpdatesOnStartupLabel = document.getElementById('checkUpdatesOnStartupLabel');
+  const updateChannelSelect = document.getElementById('updateChannelSelect');
 
   const settingsBtn = document.getElementById('settingsBtn');
   const closeSidebarBtn = document.getElementById('closeSidebar');
@@ -951,6 +961,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       checkUpdatesOnStartupToggle.checked = settings.checkUpdatesOnStartup ?? true;
       if (channel === 'msstore' && checkUpdatesOnStartupLabel) {
         checkUpdatesOnStartupLabel.style.display = 'none';
+      }
+    }
+
+    if (updateChannelSelect) {
+      updateChannelSelect.value = settings.updateChannel ?? 'auto';
+      if (channel === 'msstore') {
+        const container = document.getElementById('updateChannelContainer');
+        if (container) container.style.display = 'none';
       }
     }
   };
@@ -1204,6 +1222,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (checkUpdatesOnStartupToggle) {
     checkUpdatesOnStartupToggle.addEventListener('change', (e) => {
       settings.checkUpdatesOnStartup = e.target.checked;
+      window.api.saveSettings(settings);
+    });
+  }
+
+  if (updateChannelSelect) {
+    updateChannelSelect.addEventListener('change', (e) => {
+      settings.updateChannel = e.target.value;
       window.api.saveSettings(settings);
     });
   }

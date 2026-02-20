@@ -135,11 +135,11 @@ app.on('before-quit', () => {
   killAllProcesses();
 });
 
-setupAutoUpdater(getMainWindow);
+setupAutoUpdater(getMainWindow, loadSettings);
 
 ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('is-packaged', () => isPackaged);
-ipcMain.handle('check-for-updates', () => checkForUpdates(isPackaged));
+ipcMain.handle('check-for-updates', () => checkForUpdates(isPackaged, loadSettings));
 ipcMain.handle('download-update', () => downloadUpdate());
 ipcMain.on('cancel-update-download', () => cancelUpdateDownload(getMainWindow));
 ipcMain.on('install-update', () => installUpdate());

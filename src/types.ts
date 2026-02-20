@@ -17,6 +17,7 @@ export interface Settings {
   ffmpegPath: string;
   hideSupportModal: boolean;
   checkUpdatesOnStartup: boolean;
+  updateChannel: 'auto' | 'stable' | 'beta';
 }
 
 export interface DownloadLifecycleState {
