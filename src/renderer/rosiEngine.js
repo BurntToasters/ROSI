@@ -1295,7 +1295,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     showUpdateChannelBtn.addEventListener('click', () => {
       const isVisible = updateChannelContainer.classList.contains('visible');
       updateChannelContainer.classList.toggle('visible', !isVisible);
-      showUpdateChannelBtn.textContent = isVisible ? '▸ Update channel settings' : '▾ Hide update channel';
+      showUpdateChannelBtn.textContent = isVisible
+        ? '▸ Update channel settings'
+        : '▾ Hide update channel';
     });
   }
 
