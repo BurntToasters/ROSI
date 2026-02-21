@@ -121,11 +121,26 @@ export function resolveYtdlpPath(): string {
     try {
       fs.chmodSync(resolved, 0o755);
     } catch (err) {
-      dialog.showErrorBox(
-        'Permission Error',
-        `Failed to set executable permissions on yt-dlp binary at ${resolved}.\nError: ${(err as Error).message}`
-      );
-      app.quit();
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EROFS' || code === 'EACCES') {
+        // RoFS check if already executable
+        try {
+          fs.accessSync(resolved, fs.constants.X_OK);
+        } catch {
+          const tmpDir = path.join(app.getPath('temp'), 'rosi-bin');
+          if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+          const tmpBin = path.join(tmpDir, ytdlpBinary);
+          fs.copyFileSync(resolved, tmpBin);
+          fs.chmodSync(tmpBin, 0o755);
+          resolved = tmpBin;
+        }
+      } else {
+        dialog.showErrorBox(
+          'Permission Error',
+          `Failed to set executable permissions on yt-dlp binary at ${resolved}.\nError: ${(err as Error).message}`
+        );
+        app.quit();
+      }
     }
   }
 
