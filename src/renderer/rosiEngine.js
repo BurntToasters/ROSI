@@ -837,6 +837,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const checkUpdatesOnStartupToggle = document.getElementById('checkUpdatesOnStartupToggle');
   const checkUpdatesOnStartupLabel = document.getElementById('checkUpdatesOnStartupLabel');
   const updateChannelSelect = document.getElementById('updateChannelSelect');
+  const updateChannelContainer = document.getElementById('updateChannelContainer');
+  const showUpdateChannelBtn = document.getElementById('showUpdateChannelBtn');
 
   const settingsBtn = document.getElementById('settingsBtn');
   const closeSidebarBtn = document.getElementById('closeSidebar');
@@ -996,8 +998,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (updateChannelSelect) {
       updateChannelSelect.value = settings.updateChannel ?? 'auto';
       if (channel === 'msstore') {
-        const container = document.getElementById('updateChannelContainer');
-        if (container) container.style.display = 'none';
+        if (updateChannelContainer) updateChannelContainer.style.display = 'none';
+        if (showUpdateChannelBtn) showUpdateChannelBtn.style.display = 'none';
       }
     }
   };
@@ -1286,6 +1288,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     checkUpdatesOnStartupToggle.addEventListener('change', (e) => {
       settings.checkUpdatesOnStartup = e.target.checked;
       window.api.saveSettings(settings);
+    });
+  }
+
+  if (showUpdateChannelBtn && updateChannelContainer) {
+    showUpdateChannelBtn.addEventListener('click', () => {
+      const isVisible = updateChannelContainer.classList.contains('visible');
+      updateChannelContainer.classList.toggle('visible', !isVisible);
+      showUpdateChannelBtn.textContent = isVisible ? '▸ Update channel settings' : '▾ Hide update channel';
     });
   }
 
