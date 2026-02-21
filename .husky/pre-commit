@@ -1,2 +1,10 @@
 #!/usr/bin/env sh
-npm test
+
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    npx.cmd lint-staged
+    ;;
+  *)
+    npx lint-staged
+    ;;
+esac

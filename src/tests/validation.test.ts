@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import * as validation from '../src/utils/validation.js';
+import * as validation from '../utils/validation';
 
 describe('validation helpers', () => {
   describe('isSafeHttpUrl', () => {
@@ -24,8 +24,12 @@ describe('validation helpers', () => {
     it('accepts http/https and ms-windows-store URLs', () => {
       expect(validation.isSafeExternalUrl('https://example.com')).toBe(true);
       expect(validation.isSafeExternalUrl('http://example.com')).toBe(true);
-      expect(validation.isSafeExternalUrl('ms-windows-store://pdp/?ProductId=9N0BQSTFL4SV')).toBe(true);
-      expect(validation.isSafeExternalUrl('MS-WINDOWS-STORE://pdp/?ProductId=9N0BQSTFL4SV')).toBe(true);
+      expect(validation.isSafeExternalUrl('ms-windows-store://pdp/?ProductId=9N0BQSTFL4SV')).toBe(
+        true
+      );
+      expect(validation.isSafeExternalUrl('MS-WINDOWS-STORE://pdp/?ProductId=9N0BQSTFL4SV')).toBe(
+        true
+      );
     });
 
     it('rejects other schemes and invalid input', () => {
