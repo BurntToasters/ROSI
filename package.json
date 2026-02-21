@@ -66,10 +66,10 @@
     "release:win:arm64": "npm run prebuild && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --win --arm64 --publish always && npm run sign:gpg",
     "release:mac": "npm run prebuild && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --mac --universal --publish always && npm run sign:gpg",
     "release:linux:chain": "npm run prebuild && npm run release:linux:x64 && npm run release:linux:arm64",
+    "release:linux:chain:f": "npm run prebuild && npm run release:linux:native:x64 && npm run release:linux:native:arm64",
     "release:linux": "npm run prebuild && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --linux AppImage deb rpm --x64 --arm64 --publish always && npm run sign:gpg",
     "release:linux:x64": "node build-scripts/prepare-linux-x64.js && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --linux AppImage deb rpm --x64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:x64",
     "release:linux:arm64": "node build-scripts/prepare-linux-arm64.js && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --linux AppImage deb rpm --arm64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:arm64",
-    "release:linux:native": "npm run prebuild && npm run release:linux:native:x64 && npm run release:linux:native:arm64",
     "release:linux:native:x64": "node build-scripts/prepare-linux-x64.js && dotenv -e .env -- cross-env USE_SYSTEM_FPM=true CHANNEL=github electron-builder -c electron-builder.github.yml --linux AppImage deb rpm --x64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:x64",
     "release:linux:native:arm64": "node build-scripts/prepare-linux-arm64.js && dotenv -e .env -- cross-env USE_SYSTEM_FPM=true CHANNEL=github electron-builder -c electron-builder.github.yml --linux AppImage deb rpm --arm64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:arm64",
     "release:all": "npm run prebuild && npm run release:mac && npm run release:win && npm run release:linux"
