@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import sanitize from 'sanitize-filename';
 import { dialog } from 'electron';
 import log from 'electron-log/main';
-import { spawnWithEnv, resolveFfmpegPath, ytdlpBinary } from './platform';
+import { spawnWithEnv, resolveFfmpegPath, ytdlpBinary, isWindows } from './platform';
 import { loadSettings } from './settings';
 import { isSafeHttpUrl } from '../utils/validation';
 import {
@@ -289,7 +289,9 @@ function runConversion(
       if (ffExitType === 'success') {
         sendProgress(session, `🎉 Successfully converted to ${outputPath}`);
         const shouldDelete = !effectiveSettings.keepOriginalAfterConvert;
-        const pathsDiffer = inputPath.toLowerCase() !== outputPath.toLowerCase();
+        const pathsDiffer = isWindows
+          ? inputPath.toLowerCase() !== outputPath.toLowerCase()
+          : inputPath !== outputPath;
         if (shouldDelete && pathsDiffer) {
           sendProgress(session, `Attempting to delete original file: ${inputFilename}`);
           try {

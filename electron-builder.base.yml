@@ -52,8 +52,26 @@ appImage:
   artifactName: ROSI-Linux-${arch}.${ext}
 deb:
   artifactName: ROSI-Linux-${arch}.${ext}
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
 rpm:
   artifactName: ROSI-Linux-${arch}.${ext}
+  depends:
+    - gtk3
+    - libnotify
+    - nss
+    - libXScrnSaver
+    - libXtst
+    - at-spi2-core
+    - libuuid
+    - libsecret
 dmg:
   background: build/dmg-background.png
   icon: build/app-icon.png
