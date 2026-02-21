@@ -86,7 +86,7 @@
   },
   "homepage": "https://github.com/BurntToasters/rosi#readme",
   "devDependencies": {
-    "@eslint/js": "^9.39.2",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.19.11",
     "@vitest/coverage-v8": "^4.0.18",
     "cross-env": "^10.1.0",
