@@ -121,7 +121,9 @@ export async function installDeno(
       installArgs = ['-c', 'curl -fsSL https://deno.land/install.sh | sh'];
     }
 
-    const proc = spawn(installCmd, installArgs);
+    const proc = spawn(installCmd, installArgs, {
+      env: { ...process.env, PATH: buildDenoEnhancedPath() },
+    });
     let output = '';
     let error = '';
 
