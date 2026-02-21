@@ -409,6 +409,25 @@ select option {
   color: white;
 }
 
+.settings-link-btn {
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  margin-left: var(--spacing-md);
+  margin-bottom: var(--spacing-xs);
+  transition: var(--transition-fast);
+}
+
+.settings-link-btn:hover {
+  background: var(--surface-2);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .settings-btn {
   width: 100%;
   display: flex;
