@@ -1,13 +1,13 @@
 appId: com.burnttoasters.rosi
 productName: Rosi
 files:
-  - '**/*'
+  - 'dist/**/*'
+  - 'src/renderer/**/*'
   - '!**/node_modules/*/{test,__tests__,tests}/**'
   - '!**/*.md'
-  - '!**/package-devonly.js'
-  - '!**/dist'
+  # yt-dlp binaries are NOT in files — they are copied per-platform via extraResources
 directories:
-  output: dist
+  output: release
 publish:
   provider: github
   owner: BurntToasters
@@ -15,9 +15,11 @@ publish:
 win:
   target: nsis
   icon: build/app-icon.ico
-  asarUnpack:
-    - assets/yt-dlp.exe
-    - assets/yt-dlp_arm64.exe
+  extraResources:
+    - from: assets/
+      to: assets/
+      filter:
+        - 'yt-dlp*.exe'
 nsis:
   artifactName: ROSI-Windows-${arch}.${ext}
   allowToChangeInstallationDirectory: false
@@ -29,8 +31,9 @@ mac:
     - zip
   icon: build/app-icon.icns
   artifactName: ROSI-MacOS-universal.${ext}
-  asarUnpack:
-    - assets/yt-dlp_macos
+  extraResources:
+    - from: assets/yt-dlp_macos
+      to: assets/yt-dlp_macos
 linux:
   target:
     - AppImage
@@ -38,9 +41,13 @@ linux:
     - rpm
   icon: build/app-icon.png
   category: Utility
-  asarUnpack:
-    - assets/yt-dlp_linux
-    - assets/yt-dlp_linux_aarch64
+  executableArgs:
+    - '--ozone-platform=x11'
+  extraResources:
+    - from: assets/
+      to: assets/
+      filter:
+        - 'yt-dlp_linux*'
 appImage:
   artifactName: ROSI-Linux-${arch}.${ext}
 deb:

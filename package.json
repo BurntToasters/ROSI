@@ -1,52 +1,74 @@
 {
   "name": "rosi",
-  "version": "3.3.2",
+  "version": "3.4.0",
+  "private": true,
   "description": "Electron GUI for yt-dlp",
-  "main": "src/main.js",
+  "keywords": [
+    "electron",
+    "yt-dlp",
+    "video-downloader",
+    "cross-platform"
+  ],
+  "main": "dist/main/main.js",
+  "packageManager": "npm@11.10.1",
+  "engines": {
+    "node": ">=22.x",
+    "npm": ">=10.x"
+  },
   "scripts": {
     "prepare": "node build-scripts/install-hooks.js",
     "hooks:install": "node build-scripts/install-hooks.js",
+    "clean": "node build-scripts/dist-tools.js clean",
     "licenses": "npx npm-license-crawler --production --json licenses.json",
-    "prebuild": "npm run licenses",
+    "compile": "node build-scripts/dist-tools.js clean && tsc --project tsconfig.main.json && node build-scripts/dist-tools.js copy",
+    "prebuild": "npm run compile && npm run licenses",
+    "typecheck": "tsc --noEmit --project tsconfig.main.json",
+    "watch": "node build-scripts/watch.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:all": "node build-scripts/test-all.js",
     "test:cov": "vitest run --coverage",
-    "start": "electron .",
-    "build": "npm run prebuild && electron-builder",
-    "build:win": "npm run prebuild && electron-builder --win --arm64 --x64",
-    "build:win:x64": "npm run prebuild && electron-builder --win --x64",
-    "build:win:arm64": "npm run prebuild && electron-builder --win --arm64",
-    "build:win:all": "npm run prebuild && npm run build:win && npm run build:win:x64 && npm run build:win:arm64",
-    "build:mac:universal": "npm run prebuild && dotenv -e .env -- electron-builder --mac --universal",
-    "build:linux": "npm run prebuild && electron-builder --linux AppImage deb rpm --x64 --arm64",
-    "build:linux:x64": "npm run prebuild && node build-scripts/prepare-linux-x64.js && electron-builder --linux AppImage deb rpm --x64 && node build-scripts/restore-binaries.js",
-    "build:linux:arm64": "npm run prebuild && node build-scripts/prepare-linux-arm64.js && electron-builder --linux AppImage deb rpm --arm64 && node build-scripts/restore-binaries.js",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write src/",
+    "format:check": "prettier --check src/",
+    "start": "npm run clean && npm run compile && electron . --ozone-platform=x11",
+    "dev": "npm run compile && cross-env NODE_ENV=development electron . --dev --ozone-platform=x11",
+    "build": "npm run prebuild && electron-builder -c electron-builder.base.yml",
+    "build:win": "npm run prebuild && electron-builder -c electron-builder.base.yml --win --arm64 --x64",
+    "build:win:x64": "npm run prebuild && electron-builder -c electron-builder.base.yml --win --x64",
+    "build:win:arm64": "npm run prebuild && electron-builder -c electron-builder.base.yml --win --arm64",
+    "build:win:all": "npm run build:win && npm run build:win:x64 && npm run build:win:arm64",
+    "build:mac:universal": "npm run prebuild && dotenv -e .env -- electron-builder -c electron-builder.base.yml --mac --universal",
+    "build:linux": "npm run prebuild && electron-builder -c electron-builder.base.yml --linux AppImage deb rpm --x64 --arm64",
+    "build:linux:x64": "node build-scripts/prepare-linux-x64.js && electron-builder -c electron-builder.base.yml --linux AppImage deb rpm --x64 && node build-scripts/restore-binaries.js",
+    "build:linux:arm64": "node build-scripts/prepare-linux-arm64.js && electron-builder -c electron-builder.base.yml --linux AppImage deb rpm --arm64 && node build-scripts/restore-binaries.js",
     "build:linux:all": "npm run prebuild && npm run build:linux:x64 && npm run build:linux:arm64",
-    "build:linux:native": "npm run prebuild && node build-scripts/prepare-linux-x64.js && cross-env USE_SYSTEM_FPM=true electron-builder --linux AppImage deb rpm --x64 && node build-scripts/restore-binaries.js",
-    "build:linux:native:x64": "npm run prebuild && node build-scripts/prepare-linux-x64.js && cross-env USE_SYSTEM_FPM=true electron-builder --linux AppImage deb rpm --x64 && node build-scripts/restore-binaries.js",
-    "build:linux:native:arm64": "npm run prebuild && node build-scripts/prepare-linux-arm64.js && cross-env USE_SYSTEM_FPM=true electron-builder --linux AppImage deb rpm --arm64 && node build-scripts/restore-binaries.js",
+    "build:linux:native": "npm run prebuild && npm run build:linux:native:x64 && npm run build:linux:native:arm64",
+    "build:linux:native:x64": "node build-scripts/prepare-linux-x64.js && cross-env USE_SYSTEM_FPM=true electron-builder -c electron-builder.base.yml --linux AppImage deb rpm --x64 && node build-scripts/restore-binaries.js",
+    "build:linux:native:arm64": "node build-scripts/prepare-linux-arm64.js && cross-env USE_SYSTEM_FPM=true electron-builder -c electron-builder.base.yml --linux AppImage deb rpm --arm64 && node build-scripts/restore-binaries.js",
     "build:linux:native:all": "npm run prebuild && npm run build:linux:native:x64 && npm run build:linux:native:arm64",
-    "build:github": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --arm64 --x64",
-    "build:github:win": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --arm64 --x64",
-    "build:github:mac": "dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --mac --universal",
-    "build:msstore:x64": "npm run prebuild && cross-env CHANNEL=msstore node build-scripts/prepare-x64.js && electron-builder --win --x64 -c electron-builder.base.yml -c electron-builder.msstore.yml && node build-scripts/restore-binaries.js",
-    "build:msstore:arm64": "npm run prebuild && cross-env CHANNEL=msstore node build-scripts/prepare-arm64.js && electron-builder --win --arm64 -c electron-builder.base.yml -c electron-builder.msstore.yml && node build-scripts/restore-binaries.js",
+    "build:github": "npm run prebuild && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --win --arm64 --x64",
+    "build:github:win": "npm run prebuild && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --win --arm64 --x64",
+    "build:github:mac": "npm run prebuild && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --mac --universal",
+    "build:msstore:x64": "cross-env CHANNEL=msstore node build-scripts/prepare-x64.js && electron-builder --win --x64 -c electron-builder.msstore.yml && node build-scripts/restore-binaries.js",
+    "build:msstore:arm64": "cross-env CHANNEL=msstore node build-scripts/prepare-arm64.js && electron-builder --win --arm64 -c electron-builder.msstore.yml && node build-scripts/restore-binaries.js",
     "build:msstore": "npm run prebuild && npm run build:msstore:x64 && npm run build:msstore:arm64",
     "restore-binaries": "node build-scripts/restore-binaries.js",
     "sign:gpg": "dotenv -e .env -- node build-scripts/gpg-sign.js",
     "sign:gpg:x64": "dotenv -e .env -- node build-scripts/gpg-sign.js --arch x64",
     "sign:gpg:arm64": "dotenv -e .env -- node build-scripts/gpg-sign.js --arch arm64",
-    "release:win": "npm run prebuild && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --arm64 --x64 --publish always && npm run sign:gpg",
-    "release:win:x64": "npm run prebuild && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --x64 --publish always && npm run sign:gpg",
-    "release:win:arm64": "npm run prebuild && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --win --arm64 --publish always && npm run sign:gpg",
-    "release:mac": "npm run prebuild && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --mac --universal --publish always && npm run sign:gpg",
-    "release:linux": "npm run prebuild && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --x64 --arm64 --publish always && npm run sign:gpg",
-    "release:linux:x64": "npm run prebuild && node build-scripts/prepare-linux-x64.js && npm run prebuild && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --x64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:x64",
-    "release:linux:arm64": "npm run prebuild && node build-scripts/prepare-linux-arm64.js && npm run prebuild && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --arm64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:arm64",
-    "release:linux:native": "npm run prebuild && node build-scripts/prepare-linux-x64.js && dotenv -e .env -- cross-env USE_SYSTEM_FPM=true CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --x64 --arm64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg",
-    "release:linux:native:x64": "npm run prebuild && node build-scripts/prepare-linux-x64.js && dotenv -e .env -- cross-env USE_SYSTEM_FPM=true CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --x64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:x64",
-    "release:linux:native:arm64": "npm run prebuild && node build-scripts/prepare-linux-arm64.js && dotenv -e .env -- cross-env USE_SYSTEM_FPM=true CHANNEL=github electron-builder -c electron-builder.base.yml -c electron-builder.github.yml --linux AppImage deb rpm --arm64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:arm64",
+    "release:win": "npm run prebuild && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --win --arm64 --x64 --publish always && npm run sign:gpg",
+    "release:win:x64": "npm run prebuild && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --win --x64 --publish always && npm run sign:gpg",
+    "release:win:arm64": "npm run prebuild && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --win --arm64 --publish always && npm run sign:gpg",
+    "release:mac": "npm run prebuild && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --mac --universal --publish always && npm run sign:gpg",
+    "release:linux:chain": "npm run prebuild && npm run release:linux:x64 && npm run release:linux:arm64",
+    "release:linux": "npm run prebuild && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --linux AppImage deb rpm --x64 --arm64 --publish always && npm run sign:gpg",
+    "release:linux:x64": "node build-scripts/prepare-linux-x64.js && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --linux AppImage deb rpm --x64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:x64",
+    "release:linux:arm64": "node build-scripts/prepare-linux-arm64.js && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --linux AppImage deb rpm --arm64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:arm64",
+    "release:linux:native": "npm run prebuild && npm run release:linux:native:x64 && npm run release:linux:native:arm64",
+    "release:linux:native:x64": "node build-scripts/prepare-linux-x64.js && dotenv -e .env -- cross-env USE_SYSTEM_FPM=true CHANNEL=github electron-builder -c electron-builder.github.yml --linux AppImage deb rpm --x64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:x64",
+    "release:linux:native:arm64": "node build-scripts/prepare-linux-arm64.js && dotenv -e .env -- cross-env USE_SYSTEM_FPM=true CHANNEL=github electron-builder -c electron-builder.github.yml --linux AppImage deb rpm --arm64 --publish always && node build-scripts/restore-binaries.js && npm run sign:gpg:arm64",
     "release:all": "npm run prebuild && npm run release:mac && npm run release:win && npm run release:linux"
   },
   "overrides": {
@@ -64,100 +86,40 @@
   },
   "homepage": "https://github.com/BurntToasters/rosi#readme",
   "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@types/node": "^22.19.11",
+    "@vitest/coverage-v8": "^4.0.18",
     "cross-env": "^10.1.0",
     "dotenv-cli": "^10.0.0",
     "electron": "^40.0.0",
     "electron-builder": "^26.7.0",
+    "eslint": "^9.39.2",
     "husky": "^9.1.7",
-    "install": "^0.13.0",
     "js-yaml": "^4.1.0",
-    "npm": "^11.10.0",
+    "lint-staged": "^16.2.7",
+    "prettier": "^3.8.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.0",
     "vitest": "^4.0.16"
   },
   "dependencies": {
+    "electron-log": "^5.3.4",
     "electron-updater": "^6.3.9",
-    "glob": "^11.1.0",
     "sanitize-filename": "^1.6.3"
   },
-  "build": {
-    "appId": "com.burnttoasters.rosi",
-    "productName": "Rosi",
-    "files": [
-      "**/*",
-      "!**/node_modules/*/{test,__tests__,tests}/**",
-      "!**/*.md",
-      "!**/package-devonly.js",
-      "!**/dist"
+  "lint-staged": {
+    "src/**/*.ts": [
+      "eslint --fix",
+      "prettier --write"
     ],
-    "directories": {
-      "output": "dist"
-    },
-    "win": {
-      "target": "nsis",
-      "icon": "build/app-icon.ico",
-      "asarUnpack": [
-        "assets/yt-dlp.exe",
-        "assets/yt-dlp_arm64.exe"
-      ]
-    },
-    "nsis": {
-      "artifactName": "ROSI-Windows-${arch}.${ext}"
-    },
-    "mac": {
-      "target": [
-        "dmg",
-        "zip"
-      ],
-      "icon": "build/app-icon.icns",
-      "artifactName": "ROSI-MacOS-universal.${ext}",
-      "asarUnpack": [
-        "assets/yt-dlp_macos"
-      ]
-    },
-    "linux": {
-      "target": [
-        "AppImage",
-        "deb",
-        "rpm"
-      ],
-      "icon": "build/app-icon.png",
-      "category": "Utility",
-      "asarUnpack": [
-        "assets/yt-dlp_linux",
-        "assets/yt-dlp_linux_aarch64"
-      ]
-    },
-    "appImage": {
-      "artifactName": "ROSI-Linux-${arch}.${ext}"
-    },
-    "deb": {
-      "artifactName": "ROSI-linux_${arch}.${ext}"
-    },
-    "rpm": {
-      "artifactName": "ROSI-linux.${arch}.${ext}"
-    },
-    "dmg": {
-      "artifactName": "ROSI-MacOS-universal.${ext}",
-      "background": "build/dmg-background.png",
-      "icon": "build/app-icon.png",
-      "iconSize": 100,
-      "contents": [
-        {
-          "x": 120,
-          "y": 300,
-          "type": "file"
-        },
-        {
-          "x": 546,
-          "y": 300,
-          "type": "link",
-          "path": "/Applications"
-        }
-      ],
-      "window": {
-        "width": 648,
-        "height": 480
-      }
-    }
+    "build-scripts/**/*.js": [
+      "prettier --write"
+    ],
+    ".github/workflows/*.{yml,yaml}": [
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
   }
 }
