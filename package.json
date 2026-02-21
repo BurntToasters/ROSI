@@ -16,6 +16,9 @@
     "npm": ">=10.x"
   },
   "scripts": {
+    "gitprune": "node build-scripts/git-prune-local-branches.js",
+    "gitprune:dry": "node build-scripts/git-prune-local-branches.js --dry-run",
+    "gitprune:force": "node build-scripts/git-prune-local-branches.js --force",
     "prepare": "node build-scripts/install-hooks.js",
     "hooks:install": "node build-scripts/install-hooks.js",
     "clean": "node build-scripts/dist-tools.js clean",
