@@ -12,7 +12,7 @@
   "main": "dist/main/main.js",
   "packageManager": "npm@11.10.1",
   "engines": {
-    "node": ">=22.x",
+    "node": ">=24.x",
     "npm": ">=10.x"
   },
   "scripts": {
