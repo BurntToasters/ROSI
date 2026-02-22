@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta
@@ -242,14 +242,14 @@
         </button>
         <div class="version-info">
           <a id="versionLink" href="#">Loading...</a>
-          <span id="betaBadge" class="beta-badge" style="display: none">BETA</span>
+          <span id="betaBadge" class="beta-badge hidden">BETA</span>
         </div>
       </div>
     </aside>
 
     <main class="main-content">
       <header class="top-bar">
-        <button id="settingsBtn" class="icon-btn" title="Settings">
+        <button id="settingsBtn" class="icon-btn" title="Settings" aria-label="Settings">
           <svg
             width="22"
             height="22"
@@ -276,7 +276,7 @@
         </div>
 
         <div class="top-bar-links">
-          <a href="#" id="helpLink" title="Help">
+          <a href="#" id="helpLink" title="Help" aria-label="Help">
             <svg
               width="20"
               height="20"
@@ -292,7 +292,7 @@
               <line x1="12" y1="17" x2="12.01" y2="17" />
             </svg>
           </a>
-          <a href="#" id="supportLink" title="Support">
+          <a href="#" id="supportLink" title="Support" aria-label="Support">
             <svg
               width="20"
               height="20"
@@ -339,7 +339,7 @@
                 autocomplete="off"
                 spellcheck="false"
               />
-              <button id="clearUrl" class="clear-btn" title="Clear" style="display: none">
+              <button id="clearUrl" class="clear-btn hidden" title="Clear" aria-label="Clear URL">
                 <svg
                   width="16"
                   height="16"
@@ -376,8 +376,8 @@
 
           <div id="progress-container" class="progress-container">
             <div class="progress-header">
-              <span id="progress-status" class="progress-status">Ready</span>
-              <span id="progress-percent" class="progress-percent"></span>
+              <span id="progress-status" class="progress-status" aria-live="polite">Ready</span>
+              <span id="progress-percent" class="progress-percent" aria-live="polite"></span>
             </div>
             <div class="progress-bar-wrapper">
               <div id="progress-bar" class="progress-bar"></div>
@@ -421,7 +421,13 @@
       </section>
 
       <section id="console-section" class="console-section">
-        <div class="console-header" id="consoleHeader">
+        <div
+          class="console-header"
+          id="consoleHeader"
+          role="button"
+          aria-expanded="false"
+          tabindex="0"
+        >
           <div class="console-header-left">
             <svg
               class="console-collapse-icon"
@@ -453,7 +459,12 @@
               Console Output
             </span>
           </div>
-          <button id="clearConsole" class="console-clear-btn" title="Clear console">
+          <button
+            id="clearConsole"
+            class="console-clear-btn"
+            title="Clear console"
+            aria-label="Clear console"
+          >
             <svg
               width="14"
               height="14"
@@ -495,7 +506,13 @@
       </footer>
     </main>
 
-    <div id="app-modal" class="modal-overlay">
+    <div
+      id="app-modal"
+      class="modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-title"
+    >
       <div class="modal-box">
         <h3 id="modal-title">Modal Title</h3>
         <div id="modal-message" class="modal-message">Modal message goes here...</div>
@@ -504,7 +521,13 @@
       </div>
     </div>
 
-    <div id="licenses-overlay" class="modal-overlay">
+    <div
+      id="licenses-overlay"
+      class="modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Open Source Licenses"
+    >
       <div class="licenses-container">
         <div class="licenses-header">
           <h3>Open Source Licenses</h3>
