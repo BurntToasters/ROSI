@@ -694,21 +694,56 @@ function cleanupUpdaterListeners() {
   updaterCleanupFunctions = [];
 }
 
+let licensesPreviousFocus = null;
+let licensesTrapHandler = null;
+
 function showLicenses() {
   const licensesOverlay = document.getElementById('licenses-overlay');
   if (licensesOverlay) {
+    licensesPreviousFocus = document.activeElement;
     licensesOverlay.classList.add('active');
     document.body.style.overflow = 'hidden';
+
+    const closeBtn = licensesOverlay.querySelector('#close-licenses');
+    if (closeBtn) {
+      requestAnimationFrame(() => closeBtn.focus());
+    }
+
+    licensesTrapHandler = (e) => {
+      if (e.key !== 'Tab') return;
+      const focusable = licensesOverlay.querySelectorAll(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    licensesOverlay.addEventListener('keydown', licensesTrapHandler);
   }
 }
 
 function hideLicenses() {
   const licensesOverlay = document.getElementById('licenses-overlay');
   if (licensesOverlay) {
+    if (licensesTrapHandler) {
+      licensesOverlay.removeEventListener('keydown', licensesTrapHandler);
+      licensesTrapHandler = null;
+    }
     licensesOverlay.classList.remove('active');
     setTimeout(() => {
       document.body.style.overflow = '';
     }, 300);
+    if (licensesPreviousFocus) {
+      licensesPreviousFocus.focus();
+      licensesPreviousFocus = null;
+    }
   }
 }
 
@@ -1041,15 +1076,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (checkUpdatesOnStartupToggle) {
       checkUpdatesOnStartupToggle.checked = settings.checkUpdatesOnStartup ?? true;
       if (channel === 'msstore' && checkUpdatesOnStartupLabel) {
-        checkUpdatesOnStartupLabel.style.display = 'none';
+        checkUpdatesOnStartupLabel.classList.add('hidden');
       }
     }
 
     if (updateChannelSelect) {
       updateChannelSelect.value = settings.updateChannel ?? 'auto';
       if (channel === 'msstore') {
-        if (updateChannelContainer) updateChannelContainer.style.display = 'none';
-        if (showUpdateChannelBtn) showUpdateChannelBtn.style.display = 'none';
+        if (updateChannelContainer) updateChannelContainer.classList.add('hidden');
+        if (showUpdateChannelBtn) showUpdateChannelBtn.classList.add('hidden');
       }
     }
   };
@@ -1104,7 +1139,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   bindExternalLink(helpLink, 'https://help.rosie.run/rosi/en-us/faq');
   bindExternalLink(supportLink, 'https://rosie.run/support');
   bindExternalLink(websiteLink, 'https://rosie.run');
-  bindExternalLink(supportProjectLink, 'https://rosie.run');
+  bindExternalLink(supportProjectLink, 'https://rosie.run/support');
 
   if (licensesLink) {
     licensesLink.addEventListener('click', (event) => {
@@ -1142,12 +1177,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   const consoleHeader = document.getElementById('consoleHeader');
   if (consoleHeader) {
     consoleHeader.addEventListener('click', (e) => {
-      // Don't collapse if clicking the clear button
       if (e.target.closest('#clearConsole')) return;
-
       const isCollapsed = toggleConsoleCollapse();
       settings.consoleCollapsed = isCollapsed;
       window.api.saveSettings(settings);
+    });
+    consoleHeader.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        if (e.target.closest('#clearConsole')) return;
+        const isCollapsed = toggleConsoleCollapse();
+        settings.consoleCollapsed = isCollapsed;
+        window.api.saveSettings(settings);
+      }
     });
   }
 
