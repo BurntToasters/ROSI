@@ -47,9 +47,12 @@ function appendConsoleOutput(outputEl, text) {
 // Toggle console collapsed state
 function toggleConsoleCollapse() {
   const consoleSection = document.getElementById('console-section');
+  const consoleHeader = document.getElementById('consoleHeader');
   if (consoleSection) {
     consoleSection.classList.toggle('collapsed');
-    return consoleSection.classList.contains('collapsed');
+    const isCollapsed = consoleSection.classList.contains('collapsed');
+    if (consoleHeader) consoleHeader.setAttribute('aria-expanded', String(!isCollapsed));
+    return isCollapsed;
   }
   return false;
 }
@@ -87,9 +90,13 @@ function toggleSidebar() {
   if (isOpen) {
     sidebar.classList.remove('open');
     if (overlay) overlay.classList.remove('active');
+    const settingsBtn = document.getElementById('settingsBtn');
+    if (settingsBtn) settingsBtn.focus();
   } else {
     sidebar.classList.add('open');
     if (overlay) overlay.classList.add('active');
+    const closeBtn = document.getElementById('closeSidebar');
+    if (closeBtn) closeBtn.focus();
   }
 }
 
@@ -98,6 +105,8 @@ function closeSidebar() {
   const overlay = document.getElementById('sidebar-overlay');
   if (sidebar) sidebar.classList.remove('open');
   if (overlay) overlay.classList.remove('active');
+  const settingsBtn = document.getElementById('settingsBtn');
+  if (settingsBtn) settingsBtn.focus();
 }
 function toggleAdvancedUI(show) {
   const formatSection = document.getElementById('formatOptions');
@@ -113,7 +122,9 @@ function toggleAdvancedUI(show) {
 // Modal queue system
 const modalQueue = [];
 let isModalActive = false;
-let currentModalData = null; // Track modals
+let currentModalData = null;
+let previousFocus = null;
+let modalTrapHandler = null;
 
 function showModal({ title, message, buttons = [], priority = false, extra = null }) {
   const modalData = { title, message, buttons, priority, extra };
@@ -187,18 +198,55 @@ function displayNextModal() {
     };
     btnContainer.appendChild(btn);
   });
+
+  previousFocus = document.activeElement;
+
+  if (modalTrapHandler) {
+    modal.removeEventListener('keydown', modalTrapHandler);
+  }
+  modalTrapHandler = (e) => {
+    if (e.key !== 'Tab') return;
+    const focusable = modal.querySelectorAll('button');
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey) {
+      if (document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else {
+      if (document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  };
+  modal.addEventListener('keydown', modalTrapHandler);
+
+  requestAnimationFrame(() => {
+    const firstBtn = btnContainer.querySelector('button');
+    if (firstBtn) firstBtn.focus();
+  });
 }
 
 function hideModal(modal, action) {
   modal.classList.add('hiding');
-  currentModalData = null; // Clear current modal data
+  currentModalData = null;
+  if (modalTrapHandler) {
+    modal.removeEventListener('keydown', modalTrapHandler);
+    modalTrapHandler = null;
+  }
   setTimeout(() => {
     modal.classList.remove('active', 'hiding');
-    isModalActive = false; // Reset before action
+    isModalActive = false;
     if (typeof action === 'function') action();
-    // display next action if previous modal is done
     if (!isModalActive) {
       displayNextModal();
+    }
+    if (!isModalActive && previousFocus && typeof previousFocus.focus === 'function') {
+      previousFocus.focus();
+      previousFocus = null;
     }
   }, 200);
 }
@@ -797,7 +845,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const isBeta = /-(beta|alpha|rc)/i.test(version);
       if (isBeta) {
         versionLink.classList.add('beta-version');
-        if (betaBadge) betaBadge.style.display = '';
+        if (betaBadge) betaBadge.classList.remove('hidden');
       }
     }
   } catch (e) {
@@ -935,7 +983,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Restore console collapsed state
     if (settings.consoleCollapsed) {
       const consoleSection = document.getElementById('console-section');
+      const consoleHeaderEl = document.getElementById('consoleHeader');
       if (consoleSection) consoleSection.classList.add('collapsed');
+      if (consoleHeaderEl) consoleHeaderEl.setAttribute('aria-expanded', 'false');
     }
 
     toggleAdvancedUI(settings.advancedOptions);
@@ -1067,12 +1117,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     clearUrlBtn.addEventListener('click', () => {
       urlInput.value = '';
       urlInput.focus();
-      clearUrlBtn.style.display = 'none';
+      clearUrlBtn.classList.add('hidden');
     });
     urlInput.addEventListener('input', () => {
-      clearUrlBtn.style.display = urlInput.value.length > 0 ? 'flex' : 'none';
+      clearUrlBtn.classList.toggle('hidden', urlInput.value.length === 0);
     });
-    clearUrlBtn.style.display = urlInput.value.length > 0 ? 'flex' : 'none';
+    clearUrlBtn.classList.toggle('hidden', urlInput.value.length === 0);
   }
 
   if (clearConsoleBtn && outputEl) {
