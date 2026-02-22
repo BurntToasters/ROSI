@@ -4,7 +4,13 @@ ROSI is an Electron GUI for yt-dlp
 
 [<img src="https://get.microsoft.com/images/en-us%20dark.svg" width="200"/>](https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct) [<img width="150" alt="ROSI" src="https://prod.rosie.run/img/download-for-windows.png"/>](https://github.com/BurntToasters/ROSI/releases/latest/download/ROSI-Windows-x64.exe) [<img width="150" alt="ROSI" src="https://prod.rosie.run/img/download-for-windows-arm64.png"/>](https://github.com/BurntToasters/ROSI/releases/latest/download/ROSI-Windows-arm64.exe) [<img width="150" alt="ROSI" src="https://prod.rosie.run/img/download-for-macos.png"/>](https://github.com/BurntToasters/ROSI/releases/latest/download/ROSI-MacOS-universal.dmg) [<img width="150" alt="ROSI" src="https://prod.rosie.run/img/download-for-linux.png"/>](https://github.com/BurntToasters/ROSI/releases/latest)
 
-<p align="center"><img width="700" src="https://prod.rosie.run/img/rosi/ROSI.png"></p>
+<p align="center">
+
+<img width="45%" height="1012" alt="ROSI-3-1-1" src="https://github.com/user-attachments/assets/e66cebfb-6925-409d-9843-e94cfd868891" />
+  &nbsp;
+  <img width="45%" height="1012" alt="ROSI-3-x-app" src="https://github.com/user-attachments/assets/7a15cea3-1f32-432e-a142-aaded90c9f2a" />
+
+</p>
 
 # LICENSES
 
