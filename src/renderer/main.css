@@ -576,10 +576,26 @@ select option {
 .app-name {
   font-size: 1.25rem;
   font-weight: 700;
-  background: linear-gradient(135deg, var(--text-primary), var(--accent-light));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+}
+
+.char-white {
+  color: #ffffff;
+  text-shadow:
+    0 0 2px rgba(255, 255, 255, 1),
+    0 0 6px rgba(255, 255, 255, 0.8),
+    0 0 14px rgba(255, 255, 255, 0.5);
+}
+
+.char-black {
+  color: #000000;
+  -webkit-text-stroke: 0.5px rgba(255, 255, 255, 0.6);
+  text-shadow:
+    -1px -1px 0 rgba(255, 255, 255, 0.7),
+    1px -1px 0 rgba(255, 255, 255, 0.7),
+    -1px 1px 0 rgba(255, 255, 255, 0.7),
+    1px 1px 0 rgba(255, 255, 255, 0.7),
+    0 0 8px rgba(255, 255, 255, 0.6),
+    0 0 16px rgba(255, 255, 255, 0.3);
 }
 
 .top-bar-links {

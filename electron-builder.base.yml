@@ -3,6 +3,7 @@ productName: Rosi
 files:
   - 'dist/**/*'
   - 'src/renderer/**/*'
+  - 'licenses.json'
   - '!**/node_modules/*/{test,__tests__,tests}/**'
   - '!**/*.md'
   # yt-dlp binaries are NOT in files — they are copied per-platform via extraResources
