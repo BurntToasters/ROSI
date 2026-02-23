@@ -36,6 +36,7 @@ describe('validation helpers', () => {
       expect(validation.isSafeExternalUrl('file:///tmp/test')).toBe(false);
       expect(validation.isSafeExternalUrl('javascript:alert(1)')).toBe(false);
       expect(validation.isSafeExternalUrl('mailto:support@example.com')).toBe(false);
+      expect(validation.isSafeExternalUrl('not a url')).toBe(false);
       expect(validation.isSafeExternalUrl('')).toBe(false);
       expect(validation.isSafeExternalUrl(undefined)).toBe(false);
     });
