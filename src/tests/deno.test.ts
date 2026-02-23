@@ -86,6 +86,29 @@ describe('deno helpers', () => {
     expect(result).toEqual({ cancelled: true });
   });
 
+  it('shows install dialog without parent window when none is available', async () => {
+    showMessageBoxMock.mockResolvedValue({ response: 1 });
+    await installDeno(null);
+
+    expect(showMessageBoxMock).toHaveBeenCalledTimes(1);
+    const call = showMessageBoxMock.mock.calls[0];
+    expect(call).toHaveLength(1);
+    expect(call[0]).toMatchObject({ type: 'warning' });
+  });
+
+  it('shows install dialog with focused parent window when available', async () => {
+    const focusedWindow = {} as any;
+    getFocusedWindowMock.mockReturnValue(focusedWindow);
+    showMessageBoxMock.mockResolvedValue({ response: 1 });
+    await installDeno(null);
+
+    expect(showMessageBoxMock).toHaveBeenCalledTimes(1);
+    const call = showMessageBoxMock.mock.calls[0];
+    expect(call).toHaveLength(2);
+    expect(call[0]).toBe(focusedWindow);
+    expect(call[1]).toMatchObject({ type: 'warning' });
+  });
+
   it('resolves with success payload when installer exits successfully', async () => {
     const proc = createProc();
     spawnMock.mockReturnValue(proc);

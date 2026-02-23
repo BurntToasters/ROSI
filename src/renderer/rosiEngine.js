@@ -824,7 +824,7 @@ async function checkDenoInstallation(settings) {
             label: "No, don't remind me",
             action: () => {
               settings.denoReminderDismissed = true;
-              window.api.saveSettings(settings);
+              void persistSettings();
             },
           },
         ],
@@ -894,7 +894,41 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (e) {
     console.error('Failed to setup auto-updater:', e);
   }
-  let saveSettingsTimeout = null;
+  let settingsSaveErrorShownAt = 0;
+
+  function showSettingsSaveError(message) {
+    const now = Date.now();
+    if (now - settingsSaveErrorShownAt < 5000) {
+      return;
+    }
+    settingsSaveErrorShownAt = now;
+    showModal({
+      title: 'Settings Save Failed',
+      message,
+      buttons: [{ label: 'OK' }],
+      priority: true,
+    });
+  }
+
+  async function persistSettings(silent = false) {
+    try {
+      const result = await window.api.saveSettings(settings);
+      if (!result || result.ok !== true) {
+        if (!silent) {
+          const message = result?.error?.message || 'Could not save settings.';
+          showSettingsSaveError(`${message}\nChanges may not persist after restart.`);
+        }
+        return false;
+      }
+      settings = result.data;
+      return true;
+    } catch (_error) {
+      if (!silent) {
+        showSettingsSaveError('Could not save settings due to an unexpected error.');
+      }
+      return false;
+    }
+  }
 
   const consoleToggle = document.getElementById('consoleToggle');
   const advancedToggle = document.getElementById('advancedToggle');
@@ -953,7 +987,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     browserChoiceSelect.value = 'Firefox';
     if (settings.browserChoice !== 'Firefox') {
       settings.browserChoice = 'Firefox';
-      window.api.saveSettings(settings);
+      void persistSettings();
     }
   }
 
@@ -1109,14 +1143,14 @@ document.addEventListener('DOMContentLoaded', async () => {
           action: () => {
             window.api.openExternal('https://rosie.run/support');
             settings.hideSupportModal = true;
-            window.api.saveSettings(settings);
+            void persistSettings();
           },
         },
         {
           label: 'No thanks',
           action: () => {
             settings.hideSupportModal = true;
-            window.api.saveSettings(settings);
+            void persistSettings();
           },
         },
       ],
@@ -1172,7 +1206,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (consoleToggle)
     consoleToggle.addEventListener('change', (e) => {
       settings.showConsoleOutput = e.target.checked;
-      window.api.saveSettings(settings);
+      void persistSettings();
       updateConsoleVisibility(settings.showConsoleOutput);
     });
 
@@ -1183,7 +1217,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (e.target.closest('#clearConsole')) return;
       const isCollapsed = toggleConsoleCollapse();
       settings.consoleCollapsed = isCollapsed;
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
     consoleHeader.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
@@ -1191,7 +1225,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.target.closest('#clearConsole')) return;
         const isCollapsed = toggleConsoleCollapse();
         settings.consoleCollapsed = isCollapsed;
-        window.api.saveSettings(settings);
+        void persistSettings();
       }
     });
   }
@@ -1235,13 +1269,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
 
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   if (keepOriginalToggle)
     keepOriginalToggle.addEventListener('change', (e) => {
       if (!e.target.disabled) {
         settings.keepOriginalAfterConvert = e.target.checked;
-        window.api.saveSettings(settings);
+        void persistSettings();
       } else {
         e.preventDefault();
       }
@@ -1256,12 +1290,12 @@ document.addEventListener('DOMContentLoaded', async () => {
           browserChoiceContainer.classList.remove('visible');
         }
       }
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   if (browserChoiceSelect)
     browserChoiceSelect.addEventListener('change', (e) => {
       settings.browserChoice = e.target.value;
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   if (convertToggle)
     convertToggle.addEventListener('change', (e) => {
@@ -1280,12 +1314,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         settings.keepOriginalAfterConvert = true;
         if (keepOriginalToggle) keepOriginalToggle.checked = true;
       }
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   if (convertFormatSelect)
     convertFormatSelect.addEventListener('change', (e) => {
       settings.convertFormat = e.target.value;
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   if (ffmpegPathInput) {
     ffmpegPathInput.addEventListener('input', (e) => {
@@ -1293,7 +1327,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
     ffmpegPathInput.addEventListener('change', (e) => {
       settings.ffmpegPath = e.target.value;
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   }
   // GPU acceleration toggle
@@ -1307,13 +1341,13 @@ document.addEventListener('DOMContentLoaded', async () => {
           gpuTypeContainer.classList.remove('visible');
         }
       }
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   }
   if (gpuTypeSelect) {
     gpuTypeSelect.addEventListener('change', (e) => {
       settings.gpuType = e.target.value;
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   }
   // Animate Background toggle
@@ -1321,14 +1355,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     animateBackgroundToggle.addEventListener('change', (e) => {
       settings.animateBackground = e.target.checked;
       updateBackgroundAnimation(e.target.checked);
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   }
 
   if (bestQualityToggle) {
     bestQualityToggle.addEventListener('change', (e) => {
       settings.bestQuality = e.target.checked;
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   }
 
@@ -1366,7 +1400,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
 
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   }
 
@@ -1374,7 +1408,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (notificationsToggle) {
     notificationsToggle.addEventListener('change', (e) => {
       settings.notifications = e.target.checked;
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   }
 
@@ -1382,7 +1416,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (checkUpdatesOnStartupToggle) {
     checkUpdatesOnStartupToggle.addEventListener('change', (e) => {
       settings.checkUpdatesOnStartup = e.target.checked;
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   }
 
@@ -1399,7 +1433,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (updateChannelSelect) {
     updateChannelSelect.addEventListener('change', (e) => {
       settings.updateChannel = e.target.value;
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   }
 
@@ -1645,11 +1679,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
     cleanupUpdaterListeners();
-
-    if (saveSettingsTimeout) {
-      clearTimeout(saveSettingsTimeout);
-      window.api.saveSettings(settings);
-    }
+    void persistSettings(true);
   });
 
   // Check for updates on startup
@@ -1672,7 +1702,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (settings.firstLaunch) {
     // Save immediately - change
     settings.firstLaunch = false;
-    window.api.saveSettings(settings);
+    void persistSettings();
 
     showModal({
       title: 'Dependency FFMPEG is Required for this app.',
