@@ -584,7 +584,7 @@ function setupAutoUpdater() {
         case 'checking':
           break;
 
-        case 'available':
+        case 'available': {
           updateVersion = data.version;
           const wasManualCheck = isManualUpdateCheck;
           isManualUpdateCheck = false;
@@ -607,6 +607,7 @@ function setupAutoUpdater() {
             ],
           });
           break;
+        }
 
         case 'not-available':
           if (isManualUpdateCheck) {
@@ -840,6 +841,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     settings = await window.api.getSettings();
   } catch (error) {
     settings = {
+      settingsVersion: 1,
       showConsoleOutput: false,
       advancedOptions: false,
       convertEnabled: false,
@@ -892,6 +894,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (e) {
     console.error('Failed to setup auto-updater:', e);
   }
+  let saveSettingsTimeout = null;
 
   const consoleToggle = document.getElementById('consoleToggle');
   const advancedToggle = document.getElementById('advancedToggle');
@@ -1498,7 +1501,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const audioFormat = settings.advancedOptions ? audioSelect.value : null;
         const convertFormat = settings.convertEnabled ? convertFormatSelect.value : null;
         const keepOriginal = settings.convertEnabled ? keepOriginalToggle.checked : null;
-        window.api.downloadVideo({
+        const startResult = await window.api.downloadVideo({
           url,
           videoFormat,
           audioFormat,
@@ -1507,6 +1510,17 @@ document.addEventListener('DOMContentLoaded', async () => {
           keepOriginal,
           ffmpegPath: settings.ffmpegPath,
         });
+        if (!startResult || startResult.ok !== true) {
+          isDownloading = false;
+          setButtonLoading(downloadBtn, false);
+          hideProgressBar();
+          showModal({
+            title: 'Download Validation Error',
+            message:
+              startResult?.error?.message || 'Download request was rejected before starting.',
+            buttons: [{ label: 'OK' }],
+          });
+        }
       } catch (downloadError) {
         console.error('Unexpected error starting download:', downloadError);
         isDownloading = false;
