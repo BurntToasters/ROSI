@@ -5,6 +5,7 @@ import { dialog } from 'electron';
 import log from 'electron-log/main';
 import { spawnWithEnv, resolveFfmpegPath, ytdlpBinary, isWindows } from './platform';
 import { loadSettings } from './settings';
+import { buildFfmpegArgs, buildYtdlpArgs, resolveVideoEncoder } from './download/commandBuilders';
 import { isSafeHttpUrl } from '../utils/validation';
 import {
   createDownloadLifecycleState,
@@ -221,47 +222,14 @@ function runConversion(
 
     sendProgress(session, `🎬 Converting ${inputFilename} to ${targetFormat.toUpperCase()}...`);
 
-    const getVideoEncoder = () => {
-      if (!effectiveSettings.gpuAcceleration) return 'copy';
-      const gpuType = effectiveSettings.gpuType || 'auto';
-      if (gpuType === 'nvidia') return 'h264_nvenc';
-      if (gpuType === 'amd') return 'h264_amf';
-      if (gpuType === 'intel') return 'h264_qsv';
-      return 'copy';
-    };
-
-    const videoEncoder = getVideoEncoder();
+    const videoEncoder = resolveVideoEncoder(effectiveSettings);
     const useGpu = effectiveSettings.gpuAcceleration && videoEncoder !== 'copy';
 
     if (useGpu) {
       sendProgress(session, `🖥️ Using GPU acceleration (${videoEncoder})`);
     }
 
-    let ffmpegArgs: string[];
-    if (targetFormat === 'mp3' || targetFormat === 'm4a') {
-      ffmpegArgs = [
-        '-i',
-        inputPath,
-        '-vn',
-        '-c:a',
-        targetFormat === 'mp3' ? 'libmp3lame' : 'aac',
-        '-y',
-        outputPath,
-      ];
-    } else {
-      ffmpegArgs = [
-        '-i',
-        inputPath,
-        '-c:v',
-        videoEncoder,
-        '-c:a',
-        'aac',
-        '-movflags',
-        '+faststart',
-        '-y',
-        outputPath,
-      ];
-    }
+    const ffmpegArgs = buildFfmpegArgs(inputPath, outputPath, targetFormat, videoEncoder);
 
     ffmpegProcess = spawnWithEnv(ffmpegCommand, ffmpegArgs);
     session.ffmpegProcess = ffmpegProcess;
@@ -426,51 +394,14 @@ export function startDownload(
       }
     }
 
-    const ytdlpArgs = [
-      '-P',
+    const { args: ytdlpArgs, statusMessages } = buildYtdlpArgs({
       normalizedDownloadDir,
-      '--no-playlist',
-      '--print',
-      'after_move:filepath',
-      '--newline',
-      '--progress',
-      '--progress-delta',
-      '1',
-      '-f',
-      effectiveSettings.bestQuality
-        ? 'bestvideo+bestaudio/best'
-        : 'best[ext=mp4]/best[ext=webm]/best',
       url,
-    ];
-    if (ffmpegLocation) {
-      ytdlpArgs.splice(ytdlpArgs.length - 1, 0, '--ffmpeg-location', ffmpegLocation);
-    }
-
-    const formatFlagIndex = ytdlpArgs.indexOf('-f');
-
-    if (options.videoFormat && options.audioFormat) {
-      ytdlpArgs[formatFlagIndex + 1] = `${options.videoFormat}+${options.audioFormat}`;
-      sendProgress(
-        session,
-        `📹 Using formats: video=${options.videoFormat}, audio=${options.audioFormat}`
-      );
-    } else if (options.videoFormat) {
-      ytdlpArgs[formatFlagIndex + 1] = options.videoFormat;
-      sendProgress(session, `📹 Using video format: ${options.videoFormat}`);
-    } else if (options.audioFormat) {
-      ytdlpArgs[formatFlagIndex + 1] = options.audioFormat;
-      sendProgress(session, `🎵 Using audio format: ${options.audioFormat}`);
-    }
-
-    if (effectiveSettings.audioOnly && !options.videoFormat && !options.audioFormat) {
-      ytdlpArgs.splice(formatFlagIndex, 2);
-      ytdlpArgs.splice(-1, 0, '-x', '--audio-format', 'mp3', '--audio-quality', '0');
-      sendProgress(session, '🎵 Audio-only mode enabled');
-    }
-
-    if (effectiveSettings.hookBrowser && effectiveSettings.browserChoice) {
-      ytdlpArgs.splice(-1, 0, '--cookies-from-browser', effectiveSettings.browserChoice);
-    }
+      settings: effectiveSettings,
+      options,
+      ffmpegLocation,
+    });
+    statusMessages.forEach((message) => sendProgress(session, message));
 
     sendProgress(session, `🚀 Starting download: ${url}`);
     sendProgress(session, `   Command: ${ytdlpBinary} ${ytdlpArgs.join(' ')}`);

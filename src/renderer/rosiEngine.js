@@ -47,9 +47,12 @@ function appendConsoleOutput(outputEl, text) {
 // Toggle console collapsed state
 function toggleConsoleCollapse() {
   const consoleSection = document.getElementById('console-section');
+  const consoleHeader = document.getElementById('consoleHeader');
   if (consoleSection) {
     consoleSection.classList.toggle('collapsed');
-    return consoleSection.classList.contains('collapsed');
+    const isCollapsed = consoleSection.classList.contains('collapsed');
+    if (consoleHeader) consoleHeader.setAttribute('aria-expanded', String(!isCollapsed));
+    return isCollapsed;
   }
   return false;
 }
@@ -87,9 +90,13 @@ function toggleSidebar() {
   if (isOpen) {
     sidebar.classList.remove('open');
     if (overlay) overlay.classList.remove('active');
+    const settingsBtn = document.getElementById('settingsBtn');
+    if (settingsBtn) settingsBtn.focus();
   } else {
     sidebar.classList.add('open');
     if (overlay) overlay.classList.add('active');
+    const closeBtn = document.getElementById('closeSidebar');
+    if (closeBtn) closeBtn.focus();
   }
 }
 
@@ -98,6 +105,8 @@ function closeSidebar() {
   const overlay = document.getElementById('sidebar-overlay');
   if (sidebar) sidebar.classList.remove('open');
   if (overlay) overlay.classList.remove('active');
+  const settingsBtn = document.getElementById('settingsBtn');
+  if (settingsBtn) settingsBtn.focus();
 }
 function toggleAdvancedUI(show) {
   const formatSection = document.getElementById('formatOptions');
@@ -113,7 +122,9 @@ function toggleAdvancedUI(show) {
 // Modal queue system
 const modalQueue = [];
 let isModalActive = false;
-let currentModalData = null; // Track modals
+let currentModalData = null;
+let previousFocus = null;
+let modalTrapHandler = null;
 
 function showModal({ title, message, buttons = [], priority = false, extra = null }) {
   const modalData = { title, message, buttons, priority, extra };
@@ -187,18 +198,55 @@ function displayNextModal() {
     };
     btnContainer.appendChild(btn);
   });
+
+  previousFocus = document.activeElement;
+
+  if (modalTrapHandler) {
+    modal.removeEventListener('keydown', modalTrapHandler);
+  }
+  modalTrapHandler = (e) => {
+    if (e.key !== 'Tab') return;
+    const focusable = modal.querySelectorAll('button');
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey) {
+      if (document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else {
+      if (document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  };
+  modal.addEventListener('keydown', modalTrapHandler);
+
+  requestAnimationFrame(() => {
+    const firstBtn = btnContainer.querySelector('button');
+    if (firstBtn) firstBtn.focus();
+  });
 }
 
 function hideModal(modal, action) {
   modal.classList.add('hiding');
-  currentModalData = null; // Clear current modal data
+  currentModalData = null;
+  if (modalTrapHandler) {
+    modal.removeEventListener('keydown', modalTrapHandler);
+    modalTrapHandler = null;
+  }
   setTimeout(() => {
     modal.classList.remove('active', 'hiding');
-    isModalActive = false; // Reset before action
+    isModalActive = false;
     if (typeof action === 'function') action();
-    // display next action if previous modal is done
     if (!isModalActive) {
       displayNextModal();
+    }
+    if (!isModalActive && previousFocus && typeof previousFocus.focus === 'function') {
+      previousFocus.focus();
+      previousFocus = null;
     }
   }, 200);
 }
@@ -536,7 +584,7 @@ function setupAutoUpdater() {
         case 'checking':
           break;
 
-        case 'available':
+        case 'available': {
           updateVersion = data.version;
           const wasManualCheck = isManualUpdateCheck;
           isManualUpdateCheck = false;
@@ -559,6 +607,7 @@ function setupAutoUpdater() {
             ],
           });
           break;
+        }
 
         case 'not-available':
           if (isManualUpdateCheck) {
@@ -646,21 +695,56 @@ function cleanupUpdaterListeners() {
   updaterCleanupFunctions = [];
 }
 
+let licensesPreviousFocus = null;
+let licensesTrapHandler = null;
+
 function showLicenses() {
   const licensesOverlay = document.getElementById('licenses-overlay');
   if (licensesOverlay) {
+    licensesPreviousFocus = document.activeElement;
     licensesOverlay.classList.add('active');
     document.body.style.overflow = 'hidden';
+
+    const closeBtn = licensesOverlay.querySelector('#close-licenses');
+    if (closeBtn) {
+      requestAnimationFrame(() => closeBtn.focus());
+    }
+
+    licensesTrapHandler = (e) => {
+      if (e.key !== 'Tab') return;
+      const focusable = licensesOverlay.querySelectorAll(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    licensesOverlay.addEventListener('keydown', licensesTrapHandler);
   }
 }
 
 function hideLicenses() {
   const licensesOverlay = document.getElementById('licenses-overlay');
   if (licensesOverlay) {
+    if (licensesTrapHandler) {
+      licensesOverlay.removeEventListener('keydown', licensesTrapHandler);
+      licensesTrapHandler = null;
+    }
     licensesOverlay.classList.remove('active');
     setTimeout(() => {
       document.body.style.overflow = '';
     }, 300);
+    if (licensesPreviousFocus) {
+      licensesPreviousFocus.focus();
+      licensesPreviousFocus = null;
+    }
   }
 }
 
@@ -740,7 +824,7 @@ async function checkDenoInstallation(settings) {
             label: "No, don't remind me",
             action: () => {
               settings.denoReminderDismissed = true;
-              window.api.saveSettings(settings);
+              void persistSettings();
             },
           },
         ],
@@ -757,6 +841,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     settings = await window.api.getSettings();
   } catch (error) {
     settings = {
+      settingsVersion: 1,
       showConsoleOutput: false,
       advancedOptions: false,
       convertEnabled: false,
@@ -797,7 +882,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const isBeta = /-(beta|alpha|rc)/i.test(version);
       if (isBeta) {
         versionLink.classList.add('beta-version');
-        if (betaBadge) betaBadge.style.display = '';
+        if (betaBadge) betaBadge.classList.remove('hidden');
       }
     }
   } catch (e) {
@@ -808,6 +893,41 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupAutoUpdater();
   } catch (e) {
     console.error('Failed to setup auto-updater:', e);
+  }
+  let settingsSaveErrorShownAt = 0;
+
+  function showSettingsSaveError(message) {
+    const now = Date.now();
+    if (now - settingsSaveErrorShownAt < 5000) {
+      return;
+    }
+    settingsSaveErrorShownAt = now;
+    showModal({
+      title: 'Settings Save Failed',
+      message,
+      buttons: [{ label: 'OK' }],
+      priority: true,
+    });
+  }
+
+  async function persistSettings(silent = false) {
+    try {
+      const result = await window.api.saveSettings(settings);
+      if (!result || result.ok !== true) {
+        if (!silent) {
+          const message = result?.error?.message || 'Could not save settings.';
+          showSettingsSaveError(`${message}\nChanges may not persist after restart.`);
+        }
+        return false;
+      }
+      settings = result.data;
+      return true;
+    } catch (_error) {
+      if (!silent) {
+        showSettingsSaveError('Could not save settings due to an unexpected error.');
+      }
+      return false;
+    }
   }
 
   const consoleToggle = document.getElementById('consoleToggle');
@@ -867,7 +987,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     browserChoiceSelect.value = 'Firefox';
     if (settings.browserChoice !== 'Firefox') {
       settings.browserChoice = 'Firefox';
-      window.api.saveSettings(settings);
+      void persistSettings();
     }
   }
 
@@ -935,7 +1055,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Restore console collapsed state
     if (settings.consoleCollapsed) {
       const consoleSection = document.getElementById('console-section');
+      const consoleHeaderEl = document.getElementById('consoleHeader');
       if (consoleSection) consoleSection.classList.add('collapsed');
+      if (consoleHeaderEl) consoleHeaderEl.setAttribute('aria-expanded', 'false');
     }
 
     toggleAdvancedUI(settings.advancedOptions);
@@ -991,15 +1113,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (checkUpdatesOnStartupToggle) {
       checkUpdatesOnStartupToggle.checked = settings.checkUpdatesOnStartup ?? true;
       if (channel === 'msstore' && checkUpdatesOnStartupLabel) {
-        checkUpdatesOnStartupLabel.style.display = 'none';
+        checkUpdatesOnStartupLabel.classList.add('hidden');
       }
     }
 
     if (updateChannelSelect) {
       updateChannelSelect.value = settings.updateChannel ?? 'auto';
       if (channel === 'msstore') {
-        if (updateChannelContainer) updateChannelContainer.style.display = 'none';
-        if (showUpdateChannelBtn) showUpdateChannelBtn.style.display = 'none';
+        if (updateChannelContainer) updateChannelContainer.classList.add('hidden');
+        if (showUpdateChannelBtn) showUpdateChannelBtn.classList.add('hidden');
       }
     }
   };
@@ -1021,14 +1143,14 @@ document.addEventListener('DOMContentLoaded', async () => {
           action: () => {
             window.api.openExternal('https://rosie.run/support');
             settings.hideSupportModal = true;
-            window.api.saveSettings(settings);
+            void persistSettings();
           },
         },
         {
           label: 'No thanks',
           action: () => {
             settings.hideSupportModal = true;
-            window.api.saveSettings(settings);
+            void persistSettings();
           },
         },
       ],
@@ -1054,7 +1176,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   bindExternalLink(helpLink, 'https://help.rosie.run/rosi/en-us/faq');
   bindExternalLink(supportLink, 'https://rosie.run/support');
   bindExternalLink(websiteLink, 'https://rosie.run');
-  bindExternalLink(supportProjectLink, 'https://rosie.run');
+  bindExternalLink(supportProjectLink, 'https://rosie.run/support');
 
   if (licensesLink) {
     licensesLink.addEventListener('click', (event) => {
@@ -1067,12 +1189,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     clearUrlBtn.addEventListener('click', () => {
       urlInput.value = '';
       urlInput.focus();
-      clearUrlBtn.style.display = 'none';
+      clearUrlBtn.classList.add('hidden');
     });
     urlInput.addEventListener('input', () => {
-      clearUrlBtn.style.display = urlInput.value.length > 0 ? 'flex' : 'none';
+      clearUrlBtn.classList.toggle('hidden', urlInput.value.length === 0);
     });
-    clearUrlBtn.style.display = urlInput.value.length > 0 ? 'flex' : 'none';
+    clearUrlBtn.classList.toggle('hidden', urlInput.value.length === 0);
   }
 
   if (clearConsoleBtn && outputEl) {
@@ -1084,7 +1206,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (consoleToggle)
     consoleToggle.addEventListener('change', (e) => {
       settings.showConsoleOutput = e.target.checked;
-      window.api.saveSettings(settings);
+      void persistSettings();
       updateConsoleVisibility(settings.showConsoleOutput);
     });
 
@@ -1092,12 +1214,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   const consoleHeader = document.getElementById('consoleHeader');
   if (consoleHeader) {
     consoleHeader.addEventListener('click', (e) => {
-      // Don't collapse if clicking the clear button
       if (e.target.closest('#clearConsole')) return;
-
       const isCollapsed = toggleConsoleCollapse();
       settings.consoleCollapsed = isCollapsed;
-      window.api.saveSettings(settings);
+      void persistSettings();
+    });
+    consoleHeader.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        if (e.target.closest('#clearConsole')) return;
+        const isCollapsed = toggleConsoleCollapse();
+        settings.consoleCollapsed = isCollapsed;
+        void persistSettings();
+      }
     });
   }
 
@@ -1140,13 +1269,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
 
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   if (keepOriginalToggle)
     keepOriginalToggle.addEventListener('change', (e) => {
       if (!e.target.disabled) {
         settings.keepOriginalAfterConvert = e.target.checked;
-        window.api.saveSettings(settings);
+        void persistSettings();
       } else {
         e.preventDefault();
       }
@@ -1161,12 +1290,12 @@ document.addEventListener('DOMContentLoaded', async () => {
           browserChoiceContainer.classList.remove('visible');
         }
       }
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   if (browserChoiceSelect)
     browserChoiceSelect.addEventListener('change', (e) => {
       settings.browserChoice = e.target.value;
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   if (convertToggle)
     convertToggle.addEventListener('change', (e) => {
@@ -1185,12 +1314,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         settings.keepOriginalAfterConvert = true;
         if (keepOriginalToggle) keepOriginalToggle.checked = true;
       }
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   if (convertFormatSelect)
     convertFormatSelect.addEventListener('change', (e) => {
       settings.convertFormat = e.target.value;
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   if (ffmpegPathInput) {
     ffmpegPathInput.addEventListener('input', (e) => {
@@ -1198,7 +1327,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
     ffmpegPathInput.addEventListener('change', (e) => {
       settings.ffmpegPath = e.target.value;
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   }
   // GPU acceleration toggle
@@ -1212,13 +1341,13 @@ document.addEventListener('DOMContentLoaded', async () => {
           gpuTypeContainer.classList.remove('visible');
         }
       }
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   }
   if (gpuTypeSelect) {
     gpuTypeSelect.addEventListener('change', (e) => {
       settings.gpuType = e.target.value;
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   }
   // Animate Background toggle
@@ -1226,14 +1355,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     animateBackgroundToggle.addEventListener('change', (e) => {
       settings.animateBackground = e.target.checked;
       updateBackgroundAnimation(e.target.checked);
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   }
 
   if (bestQualityToggle) {
     bestQualityToggle.addEventListener('change', (e) => {
       settings.bestQuality = e.target.checked;
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   }
 
@@ -1271,7 +1400,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
 
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   }
 
@@ -1279,7 +1408,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (notificationsToggle) {
     notificationsToggle.addEventListener('change', (e) => {
       settings.notifications = e.target.checked;
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   }
 
@@ -1287,7 +1416,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (checkUpdatesOnStartupToggle) {
     checkUpdatesOnStartupToggle.addEventListener('change', (e) => {
       settings.checkUpdatesOnStartup = e.target.checked;
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   }
 
@@ -1304,7 +1433,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (updateChannelSelect) {
     updateChannelSelect.addEventListener('change', (e) => {
       settings.updateChannel = e.target.value;
-      window.api.saveSettings(settings);
+      void persistSettings();
     });
   }
 
@@ -1406,7 +1535,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const audioFormat = settings.advancedOptions ? audioSelect.value : null;
         const convertFormat = settings.convertEnabled ? convertFormatSelect.value : null;
         const keepOriginal = settings.convertEnabled ? keepOriginalToggle.checked : null;
-        window.api.downloadVideo({
+        const startResult = await window.api.downloadVideo({
           url,
           videoFormat,
           audioFormat,
@@ -1415,6 +1544,17 @@ document.addEventListener('DOMContentLoaded', async () => {
           keepOriginal,
           ffmpegPath: settings.ffmpegPath,
         });
+        if (!startResult || startResult.ok !== true) {
+          isDownloading = false;
+          setButtonLoading(downloadBtn, false);
+          hideProgressBar();
+          showModal({
+            title: 'Download Validation Error',
+            message:
+              startResult?.error?.message || 'Download request was rejected before starting.',
+            buttons: [{ label: 'OK' }],
+          });
+        }
       } catch (downloadError) {
         console.error('Unexpected error starting download:', downloadError);
         isDownloading = false;
@@ -1539,11 +1679,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
     cleanupUpdaterListeners();
-
-    if (saveSettingsTimeout) {
-      clearTimeout(saveSettingsTimeout);
-      window.api.saveSettings(settings);
-    }
+    void persistSettings(true);
   });
 
   // Check for updates on startup
@@ -1566,7 +1702,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (settings.firstLaunch) {
     // Save immediately - change
     settings.firstLaunch = false;
-    window.api.saveSettings(settings);
+    void persistSettings();
 
     showModal({
       title: 'Dependency FFMPEG is Required for this app.',

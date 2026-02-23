@@ -21,6 +21,15 @@ import {
   cancelFormats,
 } from './downloader';
 import { isSafeExternalUrl, isAllowedNavigationUrl } from '../utils/validation';
+import {
+  errorResult,
+  okResult,
+  validateDownloadRequestPayload,
+  validateExternalUrlPayload,
+  validateFileLocationPayload,
+  validateNotificationPayload,
+  validateSettingsPatchPayload,
+} from '../utils/ipcValidation';
 import { SPLASH_SHOW_DELAY_MS, SPLASH_FADE_DELAY_MS } from './constants';
 import type { DownloadRequestOptions } from '../types';
 
@@ -148,13 +157,27 @@ ipcMain.handle('check-deno-installed', () => checkDenoInstalled());
 ipcMain.handle('install-deno', () => installDeno(mainWindow));
 
 ipcMain.handle('get-settings', () => loadSettings());
-ipcMain.on('save-settings', (_, data) => saveSettings(data, mainWindow));
+ipcMain.handle('save-settings', (_, data) => {
+  const validation = validateSettingsPatchPayload(data);
+  if (!validation.ok) {
+    return errorResult(validation.error.code, validation.error.message, validation.error.details);
+  }
+
+  const saved = saveSettings(validation.data, mainWindow);
+  if (!saved) {
+    return errorResult('INTERNAL_ERROR', 'Failed to persist settings.');
+  }
+  return okResult(loadSettings());
+});
 
 ipcMain.handle('detect-gpu', () => detectGpu());
 
 ipcMain.on('reset-settings', () => {
   try {
-    saveSettings(getDefaultSettings(), mainWindow);
+    const saved = saveSettings(getDefaultSettings(), mainWindow);
+    if (!saved) {
+      log.error('Failed to save default settings during reset-settings.');
+    }
     app.relaunch();
     app.exit();
   } catch (error) {
@@ -164,15 +187,18 @@ ipcMain.on('reset-settings', () => {
   }
 });
 
-ipcMain.on('open-external', (_, url) => {
+ipcMain.handle('open-external', async (_, url) => {
+  const validation = validateExternalUrlPayload(url);
+  if (!validation.ok) {
+    return errorResult(validation.error.code, validation.error.message, validation.error.details);
+  }
+
   try {
-    if (isSafeExternalUrl(url)) {
-      shell.openExternal(url).catch((err) => {
-        log.error('Failed to open external URL:', err);
-      });
-    }
+    await shell.openExternal(validation.data);
+    return okResult({ opened: true });
   } catch (error) {
     log.error('Error in open-external handler:', error);
+    return errorResult('INTERNAL_ERROR', 'Failed to open external URL.');
   }
 });
 
@@ -195,11 +221,27 @@ ipcMain.handle('select-download-location', async () => {
   }
 });
 
-ipcMain.handle('getFormats', (_, url) => fetchFormats(ytdlpPath, url));
+ipcMain.handle('getFormats', (_, url) => {
+  if (typeof url !== 'string') {
+    return Promise.reject('Invalid URL provided');
+  }
+  return fetchFormats(ytdlpPath, url);
+});
 ipcMain.on('cancel-formats', () => cancelFormats());
 
-ipcMain.on('download-video', (event, options) => {
-  startDownload(ytdlpPath, event.sender, options as DownloadRequestOptions, mainWindow);
+ipcMain.handle('download-video', (event, options) => {
+  const validation = validateDownloadRequestPayload(options);
+  if (!validation.ok) {
+    return errorResult(validation.error.code, validation.error.message, validation.error.details);
+  }
+
+  try {
+    startDownload(ytdlpPath, event.sender, validation.data as DownloadRequestOptions, mainWindow);
+    return okResult({ started: true });
+  } catch (error) {
+    log.error('Error in download-video handler:', error);
+    return errorResult('INTERNAL_ERROR', 'Failed to start download.');
+  }
 });
 
 ipcMain.on('cancel-download', () => {
@@ -215,52 +257,67 @@ ipcMain.handle('restart-app', () => {
   app.exit(0);
 });
 
-ipcMain.on('open-file-location', (_, filePath) => {
+ipcMain.handle('open-file-location', async (_, filePath) => {
+  const validation = validateFileLocationPayload(filePath);
+  if (!validation.ok) {
+    return errorResult(validation.error.code, validation.error.message, validation.error.details);
+  }
+
   try {
-    if (filePath && typeof filePath === 'string') {
-      if (fs.existsSync(filePath)) {
-        shell.showItemInFolder(filePath);
-      } else {
-        const dir = path.dirname(filePath);
-        if (fs.existsSync(dir)) {
-          shell.openPath(dir).catch((err: Error) => {
-            log.error('Error opening directory:', err);
-          });
-        }
-      }
+    if (fs.existsSync(validation.data)) {
+      shell.showItemInFolder(validation.data);
+      return okResult({ opened: true });
     }
+
+    const dir = path.dirname(validation.data);
+    if (fs.existsSync(dir)) {
+      await shell.openPath(dir);
+      return okResult({ opened: true });
+    }
+
+    return errorResult('INVALID_PATH', 'Path and containing directory do not exist.');
   } catch (error) {
     log.error('Error in open-file-location handler:', error);
+    return errorResult('INTERNAL_ERROR', 'Failed to open file location.');
   }
 });
 
-ipcMain.on('show-notification', (_, options) => {
+ipcMain.handle('show-notification', (_, options) => {
+  const validation = validateNotificationPayload(options);
+  if (!validation.ok) {
+    return errorResult(validation.error.code, validation.error.message, validation.error.details);
+  }
+
   try {
-    if (Notification.isSupported()) {
-      const notification = new Notification({
-        title: options?.title || 'ROSI',
-        body: options?.body || '',
-        icon: path.join(__dirname, '..', '..', 'src', 'renderer', 'app.png'),
-        silent: false,
-      });
-
-      notification.on('click', () => {
-        try {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            if (mainWindow.isMinimized()) mainWindow.restore();
-            mainWindow.focus();
-          }
-          if (options?.filePath) {
-            shell.showItemInFolder(options.filePath);
-          }
-        } catch (clickErr) {
-          log.error('Error handling notification click:', clickErr);
-        }
-      });
-
-      notification.show();
+    if (!Notification.isSupported()) {
+      return errorResult('NOT_SUPPORTED', 'Notifications are not supported in this environment.');
     }
+
+    const notification = new Notification({
+      title: validation.data.title || 'ROSI',
+      body: validation.data.body || '',
+      icon: path.join(__dirname, '..', '..', 'src', 'renderer', 'app.png'),
+      silent: false,
+    });
+
+    notification.on('click', () => {
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          mainWindow.focus();
+        }
+        if (validation.data.filePath) {
+          shell.showItemInFolder(validation.data.filePath);
+        }
+      } catch (clickErr) {
+        log.error('Error handling notification click:', clickErr);
+      }
+    });
+
+    notification.show();
+    return okResult({ shown: true });
   } catch (error) {
     log.error('Error showing notification:', error);
+    return errorResult('INTERNAL_ERROR', 'Failed to show notification.');
   }
 });

@@ -9,7 +9,5 @@
         }
       }
     }
-  } catch (e) {
-    // Silently ignore — detection is best-effort and non-critical
-  }
+  } catch (e) {}
 })();
