@@ -6,6 +6,8 @@ on:
     branches:
       - main
       - master
+      - 3.5.x
+      - 3.5.*
 
 permissions:
   contents: read

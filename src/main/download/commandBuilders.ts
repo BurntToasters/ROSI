@@ -1,10 +1,16 @@
-import type { DownloadRequestOptions, Settings } from '../../types';
+import type { DownloadRequestOptions, GpuDetectionResult, Settings } from '../../types';
+import { detectGpu } from '../gpu';
 
-export function resolveVideoEncoder(settings: Settings): string {
+export async function resolveVideoEncoder(settings: Settings): Promise<string> {
   if (!settings.gpuAcceleration) return 'copy';
   if (settings.gpuType === 'nvidia') return 'h264_nvenc';
   if (settings.gpuType === 'amd') return 'h264_amf';
   if (settings.gpuType === 'intel') return 'h264_qsv';
+
+  const detected: GpuDetectionResult = await detectGpu();
+  if (detected.nvidia) return 'h264_nvenc';
+  if (detected.amd) return 'h264_amf';
+  if (detected.intel) return 'h264_qsv';
   return 'copy';
 }
 
