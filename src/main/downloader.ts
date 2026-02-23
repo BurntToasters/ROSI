@@ -171,7 +171,7 @@ export function cancelFormats() {
   }
 }
 
-function runConversion(
+async function runConversion(
   session: DownloadSession,
   downloadedFilePath: string,
   effectiveSettings: Settings,
@@ -222,7 +222,7 @@ function runConversion(
 
     sendProgress(session, `🎬 Converting ${inputFilename} to ${targetFormat.toUpperCase()}...`);
 
-    const videoEncoder = resolveVideoEncoder(effectiveSettings);
+    const videoEncoder = await resolveVideoEncoder(effectiveSettings);
     const useGpu = effectiveSettings.gpuAcceleration && videoEncoder !== 'copy';
 
     if (useGpu) {
@@ -466,7 +466,13 @@ export function startDownload(
       }
 
       if (effectiveSettings.convertEnabled) {
-        runConversion(session, downloadedFilePath, effectiveSettings, ffmpegCommand, mainWindow);
+        void runConversion(
+          session,
+          downloadedFilePath,
+          effectiveSettings,
+          ffmpegCommand,
+          mainWindow
+        );
       } else {
         sendProgress(session, 'ℹ️ Conversion not enabled for this download.');
         completeSession(session, '✅ Download complete (no conversion).');

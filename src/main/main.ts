@@ -20,7 +20,7 @@ import {
   fetchFormats,
   cancelFormats,
 } from './downloader';
-import { isSafeExternalUrl, isAllowedNavigationUrl } from '../utils/validation';
+import { isSafeExternalUrl, isSafeHttpUrl, isAllowedNavigationUrl } from '../utils/validation';
 import {
   errorResult,
   okResult,
@@ -222,7 +222,7 @@ ipcMain.handle('select-download-location', async () => {
 });
 
 ipcMain.handle('getFormats', (_, url) => {
-  if (typeof url !== 'string') {
+  if (typeof url !== 'string' || !isSafeHttpUrl(url)) {
     return Promise.reject('Invalid URL provided');
   }
   return fetchFormats(ytdlpPath, url);
