@@ -2,15 +2,27 @@ import type { BrowserWindow } from 'electron';
 import { app } from 'electron';
 import { autoUpdater, CancellationToken } from 'electron-updater';
 import log from 'electron-log/main';
-import type { Settings } from '../types';
+import type {
+  Settings,
+  UpdateDownloadResult,
+  UpdaterProgressEvent,
+  UpdaterStatusEvent,
+} from '../types';
 
 let updateDownloadCancellationToken: CancellationToken | null = null;
 
-function isBetaVersion(version: string): boolean {
+interface ParsedVersion {
+  major: number;
+  minor: number;
+  patch: number;
+  prerelease: string[];
+}
+
+export function isBetaVersion(version: string): boolean {
   return /-(beta|alpha|rc)/i.test(version);
 }
 
-function parseVersion(v: string) {
+export function parseVersion(v: string): ParsedVersion {
   const cleaned = v.trim().replace(/^v/i, '').split('+')[0];
   const match = cleaned.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?/);
   if (!match) return { major: 0, minor: 0, patch: 0, prerelease: [] as string[] };
@@ -22,7 +34,7 @@ function parseVersion(v: string) {
   };
 }
 
-function comparePrerelease(a: string[], b: string[]): number {
+export function comparePrerelease(a: string[], b: string[]): number {
   if (a.length === 0 && b.length === 0) return 0;
   if (a.length === 0) return 1;
   if (b.length === 0) return -1;
@@ -45,7 +57,7 @@ function comparePrerelease(a: string[], b: string[]): number {
   return 0;
 }
 
-function compareVersions(a: string, b: string): number {
+export function compareVersions(a: string, b: string): number {
   const vA = parseVersion(a);
   const vB = parseVersion(b);
   if (vA.major !== vB.major) return vA.major > vB.major ? 1 : -1;
@@ -54,13 +66,13 @@ function compareVersions(a: string, b: string): number {
   return comparePrerelease(vA.prerelease, vB.prerelease);
 }
 
-function resolveUseBeta(channel: Settings['updateChannel']): boolean {
+export function resolveUseBeta(channel: Settings['updateChannel']): boolean {
   if (channel === 'beta') return true;
   if (channel === 'stable') return false;
   return isBetaVersion(app.getVersion());
 }
 
-function applyChannel(useBeta: boolean) {
+export function applyChannel(useBeta: boolean) {
   if (useBeta) {
     autoUpdater.channel = 'beta';
     autoUpdater.allowPrerelease = true;
@@ -81,15 +93,23 @@ export function setupAutoUpdater(
   const useBeta = resolveUseBeta(settings.updateChannel);
   applyChannel(useBeta);
 
-  const sendToWindow = (channel: string, data: unknown) => {
+  const sendToWindow = (channel: 'updater-status' | 'updater-progress', data: unknown) => {
     const win = getMainWindow();
     if (win && !win.isDestroyed()) {
       win.webContents.send(channel, data);
     }
   };
 
+  const sendStatus = (data: UpdaterStatusEvent) => {
+    sendToWindow('updater-status', data);
+  };
+
+  const sendProgress = (data: UpdaterProgressEvent) => {
+    sendToWindow('updater-progress', data);
+  };
+
   autoUpdater.on('checking-for-update', () => {
-    sendToWindow('updater-status', { status: 'checking' });
+    sendStatus({ status: 'checking' });
   });
 
   autoUpdater.on('update-available', (info) => {
@@ -97,7 +117,7 @@ export function setupAutoUpdater(
     const updateIsBeta = isBetaVersion(info.version);
 
     if (currentUseBeta && !updateIsBeta) {
-      sendToWindow('updater-status', {
+      sendStatus({
         status: 'not-available',
         version: app.getVersion(),
         isBeta: currentUseBeta,
@@ -105,7 +125,7 @@ export function setupAutoUpdater(
       return;
     }
     if (!currentUseBeta && updateIsBeta) {
-      sendToWindow('updater-status', {
+      sendStatus({
         status: 'not-available',
         version: app.getVersion(),
         isBeta: currentUseBeta,
@@ -118,7 +138,7 @@ export function setupAutoUpdater(
       log.info(
         `[AutoUpdater] Ignoring update ${info.version} — current ${currentVersion} is newer or equal`
       );
-      sendToWindow('updater-status', {
+      sendStatus({
         status: 'not-available',
         version: currentVersion,
         isBeta: currentUseBeta,
@@ -126,32 +146,32 @@ export function setupAutoUpdater(
       return;
     }
 
-    sendToWindow('updater-status', {
+    sendStatus({
       status: 'available',
       version: info.version,
-      releaseNotes: info.releaseNotes,
+      releaseNotes: info.releaseNotes ?? null,
       isBeta: updateIsBeta,
     });
   });
 
   autoUpdater.on('update-not-available', (info) => {
-    sendToWindow('updater-status', {
+    sendStatus({
       status: 'not-available',
-      version: info.version,
-      isBeta: isBetaVersion(info.version),
+      version: info.version ?? app.getVersion(),
+      isBeta: isBetaVersion(info.version ?? app.getVersion()),
     });
   });
 
   autoUpdater.on('error', (err) => {
     log.error('Auto-updater error:', err);
-    sendToWindow('updater-status', {
+    sendStatus({
       status: 'error',
       message: err.message,
     });
   });
 
   autoUpdater.on('download-progress', (progressObj) => {
-    sendToWindow('updater-progress', {
+    sendProgress({
       percent: progressObj.percent,
       bytesPerSecond: progressObj.bytesPerSecond,
       transferred: progressObj.transferred,
@@ -160,7 +180,7 @@ export function setupAutoUpdater(
   });
 
   autoUpdater.on('update-downloaded', (info) => {
-    sendToWindow('updater-status', {
+    sendStatus({
       status: 'downloaded',
       version: info.version,
     });
@@ -181,7 +201,7 @@ export async function checkForUpdates(isPackaged: boolean, loadSettings: () => S
   }
 }
 
-export async function downloadUpdate() {
+export async function downloadUpdate(): Promise<UpdateDownloadResult> {
   try {
     updateDownloadCancellationToken = new CancellationToken();
     await autoUpdater.downloadUpdate(updateDownloadCancellationToken);
@@ -202,7 +222,8 @@ export function cancelUpdateDownload(getMainWindow: () => BrowserWindow | null) 
     updateDownloadCancellationToken = null;
     const win = getMainWindow();
     if (win && !win.isDestroyed()) {
-      win.webContents.send('updater-status', { status: 'cancelled' });
+      const cancelledEvent: UpdaterStatusEvent = { status: 'cancelled' };
+      win.webContents.send('updater-status', cancelledEvent);
     }
   }
 }
