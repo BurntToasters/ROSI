@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { BrowserWindow, dialog } from 'electron';
 import log from 'electron-log/main';
+import type { MessageBoxOptions } from 'electron';
 import { DENO_CHECK_TIMEOUT_MS, DENO_INSTALL_TIMEOUT_MS } from './constants';
 import { isWindows } from './platform';
 
@@ -91,14 +92,17 @@ export async function installDeno(
   mainWindow: BrowserWindow | null
 ): Promise<{ success?: boolean; cancelled?: boolean; output?: string; error?: string }> {
   const parentWindow = BrowserWindow.getFocusedWindow() || mainWindow;
-  const confirm = await dialog.showMessageBox(parentWindow!, {
+  const confirmOptions: MessageBoxOptions = {
     type: 'warning',
     buttons: ['Install', 'Cancel'],
     defaultId: 0,
     cancelId: 1,
     message:
       'This will download and run the Deno installer from deno.land. Do you want to continue?',
-  });
+  };
+  const confirm = parentWindow
+    ? await dialog.showMessageBox(parentWindow, confirmOptions)
+    : await dialog.showMessageBox(confirmOptions);
 
   if (confirm.response !== 0) {
     return { cancelled: true };
