@@ -1,4 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
+
+const detectGpuMock = vi.hoisted(() => vi.fn());
+
+vi.mock('../main/gpu', () => ({
+  detectGpu: detectGpuMock,
+}));
+
 import {
   buildFfmpegArgs,
   buildYtdlpArgs,
@@ -34,17 +41,45 @@ function createSettings(overrides: Partial<Settings> = {}): Settings {
 }
 
 describe('command builders', () => {
-  it('resolves GPU encoder based on settings', () => {
-    expect(resolveVideoEncoder(createSettings({ gpuAcceleration: false }))).toBe('copy');
-    expect(resolveVideoEncoder(createSettings({ gpuAcceleration: true, gpuType: 'nvidia' }))).toBe(
-      'h264_nvenc'
-    );
-    expect(resolveVideoEncoder(createSettings({ gpuAcceleration: true, gpuType: 'amd' }))).toBe(
-      'h264_amf'
-    );
-    expect(resolveVideoEncoder(createSettings({ gpuAcceleration: true, gpuType: 'intel' }))).toBe(
-      'h264_qsv'
-    );
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('resolves GPU encoder based on settings', async () => {
+    expect(await resolveVideoEncoder(createSettings({ gpuAcceleration: false }))).toBe('copy');
+    expect(
+      await resolveVideoEncoder(createSettings({ gpuAcceleration: true, gpuType: 'nvidia' }))
+    ).toBe('h264_nvenc');
+    expect(
+      await resolveVideoEncoder(createSettings({ gpuAcceleration: true, gpuType: 'amd' }))
+    ).toBe('h264_amf');
+    expect(
+      await resolveVideoEncoder(createSettings({ gpuAcceleration: true, gpuType: 'intel' }))
+    ).toBe('h264_qsv');
+  });
+
+  it('auto-detects GPU encoder when gpuType is auto', async () => {
+    detectGpuMock.mockResolvedValue({ nvidia: true, amd: false, intel: false });
+    expect(
+      await resolveVideoEncoder(createSettings({ gpuAcceleration: true, gpuType: 'auto' }))
+    ).toBe('h264_nvenc');
+
+    detectGpuMock.mockResolvedValue({ nvidia: false, amd: true, intel: false });
+    expect(
+      await resolveVideoEncoder(createSettings({ gpuAcceleration: true, gpuType: 'auto' }))
+    ).toBe('h264_amf');
+
+    detectGpuMock.mockResolvedValue({ nvidia: false, amd: false, intel: true });
+    expect(
+      await resolveVideoEncoder(createSettings({ gpuAcceleration: true, gpuType: 'auto' }))
+    ).toBe('h264_qsv');
+  });
+
+  it('falls back to copy when auto-detect finds no GPU', async () => {
+    detectGpuMock.mockResolvedValue({ nvidia: false, amd: false, intel: false });
+    expect(
+      await resolveVideoEncoder(createSettings({ gpuAcceleration: true, gpuType: 'auto' }))
+    ).toBe('copy');
   });
 
   it('builds ffmpeg args for audio extraction', () => {
