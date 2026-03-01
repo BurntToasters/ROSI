@@ -31,6 +31,52 @@ function updateConsoleVisibility(show) {
   }
 }
 
+const TOAST_ICONS = {
+  warning:
+    '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+  error:
+    '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+  success:
+    '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+  info: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+};
+
+function showToast(message, { type = 'info', duration = 4000 } = {}) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `
+    <span class="toast-icon">${TOAST_ICONS[type] || TOAST_ICONS.info}</span>
+    <span class="toast-message">${message}</span>
+    <button class="toast-dismiss" aria-label="Dismiss">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  `;
+
+  container.appendChild(toast);
+
+  const dismiss = () => {
+    toast.classList.remove('visible');
+    toast.classList.add('hiding');
+    toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+    setTimeout(() => toast.remove(), 500);
+  };
+
+  toast.querySelector('.toast-dismiss').addEventListener('click', dismiss);
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      toast.classList.add('visible');
+    });
+  });
+
+  if (duration > 0) {
+    setTimeout(dismiss, duration);
+  }
+}
+
 const OUTPUT_MAX_CHARS = 200000;
 
 function appendConsoleOutput(outputEl, text) {
@@ -387,6 +433,47 @@ let isDownloading = false;
 let downloadAbort = null;
 let lastDownloadedFilePath = null;
 
+function setProgressPhase(phase) {
+  const phases = document.querySelectorAll('.progress-phase');
+  const phaseOrder = ['download', 'merge', 'convert'];
+  const phaseIndex = phaseOrder.indexOf(phase);
+
+  phases.forEach((el) => {
+    const elPhase = el.dataset.phase;
+    const elIndex = phaseOrder.indexOf(elPhase);
+    el.classList.remove('active', 'completed');
+    if (elIndex < phaseIndex) {
+      el.classList.add('completed');
+    } else if (elIndex === phaseIndex) {
+      el.classList.add('active');
+    }
+  });
+}
+
+function configureProgressPhases(showMerge, showConvert) {
+  const mergePhase = document.querySelector('.progress-phase[data-phase="merge"]');
+  const convertPhase = document.querySelector('.progress-phase[data-phase="convert"]');
+  const connectors = document.querySelectorAll('.progress-phase-connector');
+
+  if (mergePhase) mergePhase.style.display = showMerge ? 'flex' : 'none';
+  if (convertPhase) convertPhase.style.display = showConvert ? 'flex' : 'none';
+
+  if (connectors[0]) connectors[0].style.display = showMerge ? 'block' : 'none';
+  if (connectors[1])
+    connectors[1].style.display =
+      showMerge && showConvert ? 'block' : showConvert ? 'block' : 'none';
+}
+
+function showProgressComplete() {
+  const icon = document.getElementById('progress-complete-icon');
+  if (icon) icon.classList.add('visible');
+}
+
+function hideProgressComplete() {
+  const icon = document.getElementById('progress-complete-icon');
+  if (icon) icon.classList.remove('visible');
+}
+
 function showProgressBar(status = 'Downloading...') {
   const container = document.getElementById('progress-container');
   const statusEl = document.getElementById('progress-status');
@@ -402,8 +489,11 @@ function showProgressBar(status = 'Downloading...') {
   if (bar) {
     bar.style.width = '0%';
     bar.classList.remove('indeterminate');
+    bar.classList.add('active-glow');
   }
   if (details) details.textContent = '';
+  hideProgressComplete();
+  setProgressPhase('download');
 }
 
 function updateProgressBar(percent, statusText = null, detailsText = null) {
@@ -435,9 +525,12 @@ function setProgressIndeterminate(status = 'Processing...') {
 
 function hideProgressBar() {
   const container = document.getElementById('progress-container');
+  const bar = document.getElementById('progress-bar');
   if (container) {
     container.classList.remove('visible');
   }
+  if (bar) bar.classList.remove('active-glow');
+  hideProgressComplete();
 }
 
 function parseYtdlpProgress(message) {
@@ -472,6 +565,115 @@ function formatBytes(bytes) {
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+const HISTORY_KEY = 'rosi-download-history';
+const HISTORY_MAX = 20;
+
+function loadHistory() {
+  try {
+    const data = localStorage.getItem(HISTORY_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(history) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  } catch {}
+}
+
+function addHistoryEntry(entry) {
+  const history = loadHistory();
+  history.unshift({
+    filename: entry.filename,
+    path: entry.path || null,
+    timestamp: Date.now(),
+    status: entry.status,
+  });
+  if (history.length > HISTORY_MAX) history.length = HISTORY_MAX;
+  saveHistory(history);
+  renderHistory();
+}
+
+function formatRelativeTime(timestamp) {
+  const diff = Date.now() - timestamp;
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return 'Just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(timestamp).toLocaleDateString();
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function renderHistory() {
+  const historySection = document.getElementById('download-history');
+  const listEl = document.getElementById('history-list');
+  const countEl = document.getElementById('history-count');
+  if (!listEl || !historySection) return;
+
+  const history = loadHistory();
+  if (countEl) countEl.textContent = String(history.length);
+
+  if (history.length === 0) {
+    historySection.classList.remove('visible');
+    listEl.innerHTML = '';
+    return;
+  }
+
+  historySection.classList.add('visible');
+  listEl.innerHTML = '';
+
+  history.forEach((entry) => {
+    const item = document.createElement('div');
+    item.className = 'history-item';
+
+    const statusLabel =
+      entry.status === 'success'
+        ? 'Completed'
+        : entry.status === 'cancelled'
+          ? 'Cancelled'
+          : 'Failed';
+
+    item.innerHTML = `
+      <div class="history-item-info">
+        <span class="history-filename" title="${escapeHtml(entry.filename)}">${escapeHtml(entry.filename)}</span>
+        <span class="history-time">${formatRelativeTime(entry.timestamp)}</span>
+      </div>
+      <div class="history-item-actions">
+        <span class="history-status ${entry.status}">${statusLabel}</span>
+        ${entry.status === 'success' && entry.path ? '<button class="history-open-btn">Open</button>' : ''}
+      </div>
+    `;
+
+    if (entry.path) {
+      const openBtn = item.querySelector('.history-open-btn');
+      if (openBtn) {
+        openBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          window.api.openFileLocation(entry.path);
+        });
+      }
+    }
+
+    listEl.appendChild(item);
+  });
+}
+
+function clearHistory() {
+  saveHistory([]);
+  renderHistory();
 }
 
 let isManualUpdateCheck = false;
@@ -965,8 +1167,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   const sidebarOverlay = document.getElementById('sidebar-overlay');
   const shortcutsBtn = document.getElementById('shortcutsBtn');
   const clearUrlBtn = document.getElementById('clearUrl');
+  const pasteUrlBtn = document.getElementById('pasteUrl');
   const clearConsoleBtn = document.getElementById('clearConsole');
   const urlInput = document.getElementById('url');
+  const downloadCard = document.querySelector('.download-card');
+  const historyHeader = document.getElementById('historyHeader');
+  const clearHistoryBtn = document.getElementById('clearHistory');
   const browserCookiesHelp = document.getElementById('browserCookiesHelp');
   const helpLink = document.getElementById('helpLink');
   const supportLink = document.getElementById('supportLink');
@@ -1185,16 +1391,98 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  function updateUrlButtons() {
+    const hasValue = urlInput && urlInput.value.length > 0;
+    if (clearUrlBtn) clearUrlBtn.classList.toggle('hidden', !hasValue);
+    if (pasteUrlBtn) pasteUrlBtn.classList.toggle('hidden', hasValue);
+  }
+
   if (clearUrlBtn && urlInput) {
     clearUrlBtn.addEventListener('click', () => {
       urlInput.value = '';
       urlInput.focus();
-      clearUrlBtn.classList.add('hidden');
+      updateUrlButtons();
     });
-    urlInput.addEventListener('input', () => {
-      clearUrlBtn.classList.toggle('hidden', urlInput.value.length === 0);
+    urlInput.addEventListener('input', updateUrlButtons);
+    updateUrlButtons();
+  }
+
+  if (pasteUrlBtn && urlInput) {
+    pasteUrlBtn.addEventListener('click', async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text && text.trim()) {
+          urlInput.value = text.trim();
+          urlInput.dispatchEvent(new Event('input'));
+          urlInput.focus();
+        }
+      } catch {
+        showToast('Unable to read clipboard. Try pasting with Ctrl+V.', { type: 'info' });
+      }
     });
-    clearUrlBtn.classList.toggle('hidden', urlInput.value.length === 0);
+  }
+
+  if (downloadCard && urlInput) {
+    downloadCard.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      downloadCard.classList.add('drag-over');
+    });
+    downloadCard.addEventListener('dragleave', () => {
+      downloadCard.classList.remove('drag-over');
+    });
+    downloadCard.addEventListener('drop', (e) => {
+      e.preventDefault();
+      downloadCard.classList.remove('drag-over');
+      const text = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+      if (text && isValidUrl(text.trim())) {
+        urlInput.value = text.trim();
+        urlInput.dispatchEvent(new Event('input'));
+      } else if (text) {
+        showToast('Dropped content is not a valid URL.', { type: 'warning' });
+      }
+    });
+  }
+
+  renderHistory();
+
+  if (historyHeader) {
+    historyHeader.addEventListener('click', (e) => {
+      if (e.target.closest('.history-clear-btn')) return;
+      const section = document.getElementById('download-history');
+      if (section) {
+        section.classList.toggle('collapsed');
+        historyHeader.setAttribute(
+          'aria-expanded',
+          String(!section.classList.contains('collapsed'))
+        );
+      }
+    });
+    historyHeader.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        historyHeader.click();
+      }
+    });
+  }
+
+  if (clearHistoryBtn) {
+    clearHistoryBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showModal({
+        title: 'Clear History',
+        message: 'Clear all download history?',
+        buttons: [
+          { label: 'Cancel' },
+          {
+            label: 'Clear',
+            action: () => {
+              clearHistory();
+              showToast('Download history cleared.', { type: 'info' });
+            },
+          },
+        ],
+      });
+    });
   }
 
   if (clearConsoleBtn && outputEl) {
@@ -1202,6 +1490,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       outputEl.textContent = '';
     });
   }
+
+  document.querySelectorAll('.settings-section-header').forEach((header) => {
+    const section = header.closest('.settings-section');
+    header.addEventListener('click', () => {
+      section.classList.toggle('collapsed');
+      header.setAttribute('aria-expanded', String(!section.classList.contains('collapsed')));
+    });
+    header.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        header.click();
+      }
+    });
+  });
 
   if (consoleToggle)
     consoleToggle.addEventListener('change', (e) => {
@@ -1465,21 +1767,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         const url = urlInput ? urlInput.value : null;
         if (!url || url.trim() === '') {
           isDownloading = false;
-          showModal({
-            title: 'Input Error',
-            message: 'Please enter a video URL.',
-            buttons: [{ label: 'OK' }],
-          });
+          showToast('Please enter a video URL.', { type: 'warning' });
           return;
         }
 
         // Validate URL format
         if (!isValidUrl(url.trim())) {
           isDownloading = false;
-          showModal({
-            title: 'Invalid URL',
-            message: 'Please enter a valid URL starting with http:// or https://',
-            buttons: [{ label: 'OK' }],
+          showToast('Please enter a valid URL starting with http:// or https://', {
+            type: 'warning',
           });
           return;
         }
@@ -1491,10 +1787,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           (!videoSelect || !audioSelect || !videoSelect.value || !audioSelect.value)
         ) {
           isDownloading = false;
-          showModal({
-            title: 'Format Selection Needed',
-            message: 'Please check resolutions and select video/audio formats first.',
-            buttons: [{ label: 'OK' }],
+          showToast('Please check resolutions and select video/audio formats first.', {
+            type: 'warning',
           });
           return;
         }
@@ -1505,10 +1799,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         } catch (dialogError) {
           console.error('Error opening save dialog:', dialogError);
           isDownloading = false;
-          showModal({
-            title: 'Error',
-            message: 'Could not open the save location dialog. Please try again.',
-            buttons: [{ label: 'OK' }],
+          showToast('Could not open the save location dialog. Please try again.', {
+            type: 'error',
           });
           return;
         }
@@ -1529,11 +1821,13 @@ document.addEventListener('DOMContentLoaded', async () => {
           hideProgressBar();
         });
 
-        showProgressBar('Starting download...');
-
         const videoFormat = settings.advancedOptions ? videoSelect.value : null;
         const audioFormat = settings.advancedOptions ? audioSelect.value : null;
         const convertFormat = settings.convertEnabled ? convertFormatSelect.value : null;
+        const needsMerge = settings.bestQuality || (videoFormat && audioFormat);
+        const needsConvert = settings.convertEnabled && convertFormat;
+        configureProgressPhases(!!needsMerge, !!needsConvert);
+        showProgressBar('Starting download...');
         const keepOriginal = settings.convertEnabled ? keepOriginalToggle.checked : null;
         const startResult = await window.api.downloadVideo({
           url,
@@ -1548,22 +1842,18 @@ document.addEventListener('DOMContentLoaded', async () => {
           isDownloading = false;
           setButtonLoading(downloadBtn, false);
           hideProgressBar();
-          showModal({
-            title: 'Download Validation Error',
-            message:
-              startResult?.error?.message || 'Download request was rejected before starting.',
-            buttons: [{ label: 'OK' }],
-          });
+          showToast(
+            startResult?.error?.message || 'Download request was rejected before starting.',
+            { type: 'error' }
+          );
         }
       } catch (downloadError) {
         console.error('Unexpected error starting download:', downloadError);
         isDownloading = false;
         setButtonLoading(downloadBtn, false);
         hideProgressBar();
-        showModal({
-          title: 'Download Error',
-          message: 'An unexpected error occurred while starting the download. Please try again.',
-          buttons: [{ label: 'OK' }],
+        showToast('An unexpected error occurred while starting the download. Please try again.', {
+          type: 'error',
         });
       }
     };
@@ -1592,8 +1882,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       } else if (message.includes('[download] Destination:')) {
         setProgressIndeterminate('Preparing download...');
       } else if (message.includes('Merging formats')) {
+        setProgressPhase('merge');
         setProgressIndeterminate('Merging video and audio...');
       } else if (message.includes('Converting') || message.includes('[ffmpeg]')) {
+        setProgressPhase('convert');
         setProgressIndeterminate('Converting...');
       } else if (message.includes('100%')) {
         updateProgressBar(100, 'Download complete!', '');
@@ -1621,6 +1913,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (isSuccess) {
           updateProgressBar(100, 'Complete!', '');
+          showProgressComplete();
 
           if (settings.notifications) {
             window.api.showNotification({
@@ -1636,6 +1929,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         setTimeout(() => {
           hideProgressBar();
         }, 2000);
+
+        const filename = lastDownloadedFilePath
+          ? lastDownloadedFilePath.split(/[/\\]/).pop()
+          : 'Unknown file';
+        addHistoryEntry({
+          filename,
+          path: lastDownloadedFilePath,
+          status: isSuccess ? 'success' : isCancelled ? 'cancelled' : 'failed',
+        });
 
         const restoreDefaultDownloadButton = () => {
           setButtonLoading(downloadBtn, false);
