@@ -1,14 +1,14 @@
 import log from 'electron-log/main';
 import { spawnWithEnv } from './platform';
 import { loadSettings } from './settings';
-import { resolveFfmpegPath } from './platform';
+import { getEffectiveFfmpegPath } from './platform';
 import { GPU_DETECT_TIMEOUT_MS, MAX_ERROR_BUFFER } from './constants';
 import type { GpuDetectionResult } from '../types';
 
 export async function detectGpu(): Promise<GpuDetectionResult> {
   const result: GpuDetectionResult = { nvidia: false, amd: false, intel: false };
   const settings = loadSettings();
-  const ffmpegCommand = resolveFfmpegPath(settings.ffmpegPath) || 'ffmpeg';
+  const ffmpegCommand = getEffectiveFfmpegPath(settings.ffmpegPath);
 
   try {
     const proc = spawnWithEnv(ffmpegCommand, ['-hide_banner', '-encoders'], { shell: false });

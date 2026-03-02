@@ -1,0 +1,52 @@
+FFmpeg Source Code Offer
+========================
+
+This product includes FFmpeg binaries that are licensed under GPL-2.0-or-later.
+In compliance with GPLv2 Section 3(b), BurntToasters offers to provide the
+complete corresponding source code for the exact FFmpeg binaries (and all
+statically linked components) that are distributed with ROSI. This includes
+the build scripts and configuration used to produce those binaries.
+
+This offer is valid for at least three years from the date you received the
+binaries. We will provide the source code on a physical medium or electronically,
+for a charge no more than the cost of physically performing distribution.
+
+To request the source code, contact:
+BurntToasters <code@rosie.run>
+
+Build Source Details (current distribution)
+-------------------------------------------
+Source repository and build scripts:
+https://github.com/BurntToasters/ffmpeg-static-builds
+
+Source release for current binaries (FFmpeg 8.0):
+https://github.com/BurntToasters/ffmpeg-static-builds/releases/tag/ffmpeg-v8.0.1
+
+This repository contains the complete corresponding source code, build scripts,
+and configuration used to produce the FFmpeg binaries distributed with ROSI
+for all platforms (Windows, macOS, and Linux).
+
+Statically Linked Components
+----------------------------
+The following libraries are statically linked into the distributed FFmpeg
+binaries. Source code for all of them is included in (or referenced by) the
+release above.
+
+  Component       License               Upstream Source
+  --------------- --------------------- ----------------------------------------
+  FFmpeg          GPL-2.0-or-later      git://git.ffmpeg.org/ffmpeg.git
+  x264            GPL-2.0-or-later      https://code.videolan.org/videolan/x264
+  x265            GPL-2.0-or-later      https://bitbucket.org/multicoreware/x265_git
+  lame (libmp3lame) LGPL-2.0            https://github.com/rbrito/lame
+  libass          ISC                   https://github.com/libass/libass
+  fribidi         LGPL-2.1-or-later     https://github.com/fribidi/fribidi
+  freetype        FTL / GPL-2.0         https://download.savannah.gnu.org/releases/freetype/
+  fontconfig      MIT-like              https://www.freedesktop.org/software/fontconfig/release/
+  libiconv        LGPL-2.1              https://ftp.gnu.org/pub/gnu/libiconv/
+  enca            GPL-2.0               https://dl.cihar.com/enca/
+  expat           MIT                   https://github.com/libexpat/libexpat
+
+Build-time tools (cmake, nasm, yasm, pkg-config) are NOT linked into the
+binaries and are not covered by this offer.
+
+Upstream sources are also available at the URLs listed above.
