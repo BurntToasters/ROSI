@@ -1,12 +1,31 @@
 const fs = require('fs');
 const path = require('path');
 
+const FLATPAK_BUILD_DIR_PREFIX = 'build-dir';
+
+function listFlatpakBuildDirs() {
+  try {
+    return fs
+      .readdirSync('.', { withFileTypes: true })
+      .filter(
+        (entry) =>
+          entry.isDirectory() &&
+          (entry.name === FLATPAK_BUILD_DIR_PREFIX ||
+            entry.name.startsWith(`${FLATPAK_BUILD_DIR_PREFIX}-`))
+      )
+      .map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
+
 function cleanBuildArtifacts() {
-  for (const dir of ['release', 'dist']) {
+  const dirs = ['release', 'dist', ...listFlatpakBuildDirs()];
+  for (const dir of dirs) {
     try {
-      fs.rmSync(dir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors — locked files from a previous build are harmless.
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
+    } catch (error) {
+      if (error && error.code === 'ENOENT') continue;
     }
   }
 }

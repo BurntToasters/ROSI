@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.burnttoasters.rosi</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MPL-2.0</project_license>
+  <name>Rosi</name>
+  <summary>A cross-platform GUI for yt-dlp</summary>
+  <description>
+    <p>
+      ROSI is a modern Electron-based GUI for yt-dlp, making it easy to
+      download videos from the web with a clean, intuitive interface.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Download videos and audio from supported sites</li>
+      <li>Bundled FFmpeg for format conversion</li>
+      <li>GPU-accelerated encoding (NVIDIA, AMD, Intel)</li>
+      <li>Advanced format selection</li>
+      <li>Audio-only download mode</li>
+      <li>Post-download conversion to MP4, MOV, MP3, M4A</li>
+      <li>Browser cookie integration</li>
+      <li>Beautiful themed interface with multiple themes</li>
+    </ul>
+  </description>
+  <url type="homepage">https://github.com/BurntToasters/ROSI</url>
+  <url type="bugtracker">https://github.com/BurntToasters/ROSI/issues</url>
+  <developer_name>BurntToasters</developer_name>
+  <launchable type="desktop-id">com.burnttoasters.rosi.desktop</launchable>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://github.com/user-attachments/assets/e66cebfb-6925-409d-9843-e94cfd868891</image>
+      <caption>ROSI main interface</caption>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="4.0.0" date="2026-03-01"/>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>
