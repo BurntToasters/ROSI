@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import sanitize from 'sanitize-filename';
 import { dialog } from 'electron';
 import log from 'electron-log/main';
-import { spawnWithEnv, resolveFfmpegPath, ytdlpBinary, isWindows } from './platform';
+import { spawnWithEnv, getEffectiveFfmpegPath, ytdlpBinary, isWindows } from './platform';
 import { loadSettings } from './settings';
 import { buildFfmpegArgs, buildYtdlpArgs, resolveVideoEncoder } from './download/commandBuilders';
 import { isSafeHttpUrl } from '../utils/validation';
@@ -346,8 +346,8 @@ export function startDownload(
 
   const settings = loadSettings();
   const effectiveSettings: Settings = { ...settings };
-  const ffmpegLocation = resolveFfmpegPath(options.ffmpegPath || settings.ffmpegPath);
-  const ffmpegCommand = ffmpegLocation || 'ffmpeg';
+  const ffmpegCommand = getEffectiveFfmpegPath(options.ffmpegPath || settings.ffmpegPath);
+  const ffmpegLocation = ffmpegCommand !== 'ffmpeg' ? ffmpegCommand : null;
 
   if (options.convertFormat !== undefined) {
     if (typeof options.convertFormat === 'string' && options.convertFormat.trim() !== '') {

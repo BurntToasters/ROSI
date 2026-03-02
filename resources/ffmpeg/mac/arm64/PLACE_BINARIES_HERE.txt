@@ -1,0 +1,2 @@
+Place the platform-specific ffmpeg binary in this directory.
+See resources/ffmpeg/README.md for details.

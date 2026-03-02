@@ -115,15 +115,16 @@
             </div>
 
             <label class="select-label">
-              <span>FFmpeg path (optional)</span>
+              <span>FFmpeg path (override, optional)</span>
               <input
                 id="ffmpegPathInput"
                 type="text"
-                placeholder="e.g. /opt/homebrew/bin/ffmpeg or C:\\ffmpeg\\bin\\ffmpeg.exe"
+                placeholder="Leave blank to use bundled FFmpeg"
               />
             </label>
             <div class="settings-hint">
-              Used for merging formats and conversion when FFmpeg isn't in your PATH.
+              FFmpeg is bundled with ROSI. Only set this if you want to use a different FFmpeg
+              installation.
             </div>
           </div>
         </section>

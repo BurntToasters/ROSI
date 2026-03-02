@@ -2174,14 +2174,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     void persistSettings();
 
     showModal({
-      title: 'Dependency FFMPEG is Required for this app.',
+      title: 'Welcome to ROSI!',
       message:
-        'ROSI uses FFMPEG for yt-dlp and converting files to MP4.\nPlease ensure FFMPEG is installed and accessible in your system\'s PATH, or set a custom FFmpeg path in Settings.\nClick "More Info" for guidance.',
+        'ROSI includes a bundled FFmpeg for downloading and converting videos.\nYou can change the FFmpeg path in Settings if needed.\nEnjoy!',
       buttons: [
-        {
-          label: 'More Info',
-          action: () => window.api.openExternal('https://help.rosie.run/installing-ffmpeg'),
-        },
         {
           label: 'OK',
           action: () => {

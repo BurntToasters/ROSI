@@ -19,8 +19,6 @@ export function buildEnhancedPath() {
     const extraPaths = [
       path.join(userProfile, '.deno', 'bin'),
       path.join(localAppData, 'deno', 'bin'),
-      'C:\\Program Files\\ffmpeg\\bin',
-      'C:\\ffmpeg\\bin',
       'C:\\Program Files\\deno',
       'C:\\deno',
     ];
@@ -79,6 +77,98 @@ export function resolveFfmpegPath(customPath: unknown): string | null {
   }
 
   return candidate;
+}
+
+function ensureExecutable(filePath: string): string {
+  if (isWindows) return filePath;
+
+  try {
+    const stats = fs.statSync(filePath);
+    const isExec = (stats.mode & 0o111) !== 0;
+
+    if (!isExec) {
+      try {
+        fs.chmodSync(filePath, stats.mode | 0o755);
+      } catch (chmodErr) {
+        const code = (chmodErr as NodeJS.ErrnoException).code;
+        if (code === 'EROFS' || code === 'EACCES') {
+          try {
+            fs.accessSync(filePath, fs.constants.X_OK);
+          } catch {
+            const binaryName = path.basename(filePath);
+            const tmpDir = path.join(app.getPath('temp'), 'rosi-bin');
+            if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+            const tmpBin = path.join(tmpDir, binaryName);
+            fs.copyFileSync(filePath, tmpBin);
+            fs.chmodSync(tmpBin, 0o755);
+            return tmpBin;
+          }
+        }
+      }
+    }
+  } catch {
+    // statSync failed — ignore
+  }
+
+  return filePath;
+}
+
+function getBundledFfmpegDir(): string | null {
+  if (typeof process.resourcesPath !== 'string') return null;
+
+  const baseDir = path.join(process.resourcesPath, 'ffmpeg');
+  const ffmpegName = isWindows ? 'ffmpeg.exe' : 'ffmpeg';
+
+  if (fs.existsSync(path.join(baseDir, ffmpegName))) {
+    return baseDir;
+  }
+
+  if (isMac || isWindows) {
+    const archDir = path.join(baseDir, process.arch);
+    if (fs.existsSync(archDir)) return archDir;
+    const x64Dir = path.join(baseDir, 'x64');
+    if (process.arch === 'x64' && fs.existsSync(x64Dir)) return x64Dir;
+    const arm64Dir = path.join(baseDir, 'arm64');
+    if (process.arch === 'arm64' && fs.existsSync(arm64Dir)) return arm64Dir;
+  }
+
+  if (fs.existsSync(baseDir)) return baseDir;
+  return null;
+}
+
+let cachedBundledFfmpegPath: string | null | undefined;
+
+export function resolveBundledFfmpegPath(): string | null {
+  if (cachedBundledFfmpegPath !== undefined) return cachedBundledFfmpegPath;
+
+  const bundledDir = getBundledFfmpegDir();
+  if (bundledDir) {
+    const ext = isWindows ? '.exe' : '';
+    const bundledPath = path.join(bundledDir, `ffmpeg${ext}`);
+    if (fs.existsSync(bundledPath)) {
+      const effectivePath = ensureExecutable(bundledPath);
+      cachedBundledFfmpegPath = effectivePath;
+      log.info(`Resolved bundled ffmpeg at: ${effectivePath}`);
+      return effectivePath;
+    }
+  }
+
+  cachedBundledFfmpegPath = null;
+  return null;
+}
+
+export function getEffectiveFfmpegPath(customPath?: string | null): string {
+  const resolved = resolveFfmpegPath(customPath);
+  if (resolved) return resolved;
+
+  const bundled = resolveBundledFfmpegPath();
+  if (bundled) return bundled;
+
+  return 'ffmpeg';
+}
+
+export function hasBundledFfmpeg(): boolean {
+  return resolveBundledFfmpegPath() !== null;
 }
 
 function getYtdlpBinaryName() {

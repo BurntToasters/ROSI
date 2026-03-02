@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'events';
 
-const { loadSettingsMock, resolveFfmpegPathMock, spawnWithEnvMock, logErrorMock } = vi.hoisted(
+const { loadSettingsMock, getEffectiveFfmpegPathMock, spawnWithEnvMock, logErrorMock } = vi.hoisted(
   () => {
     return {
       loadSettingsMock: vi.fn(),
-      resolveFfmpegPathMock: vi.fn(),
+      getEffectiveFfmpegPathMock: vi.fn(),
       spawnWithEnvMock: vi.fn(),
       logErrorMock: vi.fn(),
     };
@@ -17,7 +17,7 @@ vi.mock('../main/settings', () => ({
 }));
 
 vi.mock('../main/platform', () => ({
-  resolveFfmpegPath: resolveFfmpegPathMock,
+  getEffectiveFfmpegPath: getEffectiveFfmpegPathMock,
   spawnWithEnv: spawnWithEnvMock,
 }));
 
@@ -47,7 +47,7 @@ describe('gpu detection', () => {
     loadSettingsMock.mockReturnValue({
       ffmpegPath: '',
     });
-    resolveFfmpegPathMock.mockReturnValue(null);
+    getEffectiveFfmpegPathMock.mockReturnValue('ffmpeg');
   });
 
   it('detects supported GPU encoders from ffmpeg output', async () => {
