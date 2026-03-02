@@ -19,6 +19,85 @@ function isValidUrl(string) {
   }
 }
 
+let systemThemeMediaQuery = null;
+let systemThemeMediaQueryHandler = null;
+let appliedTheme = 'dark';
+let themePreference = 'system';
+
+function resolveAppliedTheme(preference) {
+  if (preference === 'light' || preference === 'dark' || preference === 'purple') {
+    return preference;
+  }
+  const query =
+    systemThemeMediaQuery ||
+    (typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-color-scheme: dark)')
+      : null);
+  return query && query.matches ? 'dark' : 'light';
+}
+
+function syncLicensesTheme(theme) {
+  try {
+    const frame = document.getElementById('licenses-frame');
+    const root = frame?.contentDocument?.documentElement;
+    if (root) {
+      root.dataset.theme = theme;
+    }
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+function teardownSystemThemeListener() {
+  if (!systemThemeMediaQuery || !systemThemeMediaQueryHandler) {
+    return;
+  }
+  if (typeof systemThemeMediaQuery.removeEventListener === 'function') {
+    systemThemeMediaQuery.removeEventListener('change', systemThemeMediaQueryHandler);
+  } else if (typeof systemThemeMediaQuery.removeListener === 'function') {
+    systemThemeMediaQuery.removeListener(systemThemeMediaQueryHandler);
+  }
+  systemThemeMediaQueryHandler = null;
+}
+
+function ensureSystemThemeListener() {
+  if (themePreference !== 'system') {
+    teardownSystemThemeListener();
+    return;
+  }
+  if (!systemThemeMediaQuery && typeof window.matchMedia === 'function') {
+    systemThemeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  }
+  if (!systemThemeMediaQuery || systemThemeMediaQueryHandler) {
+    return;
+  }
+  systemThemeMediaQueryHandler = () => {
+    if (themePreference !== 'system') {
+      return;
+    }
+    appliedTheme = resolveAppliedTheme('system');
+    document.documentElement.dataset.theme = appliedTheme;
+    syncLicensesTheme(appliedTheme);
+  };
+  if (typeof systemThemeMediaQuery.addEventListener === 'function') {
+    systemThemeMediaQuery.addEventListener('change', systemThemeMediaQueryHandler);
+  } else if (typeof systemThemeMediaQuery.addListener === 'function') {
+    systemThemeMediaQuery.addListener(systemThemeMediaQueryHandler);
+  }
+}
+
+function applyTheme(preference) {
+  themePreference =
+    preference === 'light' || preference === 'dark' || preference === 'purple'
+      ? preference
+      : 'system';
+  ensureSystemThemeListener();
+  appliedTheme = resolveAppliedTheme(themePreference);
+  document.documentElement.dataset.theme = appliedTheme;
+  syncLicensesTheme(appliedTheme);
+  return appliedTheme;
+}
+
 // toggles console output visibility
 function updateConsoleVisibility(show) {
   const consoleSection = document.getElementById('console-section');
@@ -29,6 +108,7 @@ function updateConsoleVisibility(show) {
       consoleSection.classList.remove('visible');
     }
   }
+  document.body.classList.toggle('console-visible', !!show);
 }
 
 const TOAST_ICONS = {
@@ -136,11 +216,13 @@ function toggleSidebar() {
   if (isOpen) {
     sidebar.classList.remove('open');
     if (overlay) overlay.classList.remove('active');
+    document.body.classList.remove('sidebar-open');
     const settingsBtn = document.getElementById('settingsBtn');
     if (settingsBtn) settingsBtn.focus();
   } else {
     sidebar.classList.add('open');
     if (overlay) overlay.classList.add('active');
+    document.body.classList.add('sidebar-open');
     const closeBtn = document.getElementById('closeSidebar');
     if (closeBtn) closeBtn.focus();
   }
@@ -151,6 +233,7 @@ function closeSidebar() {
   const overlay = document.getElementById('sidebar-overlay');
   if (sidebar) sidebar.classList.remove('open');
   if (overlay) overlay.classList.remove('active');
+  document.body.classList.remove('sidebar-open');
   const settingsBtn = document.getElementById('settingsBtn');
   if (settingsBtn) settingsBtn.focus();
 }
@@ -905,6 +988,8 @@ function showLicenses() {
   if (licensesOverlay) {
     licensesPreviousFocus = document.activeElement;
     licensesOverlay.classList.add('active');
+    syncLicensesTheme(appliedTheme);
+    document.body.classList.add('licenses-open');
     document.body.style.overflow = 'hidden';
 
     const closeBtn = licensesOverlay.querySelector('#close-licenses');
@@ -942,6 +1027,7 @@ function hideLicenses() {
     licensesOverlay.classList.remove('active');
     setTimeout(() => {
       document.body.style.overflow = '';
+      document.body.classList.remove('licenses-open');
     }, 300);
     if (licensesPreviousFocus) {
       licensesPreviousFocus.focus();
@@ -1043,7 +1129,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     settings = await window.api.getSettings();
   } catch (error) {
     settings = {
-      settingsVersion: 1,
+      settingsVersion: 2,
+      theme: 'system',
       showConsoleOutput: false,
       advancedOptions: false,
       convertEnabled: false,
@@ -1070,6 +1157,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       buttons: [{ label: 'OK' }],
     });
   }
+  applyTheme(settings.theme ?? 'system');
 
   try {
     const version = await window.api.getAppVersion();
@@ -1153,6 +1241,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const downloadBtn = document.getElementById('downloadBtn');
   const checkUpdateBtn = document.getElementById('checkUpdateBtn');
   const animateBackgroundToggle = document.getElementById('animateBackgroundToggle');
+  const themeSelect = document.getElementById('themeSelect');
   const bestQualityToggle = document.getElementById('bestQualityToggle');
   const audioOnlyToggle = document.getElementById('audioOnlyToggle');
   const notificationsToggle = document.getElementById('notificationsToggle');
@@ -1170,6 +1259,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const pasteUrlBtn = document.getElementById('pasteUrl');
   const clearConsoleBtn = document.getElementById('clearConsole');
   const urlInput = document.getElementById('url');
+  const urlInputContainer = document.querySelector('.url-input-container');
   const downloadCard = document.querySelector('.download-card');
   const historyHeader = document.getElementById('historyHeader');
   const clearHistoryBtn = document.getElementById('clearHistory');
@@ -1179,6 +1269,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const websiteLink = document.getElementById('websiteLink');
   const supportProjectLink = document.getElementById('supportProjectLink');
   const licensesLink = document.getElementById('licensesLink');
+  const licensesFrame = document.getElementById('licenses-frame');
 
   if (fetchFormatsBtn) fetchFormatsBtn._originalClick = fetchFormats;
   if (downloadBtn) downloadBtn._originalClick = null;
@@ -1272,6 +1363,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (animateBackgroundToggle) {
       animateBackgroundToggle.checked = settings.animateBackground ?? true;
       updateBackgroundAnimation(settings.animateBackground ?? true);
+    }
+    if (themeSelect) {
+      const nextTheme =
+        settings.theme === 'light' ||
+        settings.theme === 'dark' ||
+        settings.theme === 'purple' ||
+        settings.theme === 'system'
+          ? settings.theme
+          : 'system';
+      themeSelect.value = nextTheme;
+      applyTheme(nextTheme);
     }
     if (bestQualityToggle) {
       bestQualityToggle.checked = settings.bestQuality ?? false;
@@ -1390,20 +1492,62 @@ document.addEventListener('DOMContentLoaded', async () => {
       showLicenses();
     });
   }
+  if (licensesFrame) {
+    licensesFrame.addEventListener('load', () => {
+      syncLicensesTheme(appliedTheme);
+    });
+  }
+
+  let hasUrlValidationIntent = false;
+  function syncPrimaryActionState() {
+    const hasInput = !!urlInput;
+    const hasPrimaryButton = !!downloadBtn;
+    if (!hasInput || !hasPrimaryButton) return;
+    const raw = urlInput.value || '';
+    const trimmed = raw.trim();
+    const hasValue = trimmed.length > 0;
+    const validUrl = hasValue && isValidUrl(trimmed);
+    const showInvalid = hasUrlValidationIntent && hasValue && !validUrl;
+
+    if (urlInputContainer) {
+      urlInputContainer.classList.toggle('is-empty', !hasValue);
+      urlInputContainer.classList.toggle('is-valid', validUrl);
+      urlInputContainer.classList.toggle('is-invalid', showInvalid);
+    }
+    if (downloadCard) {
+      downloadCard.classList.toggle('is-ready', validUrl);
+    }
+    urlInput.setAttribute('aria-invalid', String(showInvalid));
+
+    const isLoading = downloadBtn.classList.contains('loading');
+    if (!isLoading) {
+      downloadBtn.disabled = !validUrl;
+      downloadBtn.classList.toggle('is-disabled', !validUrl);
+    }
+  }
 
   function updateUrlButtons() {
     const hasValue = urlInput && urlInput.value.length > 0;
     if (clearUrlBtn) clearUrlBtn.classList.toggle('hidden', !hasValue);
     if (pasteUrlBtn) pasteUrlBtn.classList.toggle('hidden', hasValue);
+    syncPrimaryActionState();
   }
 
   if (clearUrlBtn && urlInput) {
     clearUrlBtn.addEventListener('click', () => {
       urlInput.value = '';
       urlInput.focus();
+      hasUrlValidationIntent = false;
       updateUrlButtons();
     });
-    urlInput.addEventListener('input', updateUrlButtons);
+    urlInput.addEventListener('input', () => {
+      hasUrlValidationIntent = true;
+      updateUrlButtons();
+    });
+    urlInput.addEventListener('blur', () => {
+      hasUrlValidationIntent = true;
+      syncPrimaryActionState();
+    });
     updateUrlButtons();
   }
 
@@ -1415,6 +1559,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           urlInput.value = text.trim();
           urlInput.dispatchEvent(new Event('input'));
           urlInput.focus();
+          hasUrlValidationIntent = true;
+          syncPrimaryActionState();
         }
       } catch {
         showToast('Unable to read clipboard. Try pasting with Ctrl+V.', { type: 'info' });
@@ -1437,6 +1583,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (text && isValidUrl(text.trim())) {
         urlInput.value = text.trim();
         urlInput.dispatchEvent(new Event('input'));
+        hasUrlValidationIntent = true;
+        syncPrimaryActionState();
       } else if (text) {
         showToast('Dropped content is not a valid URL.', { type: 'warning' });
       }
@@ -1660,6 +1808,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       void persistSettings();
     });
   }
+  if (themeSelect) {
+    themeSelect.addEventListener('change', (e) => {
+      settings.theme = e.target.value;
+      applyTheme(settings.theme);
+      void persistSettings();
+    });
+  }
 
   if (bestQualityToggle) {
     bestQualityToggle.addEventListener('change', (e) => {
@@ -1762,11 +1917,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (isDownloading) return;
 
         isDownloading = true;
+        hasUrlValidationIntent = true;
+        syncPrimaryActionState();
 
         const urlInput = document.getElementById('url');
         const url = urlInput ? urlInput.value : null;
         if (!url || url.trim() === '') {
           isDownloading = false;
+          syncPrimaryActionState();
           showToast('Please enter a video URL.', { type: 'warning' });
           return;
         }
@@ -1774,6 +1932,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Validate URL format
         if (!isValidUrl(url.trim())) {
           isDownloading = false;
+          syncPrimaryActionState();
           showToast('Please enter a valid URL starting with http:// or https://', {
             type: 'warning',
           });
@@ -1787,6 +1946,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           (!videoSelect || !audioSelect || !videoSelect.value || !audioSelect.value)
         ) {
           isDownloading = false;
+          syncPrimaryActionState();
           showToast('Please check resolutions and select video/audio formats first.', {
             type: 'warning',
           });
@@ -1799,6 +1959,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         } catch (dialogError) {
           console.error('Error opening save dialog:', dialogError);
           isDownloading = false;
+          syncPrimaryActionState();
           showToast('Could not open the save location dialog. Please try again.', {
             type: 'error',
           });
@@ -1807,6 +1968,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (!savePath) {
           isDownloading = false;
+          syncPrimaryActionState();
           if (outputEl) outputEl.textContent = '⚠️ Download cancelled: No save location selected.';
           return;
         }
@@ -1814,6 +1976,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         downloadAbort = () => {
           isDownloading = false;
           setButtonLoading(downloadBtn, false);
+          syncPrimaryActionState();
         };
         setButtonLoading(downloadBtn, true, () => {
           window.api.cancelDownload();
@@ -1841,6 +2004,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!startResult || startResult.ok !== true) {
           isDownloading = false;
           setButtonLoading(downloadBtn, false);
+          syncPrimaryActionState();
           hideProgressBar();
           showToast(
             startResult?.error?.message || 'Download request was rejected before starting.',
@@ -1851,6 +2015,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.error('Unexpected error starting download:', downloadError);
         isDownloading = false;
         setButtonLoading(downloadBtn, false);
+        syncPrimaryActionState();
         hideProgressBar();
         showToast('An unexpected error occurred while starting the download. Please try again.', {
           type: 'error',
@@ -1905,6 +2070,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (downloadBtn) {
         isDownloading = false;
         setButtonLoading(downloadBtn, false);
+        syncPrimaryActionState();
 
         const normalizedStatus = String(statusMessage || '').toLowerCase();
         const isCancelled = normalizedStatus.includes('cancel');
@@ -1941,6 +2107,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const restoreDefaultDownloadButton = () => {
           setButtonLoading(downloadBtn, false);
+          syncPrimaryActionState();
         };
 
         if (isSuccess && lastDownloadedFilePath) {

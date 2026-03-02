@@ -21,6 +21,7 @@ describe('settings migration', () => {
   it('migrates legacy settings and enforces schema defaults', () => {
     const migrated = migrateSettings({
       showConsoleOutput: true,
+      theme: 'purple',
       audioOnly: true,
       convertFormat: 'mp3',
       updateChannel: 'beta',
@@ -29,6 +30,7 @@ describe('settings migration', () => {
     });
 
     expect(migrated.showConsoleOutput).toBe(true);
+    expect(migrated.theme).toBe('purple');
     expect(migrated.audioOnly).toBe(true);
     expect(migrated.convertFormat).toBe('mp3');
     expect(migrated.updateChannel).toBe('beta');
@@ -39,10 +41,12 @@ describe('settings migration', () => {
   it('falls back on invalid enum fields', () => {
     const defaults = getDefaultSettings();
     const migrated = migrateSettings({
+      theme: 'sunset',
       updateChannel: 'nightly',
       gpuType: 'unknown',
     });
 
+    expect(migrated.theme).toBe(defaults.theme);
     expect(migrated.updateChannel).toBe(defaults.updateChannel);
     expect(migrated.gpuType).toBe(defaults.gpuType);
   });

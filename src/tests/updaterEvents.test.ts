@@ -68,6 +68,7 @@ import type { Settings } from '../types';
 function createSettings(overrides: Partial<Settings> = {}): Settings {
   return {
     settingsVersion: 1,
+    theme: 'system',
     showConsoleOutput: false,
     consoleCollapsed: false,
     advancedOptions: false,

@@ -71,12 +71,14 @@ describe('settings persistence', () => {
       JSON.stringify({
         ...getDefaultSettings(),
         settingsVersion: 0,
+        theme: 'dark',
         updateChannel: 'beta',
       })
     );
 
     const loaded = loadSettings();
     expect(loaded.settingsVersion).toBe(CURRENT_SETTINGS_VERSION);
+    expect(loaded.theme).toBe('dark');
     expect(loaded.updateChannel).toBe('beta');
   });
 
@@ -84,6 +86,7 @@ describe('settings persistence', () => {
     const result = saveSettings(
       {
         audioOnly: true,
+        theme: 'purple',
         updateChannel: 'stable',
       },
       null
@@ -95,6 +98,7 @@ describe('settings persistence', () => {
     const [, writtenPayload] = writeFileSyncMock.mock.calls[0];
     const parsed = JSON.parse(writtenPayload);
     expect(parsed.audioOnly).toBe(true);
+    expect(parsed.theme).toBe('purple');
     expect(parsed.updateChannel).toBe('stable');
     expect(parsed.settingsVersion).toBe(CURRENT_SETTINGS_VERSION);
   });

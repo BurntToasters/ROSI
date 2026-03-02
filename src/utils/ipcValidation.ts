@@ -10,6 +10,7 @@ import { isSafeExternalUrl, isSafeHttpUrl } from './validation';
 
 const ALLOWED_GPU_TYPES = new Set(['auto', 'nvidia', 'amd', 'intel']);
 const ALLOWED_UPDATE_CHANNELS = new Set(['auto', 'stable', 'beta']);
+const ALLOWED_THEMES = new Set(['system', 'light', 'dark', 'purple']);
 
 type ValidationResult<T> = { ok: true; data: T } | { ok: false; error: IpcErrorPayload };
 
@@ -130,6 +131,7 @@ export function validateDownloadRequestPayload(
 function isValidSettingsKey(key: string): key is keyof Settings {
   return (
     key === 'settingsVersion' ||
+    key === 'theme' ||
     key === 'showConsoleOutput' ||
     key === 'consoleCollapsed' ||
     key === 'advancedOptions' ||
@@ -203,6 +205,20 @@ export function validateSettingsPatchPayload(value: unknown): ValidationResult<P
         };
       }
       patch[rawKey] = rawValue;
+      continue;
+    }
+
+    if (rawKey === 'theme') {
+      if (!isString(rawValue) || !ALLOWED_THEMES.has(rawValue)) {
+        return {
+          ok: false,
+          error: buildError(
+            'VALIDATION_ERROR',
+            'theme must be one of: system, light, dark, purple.'
+          ),
+        };
+      }
+      patch.theme = rawValue as Settings['theme'];
       continue;
     }
 

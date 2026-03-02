@@ -5,10 +5,11 @@ import log from 'electron-log/main';
 import type { Settings } from '../types';
 
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
-export const CURRENT_SETTINGS_VERSION = 1;
+export const CURRENT_SETTINGS_VERSION = 2;
 
 const defaultSettings: Settings = {
   settingsVersion: CURRENT_SETTINGS_VERSION,
+  theme: 'system',
   showConsoleOutput: false,
   consoleCollapsed: false,
   advancedOptions: false,
@@ -53,6 +54,12 @@ function readUpdateChannel(value: unknown): Settings['updateChannel'] {
     : defaultSettings.updateChannel;
 }
 
+function readTheme(value: unknown): Settings['theme'] {
+  return value === 'system' || value === 'light' || value === 'dark' || value === 'purple'
+    ? value
+    : defaultSettings.theme;
+}
+
 function readGpuType(value: unknown): Settings['gpuType'] {
   return value === 'auto' || value === 'nvidia' || value === 'amd' || value === 'intel'
     ? value
@@ -73,6 +80,7 @@ export function migrateSettings(rawSettings: unknown): Settings {
 
   return {
     settingsVersion: readSettingsVersion(rawSettings.settingsVersion),
+    theme: readTheme(rawSettings.theme),
     showConsoleOutput: readBoolean(
       rawSettings.showConsoleOutput,
       defaultSettings.showConsoleOutput
