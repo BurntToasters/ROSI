@@ -72,7 +72,16 @@
     "release:linux:arm64": "dotenv -e .env -- node build-scripts/build-with-restore.js --prepare build-scripts/prepare-linux-arm64.js --env CHANNEL=github -- npx electron-builder -c electron-builder.github.yml --linux AppImage deb rpm --arm64 --publish always && npm run sign:gpg:arm64",
     "release:linux:native:x64": "dotenv -e .env -- node build-scripts/build-with-restore.js --prepare build-scripts/prepare-linux-x64.js --env USE_SYSTEM_FPM=true --env CHANNEL=github -- npx electron-builder -c electron-builder.github.yml --linux AppImage deb rpm --x64 --publish always && npm run sign:gpg:x64",
     "release:linux:native:arm64": "dotenv -e .env -- node build-scripts/build-with-restore.js --prepare build-scripts/prepare-linux-arm64.js --env USE_SYSTEM_FPM=true --env CHANNEL=github -- npx electron-builder -c electron-builder.github.yml --linux AppImage deb rpm --arm64 --publish always && npm run sign:gpg:arm64",
-    "release:all": "npm run prebuild && npm run release:mac && npm run release:win && npm run release:linux"
+    "release:all": "npm run prebuild && npm run release:mac && npm run release:win && npm run release:linux",
+    "flatpak:setup": "sudo env \"PATH=$PATH\" node build-scripts/setup-flatpak.js",
+    "flatpak:build": "node build-scripts/flatpak.js build",
+    "flatpak:build:x64": "node build-scripts/flatpak.js build --x64",
+    "flatpak:build:arm64": "node build-scripts/flatpak.js build --arm64",
+    "flatpak:run": "flatpak run com.burnttoasters.rosi",
+    "flatpak:bundle": "node build-scripts/flatpak.js bundle",
+    "flatpak:bundle:x64": "node build-scripts/flatpak.js bundle --x64",
+    "flatpak:bundle:arm64": "node build-scripts/flatpak.js bundle --arm64",
+    "flatpak:clean": "node build-scripts/flatpak.js clean"
   },
   "overrides": {
     "tar": "^7.5.3",
