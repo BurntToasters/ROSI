@@ -1,5 +1,6 @@
 export interface Settings {
   settingsVersion: number;
+  theme: ThemePreference;
   showConsoleOutput: boolean;
   consoleCollapsed: boolean;
   advancedOptions: boolean;
@@ -23,6 +24,7 @@ export interface Settings {
 }
 
 export type UpdateChannel = 'auto' | 'stable' | 'beta';
+export type ThemePreference = 'system' | 'light' | 'dark' | 'purple';
 
 export type DistributionChannel = 'github' | 'msstore';
 

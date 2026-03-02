@@ -26,6 +26,7 @@ vi.mock('../main/platform', () => ({
 vi.mock('../main/settings', () => ({
   loadSettings: vi.fn(() => ({
     settingsVersion: 1,
+    theme: 'system',
     showConsoleOutput: false,
     consoleCollapsed: false,
     advancedOptions: false,
