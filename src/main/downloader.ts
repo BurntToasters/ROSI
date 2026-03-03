@@ -301,16 +301,16 @@ async function runConversion(
       if (err.message.includes('ENOENT')) {
         sendProgress(
           session,
-          `❌ Failed to start conversion: FFmpeg not found at ${ffmpegCommand}. Ensure FFMPEG is installed and accessible.`
+          `❌ Failed to start conversion: FFmpeg was not found at ${ffmpegCommand}.`
         );
-        completeSession(session, '❌ Conversion failed (FFMPEG not found).');
+        completeSession(session, '❌ Conversion failed (FFmpeg not found).');
         if (mainWindow && !mainWindow.isDestroyed()) {
           dialog.showMessageBox(mainWindow, {
             type: 'error',
-            title: 'FFMPEG Error',
+            title: 'FFmpeg Error',
             message: `Failed to start conversion: FFmpeg not found at ${ffmpegCommand}.`,
             detail:
-              'Please ensure FFMPEG is installed and accessible, or set a custom FFmpeg path in Settings. See Help for more details.',
+              'ROSI uses bundled FFmpeg by default. If you set a custom FFmpeg path, make sure it points to a valid FFmpeg binary.',
           });
         }
       } else {

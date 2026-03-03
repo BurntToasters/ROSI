@@ -41,3 +41,4 @@ resources/ffmpeg/
 - Use **static builds** (not shared) for easier bundling
 - Ensure binaries have execute permissions on macOS/Linux (`chmod +x`)
 - ffprobe is NOT required — ROSI only uses ffmpeg
+- Verify binaries before a build with `npm run ffmpeg:check:all`

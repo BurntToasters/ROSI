@@ -152,6 +152,14 @@ function runConfigChecks() {
       'package.json: scripts.test:all must run build-scripts/test-all.js'
     );
     assertConfig(pkg.main === 'dist/main/main.js', 'package.json: main must be dist/main/main.js');
+    assertConfig(
+      Boolean(pkg.scripts && pkg.scripts['ffmpeg:check']),
+      'package.json: missing scripts.ffmpeg:check'
+    );
+    assertConfig(
+      typeof pkg.scripts?.prebuild === 'string' && pkg.scripts.prebuild.includes('ffmpeg:check'),
+      'package.json: scripts.prebuild must include ffmpeg check'
+    );
 
     const baseConfigPath = path.join(process.cwd(), 'electron-builder.base.yml');
     const githubConfigPath = path.join(process.cwd(), 'electron-builder.github.yml');
@@ -191,6 +199,7 @@ function runConfigChecks() {
       'src/main/main.ts',
       'src/main/preload.ts',
       'src/renderer/index.html',
+      'build-scripts/check-ffmpeg.js',
       'assets/yt-dlp.exe',
       'assets/yt-dlp_arm64.exe',
       'assets/yt-dlp_macos',
