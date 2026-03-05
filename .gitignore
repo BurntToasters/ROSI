@@ -44,5 +44,13 @@ build/Release
 *.provisionprofile
 *.mobileprovision
 
+# FFmpeg binaries (downloaded locally, not committed)
+resources/ffmpeg/**/ffmpeg
+resources/ffmpeg/**/ffmpeg.exe
+resources/ffmpeg/**/ffprobe
+resources/ffmpeg/**/ffprobe.exe
+resources/ffmpeg/**/ffplay
+resources/ffmpeg/**/ffplay.exe
+
 # REPL history
 .node_repl_history
