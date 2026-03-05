@@ -95,13 +95,19 @@ function ensureExecutable(filePath: string): string {
           try {
             fs.accessSync(filePath, fs.constants.X_OK);
           } catch {
-            const binaryName = path.basename(filePath);
-            const tmpDir = path.join(app.getPath('temp'), 'rosi-bin');
-            if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-            const tmpBin = path.join(tmpDir, binaryName);
-            fs.copyFileSync(filePath, tmpBin);
-            fs.chmodSync(tmpBin, 0o755);
-            return tmpBin;
+            try {
+              const binaryName = path.basename(filePath);
+              const tmpDir = path.join(app.getPath('temp'), 'rosi-bin');
+              if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+              const tmpBin = path.join(tmpDir, binaryName);
+              fs.copyFileSync(filePath, tmpBin);
+              fs.chmodSync(tmpBin, 0o755);
+              return tmpBin;
+            } catch (copyErr) {
+              log.error(
+                `Failed to copy ffmpeg to temp for execution: ${(copyErr as Error).message}`
+              );
+            }
           }
         }
       }
@@ -169,6 +175,35 @@ export function getEffectiveFfmpegPath(customPath?: string | null): string {
 
 export function hasBundledFfmpeg(): boolean {
   return resolveBundledFfmpegPath() !== null;
+}
+
+export function verifyBundledFfmpeg(): void {
+  const ffmpegPath = resolveBundledFfmpegPath();
+  if (!ffmpegPath) {
+    log.info('No bundled ffmpeg found; will rely on system ffmpeg.');
+    return;
+  }
+
+  try {
+    const proc = spawnWithEnv(ffmpegPath, ['-version'], { shell: false });
+    let output = '';
+    proc.stdout?.on('data', (data: Buffer) => {
+      if (output.length < 512) output += data.toString();
+    });
+    proc.on('close', (code: number | null) => {
+      if (code === 0 && output) {
+        const firstLine = output.split('\n')[0]?.trim() ?? '';
+        log.info(`Bundled ffmpeg verified: ${firstLine}`);
+      } else {
+        log.warn(`Bundled ffmpeg at ${ffmpegPath} exited with code ${code}`);
+      }
+    });
+    proc.on('error', (err: Error) => {
+      log.warn(`Bundled ffmpeg at ${ffmpegPath} failed to execute: ${err.message}`);
+    });
+  } catch (err) {
+    log.warn(`Failed to verify bundled ffmpeg: ${(err as Error).message}`);
+  }
 }
 
 function getYtdlpBinaryName() {
