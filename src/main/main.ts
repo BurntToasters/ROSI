@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, shell, Notification } from 'electr
 import * as path from 'path';
 import * as fs from 'fs';
 import log from 'electron-log/main';
-import { isPackaged, resolveYtdlpPath } from './platform';
+import { isPackaged, resolveYtdlpPath, verifyBundledFfmpeg } from './platform';
 import { loadSettings, saveSettings, getDefaultSettings } from './settings';
 import {
   setupAutoUpdater,
@@ -127,6 +127,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   createSplashWindow();
+  verifyBundledFfmpeg();
   setTimeout(() => {
     createWindow();
   }, SPLASH_SHOW_DELAY_MS);

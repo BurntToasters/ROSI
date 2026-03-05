@@ -27,7 +27,7 @@ vi.mock('electron-log/main', () => ({
   },
 }));
 
-import { detectGpu } from '../main/gpu';
+import { detectGpu, clearGpuCache } from '../main/gpu';
 
 function createProc() {
   const proc = new EventEmitter() as EventEmitter & {
@@ -44,6 +44,7 @@ function createProc() {
 describe('gpu detection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearGpuCache();
     loadSettingsMock.mockReturnValue({
       ffmpegPath: '',
     });
