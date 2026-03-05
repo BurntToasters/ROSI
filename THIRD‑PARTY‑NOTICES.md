@@ -1,34 +1,43 @@
 1. **yt‑dl‑p** <br>
-    License: [Unlicense] <br>
-    Link: https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE <br>
+   License: [Unlicense] <br>
+   Link: https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE <br>
 
 2. **mutagen** <br>
-    License: GPL v2 <br>
-    Link: https://github.com/quodlibet/mutagen/blob/master/COPYING <br>
+   License: GPL v2 <br>
+   Link: https://github.com/quodlibet/mutagen/blob/master/COPYING <br>
 
 3. **AtomicParsley** <br>
-    License: GPL v2 or later <br>
-    Link: https://github.com/wez/atomicparsley/blob/master/COPYING <br>
+   License: GPL v2 or later <br>
+   Link: https://github.com/wez/atomicparsley/blob/master/COPYING <br>
 
 4. **pycryptodome** <br>
-    License: Public domain + BSD‑2‑Clause <br>
-    Link: https://github.com/Legrandin/pycryptodome/blob/master/LICENSE.rst <br>
+   License: Public domain + BSD‑2‑Clause <br>
+   Link: https://github.com/Legrandin/pycryptodome/blob/master/LICENSE.rst <br>
 
 5. **phantomjs** <br>
-    License: BSD‑3‑Clause <br>
-    Link: https://github.com/ariya/phantomjs/blob/master/LICENSE.BSD <br>
+   License: BSD‑3‑Clause <br>
+   Link: https://github.com/ariya/phantomjs/blob/master/LICENSE.BSD <br>
 
 6. **websockets** <br>
-    License: BSD‑3‑Clause <br>
-    Link: https://github.com/aaugustin/websockets/blob/main/LICENSE <br>
+   License: BSD‑3‑Clause <br>
+   Link: https://github.com/aaugustin/websockets/blob/main/LICENSE <br>
 
+7. **FFmpeg** <br>
+   License: GPL‑2.0‑or‑later <br>
+   Link: https://www.gnu.org/licenses/old-licenses/gpl-2.0.html <br>
+   Source: https://github.com/BurntToasters/ffmpeg-static-builds <br>
+   ROSI bundles static GPL builds of FFmpeg 8.0 for all platforms. FFmpeg is invoked as an
+   external process and is not linked into ROSI. The complete corresponding source code,
+   build scripts, and configuration are available at the source URL above. A written source
+   offer is included with the distributed binaries at `ffmpeg/SOURCE_OFFER.txt`. <br>
 
 # Python intepreter full license
-______________________________
+
+---
 
 **Python interpreter** <br>
-    License: PSF License v2 (PSF-LICENSE.txt plus sub‑licenses) <br>
-    Link: https://docs.python.org/3/license.html <br>
+License: PSF License v2 (PSF-LICENSE.txt plus sub‑licenses) <br>
+Link: https://docs.python.org/3/license.html <br>
 
 ## PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2
 
@@ -51,7 +60,7 @@ ______________________________
    agrees to include in any such work a brief summary of the changes made to Python.
 
 4. PSF is making Python available to Licensee on an "AS IS" basis.
-   PSF MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR IMPLIED.  BY WAY OF
+   PSF MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR IMPLIED. BY WAY OF
    EXAMPLE, BUT NOT LIMITATION, PSF MAKES NO AND DISCLAIMS ANY REPRESENTATION OR
    WARRANTY OF MERCHANTABILITY OR FITNESS FOR ANY PARTICULAR PURPOSE OR THAT THE
    USE OF PYTHON WILL NOT INFRINGE ANY THIRD PARTY RIGHTS.
@@ -65,7 +74,7 @@ ______________________________
    its terms and conditions.
 
 7. Nothing in this License Agreement shall be deemed to create any relationship
-   of agency, partnership, or joint venture between PSF and Licensee.  This License
+   of agency, partnership, or joint venture between PSF and Licensee. This License
    Agreement does not grant permission to use PSF trademarks or trade name in a
    trademark sense to endorse or promote products or services of Licensee, or any
    third party.
@@ -73,7 +82,7 @@ ______________________________
 8. By copying, installing or otherwise using Python, Licensee agrees
    to be bound by the terms and conditions of this License Agreement.
 
-_______________
+---
 
 ## BEOPEN.COM LICENSE AGREEMENT FOR PYTHON 2.0
 
@@ -92,7 +101,7 @@ _______________
    Software, alone or in any derivative version prepared by Licensee.
 
 3. BeOpen is making the Software available to Licensee on an "AS IS" basis.
-   BEOPEN MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR IMPLIED.  BY WAY OF
+   BEOPEN MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR IMPLIED. BY WAY OF
    EXAMPLE, BUT NOT LIMITATION, BEOPEN MAKES NO AND DISCLAIMS ANY REPRESENTATION OR
    WARRANTY OF MERCHANTABILITY OR FITNESS FOR ANY PARTICULAR PURPOSE OR THAT THE
    USE OF THE SOFTWARE WILL NOT INFRINGE ANY THIRD PARTY RIGHTS.
@@ -108,18 +117,18 @@ _______________
 6. This License Agreement shall be governed by and interpreted in all respects
    by the law of the State of California, excluding conflict of law provisions.
    Nothing in this License Agreement shall be deemed to create any relationship of
-   agency, partnership, or joint venture between BeOpen and Licensee.  This License
+   agency, partnership, or joint venture between BeOpen and Licensee. This License
    Agreement does not grant permission to use BeOpen trademarks or trade names in a
    trademark sense to endorse or promote products or services of Licensee, or any
-   third party.  As an exception, the "BeOpen Python" logos available at
+   third party. As an exception, the "BeOpen Python" logos available at
    http://www.pythonlabs.com/logos.html may be used according to the permissions
    granted on that web page.
 
 7. By copying, installing or otherwise using the software, Licensee agrees to be
    bound by the terms and conditions of this License Agreement.
 
-   ______
-   
+   ***
+
 ## CNRI LICENSE AGREEMENT FOR PYTHON 1.6.1
 
 1. This LICENSE AGREEMENT is between the Corporation for National Research
@@ -135,12 +144,12 @@ _______________
    provided, however, that CNRI's License Agreement and CNRI's notice of copyright,
    i.e., "Copyright © 1995-2001 Corporation for National Research Initiatives; All
    Rights Reserved" are retained in Python 1.6.1 alone or in any derivative version
-   prepared by Licensee.  Alternately, in lieu of CNRI's License Agreement,
+   prepared by Licensee. Alternately, in lieu of CNRI's License Agreement,
    Licensee may substitute the following text (omitting the quotes): "Python 1.6.1
    is made available subject to the terms and conditions in CNRI's License
-   Agreement.  This Agreement together with Python 1.6.1 may be located on the
+   Agreement. This Agreement together with Python 1.6.1 may be located on the
    internet using the following unique, persistent identifier (known as a handle):
-   1895.22/1013.  This Agreement may also be obtained from a proxy server on the
+   1895.22/1013. This Agreement may also be obtained from a proxy server on the
    internet using the following URL: http://hdl.handle.net/1895.22/1013".
 
 3. In the event Licensee prepares a derivative work that is based on or
@@ -148,8 +157,8 @@ _______________
    work available to others as provided herein, then Licensee hereby agrees to
    include in any such work a brief summary of the changes made to Python 1.6.1.
 
-4. CNRI is making Python 1.6.1 available to Licensee on an "AS IS" basis.  CNRI
-   MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR IMPLIED.  BY WAY OF EXAMPLE,
+4. CNRI is making Python 1.6.1 available to Licensee on an "AS IS" basis. CNRI
+   MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR IMPLIED. BY WAY OF EXAMPLE,
    BUT NOT LIMITATION, CNRI MAKES NO AND DISCLAIMS ANY REPRESENTATION OR WARRANTY
    OF MERCHANTABILITY OR FITNESS FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF
    PYTHON 1.6.1 WILL NOT INFRINGE ANY THIRD PARTY RIGHTS.
@@ -170,9 +179,9 @@ _______________
    1.6.1 that incorporate non-separable material that was previously distributed
    under the GNU General Public License (GPL), the law of the Commonwealth of
    Virginia shall govern this License Agreement only as to issues arising under or
-   with respect to Paragraphs 4, 5, and 7 of this License Agreement.  Nothing in
+   with respect to Paragraphs 4, 5, and 7 of this License Agreement. Nothing in
    this License Agreement shall be deemed to create any relationship of agency,
-   partnership, or joint venture between CNRI and Licensee.  This License Agreement
+   partnership, or joint venture between CNRI and Licensee. This License Agreement
    does not grant permission to use CNRI trademarks or trade name in a trademark
    sense to endorse or promote products or services of Licensee, or any third
    party.
@@ -181,12 +190,12 @@ _______________
    or otherwise using Python 1.6.1, Licensee agrees to be bound by the terms and
    conditions of this License Agreement.
 
-_____
+---
 
 ## CWI LICENSE AGREEMENT FOR PYTHON 0.9.0 THROUGH 1.2
 
 Copyright © 1991 - 1995, Stichting Mathematisch Centrum Amsterdam, The
-Netherlands.  All rights reserved.
+Netherlands. All rights reserved.
 
 Permission to use, copy, modify, and distribute this software and its
 documentation for any purpose and without fee is hereby granted, provided that
@@ -204,7 +213,7 @@ DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS
 ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS
 SOFTWARE.
 
-_____
+---
 
 ## ZERO-CLAUSE BSD LICENSE FOR CODE IN THE PYTHON DOCUMENTATION
 
@@ -219,17 +228,17 @@ LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
 OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 
-____
+---
 
 ## Licenses and Acknowledgements for Incorporated Software
 
 This section is an incomplete, but growing list of licenses and acknowledgements for third-party software incorporated in the Python distribution.
 
-_______
+---
 
 ### Mersenne Twister
 
-The _random C extension underlying the random module includes code based on a download from http://www.math.sci.hiroshima-u.ac.jp/~m-mat/MT/MT2002/emt19937ar.html. The following are the verbatim comments from the original code:
+The \_random C extension underlying the random module includes code based on a download from http://www.math.sci.hiroshima-u.ac.jp/~m-mat/MT/MT2002/emt19937ar.html. The following are the verbatim comments from the original code:
 
 A C-program for MT19937, with initialization improved 2002/1/26.
 Coded by Takuji Nishimura and Makoto Matsumoto.
@@ -244,21 +253,21 @@ Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions
 are met:
 
- 1. Redistributions of source code must retain the above copyright
+1.  Redistributions of source code must retain the above copyright
     notice, this list of conditions and the following disclaimer.
 
- 2. Redistributions in binary form must reproduce the above copyright
+2.  Redistributions in binary form must reproduce the above copyright
     notice, this list of conditions and the following disclaimer in the
     documentation and/or other materials provided with the distribution.
 
- 3. The names of its contributors may not be used to endorse or promote
+3.  The names of its contributors may not be used to endorse or promote
     products derived from this software without specific prior written
     permission.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
 CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
 EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
 PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -267,12 +276,11 @@ LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
 NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-
 Any feedback is very welcome.
 http://www.math.sci.hiroshima-u.ac.jp/~m-mat/MT/emt.html
 email: m-mat @ math.sci.hiroshima-u.ac.jp (remove space)
 
-____
+---
 
 ### Sockets
 
@@ -284,6 +292,7 @@ All rights reserved.
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions
 are met:
+
 1. Redistributions of source code must retain the above copyright
    notice, this list of conditions and the following disclaimer.
 2. Redistributions in binary form must reproduce the above copyright
@@ -296,7 +305,7 @@ are met:
 THIS SOFTWARE IS PROVIDED BY THE PROJECT AND CONTRIBUTORS "AS IS" AND
 ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-ARE DISCLAIMED.  IN NO EVENT SHALL THE PROJECT OR CONTRIBUTORS BE LIABLE
+ARE DISCLAIMED. IN NO EVENT SHALL THE PROJECT OR CONTRIBUTORS BE LIABLE
 FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
 DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
 OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -305,8 +314,7 @@ LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
 OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 SUCH DAMAGE.
 
-___
-
+---
 
 ### Asynchronous socket services
 
@@ -333,7 +341,7 @@ OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT,
 NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
 CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-___
+---
 
 ### Cookie management
 
@@ -348,7 +356,7 @@ and its documentation for any purpose and without fee is hereby
 granted, provided that the above copyright notice appear in all
 copies and that both that copyright notice and this permission
 notice appear in supporting documentation, and that the name of
-Timothy O'Malley  not be used in advertising or publicity
+Timothy O'Malley not be used in advertising or publicity
 pertaining to distribution of the software without specific, written
 prior permission.
 
@@ -361,14 +369,14 @@ WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS
 ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 
-___
+---
 
 ### Execution tracing
 
 The trace module contains the following notice:
 
 portions copyright 2001, Autonomous Zones Industries, Inc., all rights...
-err...  reserved and offered to the public under the terms of the
+err... reserved and offered to the public under the terms of the
 Python 2.2 license.
 Author: Zooko O'Whielacronx
 http://zooko.com/
@@ -385,7 +393,6 @@ Author: Skip Montanaro
 
 Copyright 1991-1995, Stichting Mathematisch Centrum, all rights reserved.
 
-
 Permission to use, copy, modify, and distribute this Python software and
 its associated documentation for any purpose without fee is hereby
 granted, provided that the above copyright notice appears in all copies,
@@ -394,7 +401,7 @@ supporting documentation, and that the name of neither Automatrix,
 Bioreason or Mojam Media be used in advertising or publicity pertaining to
 distribution of the software without specific, written prior permission.
 
-___
+---
 
 ### UUencode and UUdecode functions
 
@@ -402,7 +409,7 @@ The uu codec contains the following notice:
 
 Copyright 1994 by Lance Ellinghouse
 Cathedral City, California Republic, United States of America.
-                       All Rights Reserved
+All Rights Reserved
 Permission to use, copy, modify, and distribute this software and its
 documentation for any purpose and without fee is hereby granted,
 provided that the above copyright notice appear in all copies and that
@@ -419,12 +426,13 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
 OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 Modified by Jack Jansen, CWI, July 1995:
+
 - Use binascii module to do the actual line-by-line conversion
   between ascii and binary. This results in a 1000-fold speedup. The C
   version is still 5 times faster, though.
 - Arguments more compliant with Python standard
 
-___
+---
 
 ### XML Remote Procedure Calls
 
@@ -450,14 +458,14 @@ prior permission.
 
 SECRET LABS AB AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD
 TO THIS SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANT-
-ABILITY AND FITNESS.  IN NO EVENT SHALL SECRET LABS AB OR THE AUTHOR
+ABILITY AND FITNESS. IN NO EVENT SHALL SECRET LABS AB OR THE AUTHOR
 BE LIABLE FOR ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY
 DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
 WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS
 ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE
 OF THIS SOFTWARE.
 
-___
+---
 
 ### test_epoll
 
@@ -484,7 +492,7 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-___
+---
 
 ### Select kqueue
 
@@ -496,6 +504,7 @@ All rights reserved.
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions
 are met:
+
 1. Redistributions of source code must retain the above copyright
    notice, this list of conditions and the following disclaimer.
 2. Redistributions in binary form must reproduce the above copyright
@@ -505,7 +514,7 @@ are met:
 THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS "AS IS" AND
 ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
 FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
 DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
 OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -514,7 +523,7 @@ LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
 OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 SUCH DAMAGE.
 
-___
+---
 
 ### SipHash24
 
@@ -535,39 +544,39 @@ all copies or substantial portions of the Software.
 </MIT License>
 
 Original location:
-   https://github.com/majek/csiphash/
+https://github.com/majek/csiphash/
 
 Solution inspired by code from:
-   Samuel Neves (supercop/crypto_auth/siphash24/little)
-   djb (supercop/crypto_auth/siphash24/little2)
-   Jean-Philippe Aumasson (https://131002.net/siphash/siphash24.c)
+Samuel Neves (supercop/crypto_auth/siphash24/little)
+djb (supercop/crypto_auth/siphash24/little2)
+Jean-Philippe Aumasson (https://131002.net/siphash/siphash24.c)
 
-___
+---
 
 ### strtod and dtoa
 
 The file Python/dtoa.c, which supplies C functions dtoa and strtod for conversion of C doubles to and from strings, is derived from the file of the same name by David M. Gay, currently available from https://web.archive.org/web/20220517033456/http://www.netlib.org/fp/dtoa.c. The original file, as retrieved on March 16, 2009, contains the following copyright and licensing notice:
 
-/****************************************************************
- *
- * The author of this software is David M. Gay.
- *
- * Copyright (c) 1991, 2000, 2001 by Lucent Technologies.
- *
- * Permission to use, copy, modify, and distribute this software for any
- * purpose without fee is hereby granted, provided that this entire notice
- * is included in all copies of any software which is or includes a copy
- * or modification of this software and in all copies of the supporting
- * documentation for such software.
- *
- * THIS SOFTWARE IS BEING PROVIDED "AS IS", WITHOUT ANY EXPRESS OR IMPLIED
- * WARRANTY.  IN PARTICULAR, NEITHER THE AUTHOR NOR LUCENT MAKES ANY
- * REPRESENTATION OR WARRANTY OF ANY KIND CONCERNING THE MERCHANTABILITY
- * OF THIS SOFTWARE OR ITS FITNESS FOR ANY PARTICULAR PURPOSE.
- *
- ***************************************************************/
+/******************************\*\*\*\*******************************
 
-___
+-
+- The author of this software is David M. Gay.
+-
+- Copyright (c) 1991, 2000, 2001 by Lucent Technologies.
+-
+- Permission to use, copy, modify, and distribute this software for any
+- purpose without fee is hereby granted, provided that this entire notice
+- is included in all copies of any software which is or includes a copy
+- or modification of this software and in all copies of the supporting
+- documentation for such software.
+-
+- THIS SOFTWARE IS BEING PROVIDED "AS IS", WITHOUT ANY EXPRESS OR IMPLIED
+- WARRANTY. IN PARTICULAR, NEITHER THE AUTHOR NOR LUCENT MAKES ANY
+- REPRESENTATION OR WARRANTY OF ANY KIND CONCERNING THE MERCHANTABILITY
+- OF THIS SOFTWARE OR ITS FITNESS FOR ANY PARTICULAR PURPOSE.
+- ******************************\*\*\*******************************/
+
+---
 
 ### OpenSSL
 
@@ -667,33 +676,33 @@ TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
    meet the following conditions:
 
    (a) You must give any other recipients of the Work or
-       Derivative Works a copy of this License; and
+   Derivative Works a copy of this License; and
 
    (b) You must cause any modified files to carry prominent notices
-       stating that You changed the files; and
+   stating that You changed the files; and
 
    (c) You must retain, in the Source form of any Derivative Works
-       that You distribute, all copyright, patent, trademark, and
-       attribution notices from the Source form of the Work,
-       excluding those notices that do not pertain to any part of
-       the Derivative Works; and
+   that You distribute, all copyright, patent, trademark, and
+   attribution notices from the Source form of the Work,
+   excluding those notices that do not pertain to any part of
+   the Derivative Works; and
 
    (d) If the Work includes a "NOTICE" text file as part of its
-       distribution, then any Derivative Works that You distribute must
-       include a readable copy of the attribution notices contained
-       within such NOTICE file, excluding those notices that do not
-       pertain to any part of the Derivative Works, in at least one
-       of the following places: within a NOTICE text file distributed
-       as part of the Derivative Works; within the Source form or
-       documentation, if provided along with the Derivative Works; or,
-       within a display generated by the Derivative Works, if and
-       wherever such third-party notices normally appear. The contents
-       of the NOTICE file are for informational purposes only and
-       do not modify the License. You may add Your own attribution
-       notices within Derivative Works that You distribute, alongside
-       or as an addendum to the NOTICE text from the Work, provided
-       that such additional attribution notices cannot be construed
-       as modifying the License.
+   distribution, then any Derivative Works that You distribute must
+   include a readable copy of the attribution notices contained
+   within such NOTICE file, excluding those notices that do not
+   pertain to any part of the Derivative Works, in at least one
+   of the following places: within a NOTICE text file distributed
+   as part of the Derivative Works; within the Source form or
+   documentation, if provided along with the Derivative Works; or,
+   within a display generated by the Derivative Works, if and
+   wherever such third-party notices normally appear. The contents
+   of the NOTICE file are for informational purposes only and
+   do not modify the License. You may add Your own attribution
+   notices within Derivative Works that You distribute, alongside
+   or as an addendum to the NOTICE text from the Work, provided
+   that such additional attribution notices cannot be construed
+   as modifying the License.
 
    You may add Your own copyright statement to Your modifications and
    may provide additional or different license terms and conditions
@@ -750,14 +759,14 @@ TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
 
 END OF TERMS AND CONDITIONS
 
-___
+---
 
 ### expat
 
 The pyexpat extension is built using an included copy of the expat sources unless the build is configured --with-system-expat:
 
 Copyright (c) 1998, 1999, 2000 Thai Open Source Software Center Ltd
-                               and Clark Cooper
+and Clark Cooper
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
@@ -778,13 +787,13 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
 TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-___
+---
 
 ### libffi
 
-The _ctypes C extension underlying the ctypes module is built using an included copy of the libffi sources unless the build is configured --with-system-libffi:
+The \_ctypes C extension underlying the ctypes module is built using an included copy of the libffi sources unless the build is configured --with-system-libffi:
 
-Copyright (c) 1996-2008  Red Hat, Inc and others.
+Copyright (c) 1996-2008 Red Hat, Inc and others.
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
@@ -800,13 +809,13 @@ in all copies or substantial portions of the Software.
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
 HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
 WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
-___
+---
 
 ### zlib
 
@@ -815,7 +824,7 @@ The zlib extension is built using an included copy of the zlib sources if the zl
 Copyright (C) 1995-2011 Jean-loup Gailly and Mark Adler
 
 This software is provided 'as-is', without any express or implied
-warranty.  In no event will the authors be held liable for any damages
+warranty. In no event will the authors be held liable for any damages
 arising from the use of this software.
 
 Permission is granted to anyone to use this software for any purpose,
@@ -832,10 +841,10 @@ freely, subject to the following restrictions:
 
 3. This notice may not be removed or altered from any source distribution.
 
-Jean-loup Gailly        Mark Adler
-jloup@gzip.org          madler@alumni.caltech.edu
+Jean-loup Gailly Mark Adler
+jloup@gzip.org madler@alumni.caltech.edu
 
-___
+---
 
 ### cfuhash
 
@@ -850,17 +859,17 @@ Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions
 are met:
 
-  * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
+- Redistributions of source code must retain the above copyright
+  notice, this list of conditions and the following disclaimer.
 
-  * Redistributions in binary form must reproduce the above
-    copyright notice, this list of conditions and the following
-    disclaimer in the documentation and/or other materials provided
-    with the distribution.
+- Redistributions in binary form must reproduce the above
+  copyright notice, this list of conditions and the following
+  disclaimer in the documentation and/or other materials provided
+  with the distribution.
 
-  * Neither the name of the author nor the names of its
-    contributors may be used to endorse or promote products derived
-    from this software without specific prior written permission.
+- Neither the name of the author nor the names of its
+  contributors may be used to endorse or promote products derived
+  from this software without specific prior written permission.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
@@ -875,11 +884,11 @@ STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
 OF THE POSSIBILITY OF SUCH DAMAGE.
 
-___
+---
 
 ### libmpdec
 
-The _decimal C extension underlying the decimal module is built using an included copy of the libmpdec library unless the build is configured --with-system-libmpdec:
+The \_decimal C extension underlying the decimal module is built using an included copy of the libmpdec library unless the build is configured --with-system-libmpdec:
 
 Copyright (c) 2008-2020 Stefan Krah. All rights reserved.
 
@@ -897,7 +906,7 @@ are met:
 THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS "AS IS" AND
 ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
 FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
 DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
 OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -906,7 +915,7 @@ LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
 OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 SUCH DAMAGE.
 
-___
+---
 
 ### W3C C14N test suite
 
@@ -919,12 +928,12 @@ Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions
 are met:
 
-* Redistributions of works must retain the original copyright notice,
+- Redistributions of works must retain the original copyright notice,
   this list of conditions and the following disclaimer.
-* Redistributions in binary form must reproduce the original copyright
+- Redistributions in binary form must reproduce the original copyright
   notice, this list of conditions and the following disclaimer in the
   documentation and/or other materials provided with the distribution.
-* Neither the name of the W3C nor the names of its contributors may be
+- Neither the name of the W3C nor the names of its contributors may be
   used to endorse or promote products derived from this work without
   specific prior written permission.
 
@@ -940,7 +949,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-___
+---
 
 ### mimalloc
 
@@ -966,13 +975,13 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-___
+---
 
 ### asyncio
 
 Parts of the asyncio module are incorporated from uvloop 0.16, which is distributed under the MIT license:
 
-Copyright (c) 2015-2021 MagicStack Inc.  http://magic.io
+Copyright (c) 2015-2021 MagicStack Inc. http://magic.io
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
@@ -993,7 +1002,7 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-___
+---
 
 ### Global Unbounded Sequences (GUS)
 
@@ -1004,6 +1013,7 @@ Copyright (c) 2019,2020 Jeffrey Roberson <jeff@FreeBSD.org>
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions
 are met:
+
 1. Redistributions of source code must retain the above copyright
    notice unmodified, this list of conditions, and the following
    disclaimer.
@@ -1021,6 +1031,3 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-
-
