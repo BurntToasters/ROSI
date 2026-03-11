@@ -97,4 +97,46 @@ describe('gpu detection', () => {
     });
     expect(logErrorMock).toHaveBeenCalled();
   });
+
+  it('returns cached result on second call within TTL', async () => {
+    const proc = createProc();
+    spawnWithEnvMock.mockReturnValue(proc);
+
+    const pending = detectGpu();
+    proc.stdout.emit('data', Buffer.from('h264_nvenc\n'));
+    proc.emit('close', 0);
+    await pending;
+
+    const second = await detectGpu();
+    expect(second).toEqual({ nvidia: true, amd: false, intel: false });
+    expect(spawnWithEnvMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-detects after cache TTL expires', async () => {
+    vi.useFakeTimers();
+    try {
+      const proc1 = createProc();
+      spawnWithEnvMock.mockReturnValue(proc1);
+
+      const pending1 = detectGpu();
+      proc1.stdout.emit('data', Buffer.from('h264_nvenc\n'));
+      proc1.emit('close', 0);
+      await pending1;
+
+      vi.advanceTimersByTime(300_001);
+
+      const proc2 = createProc();
+      spawnWithEnvMock.mockReturnValue(proc2);
+
+      const pending2 = detectGpu();
+      proc2.stdout.emit('data', Buffer.from('h264_amf\n'));
+      proc2.emit('close', 0);
+      const result = await pending2;
+
+      expect(result).toEqual({ nvidia: false, amd: true, intel: false });
+      expect(spawnWithEnvMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

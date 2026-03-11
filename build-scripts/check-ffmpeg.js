@@ -1,7 +1,9 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const projectRoot = path.resolve(__dirname, '..');
+const checksumsPath = path.join(projectRoot, 'resources', 'ffmpeg', 'checksums.json');
 
 const REQUIRED_BINARIES = {
   win: {
@@ -42,7 +44,7 @@ function normalizeArch(value) {
 
 function usage() {
   console.error(
-    'Usage: node build-scripts/check-ffmpeg.js [--all] [--current] [--target <platform:arch>]...'
+    'Usage: node build-scripts/check-ffmpeg.js [--all] [--current] [--target <platform:arch>]... [--generate-checksums]'
   );
   process.exit(1);
 }
@@ -89,6 +91,7 @@ function dedupeTargets(targets) {
 function parseArgs(args) {
   let explicitAll = false;
   let includeCurrent = false;
+  let generateChecksums = false;
   const targets = [];
 
   for (let i = 0; i < args.length; i += 1) {
@@ -99,6 +102,10 @@ function parseArgs(args) {
     }
     if (arg === '--current') {
       includeCurrent = true;
+      continue;
+    }
+    if (arg === '--generate-checksums') {
+      generateChecksums = true;
       continue;
     }
     if (arg === '--target') {
@@ -118,11 +125,10 @@ function parseArgs(args) {
     usage();
   }
 
+  let resolvedTargets;
   if (explicitAll) {
-    return allTargets();
-  }
-
-  if (includeCurrent) {
+    resolvedTargets = allTargets();
+  } else if (includeCurrent) {
     const platform = normalizePlatform(process.platform);
     const arch = normalizeArch(process.arch);
     if (!platform || !arch || !REQUIRED_BINARIES[platform]?.[arch]) {
@@ -130,17 +136,49 @@ function parseArgs(args) {
       process.exit(1);
     }
     targets.push({ platform, arch });
+    resolvedTargets = dedupeTargets(targets);
+  } else if (targets.length === 0) {
+    resolvedTargets = allTargets();
+  } else {
+    resolvedTargets = dedupeTargets(targets);
   }
 
-  if (targets.length === 0) {
-    return allTargets();
-  }
+  return { targets: resolvedTargets, generateChecksums };
+}
 
-  return dedupeTargets(targets);
+function computeSha256(filePath) {
+  const data = fs.readFileSync(filePath);
+  return crypto.createHash('sha256').update(data).digest('hex');
+}
+
+function loadChecksums() {
+  if (!fs.existsSync(checksumsPath)) return null;
+  return JSON.parse(fs.readFileSync(checksumsPath, 'utf8'));
+}
+
+function generateChecksumManifest(targets) {
+  const manifest = loadChecksums() || {};
+  for (const target of targets) {
+    const relativePath = REQUIRED_BINARIES[target.platform][target.arch];
+    const absolutePath = path.join(projectRoot, relativePath);
+    if (!fs.existsSync(absolutePath)) {
+      console.error(`Cannot generate checksum — binary missing: ${relativePath}`);
+      process.exit(1);
+    }
+    const key = `${target.platform}:${target.arch}`;
+    manifest[key] = {
+      path: relativePath,
+      sha256: computeSha256(absolutePath),
+    };
+  }
+  fs.writeFileSync(checksumsPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+  console.log(`Checksums written to resources/ffmpeg/checksums.json`);
 }
 
 function validateTargets(targets) {
   const missing = [];
+  const checksumErrors = [];
+  const manifest = loadChecksums();
 
   for (const target of targets) {
     const relativePath = REQUIRED_BINARIES[target.platform][target.arch];
@@ -153,6 +191,22 @@ function validateTargets(targets) {
     const stats = fs.statSync(absolutePath);
     if (!stats.isFile()) {
       missing.push(`${target.platform}:${target.arch} -> ${relativePath} (not a file)`);
+      continue;
+    }
+
+    if (manifest) {
+      const key = `${target.platform}:${target.arch}`;
+      const entry = manifest[key];
+      if (!entry) {
+        checksumErrors.push(`${key} -> no checksum entry in manifest`);
+      } else {
+        const actual = computeSha256(absolutePath);
+        if (actual !== entry.sha256) {
+          checksumErrors.push(
+            `${key} -> SHA-256 mismatch\n  expected: ${entry.sha256}\n  actual:   ${actual}`
+          );
+        }
+      }
     }
   }
 
@@ -165,10 +219,25 @@ function validateTargets(targets) {
     console.error('\nSee resources/ffmpeg/README.md for the required structure.');
     process.exit(1);
   }
+
+  if (checksumErrors.length > 0) {
+    console.error('\nFFmpeg checksum verification failed.');
+    for (const item of checksumErrors) {
+      console.error(`- ${item}`);
+    }
+    console.error('\nRegenerate with: node build-scripts/check-ffmpeg.js --generate-checksums');
+    process.exit(1);
+  }
 }
 
-const targets = parseArgs(process.argv.slice(2));
-validateTargets(targets);
+const { targets, generateChecksums: shouldGenerate } = parseArgs(process.argv.slice(2));
+if (shouldGenerate) {
+  validateTargets(targets);
+  generateChecksumManifest(targets);
+} else {
+  validateTargets(targets);
+}
+const checksumNote = loadChecksums() ? ' (checksums verified)' : ' (no checksum manifest found)';
 console.log(
-  `FFmpeg prebuild check passed for: ${targets.map((t) => `${t.platform}:${t.arch}`).join(', ')}`
+  `FFmpeg prebuild check passed for: ${targets.map((t) => `${t.platform}:${t.arch}`).join(', ')}${checksumNote}`
 );

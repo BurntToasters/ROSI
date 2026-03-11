@@ -23,11 +23,11 @@ export function isBetaVersion(version: string): boolean {
 }
 
 export function parseVersion(v: string): ParsedVersion {
-  const cleaned = v.trim().replace(/^v/i, '').split('+')[0];
+  const cleaned = v.trim().replace(/^v/i, '').split('+')[0] ?? '';
   const match = cleaned.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?/);
   if (!match) return { major: 0, minor: 0, patch: 0, prerelease: [] as string[] };
   return {
-    major: parseInt(match[1], 10) || 0,
+    major: parseInt(match[1] ?? '0', 10) || 0,
     minor: match[2] ? parseInt(match[2], 10) : 0,
     patch: match[3] ? parseInt(match[3], 10) : 0,
     prerelease: match[4] ? match[4].split('.') : ([] as string[]),
@@ -39,10 +39,12 @@ export function comparePrerelease(a: string[], b: string[]): number {
   if (a.length === 0) return 1;
   if (b.length === 0) return -1;
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    if (a[i] === undefined) return -1;
-    if (b[i] === undefined) return 1;
-    const aNum = /^\d+$/.test(a[i]) ? parseInt(a[i], 10) : null;
-    const bNum = /^\d+$/.test(b[i]) ? parseInt(b[i], 10) : null;
+    const ai = a[i];
+    const bi = b[i];
+    if (ai === undefined) return -1;
+    if (bi === undefined) return 1;
+    const aNum = /^\d+$/.test(ai) ? parseInt(ai, 10) : null;
+    const bNum = /^\d+$/.test(bi) ? parseInt(bi, 10) : null;
     if (aNum !== null && bNum !== null) {
       if (aNum !== bNum) return aNum > bNum ? 1 : -1;
     } else if (aNum !== null) {
@@ -50,7 +52,7 @@ export function comparePrerelease(a: string[], b: string[]): number {
     } else if (bNum !== null) {
       return 1;
     } else {
-      const cmp = a[i].localeCompare(b[i]);
+      const cmp = ai.localeCompare(bi);
       if (cmp !== 0) return cmp;
     }
   }

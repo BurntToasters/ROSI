@@ -161,7 +161,9 @@ export function saveSettings(
     const completeSettings = normalizeSettingsVersion(
       migrateSettings({ ...existing, ...newSettings })
     );
-    fs.writeFileSync(settingsPath, JSON.stringify(completeSettings, null, 2));
+    const tmpPath = `${settingsPath}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(completeSettings, null, 2));
+    fs.renameSync(tmpPath, settingsPath);
     return true;
   } catch (error) {
     log.error('Failed to save settings:', error);
@@ -203,7 +205,12 @@ export function loadStats(): DownloadStats {
       stats.cancelledDownloads = loaded.cancelledDownloads;
     if (typeof loaded.totalBytesDownloaded === 'number')
       stats.totalBytesDownloaded = loaded.totalBytesDownloaded;
-    if (loaded.formatCounts && typeof loaded.formatCounts === 'object')
+    if (
+      loaded.formatCounts &&
+      typeof loaded.formatCounts === 'object' &&
+      !Array.isArray(loaded.formatCounts) &&
+      loaded.formatCounts !== null
+    )
       stats.formatCounts = { ...loaded.formatCounts };
     if (typeof loaded.firstDownloadAt === 'number') stats.firstDownloadAt = loaded.firstDownloadAt;
     if (typeof loaded.lastDownloadAt === 'number') stats.lastDownloadAt = loaded.lastDownloadAt;
@@ -217,7 +224,9 @@ export function saveStats(stats: DownloadStats): boolean {
   try {
     const dir = path.dirname(statsPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(statsPath, JSON.stringify(stats, null, 2));
+    const tmpPath = `${statsPath}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(stats, null, 2));
+    fs.renameSync(tmpPath, statsPath);
     return true;
   } catch (error) {
     log.error('Failed to save stats:', error);

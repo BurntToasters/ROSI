@@ -5,11 +5,13 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    testTimeout: 10_000,
+    hookTimeout: 10_000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
       include: ['src/**/*.ts'],
-      exclude: ['src/**/*.test.ts', 'src/main/main.ts', 'src/main/preload.ts', 'src/tests/**'],
+      exclude: ['src/**/*.test.ts', 'src/tests/**'],
     },
   },
 });

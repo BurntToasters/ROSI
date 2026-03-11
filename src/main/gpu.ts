@@ -6,13 +6,16 @@ import { GPU_DETECT_TIMEOUT_MS, MAX_ERROR_BUFFER } from './constants';
 import type { GpuDetectionResult } from '../types';
 
 let cachedGpuResult: GpuDetectionResult | null = null;
+let gpuCacheTimestamp = 0;
+const GPU_CACHE_TTL_MS = 300_000;
 
 export function clearGpuCache(): void {
   cachedGpuResult = null;
+  gpuCacheTimestamp = 0;
 }
 
 export async function detectGpu(): Promise<GpuDetectionResult> {
-  if (cachedGpuResult) return cachedGpuResult;
+  if (cachedGpuResult && Date.now() - gpuCacheTimestamp < GPU_CACHE_TTL_MS) return cachedGpuResult;
   const result: GpuDetectionResult = { nvidia: false, amd: false, intel: false };
   const settings = loadSettings();
   const ffmpegCommand = getEffectiveFfmpegPath(settings.ffmpegPath);
@@ -52,5 +55,6 @@ export async function detectGpu(): Promise<GpuDetectionResult> {
   }
 
   cachedGpuResult = result;
+  gpuCacheTimestamp = Date.now();
   return result;
 }
