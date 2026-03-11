@@ -128,6 +128,15 @@ describe('ipc validation helpers', () => {
     expect(invalid.ok).toBe(false);
   });
 
+  it('validates audioFormat in settings patch payload', () => {
+    const valid = validateSettingsPatchPayload({ audioFormat: 'flac' });
+    expect(valid.ok).toBe(true);
+    if (valid.ok) expect(valid.data.audioFormat).toBe('flac');
+
+    expect(validateSettingsPatchPayload({ audioFormat: 'invalid' }).ok).toBe(false);
+    expect(validateSettingsPatchPayload({ audioFormat: 42 }).ok).toBe(false);
+  });
+
   it('validates external URL and file path payloads', () => {
     expect(validateExternalUrlPayload('  https://example.com  ').ok).toBe(true);
     expect(validateExternalUrlPayload(42).ok).toBe(false);

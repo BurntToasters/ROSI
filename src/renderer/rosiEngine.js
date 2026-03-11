@@ -1200,24 +1200,32 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  let persistDebounceTimer = null;
+
   async function persistSettings(silent = false) {
-    try {
-      const result = await window.api.saveSettings(settings);
-      if (!result || result.ok !== true) {
-        if (!silent) {
-          const message = result?.error?.message || 'Could not save settings.';
-          showSettingsSaveError(`${message}\nChanges may not persist after restart.`);
+    if (persistDebounceTimer) clearTimeout(persistDebounceTimer);
+    return new Promise((resolve) => {
+      persistDebounceTimer = setTimeout(async () => {
+        try {
+          const result = await window.api.saveSettings(settings);
+          if (!result || result.ok !== true) {
+            if (!silent) {
+              const message = result?.error?.message || 'Could not save settings.';
+              showSettingsSaveError(`${message}\nChanges may not persist after restart.`);
+            }
+            resolve(false);
+            return;
+          }
+          settings = result.data;
+          resolve(true);
+        } catch (_error) {
+          if (!silent) {
+            showSettingsSaveError('Could not save settings due to an unexpected error.');
+          }
+          resolve(false);
         }
-        return false;
-      }
-      settings = result.data;
-      return true;
-    } catch (_error) {
-      if (!silent) {
-        showSettingsSaveError('Could not save settings due to an unexpected error.');
-      }
-      return false;
-    }
+      }, 300);
+    });
   }
 
   const consoleToggle = document.getElementById('consoleToggle');
@@ -1244,6 +1252,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const themeSelect = document.getElementById('themeSelect');
   const bestQualityToggle = document.getElementById('bestQualityToggle');
   const audioOnlyToggle = document.getElementById('audioOnlyToggle');
+  const audioFormatContainer = document.getElementById('audioFormatContainer');
+  const audioFormatSelect = document.getElementById('audioFormatSelect');
   const notificationsToggle = document.getElementById('notificationsToggle');
   const checkUpdatesOnStartupToggle = document.getElementById('checkUpdatesOnStartupToggle');
   const checkUpdatesOnStartupLabel = document.getElementById('checkUpdatesOnStartupLabel');
@@ -1270,6 +1280,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   const supportProjectLink = document.getElementById('supportProjectLink');
   const licensesLink = document.getElementById('licensesLink');
   const licensesFrame = document.getElementById('licenses-frame');
+  const exportSettingsBtn = document.getElementById('exportSettingsBtn');
+  const importSettingsBtn = document.getElementById('importSettingsBtn');
+  const viewStatsBtn = document.getElementById('viewStatsBtn');
+  const queueUrlInput = document.getElementById('queueUrlInput');
+  const addToQueueBtn = document.getElementById('addToQueueBtn');
+  const startQueueBtn = document.getElementById('startQueueBtn');
+  const clearQueueBtn = document.getElementById('clearQueueBtn');
+  const cancelQueueBtn = document.getElementById('cancelQueueBtn');
+  const queueList = document.getElementById('queueList');
+  const queueCount = document.getElementById('queueCount');
+  const queueSection = document.getElementById('queue-section');
 
   if (fetchFormatsBtn) fetchFormatsBtn._originalClick = fetchFormats;
   if (downloadBtn) downloadBtn._originalClick = null;
@@ -1401,13 +1422,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         audioOnlyToggle.parentElement.title = '';
       }
     }
+    if (audioFormatSelect) {
+      audioFormatSelect.value = settings.audioFormat ?? 'mp3';
+    }
+    if (audioFormatContainer) {
+      if (settings.audioOnly) {
+        audioFormatContainer.classList.add('visible');
+      } else {
+        audioFormatContainer.classList.remove('visible');
+      }
+    }
     // disable convert when audio-only is enabled
     if (convertToggle) {
       convertToggle.disabled = settings.audioOnly ?? false;
       if (settings.audioOnly) {
         convertToggle.parentElement.classList.add('disabled');
-        convertToggle.parentElement.title =
-          'Disabled when Audio-only mode is enabled (audio already extracted as MP3)';
+        convertToggle.parentElement.title = 'Disabled when Audio-only mode is enabled';
       } else {
         convertToggle.parentElement.classList.remove('disabled');
         convertToggle.parentElement.title = '';
@@ -1828,6 +1858,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     audioOnlyToggle.addEventListener('change', (e) => {
       settings.audioOnly = e.target.checked;
 
+      if (audioFormatContainer) {
+        if (e.target.checked) {
+          audioFormatContainer.classList.add('visible');
+        } else {
+          audioFormatContainer.classList.remove('visible');
+        }
+      }
+
       if (bestQualityToggle) {
         bestQualityToggle.disabled = e.target.checked;
         if (e.target.checked) {
@@ -1847,8 +1885,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           convertToggle.checked = false;
           settings.convertEnabled = false;
           convertToggle.parentElement.classList.add('disabled');
-          convertToggle.parentElement.title =
-            'Disabled when Audio-only mode is enabled (audio already extracted as MP3)';
+          convertToggle.parentElement.title = 'Disabled when Audio-only mode is enabled';
           if (convertFormatContainer) convertFormatContainer.classList.remove('visible');
           if (keepOriginalLabel) keepOriginalLabel.classList.remove('visible');
         } else {
@@ -1857,6 +1894,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
 
+      void persistSettings();
+    });
+  }
+
+  if (audioFormatSelect) {
+    audioFormatSelect.addEventListener('change', (e) => {
+      settings.audioFormat = e.target.value;
       void persistSettings();
     });
   }
@@ -1905,6 +1949,174 @@ document.addEventListener('DOMContentLoaded', async () => {
         ],
       });
     });
+
+  if (exportSettingsBtn) {
+    exportSettingsBtn.addEventListener('click', async () => {
+      const result = await window.api.exportSettings();
+      if (result && result.ok) {
+        showToast('Settings exported successfully.', { type: 'success' });
+      }
+    });
+  }
+
+  if (importSettingsBtn) {
+    importSettingsBtn.addEventListener('click', async () => {
+      showModal({
+        title: 'Import Settings',
+        message:
+          'Importing settings will overwrite your current settings and restart ROSI. Continue?',
+        buttons: [
+          { label: 'Cancel' },
+          {
+            label: 'Import',
+            action: async () => {
+              const result = await window.api.importSettings();
+              if (result && result.ok) {
+                showToast('Settings imported. Restarting...', { type: 'success' });
+                setTimeout(() => window.api.restartApp(), 1000);
+              }
+            },
+          },
+        ],
+      });
+    });
+  }
+
+  if (viewStatsBtn) {
+    viewStatsBtn.addEventListener('click', async () => {
+      try {
+        const stats = await window.api.getStats();
+        const formatList = Object.entries(stats.formatCounts || {})
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5)
+          .map(([fmt, count]) => `${fmt}: ${count}`)
+          .join(', ');
+        showModal({
+          title: 'Download Statistics',
+          message: [
+            `Total downloads: ${stats.totalDownloads}`,
+            `Successful: ${stats.successfulDownloads}`,
+            `Failed: ${stats.failedDownloads}`,
+            `Cancelled: ${stats.cancelledDownloads}`,
+            `Total downloaded: ${formatBytes(stats.totalBytesDownloaded)}`,
+            formatList ? `Top formats: ${formatList}` : '',
+            stats.lastDownloadAt
+              ? `Last download: ${formatRelativeTime(stats.lastDownloadAt)}`
+              : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          buttons: [
+            {
+              label: 'Reset Stats',
+              action: async () => {
+                await window.api.resetStats();
+                showToast('Statistics reset.', { type: 'info' });
+              },
+            },
+            { label: 'Close' },
+          ],
+        });
+      } catch (e) {
+        showToast('Could not load statistics.', { type: 'error' });
+      }
+    });
+  }
+
+  function renderQueue(queue) {
+    if (!queueList || !queueSection) return;
+    if (queueCount) queueCount.textContent = String(queue.length);
+    if (queue.length === 0) {
+      queueSection.classList.remove('has-items');
+      queueList.innerHTML = '';
+      return;
+    }
+    queueSection.classList.add('has-items');
+    queueList.innerHTML = '';
+    queue.forEach((item) => {
+      const el = document.createElement('div');
+      el.className = `queue-item queue-${item.status}`;
+      const statusIcon =
+        item.status === 'completed'
+          ? '✅'
+          : item.status === 'failed'
+            ? '❌'
+            : item.status === 'cancelled'
+              ? '⏹️'
+              : item.status === 'downloading'
+                ? '⏳'
+                : '⏸️';
+      let urlDisplay;
+      try {
+        urlDisplay = new URL(item.url).hostname + new URL(item.url).pathname.slice(0, 30);
+      } catch {
+        urlDisplay = item.url.slice(0, 40);
+      }
+      el.innerHTML = `
+        <span class="queue-item-status">${statusIcon}</span>
+        <span class="queue-item-url" title="${escapeHtml(item.url)}">${escapeHtml(urlDisplay)}</span>
+        ${item.status === 'pending' ? '<button class="queue-item-remove" aria-label="Remove">✕</button>' : ''}
+      `;
+      const removeBtn = el.querySelector('.queue-item-remove');
+      if (removeBtn) {
+        removeBtn.addEventListener('click', () => {
+          window.api.removeFromQueue(item.id);
+        });
+      }
+      queueList.appendChild(el);
+    });
+  }
+
+  if (addToQueueBtn && queueUrlInput) {
+    addToQueueBtn.addEventListener('click', async () => {
+      const raw = queueUrlInput.value.trim();
+      if (!raw) {
+        showToast('Enter one or more URLs (one per line).', { type: 'warning' });
+        return;
+      }
+      const urls = raw
+        .split(/[\n,]+/)
+        .map((u) => u.trim())
+        .filter((u) => u.length > 0);
+      const result = await window.api.addToQueue(urls);
+      if (result && result.ok) {
+        queueUrlInput.value = '';
+        showToast(`Added ${result.data.added} URL(s) to queue.`, { type: 'success' });
+      } else {
+        showToast(result?.error?.message || 'Failed to add URLs.', { type: 'error' });
+      }
+    });
+  }
+
+  if (startQueueBtn) {
+    startQueueBtn.addEventListener('click', async () => {
+      const result = await window.api.startQueue();
+      if (result && result.ok) {
+        showToast('Queue started.', { type: 'info' });
+      } else {
+        showToast(result?.error?.message || 'Could not start queue.', { type: 'warning' });
+      }
+    });
+  }
+
+  if (clearQueueBtn) {
+    clearQueueBtn.addEventListener('click', async () => {
+      await window.api.clearQueue();
+      showToast('Queue cleared.', { type: 'info' });
+    });
+  }
+
+  if (cancelQueueBtn) {
+    cancelQueueBtn.addEventListener('click', () => {
+      window.api.cancelQueue();
+      showToast('Queue cancelled.', { type: 'info' });
+    });
+  }
+
+  window.api
+    .getQueue()
+    .then((queue) => renderQueue(queue))
+    .catch(() => {});
 
   if (fetchFormatsBtn) {
     fetchFormatsBtn.onclick = fetchFormats;
@@ -2138,6 +2350,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     })
   );
+
+  ipcCleanupFunctions.push(
+    window.api.onQueueUpdate((queue) => {
+      renderQueue(queue);
+    })
+  );
+
+  window.api
+    .getQueue()
+    .then((queue) => renderQueue(queue))
+    .catch(() => {});
 
   window.addEventListener('beforeunload', () => {
     ipcCleanupFunctions.forEach((cleanup) => {

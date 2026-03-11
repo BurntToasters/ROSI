@@ -4,7 +4,7 @@ import sanitize from 'sanitize-filename';
 import { dialog } from 'electron';
 import log from 'electron-log/main';
 import { spawnWithEnv, getEffectiveFfmpegPath, ytdlpBinary, isWindows } from './platform';
-import { loadSettings } from './settings';
+import { loadSettings, recordDownload } from './settings';
 import { buildFfmpegArgs, buildYtdlpArgs, resolveVideoEncoder } from './download/commandBuilders';
 import { isSafeHttpUrl } from '../utils/validation';
 import {
@@ -52,6 +52,20 @@ function completeSession(
     safeSend(session.sender, 'progress', progressMessage);
   }
   safeSend(session.sender, 'complete', statusMessage);
+
+  const normalizedMsg = statusMessage.toLowerCase();
+  if (normalizedMsg.includes('cancel')) {
+    recordDownload('cancelled');
+  } else if (
+    normalizedMsg.includes('✅') ||
+    normalizedMsg.includes('complete') ||
+    normalizedMsg.includes('done')
+  ) {
+    recordDownload('success');
+  } else if (normalizedMsg.includes('❌') || normalizedMsg.includes('fail')) {
+    recordDownload('failed');
+  }
+
   activeDownloadSession = null;
   ytdlpProcess = null;
   ffmpegProcess = null;
@@ -453,7 +467,10 @@ export function startDownload(
       let downloadedFilePath: string | null = null;
       try {
         const outputLines = downloadOutputData.trim().split('\n');
-        downloadedFilePath = outputLines.filter((line) => line.trim() !== '').pop() ?? null;
+        const pathLines = outputLines
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0 && !l.startsWith('[') && !l.startsWith('WARNING'));
+        downloadedFilePath = pathLines.length > 0 ? pathLines[pathLines.length - 1] : null;
         if (!downloadedFilePath) {
           throw new Error("Could not find a valid filepath in yt-dlp's output.");
         }

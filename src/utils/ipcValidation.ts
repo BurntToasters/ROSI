@@ -11,6 +11,7 @@ import { isSafeExternalUrl, isSafeHttpUrl } from './validation';
 const ALLOWED_GPU_TYPES = new Set(['auto', 'nvidia', 'amd', 'intel']);
 const ALLOWED_UPDATE_CHANNELS = new Set(['auto', 'stable', 'beta']);
 const ALLOWED_THEMES = new Set(['system', 'light', 'dark', 'purple']);
+const ALLOWED_AUDIO_FORMATS = new Set(['mp3', 'flac', 'ogg', 'wav', 'm4a', 'opus']);
 
 type ValidationResult<T> = { ok: true; data: T } | { ok: false; error: IpcErrorPayload };
 
@@ -136,6 +137,7 @@ function isValidSettingsKey(key: string): key is keyof Settings {
     key === 'consoleCollapsed' ||
     key === 'advancedOptions' ||
     key === 'audioOnly' ||
+    key === 'audioFormat' ||
     key === 'convertEnabled' ||
     key === 'convertFormat' ||
     key === 'keepOriginalAfterConvert' ||
@@ -233,6 +235,20 @@ export function validateSettingsPatchPayload(value: unknown): ValidationResult<P
         };
       }
       patch.gpuType = rawValue as Settings['gpuType'];
+      continue;
+    }
+
+    if (rawKey === 'audioFormat') {
+      if (!isString(rawValue) || !ALLOWED_AUDIO_FORMATS.has(rawValue)) {
+        return {
+          ok: false,
+          error: buildError(
+            'VALIDATION_ERROR',
+            'audioFormat must be one of: mp3, flac, ogg, wav, m4a, opus.'
+          ),
+        };
+      }
+      patch.audioFormat = rawValue as Settings['audioFormat'];
       continue;
     }
 

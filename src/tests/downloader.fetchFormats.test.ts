@@ -48,7 +48,9 @@ vi.mock('../main/settings', () => ({
     hideSupportModal: false,
     checkUpdatesOnStartup: true,
     updateChannel: 'auto',
+    audioFormat: 'mp3',
   })),
+  recordDownload: vi.fn(),
 }));
 
 vi.mock('electron', () => ({

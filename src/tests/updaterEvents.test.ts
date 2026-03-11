@@ -89,6 +89,7 @@ function createSettings(overrides: Partial<Settings> = {}): Settings {
     hideSupportModal: false,
     checkUpdatesOnStartup: true,
     updateChannel: 'auto',
+    audioFormat: 'mp3',
     ...overrides,
   };
 }
