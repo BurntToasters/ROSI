@@ -46,6 +46,14 @@ log.initialize();
 
 process.on('uncaughtException', (error) => {
   log.error('Uncaught exception:', error);
+  try {
+    const { dialog: dlg } = require('electron');
+    dlg.showErrorBox(
+      'Fatal Error',
+      `ROSI encountered an unexpected error and must close.\n\n${error.message}`
+    );
+  } catch {}
+  process.exit(1);
 });
 
 process.on('unhandledRejection', (reason) => {
@@ -160,6 +168,7 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   killAllProcesses();
+  cancelFormats();
 });
 
 setupAutoUpdater(getMainWindow, loadSettings);
@@ -375,6 +384,45 @@ ipcMain.handle('reset-stats', () => {
 let downloadQueue: QueueItem[] = [];
 let isQueueRunning = false;
 let queueCancelled = false;
+let queueActiveItemId: string | null = null;
+let queueProcessingLock = false;
+
+const queuePath = path.join(app.getPath('userData'), 'download-queue.json');
+
+function loadPersistedQueue(): QueueItem[] {
+  try {
+    if (!fs.existsSync(queuePath)) return [];
+    const raw = fs.readFileSync(queuePath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (item: unknown): item is QueueItem =>
+          item !== null &&
+          typeof item === 'object' &&
+          typeof (item as QueueItem).id === 'string' &&
+          typeof (item as QueueItem).url === 'string'
+      )
+      .map((item: QueueItem) => ({
+        ...item,
+        status: item.status === 'downloading' ? ('pending' as const) : item.status,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function persistQueue(): void {
+  try {
+    const dir = path.dirname(queuePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(queuePath, JSON.stringify(downloadQueue, null, 2));
+  } catch (error) {
+    log.error('Failed to persist queue:', error);
+  }
+}
+
+downloadQueue = loadPersistedQueue();
 
 function generateQueueId(): string {
   return `q_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -384,84 +432,93 @@ function broadcastQueue() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('queue-update', downloadQueue);
   }
+  persistQueue();
 }
 
 async function processQueue() {
-  if (!isQueueRunning) return;
+  if (!isQueueRunning || queueProcessingLock) return;
+  queueProcessingLock = true;
 
-  const nextItem = downloadQueue.find((item) => item.status === 'pending');
-  if (!nextItem || queueCancelled) {
-    isQueueRunning = false;
-    queueCancelled = false;
-    broadcastQueue();
-    return;
-  }
-
-  nextItem.status = 'downloading';
-  broadcastQueue();
-
-  return new Promise<void>((resolve) => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      nextItem.status = 'failed';
-      nextItem.error = 'Window closed';
+  try {
+    const nextItem = downloadQueue.find((item) => item.status === 'pending');
+    if (!nextItem || queueCancelled) {
+      isQueueRunning = false;
+      queueCancelled = false;
+      queueActiveItemId = null;
       broadcastQueue();
-      resolve();
       return;
     }
 
-    const settings = loadSettings();
-    const options: DownloadRequestOptions = {
-      url: nextItem.url,
-      outputPath: app.getPath('downloads'),
-      ffmpegPath: settings.ffmpegPath || undefined,
-      convertFormat: settings.convertEnabled ? settings.convertFormat : undefined,
-      keepOriginal: settings.convertEnabled ? settings.keepOriginalAfterConvert : undefined,
-    };
+    nextItem.status = 'downloading';
+    queueActiveItemId = nextItem.id;
+    broadcastQueue();
 
-    const completeListener = (
-      _: Electron.IpcRendererEvent | Electron.Event,
-      statusMessage: string
-    ) => {
-      mainWindow?.webContents.removeListener('ipc-message', ipcListener);
-      const msg = String(statusMessage || '').toLowerCase();
-      if (msg.includes('cancel')) {
-        nextItem.status = 'cancelled';
-      } else if (msg.includes('✅') || msg.includes('complete') || msg.includes('done')) {
-        nextItem.status = 'completed';
-      } else {
+    await new Promise<void>((resolve) => {
+      if (!mainWindow || mainWindow.isDestroyed()) {
         nextItem.status = 'failed';
-        nextItem.error = statusMessage;
+        nextItem.error = 'Window closed';
+        queueActiveItemId = null;
+        broadcastQueue();
+        resolve();
+        return;
       }
-      broadcastQueue();
-      if (isQueueRunning && !queueCancelled) {
-        void processQueue().then(resolve);
-      } else {
+
+      const settings = loadSettings();
+      const options: DownloadRequestOptions = {
+        url: nextItem.url,
+        outputPath: app.getPath('downloads'),
+        ffmpegPath: settings.ffmpegPath || undefined,
+        convertFormat: settings.convertEnabled ? settings.convertFormat : undefined,
+        keepOriginal: settings.convertEnabled ? settings.keepOriginalAfterConvert : undefined,
+      };
+
+      const completeListener = (
+        _: Electron.IpcRendererEvent | Electron.Event,
+        statusMessage: string
+      ) => {
+        mainWindow?.webContents.removeListener('ipc-message', ipcListener);
+        const msg = String(statusMessage || '').toLowerCase();
+        if (msg.includes('cancel')) {
+          nextItem.status = 'cancelled';
+        } else if (msg.includes('\u2705') || msg.includes('complete') || msg.includes('done')) {
+          nextItem.status = 'completed';
+        } else {
+          nextItem.status = 'failed';
+          nextItem.error = statusMessage;
+        }
+        queueActiveItemId = null;
+        broadcastQueue();
+        resolve();
+      };
+
+      const ipcListener = (_: Electron.Event, channel: string, ...args: unknown[]) => {
+        if (channel === 'complete' && queueActiveItemId === nextItem.id) {
+          completeListener(_, args[0] as string);
+        }
+      };
+
+      mainWindow.webContents.on('ipc-message', ipcListener);
+
+      try {
+        startDownload(ytdlpPath, mainWindow.webContents, options, mainWindow);
+      } catch (error) {
+        mainWindow?.webContents.removeListener('ipc-message', ipcListener);
+        nextItem.status = 'failed';
+        nextItem.error = (error as Error).message;
+        queueActiveItemId = null;
+        broadcastQueue();
         resolve();
       }
-    };
+    });
 
-    const ipcListener = (_: Electron.Event, channel: string, ...args: unknown[]) => {
-      if (channel === 'complete') {
-        completeListener(_, args[0] as string);
-      }
-    };
-
-    mainWindow.webContents.on('ipc-message', ipcListener);
-
-    try {
-      startDownload(ytdlpPath, mainWindow.webContents, options, mainWindow);
-    } catch (error) {
-      mainWindow?.webContents.removeListener('ipc-message', ipcListener);
-      nextItem.status = 'failed';
-      nextItem.error = (error as Error).message;
-      broadcastQueue();
-      if (isQueueRunning && !queueCancelled) {
-        void processQueue().then(resolve);
-      } else {
-        resolve();
-      }
+    if (isQueueRunning && !queueCancelled) {
+      queueProcessingLock = false;
+      void processQueue();
+      return;
     }
-  });
+  } finally {
+    queueProcessingLock = false;
+  }
 }
 
 ipcMain.handle('add-to-queue', (_, urls) => {
@@ -489,7 +546,9 @@ ipcMain.handle('remove-from-queue', (_, id) => {
   }
   const idx = downloadQueue.findIndex((item) => item.id === id);
   if (idx === -1) return errorResult('NOT_AVAILABLE', 'Queue item not found.');
-  if (downloadQueue[idx].status === 'downloading') {
+  const item = downloadQueue[idx];
+  if (!item) return errorResult('NOT_AVAILABLE', 'Queue item not found.');
+  if (item.status === 'downloading') {
     return errorResult('VALIDATION_ERROR', 'Cannot remove an actively downloading item.');
   }
   downloadQueue.splice(idx, 1);
@@ -526,7 +585,10 @@ ipcMain.handle('start-queue', () => {
 ipcMain.on('cancel-queue', () => {
   queueCancelled = true;
   isQueueRunning = false;
-  cancelActiveSession(true);
+  if (queueActiveItemId) {
+    cancelActiveSession(true);
+    queueActiveItemId = null;
+  }
   downloadQueue.forEach((item) => {
     if (item.status === 'pending' || item.status === 'downloading') {
       item.status = 'cancelled';

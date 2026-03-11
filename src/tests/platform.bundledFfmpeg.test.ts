@@ -104,4 +104,23 @@ describe('platform bundled ffmpeg resolution', () => {
 
     expect(platform.getEffectiveFfmpegPath(customPath)).toBe(customPath);
   });
+
+  it('resolves relative paths to absolute via path.resolve', async () => {
+    const resourcesPath = createTempResourcesPath();
+    const platform = await loadPlatformModule(resourcesPath);
+
+    const result = platform.resolveFfmpegPath('../etc/ffmpeg');
+    expect(result).not.toBeNull();
+    expect(path.isAbsolute(result!)).toBe(true);
+    expect(result).not.toContain('..');
+  });
+
+  it('rejects null, empty, and whitespace-only custom paths', async () => {
+    const resourcesPath = createTempResourcesPath();
+    const platform = await loadPlatformModule(resourcesPath);
+
+    expect(platform.resolveFfmpegPath(null)).toBeNull();
+    expect(platform.resolveFfmpegPath('')).toBeNull();
+    expect(platform.resolveFfmpegPath('   ')).toBeNull();
+  });
 });

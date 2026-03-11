@@ -4,7 +4,12 @@ import { spawn } from 'child_process';
 import { BrowserWindow, dialog } from 'electron';
 import log from 'electron-log/main';
 import type { MessageBoxOptions } from 'electron';
-import { DENO_CHECK_TIMEOUT_MS, DENO_INSTALL_TIMEOUT_MS } from './constants';
+import {
+  DENO_CHECK_TIMEOUT_MS,
+  DENO_INSTALL_TIMEOUT_MS,
+  MAX_OUTPUT_BUFFER,
+  MAX_ERROR_BUFFER,
+} from './constants';
 import { isWindows } from './platform';
 
 function getDenoSearchPaths(): string[] {
@@ -139,11 +144,11 @@ export async function installDeno(
     }, DENO_INSTALL_TIMEOUT_MS);
 
     proc.stdout?.on('data', (data) => {
-      output += data.toString();
+      if (output.length < MAX_OUTPUT_BUFFER) output += data.toString();
     });
 
     proc.stderr?.on('data', (data) => {
-      error += data.toString();
+      if (error.length < MAX_ERROR_BUFFER) error += data.toString();
     });
 
     proc.on('close', (code) => {

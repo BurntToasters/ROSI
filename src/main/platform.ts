@@ -58,7 +58,9 @@ export function resolveFfmpegPath(customPath: unknown): string | null {
   const trimmed = customPath.trim();
   if (!trimmed) return null;
 
-  let candidate = trimmed;
+  const resolved = path.resolve(trimmed);
+
+  let candidate = resolved;
 
   try {
     if (fs.existsSync(candidate)) {
@@ -73,7 +75,7 @@ export function resolveFfmpegPath(customPath: unknown): string | null {
       }
     }
   } catch {
-    return trimmed;
+    return resolved;
   }
 
   return candidate;

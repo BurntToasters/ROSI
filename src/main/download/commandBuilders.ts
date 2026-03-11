@@ -1,6 +1,20 @@
 import type { DownloadRequestOptions, GpuDetectionResult, Settings } from '../../types';
 import { detectGpu } from '../gpu';
 
+const VALID_FORMAT_ID = /^\d+$/;
+const ALLOWED_BROWSERS = new Set([
+  'brave',
+  'chrome',
+  'chromium',
+  'edge',
+  'firefox',
+  'opera',
+  'safari',
+  'vivaldi',
+  'whale',
+]);
+const ALLOWED_AUDIO_FORMATS = new Set(['mp3', 'flac', 'ogg', 'wav', 'm4a', 'opus']);
+
 export async function resolveVideoEncoder(settings: Settings): Promise<string> {
   if (!settings.gpuAcceleration) return 'copy';
   if (settings.gpuType === 'nvidia') return 'h264_nvenc';
@@ -87,28 +101,35 @@ export function buildYtdlpArgs({
   }
 
   const formatFlagIndex = args.indexOf('-f');
-  if (options.videoFormat && options.audioFormat) {
-    args[formatFlagIndex + 1] = `${options.videoFormat}+${options.audioFormat}`;
-    statusMessages.push(
-      `📹 Using formats: video=${options.videoFormat}, audio=${options.audioFormat}`
-    );
-  } else if (options.videoFormat) {
-    args[formatFlagIndex + 1] = options.videoFormat;
-    statusMessages.push(`📹 Using video format: ${options.videoFormat}`);
-  } else if (options.audioFormat) {
-    args[formatFlagIndex + 1] = options.audioFormat;
-    statusMessages.push(`🎵 Using audio format: ${options.audioFormat}`);
+  const videoFmt = options.videoFormat;
+  const audioFmt = options.audioFormat;
+  const validVideo = videoFmt && VALID_FORMAT_ID.test(videoFmt);
+  const validAudio = audioFmt && VALID_FORMAT_ID.test(audioFmt);
+  if (validVideo && validAudio) {
+    args[formatFlagIndex + 1] = `${videoFmt}+${audioFmt}`;
+    statusMessages.push(`📹 Using formats: video=${videoFmt}, audio=${audioFmt}`);
+  } else if (validVideo) {
+    args[formatFlagIndex + 1] = videoFmt;
+    statusMessages.push(`📹 Using video format: ${videoFmt}`);
+  } else if (validAudio) {
+    args[formatFlagIndex + 1] = audioFmt;
+    statusMessages.push(`🎵 Using audio format: ${audioFmt}`);
   }
 
-  if (settings.audioOnly && !options.videoFormat && !options.audioFormat) {
+  if (settings.audioOnly && !validVideo && !validAudio) {
     args.splice(formatFlagIndex, 2);
-    const audioFmt = settings.audioFormat || 'mp3';
-    args.splice(-1, 0, '-x', '--audio-format', audioFmt, '--audio-quality', '0');
-    statusMessages.push(`🎵 Audio-only mode enabled (${audioFmt.toUpperCase()})`);
+    const audioOutputFmt = ALLOWED_AUDIO_FORMATS.has(settings.audioFormat)
+      ? settings.audioFormat
+      : 'mp3';
+    args.splice(-1, 0, '-x', '--audio-format', audioOutputFmt, '--audio-quality', '0');
+    statusMessages.push(`🎵 Audio-only mode enabled (${audioOutputFmt.toUpperCase()})`);
   }
 
   if (settings.hookBrowser && settings.browserChoice) {
-    args.splice(-1, 0, '--cookies-from-browser', settings.browserChoice);
+    const normalized = settings.browserChoice.toLowerCase();
+    if (ALLOWED_BROWSERS.has(normalized)) {
+      args.splice(-1, 0, '--cookies-from-browser', normalized);
+    }
   }
 
   return { args, statusMessages };

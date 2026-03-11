@@ -122,7 +122,7 @@ describe('command builders', () => {
     expect(result.args).toContain('--ffmpeg-location');
     expect(result.args).toContain('/usr/bin/ffmpeg');
     expect(result.args).toContain('--cookies-from-browser');
-    expect(result.args).toContain('Firefox');
+    expect(result.args).toContain('firefox');
     expect(result.args).toContain('137+140');
     expect(result.statusMessages).toContain('📹 Using formats: video=137, audio=140');
   });
@@ -161,5 +161,91 @@ describe('command builders', () => {
     expect(result.args).toContain('--audio-format');
     expect(result.args).toContain('flac');
     expect(result.statusMessages).toContain('🎵 Audio-only mode enabled (FLAC)');
+  });
+
+  it('rejects non-numeric format IDs and uses default format', () => {
+    const result = buildYtdlpArgs({
+      normalizedDownloadDir: '/tmp/downloads',
+      url: 'https://example.com/video',
+      settings: createSettings(),
+      options: {
+        url: 'https://example.com/video',
+        outputPath: '/tmp/downloads',
+        videoFormat: '137; rm -rf /',
+        audioFormat: 'abc',
+      },
+      ffmpegLocation: null,
+    });
+
+    expect(result.args).not.toContain('137; rm -rf /');
+    expect(result.args).not.toContain('abc');
+    const fIdx = result.args.indexOf('-f');
+    expect(result.args[fIdx + 1]).toContain('best');
+  });
+
+  it('accepts valid numeric format IDs', () => {
+    const result = buildYtdlpArgs({
+      normalizedDownloadDir: '/tmp/downloads',
+      url: 'https://example.com/video',
+      settings: createSettings(),
+      options: {
+        url: 'https://example.com/video',
+        outputPath: '/tmp/downloads',
+        videoFormat: '137',
+        audioFormat: '140',
+      },
+      ffmpegLocation: null,
+    });
+
+    expect(result.args).toContain('137+140');
+  });
+
+  it('ignores unrecognised browser names', () => {
+    const result = buildYtdlpArgs({
+      normalizedDownloadDir: '/tmp/downloads',
+      url: 'https://example.com/video',
+      settings: createSettings({ hookBrowser: true, browserChoice: 'curl' }),
+      options: {
+        url: 'https://example.com/video',
+        outputPath: '/tmp/downloads',
+      },
+      ffmpegLocation: null,
+    });
+
+    expect(result.args).not.toContain('--cookies-from-browser');
+    expect(result.args).not.toContain('curl');
+  });
+
+  it('normalises allowed browser name to lowercase', () => {
+    const result = buildYtdlpArgs({
+      normalizedDownloadDir: '/tmp/downloads',
+      url: 'https://example.com/video',
+      settings: createSettings({ hookBrowser: true, browserChoice: 'Firefox' }),
+      options: {
+        url: 'https://example.com/video',
+        outputPath: '/tmp/downloads',
+      },
+      ffmpegLocation: null,
+    });
+
+    expect(result.args).toContain('--cookies-from-browser');
+    expect(result.args).toContain('firefox');
+  });
+
+  it('falls back to mp3 for unrecognised audio format in audio-only mode', () => {
+    const result = buildYtdlpArgs({
+      normalizedDownloadDir: '/tmp/downloads',
+      url: 'https://example.com/video',
+      settings: createSettings({ audioOnly: true, audioFormat: 'exe' as 'mp3' }),
+      options: {
+        url: 'https://example.com/video',
+        outputPath: '/tmp/downloads',
+      },
+      ffmpegLocation: null,
+    });
+
+    expect(result.args).toContain('--audio-format');
+    expect(result.args).toContain('mp3');
+    expect(result.statusMessages).toContain('🎵 Audio-only mode enabled (MP3)');
   });
 });

@@ -144,7 +144,14 @@ function showToast(message, { type = 'info', duration = 4000 } = {}) {
     setTimeout(() => toast.remove(), 500);
   };
 
-  toast.querySelector('.toast-dismiss').addEventListener('click', dismiss);
+  const dismissBtn = toast.querySelector('.toast-dismiss');
+  dismissBtn.addEventListener('click', dismiss);
+  dismissBtn.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      dismiss();
+    }
+  });
 
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
@@ -334,8 +341,15 @@ function displayNextModal() {
     modal.removeEventListener('keydown', modalTrapHandler);
   }
   modalTrapHandler = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      hideModal(modal, null);
+      return;
+    }
     if (e.key !== 'Tab') return;
-    const focusable = modal.querySelectorAll('button');
+    const focusable = modal.querySelectorAll(
+      'button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])'
+    );
     if (focusable.length === 0) return;
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
@@ -717,6 +731,7 @@ function renderHistory() {
 
   historySection.classList.add('visible');
   listEl.innerHTML = '';
+  const fragment = document.createDocumentFragment();
 
   history.forEach((entry) => {
     const item = document.createElement('div');
@@ -750,8 +765,9 @@ function renderHistory() {
       }
     }
 
-    listEl.appendChild(item);
+    fragment.appendChild(item);
   });
+  listEl.appendChild(fragment);
 }
 
 function clearHistory() {
@@ -1952,9 +1968,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (exportSettingsBtn) {
     exportSettingsBtn.addEventListener('click', async () => {
-      const result = await window.api.exportSettings();
-      if (result && result.ok) {
-        showToast('Settings exported successfully.', { type: 'success' });
+      try {
+        const result = await window.api.exportSettings();
+        if (result && result.ok) {
+          showToast('Settings exported successfully.', { type: 'success' });
+        } else if (result && !result.ok) {
+          showToast(result.error?.message || 'Export failed.', { type: 'error' });
+        }
+      } catch {
+        showToast('An unexpected error occurred during export.', { type: 'error' });
       }
     });
   }
@@ -1970,10 +1992,18 @@ document.addEventListener('DOMContentLoaded', async () => {
           {
             label: 'Import',
             action: async () => {
-              const result = await window.api.importSettings();
-              if (result && result.ok) {
-                showToast('Settings imported. Restarting...', { type: 'success' });
-                setTimeout(() => window.api.restartApp(), 1000);
+              try {
+                const result = await window.api.importSettings();
+                if (result && result.ok) {
+                  showToast('Settings imported. Restarting...', { type: 'success' });
+                  setTimeout(() => window.api.restartApp(), 1000);
+                } else {
+                  showToast(result?.error?.message || 'Import failed or was cancelled.', {
+                    type: 'error',
+                  });
+                }
+              } catch {
+                showToast('An unexpected error occurred during import.', { type: 'error' });
               }
             },
           },
@@ -2033,6 +2063,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     queueSection.classList.add('has-items');
     queueList.innerHTML = '';
+    const fragment = document.createDocumentFragment();
     queue.forEach((item) => {
       const el = document.createElement('div');
       el.className = `queue-item queue-${item.status}`;
@@ -2063,27 +2094,35 @@ document.addEventListener('DOMContentLoaded', async () => {
           window.api.removeFromQueue(item.id);
         });
       }
-      queueList.appendChild(el);
+      fragment.appendChild(el);
     });
+    queueList.appendChild(fragment);
   }
 
+  let isAddingToQueue = false;
   if (addToQueueBtn && queueUrlInput) {
     addToQueueBtn.addEventListener('click', async () => {
+      if (isAddingToQueue) return;
       const raw = queueUrlInput.value.trim();
       if (!raw) {
         showToast('Enter one or more URLs (one per line).', { type: 'warning' });
         return;
       }
-      const urls = raw
-        .split(/[\n,]+/)
-        .map((u) => u.trim())
-        .filter((u) => u.length > 0);
-      const result = await window.api.addToQueue(urls);
-      if (result && result.ok) {
-        queueUrlInput.value = '';
-        showToast(`Added ${result.data.added} URL(s) to queue.`, { type: 'success' });
-      } else {
-        showToast(result?.error?.message || 'Failed to add URLs.', { type: 'error' });
+      isAddingToQueue = true;
+      try {
+        const urls = raw
+          .split(/[\n,]+/)
+          .map((u) => u.trim())
+          .filter((u) => u.length > 0);
+        const result = await window.api.addToQueue(urls);
+        if (result && result.ok) {
+          queueUrlInput.value = '';
+          showToast(`Added ${result.data.added} URL(s) to queue.`, { type: 'success' });
+        } else {
+          showToast(result?.error?.message || 'Failed to add URLs.', { type: 'error' });
+        }
+      } finally {
+        isAddingToQueue = false;
       }
     });
   }
