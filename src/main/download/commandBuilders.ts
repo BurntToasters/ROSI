@@ -102,8 +102,9 @@ export function buildYtdlpArgs({
 
   if (settings.audioOnly && !options.videoFormat && !options.audioFormat) {
     args.splice(formatFlagIndex, 2);
-    args.splice(-1, 0, '-x', '--audio-format', 'mp3', '--audio-quality', '0');
-    statusMessages.push('🎵 Audio-only mode enabled');
+    const audioFmt = settings.audioFormat || 'mp3';
+    args.splice(-1, 0, '-x', '--audio-format', audioFmt, '--audio-quality', '0');
+    statusMessages.push(`🎵 Audio-only mode enabled (${audioFmt.toUpperCase()})`);
   }
 
   if (settings.hookBrowser && settings.browserChoice) {

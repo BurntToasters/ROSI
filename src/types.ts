@@ -1,3 +1,5 @@
+export type AudioFormat = 'mp3' | 'flac' | 'ogg' | 'wav' | 'm4a' | 'opus';
+
 export interface Settings {
   settingsVersion: number;
   theme: ThemePreference;
@@ -5,6 +7,7 @@ export interface Settings {
   consoleCollapsed: boolean;
   advancedOptions: boolean;
   audioOnly: boolean;
+  audioFormat: AudioFormat;
   convertEnabled: boolean;
   convertFormat: string;
   keepOriginalAfterConvert: boolean;
@@ -84,6 +87,26 @@ export interface NotificationRequest {
   filePath?: string;
 }
 
+export interface DownloadStats {
+  totalDownloads: number;
+  successfulDownloads: number;
+  failedDownloads: number;
+  cancelledDownloads: number;
+  totalBytesDownloaded: number;
+  formatCounts: Record<string, number>;
+  firstDownloadAt: number | null;
+  lastDownloadAt: number | null;
+}
+
+export interface QueueItem {
+  id: string;
+  url: string;
+  status: 'pending' | 'downloading' | 'completed' | 'failed' | 'cancelled';
+  addedAt: number;
+  filename?: string;
+  error?: string;
+}
+
 export type UpdaterStatusEvent =
   | { status: 'checking' }
   | {
@@ -145,4 +168,15 @@ export interface RendererApi {
   onComplete: (callback: (message: string) => void) => () => void;
   openFileLocation: (filePath: string) => Promise<IpcResult<{ opened: boolean }>>;
   showNotification: (options: NotificationRequest) => Promise<IpcResult<{ shown: boolean }>>;
+  exportSettings: () => Promise<IpcResult<{ exported: boolean }>>;
+  importSettings: () => Promise<IpcResult<{ imported: boolean }>>;
+  getStats: () => Promise<DownloadStats>;
+  resetStats: () => Promise<IpcResult<void>>;
+  addToQueue: (urls: string[]) => Promise<IpcResult<{ added: number }>>;
+  removeFromQueue: (id: string) => Promise<IpcResult<void>>;
+  clearQueue: () => Promise<IpcResult<void>>;
+  getQueue: () => Promise<QueueItem[]>;
+  startQueue: () => Promise<IpcResult<{ started: boolean }>>;
+  cancelQueue: () => void;
+  onQueueUpdate: (callback: (queue: QueueItem[]) => void) => () => void;
 }

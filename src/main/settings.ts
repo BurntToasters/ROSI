@@ -2,9 +2,10 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { app, dialog } from 'electron';
 import log from 'electron-log/main';
-import type { Settings } from '../types';
+import type { AudioFormat, DownloadStats, Settings } from '../types';
 
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+const statsPath = path.join(app.getPath('userData'), 'download-stats.json');
 export const CURRENT_SETTINGS_VERSION = 2;
 
 const defaultSettings: Settings = {
@@ -14,6 +15,7 @@ const defaultSettings: Settings = {
   consoleCollapsed: false,
   advancedOptions: false,
   audioOnly: false,
+  audioFormat: 'mp3',
   convertEnabled: false,
   convertFormat: 'mp4',
   keepOriginalAfterConvert: true,
@@ -46,6 +48,14 @@ function readBoolean(value: unknown, fallback: boolean): boolean {
 
 function readString(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback;
+}
+
+const ALLOWED_AUDIO_FORMATS = new Set<AudioFormat>(['mp3', 'flac', 'ogg', 'wav', 'm4a', 'opus']);
+
+function readAudioFormat(value: unknown): AudioFormat {
+  return typeof value === 'string' && ALLOWED_AUDIO_FORMATS.has(value as AudioFormat)
+    ? (value as AudioFormat)
+    : defaultSettings.audioFormat;
 }
 
 function readUpdateChannel(value: unknown): Settings['updateChannel'] {
@@ -88,6 +98,7 @@ export function migrateSettings(rawSettings: unknown): Settings {
     consoleCollapsed: readBoolean(rawSettings.consoleCollapsed, defaultSettings.consoleCollapsed),
     advancedOptions: readBoolean(rawSettings.advancedOptions, defaultSettings.advancedOptions),
     audioOnly: readBoolean(rawSettings.audioOnly, defaultSettings.audioOnly),
+    audioFormat: readAudioFormat(rawSettings.audioFormat),
     convertEnabled: readBoolean(rawSettings.convertEnabled, defaultSettings.convertEnabled),
     convertFormat: readString(rawSettings.convertFormat, defaultSettings.convertFormat),
     keepOriginalAfterConvert: readBoolean(
@@ -160,6 +171,130 @@ export function saveSettings(
         `Failed to save settings: ${(error as Error).message}`
       );
     }
+    return false;
+  }
+}
+
+function getDefaultStats(): DownloadStats {
+  return {
+    totalDownloads: 0,
+    successfulDownloads: 0,
+    failedDownloads: 0,
+    cancelledDownloads: 0,
+    totalBytesDownloaded: 0,
+    formatCounts: {},
+    firstDownloadAt: null,
+    lastDownloadAt: null,
+  };
+}
+
+export function loadStats(): DownloadStats {
+  try {
+    if (!fs.existsSync(statsPath)) return getDefaultStats();
+    const raw = fs.readFileSync(statsPath, 'utf-8');
+    const loaded = JSON.parse(raw);
+    if (!loaded || typeof loaded !== 'object' || Array.isArray(loaded)) return getDefaultStats();
+    const stats = getDefaultStats();
+    if (typeof loaded.totalDownloads === 'number') stats.totalDownloads = loaded.totalDownloads;
+    if (typeof loaded.successfulDownloads === 'number')
+      stats.successfulDownloads = loaded.successfulDownloads;
+    if (typeof loaded.failedDownloads === 'number') stats.failedDownloads = loaded.failedDownloads;
+    if (typeof loaded.cancelledDownloads === 'number')
+      stats.cancelledDownloads = loaded.cancelledDownloads;
+    if (typeof loaded.totalBytesDownloaded === 'number')
+      stats.totalBytesDownloaded = loaded.totalBytesDownloaded;
+    if (loaded.formatCounts && typeof loaded.formatCounts === 'object')
+      stats.formatCounts = { ...loaded.formatCounts };
+    if (typeof loaded.firstDownloadAt === 'number') stats.firstDownloadAt = loaded.firstDownloadAt;
+    if (typeof loaded.lastDownloadAt === 'number') stats.lastDownloadAt = loaded.lastDownloadAt;
+    return stats;
+  } catch {
+    return getDefaultStats();
+  }
+}
+
+export function saveStats(stats: DownloadStats): boolean {
+  try {
+    const dir = path.dirname(statsPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(statsPath, JSON.stringify(stats, null, 2));
+    return true;
+  } catch (error) {
+    log.error('Failed to save stats:', error);
+    return false;
+  }
+}
+
+export function recordDownload(
+  outcome: 'success' | 'failed' | 'cancelled',
+  format?: string,
+  bytes?: number
+): void {
+  const stats = loadStats();
+  stats.totalDownloads += 1;
+  const now = Date.now();
+  if (!stats.firstDownloadAt) stats.firstDownloadAt = now;
+  stats.lastDownloadAt = now;
+
+  if (outcome === 'success') {
+    stats.successfulDownloads += 1;
+    if (format) {
+      stats.formatCounts[format] = (stats.formatCounts[format] || 0) + 1;
+    }
+    if (typeof bytes === 'number' && bytes > 0) {
+      stats.totalBytesDownloaded += bytes;
+    }
+  } else if (outcome === 'failed') {
+    stats.failedDownloads += 1;
+  } else {
+    stats.cancelledDownloads += 1;
+  }
+
+  saveStats(stats);
+}
+
+export function resetStats(): boolean {
+  return saveStats(getDefaultStats());
+}
+
+export async function exportSettingsToFile(
+  parentWindow: Electron.BrowserWindow | null
+): Promise<boolean> {
+  if (!parentWindow || parentWindow.isDestroyed()) return false;
+  const { canceled, filePath } = await dialog.showSaveDialog(parentWindow, {
+    title: 'Export Settings',
+    defaultPath: 'rosi-settings.json',
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  });
+  if (canceled || !filePath) return false;
+  try {
+    const settings = loadSettings();
+    fs.writeFileSync(filePath, JSON.stringify(settings, null, 2));
+    return true;
+  } catch (error) {
+    log.error('Failed to export settings:', error);
+    return false;
+  }
+}
+
+export async function importSettingsFromFile(
+  parentWindow: Electron.BrowserWindow | null
+): Promise<boolean> {
+  if (!parentWindow || parentWindow.isDestroyed()) return false;
+  const { canceled, filePaths } = await dialog.showOpenDialog(parentWindow, {
+    title: 'Import Settings',
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+    properties: ['openFile'],
+  });
+  if (canceled || !filePaths[0]) return false;
+  try {
+    const raw = fs.readFileSync(filePaths[0], 'utf-8');
+    const loaded = JSON.parse(raw);
+    const migrated = normalizeSettingsVersion(migrateSettings(loaded));
+    fs.writeFileSync(settingsPath, JSON.stringify(migrated, null, 2));
+    return true;
+  } catch (error) {
+    log.error('Failed to import settings:', error);
     return false;
   }
 }

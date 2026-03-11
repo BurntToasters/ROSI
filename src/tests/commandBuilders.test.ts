@@ -37,6 +37,7 @@ function createSettings(overrides: Partial<Settings> = {}): Settings {
     hideSupportModal: false,
     checkUpdatesOnStartup: true,
     updateChannel: 'auto',
+    audioFormat: 'mp3',
     ...overrides,
   };
 }
@@ -141,6 +142,24 @@ describe('command builders', () => {
     expect(result.args).toContain('-x');
     expect(result.args).toContain('--audio-format');
     expect(result.args).toContain('mp3');
-    expect(result.statusMessages).toContain('🎵 Audio-only mode enabled');
+    expect(result.statusMessages).toContain('🎵 Audio-only mode enabled (MP3)');
+  });
+
+  it('builds yt-dlp args for audio-only mode with custom audio format', () => {
+    const result = buildYtdlpArgs({
+      normalizedDownloadDir: '/tmp/downloads',
+      url: 'https://example.com/video',
+      settings: createSettings({ audioOnly: true, audioFormat: 'flac' }),
+      options: {
+        url: 'https://example.com/video',
+        outputPath: '/tmp/downloads',
+      },
+      ffmpegLocation: null,
+    });
+
+    expect(result.args).toContain('-x');
+    expect(result.args).toContain('--audio-format');
+    expect(result.args).toContain('flac');
+    expect(result.statusMessages).toContain('🎵 Audio-only mode enabled (FLAC)');
   });
 });

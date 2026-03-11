@@ -1,7 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   DownloadRequestOptions,
+  DownloadStats,
   NotificationRequest,
+  QueueItem,
   RendererApi,
   Settings,
   UpdateDownloadResult,
@@ -60,6 +62,21 @@ const api: RendererApi = {
   openFileLocation: (filePath: string) => ipcRenderer.invoke('open-file-location', filePath),
   showNotification: (options: NotificationRequest) =>
     ipcRenderer.invoke('show-notification', options),
+  exportSettings: () => ipcRenderer.invoke('export-settings'),
+  importSettings: () => ipcRenderer.invoke('import-settings'),
+  getStats: () => ipcRenderer.invoke('get-stats') as Promise<DownloadStats>,
+  resetStats: () => ipcRenderer.invoke('reset-stats'),
+  addToQueue: (urls: string[]) => ipcRenderer.invoke('add-to-queue', urls),
+  removeFromQueue: (id: string) => ipcRenderer.invoke('remove-from-queue', id),
+  clearQueue: () => ipcRenderer.invoke('clear-queue'),
+  getQueue: () => ipcRenderer.invoke('get-queue') as Promise<QueueItem[]>,
+  startQueue: () => ipcRenderer.invoke('start-queue'),
+  cancelQueue: () => ipcRenderer.send('cancel-queue'),
+  onQueueUpdate: (callback: (queue: QueueItem[]) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, queue: QueueItem[]) => callback(queue);
+    ipcRenderer.on('queue-update', listener);
+    return () => ipcRenderer.removeListener('queue-update', listener);
+  },
 };
 
 contextBridge.exposeInMainWorld('api', api);

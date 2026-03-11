@@ -50,4 +50,14 @@ describe('settings migration', () => {
     expect(migrated.updateChannel).toBe(defaults.updateChannel);
     expect(migrated.gpuType).toBe(defaults.gpuType);
   });
+
+  it('adds audioFormat with default value during migration', () => {
+    const migrated = migrateSettings({
+      settingsVersion: 1,
+      audioOnly: true,
+    });
+
+    expect(migrated.audioFormat).toBe('mp3');
+    expect(migrated.settingsVersion).toBe(1);
+  });
 });
