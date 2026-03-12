@@ -27,13 +27,13 @@ clean.on('close', (code) => {
     process.exit(code);
   }
 
-  const child = spawn(
+  const mainWatcher = spawn(
     process.execPath,
     [tscBin, '--project', 'tsconfig.main.json', '--watch', '--preserveWatchOutput'],
     { cwd: ROOT, stdio: 'inherit' }
   );
 
-  child.on('exit', (exitCode, signal) => {
+  mainWatcher.on('exit', (exitCode, signal) => {
     if (shuttingDown) return;
     if (signal) {
       shutdown(0);
@@ -42,7 +42,22 @@ clean.on('close', (code) => {
     shutdown(exitCode ?? 0);
   });
 
-  children.push(child);
+  const rendererWatcher = spawn(
+    process.execPath,
+    [tscBin, '--project', 'tsconfig.renderer.json', '--watch', '--preserveWatchOutput'],
+    { cwd: ROOT, stdio: 'inherit' }
+  );
+
+  rendererWatcher.on('exit', (exitCode, signal) => {
+    if (shuttingDown) return;
+    if (signal) {
+      shutdown(0);
+      return;
+    }
+    shutdown(exitCode ?? 0);
+  });
+
+  children.push(mainWatcher, rendererWatcher);
 });
 
 process.on('SIGINT', () => shutdown(0));

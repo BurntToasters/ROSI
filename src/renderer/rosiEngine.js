@@ -1,16 +1,35 @@
+const rosiModules = window.rosiModules || {};
+const uiModule = rosiModules.ui || null;
+const downloadsModule = rosiModules.downloads || null;
+const queueModule = rosiModules.queue || null;
+const settingsModule = rosiModules.settings || null;
+const updatesModule = rosiModules.updates || null;
+
 function isMac() {
+  if (uiModule && typeof uiModule.isMac === 'function') {
+    return uiModule.isMac();
+  }
   return navigator.platform.toLowerCase().includes('mac');
 }
 
 function getModifierKey() {
+  if (uiModule && typeof uiModule.getModifierKey === 'function') {
+    return uiModule.getModifierKey();
+  }
   return isMac() ? 'metaKey' : 'ctrlKey';
 }
 
 function getModifierKeyName() {
+  if (uiModule && typeof uiModule.getModifierKeyName === 'function') {
+    return uiModule.getModifierKeyName();
+  }
   return isMac() ? 'Cmd' : 'Ctrl';
 }
 
 function isValidUrl(string) {
+  if (uiModule && typeof uiModule.isValidUrl === 'function') {
+    return uiModule.isValidUrl(string);
+  }
   try {
     const url = new URL(string);
     return url.protocol === 'http:' || url.protocol === 'https:';
@@ -98,83 +117,28 @@ function applyTheme(preference) {
   return appliedTheme;
 }
 
-// toggles console output visibility
 function updateConsoleVisibility(show) {
+  if (uiModule && typeof uiModule.updateConsoleVisibility === 'function') {
+    uiModule.updateConsoleVisibility(show);
+    return;
+  }
   const consoleSection = document.getElementById('console-section');
   if (consoleSection) {
-    if (show) {
-      consoleSection.classList.add('visible');
-    } else {
-      consoleSection.classList.remove('visible');
-    }
+    consoleSection.classList.toggle('visible', !!show);
   }
   document.body.classList.toggle('console-visible', !!show);
 }
 
-const TOAST_ICONS = {
-  warning:
-    '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
-  error:
-    '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
-  success:
-    '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
-  info: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
-};
-
 function showToast(message, { type = 'info', duration = 4000 } = {}) {
-  const container = document.getElementById('toast-container');
-  if (!container) return;
-
-  const toast = document.createElement('div');
-  toast.className = `toast toast-${type}`;
-  toast.innerHTML = `
-    <span class="toast-icon">${TOAST_ICONS[type] || TOAST_ICONS.info}</span>
-    <span class="toast-message">${message}</span>
-    <button class="toast-dismiss" aria-label="Dismiss">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-    </button>
-  `;
-
-  container.appendChild(toast);
-
-  const dismiss = () => {
-    toast.classList.remove('visible');
-    toast.classList.add('hiding');
-    toast.addEventListener('transitionend', () => toast.remove(), { once: true });
-    setTimeout(() => toast.remove(), 500);
-  };
-
-  const dismissBtn = toast.querySelector('.toast-dismiss');
-  dismissBtn.addEventListener('click', dismiss);
-  dismissBtn.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      dismiss();
-    }
-  });
-
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      toast.classList.add('visible');
-    });
-  });
-
-  if (duration > 0) {
-    setTimeout(dismiss, duration);
+  if (uiModule && typeof uiModule.showToast === 'function') {
+    uiModule.showToast(message, { type, duration });
   }
 }
 
-const OUTPUT_MAX_CHARS = 200000;
-
 function appendConsoleOutput(outputEl, text) {
-  if (!outputEl) return;
-  const nextText = outputEl.textContent + text + '\n';
-  if (nextText.length <= OUTPUT_MAX_CHARS) {
-    outputEl.textContent = nextText;
-  } else {
-    outputEl.textContent = nextText.slice(-OUTPUT_MAX_CHARS);
+  if (uiModule && typeof uiModule.appendConsoleOutput === 'function') {
+    uiModule.appendConsoleOutput(outputEl, text);
   }
-  outputEl.scrollTop = outputEl.scrollHeight;
 }
 
 // Toggle console collapsed state
@@ -190,68 +154,26 @@ function toggleConsoleCollapse() {
   return false;
 }
 
-// handles loader in button, swaps text for spinner, click cancels
 function setButtonLoading(button, isLoading, onCancel) {
-  if (!button) return;
-  if (!button.dataset.defaultHtml) {
-    button.dataset.defaultHtml = button.innerHTML;
-  }
-  if (!button.dataset.defaultText) {
-    button.dataset.defaultText = button.textContent.trim();
-  }
-  if (isLoading) {
-    button.classList.add('loading');
-    button.innerHTML = `<img src="loader.svg" class="loader-icon" alt="Loading...">`;
-    button.disabled = false;
-    button.setAttribute('aria-busy', 'true');
-    button.onclick = typeof onCancel === 'function' ? onCancel : null;
-  } else {
-    button.classList.remove('loading');
-    button.innerHTML = button.dataset.defaultHtml || button.dataset.defaultText || 'Action';
-    button.disabled = false;
-    button.removeAttribute('aria-busy');
-    button.onclick = button._originalClick || null;
+  if (uiModule && typeof uiModule.setButtonLoading === 'function') {
+    uiModule.setButtonLoading(button, isLoading, onCancel);
   }
 }
 
 function toggleSidebar() {
-  const sidebar = document.getElementById('sidebar');
-  const overlay = document.getElementById('sidebar-overlay');
-  if (!sidebar) return;
-
-  const isOpen = sidebar.classList.contains('open');
-  if (isOpen) {
-    sidebar.classList.remove('open');
-    if (overlay) overlay.classList.remove('active');
-    document.body.classList.remove('sidebar-open');
-    const settingsBtn = document.getElementById('settingsBtn');
-    if (settingsBtn) settingsBtn.focus();
-  } else {
-    sidebar.classList.add('open');
-    if (overlay) overlay.classList.add('active');
-    document.body.classList.add('sidebar-open');
-    const closeBtn = document.getElementById('closeSidebar');
-    if (closeBtn) closeBtn.focus();
+  if (uiModule && typeof uiModule.toggleSidebar === 'function') {
+    uiModule.toggleSidebar();
   }
 }
 
 function closeSidebar() {
-  const sidebar = document.getElementById('sidebar');
-  const overlay = document.getElementById('sidebar-overlay');
-  if (sidebar) sidebar.classList.remove('open');
-  if (overlay) overlay.classList.remove('active');
-  document.body.classList.remove('sidebar-open');
-  const settingsBtn = document.getElementById('settingsBtn');
-  if (settingsBtn) settingsBtn.focus();
+  if (uiModule && typeof uiModule.closeSidebar === 'function') {
+    uiModule.closeSidebar();
+  }
 }
 function toggleAdvancedUI(show) {
-  const formatSection = document.getElementById('formatOptions');
-  if (formatSection) {
-    if (show) {
-      formatSection.classList.add('visible');
-    } else {
-      formatSection.classList.remove('visible');
-    }
+  if (uiModule && typeof uiModule.toggleAdvancedUI === 'function') {
+    uiModule.toggleAdvancedUI(show);
   }
 }
 
@@ -631,37 +553,17 @@ function hideProgressBar() {
 }
 
 function parseYtdlpProgress(message) {
-  const progressMatch = message.match(
-    /\[download\]\s+(\d+\.?\d*)%\s+of\s+~?(\S+)\s+at\s+(\S+)\s+ETA\s+(\S+)/
-  );
-  if (progressMatch) {
-    return {
-      percent: parseFloat(progressMatch[1]),
-      totalSize: progressMatch[2],
-      speed: progressMatch[3],
-      eta: progressMatch[4],
-    };
+  if (downloadsModule && typeof downloadsModule.parseYtdlpProgress === 'function') {
+    return downloadsModule.parseYtdlpProgress(message);
   }
-
-  const simpleMatch = message.match(/\[download\]\s+(\d+\.?\d*)%\s+of\s+~?(\S+)/);
-  if (simpleMatch) {
-    return {
-      percent: parseFloat(simpleMatch[1]),
-      totalSize: simpleMatch[2],
-      speed: null,
-      eta: null,
-    };
-  }
-
   return null;
 }
 
 function formatBytes(bytes) {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  if (downloadsModule && typeof downloadsModule.formatBytes === 'function') {
+    return downloadsModule.formatBytes(bytes);
+  }
+  return String(bytes);
 }
 
 const HISTORY_KEY = 'rosi-download-history';
@@ -889,7 +791,11 @@ function setupAutoUpdater() {
           updateVersion = data.version;
           const wasManualCheck = isManualUpdateCheck;
           isManualUpdateCheck = false;
-          const isBetaUpdate = data.isBeta || /-(beta|alpha|rc)/i.test(data.version);
+          const isBetaUpdate =
+            data.isBeta ||
+            (updatesModule && typeof updatesModule.isPrereleaseVersion === 'function'
+              ? updatesModule.isPrereleaseVersion(data.version)
+              : /-(beta|alpha|rc)/i.test(data.version));
           showModal({
             title: isBetaUpdate ? 'Beta Update Available!' : 'Update Available!',
             message: isBetaUpdate
@@ -974,10 +880,14 @@ function setupAutoUpdater() {
       }
 
       if (progressInfo) {
-        const speed = formatBytes(data.bytesPerSecond) + '/s';
-        const downloaded = formatBytes(data.transferred);
-        const total = formatBytes(data.total);
-        progressInfo.textContent = `${downloaded} / ${total} (${speed}) — ${Math.round(data.percent)}%`;
+        if (updatesModule && typeof updatesModule.formatUpdateProgressInfo === 'function') {
+          progressInfo.textContent = updatesModule.formatUpdateProgressInfo(data, formatBytes);
+        } else {
+          const speed = formatBytes(data.bytesPerSecond) + '/s';
+          const downloaded = formatBytes(data.transferred);
+          const total = formatBytes(data.total);
+          progressInfo.textContent = `${downloaded} / ${total} (${speed}) — ${Math.round(data.percent)}%`;
+        }
       }
     })
   );
@@ -1185,7 +1095,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         event.preventDefault();
         window.api.openExternal(`https://github.com/BurntToasters/ROSI/releases/tag/v${version}`);
       });
-      const isBeta = /-(beta|alpha|rc)/i.test(version);
+      const isBeta =
+        updatesModule && typeof updatesModule.isPrereleaseVersion === 'function'
+          ? updatesModule.isPrereleaseVersion(version)
+          : /-(beta|alpha|rc)/i.test(version);
       if (isBeta) {
         versionLink.classList.add('beta-version');
         if (betaBadge) betaBadge.classList.remove('hidden');
@@ -1306,7 +1219,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const cancelQueueBtn = document.getElementById('cancelQueueBtn');
   const queueList = document.getElementById('queueList');
   const queueCount = document.getElementById('queueCount');
-  const queueSection = document.getElementById('queue-section');
+  const queueSection =
+    (queueModule && typeof queueModule.resolveQueueSectionElement === 'function'
+      ? queueModule.resolveQueueSectionElement(document)
+      : null) || document.getElementById('queueSection');
 
   if (fetchFormatsBtn) fetchFormatsBtn._originalClick = fetchFormats;
   if (downloadBtn) downloadBtn._originalClick = null;
@@ -1518,6 +1434,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (shortcutsBtn) shortcutsBtn.addEventListener('click', showKeyboardShortcuts);
 
   const bindExternalLink = (element, url) => {
+    if (settingsModule && typeof settingsModule.bindExternalLink === 'function') {
+      settingsModule.bindExternalLink(element, url, window.api.openExternal);
+      return;
+    }
     if (element) {
       element.addEventListener('click', (event) => {
         event.preventDefault();
@@ -2054,49 +1974,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function renderQueue(queue) {
-    if (!queueList || !queueSection) return;
-    if (queueCount) queueCount.textContent = String(queue.length);
-    if (queue.length === 0) {
-      queueSection.classList.remove('has-items');
-      queueList.innerHTML = '';
-      return;
+    if (queueModule && typeof queueModule.renderQueue === 'function') {
+      queueModule.renderQueue(
+        queue,
+        { queueList, queueSection, queueCount },
+        { escapeHtml, removeFromQueue: window.api.removeFromQueue }
+      );
     }
-    queueSection.classList.add('has-items');
-    queueList.innerHTML = '';
-    const fragment = document.createDocumentFragment();
-    queue.forEach((item) => {
-      const el = document.createElement('div');
-      el.className = `queue-item queue-${item.status}`;
-      const statusIcon =
-        item.status === 'completed'
-          ? '✅'
-          : item.status === 'failed'
-            ? '❌'
-            : item.status === 'cancelled'
-              ? '⏹️'
-              : item.status === 'downloading'
-                ? '⏳'
-                : '⏸️';
-      let urlDisplay;
-      try {
-        urlDisplay = new URL(item.url).hostname + new URL(item.url).pathname.slice(0, 30);
-      } catch {
-        urlDisplay = item.url.slice(0, 40);
-      }
-      el.innerHTML = `
-        <span class="queue-item-status">${statusIcon}</span>
-        <span class="queue-item-url" title="${escapeHtml(item.url)}">${escapeHtml(urlDisplay)}</span>
-        ${item.status === 'pending' ? '<button class="queue-item-remove" aria-label="Remove">✕</button>' : ''}
-      `;
-      const removeBtn = el.querySelector('.queue-item-remove');
-      if (removeBtn) {
-        removeBtn.addEventListener('click', () => {
-          window.api.removeFromQueue(item.id);
-        });
-      }
-      fragment.appendChild(el);
-    });
-    queueList.appendChild(fragment);
   }
 
   let isAddingToQueue = false;
@@ -2151,11 +2035,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       showToast('Queue cancelled.', { type: 'info' });
     });
   }
-
-  window.api
-    .getQueue()
-    .then((queue) => renderQueue(queue))
-    .catch(() => {});
 
   if (fetchFormatsBtn) {
     fetchFormatsBtn.onclick = fetchFormats;

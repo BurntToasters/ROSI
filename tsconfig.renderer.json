@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "./src/renderer/modules",
+    "outDir": "./src/renderer/modules",
+    "sourceMap": false,
+    "types": []
+  },
+  "include": ["src/renderer/modules/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}
