@@ -300,7 +300,11 @@ export async function importSettingsFromFile(
     const raw = fs.readFileSync(filePaths[0], 'utf-8');
     const loaded = JSON.parse(raw);
     const migrated = normalizeSettingsVersion(migrateSettings(loaded));
-    fs.writeFileSync(settingsPath, JSON.stringify(migrated, null, 2));
+    const dir = path.dirname(settingsPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const tmpPath = `${settingsPath}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(migrated, null, 2));
+    fs.renameSync(tmpPath, settingsPath);
     return true;
   } catch (error) {
     log.error('Failed to import settings:', error);

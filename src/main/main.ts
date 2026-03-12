@@ -61,6 +61,7 @@ process.on('unhandledRejection', (reason) => {
 });
 
 const ytdlpPath = resolveYtdlpPath();
+const isSmokeRun = process.argv.includes('--smoke') || process.env.ROSI_SMOKE === '1';
 
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
@@ -85,6 +86,124 @@ function createSplashWindow() {
   });
   splashWindow.loadFile(path.join(__dirname, '..', '..', 'src', 'renderer', 'splash.html'));
   splashWindow.center();
+}
+
+async function runRendererSmokeChecks(windowRef: BrowserWindow): Promise<string[]> {
+  const script = `
+    (async () => {
+      const failures = [];
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const assert = (condition, message) => {
+        if (!condition) failures.push(message);
+      };
+
+      try {
+        assert(!!window.rosiModules, 'window.rosiModules is missing.');
+
+        for (let i = 0; i < 5; i += 1) {
+          const modalActive = document.getElementById('app-modal')?.classList.contains('active');
+          const licensesActive = document
+            .getElementById('licenses-overlay')
+            ?.classList.contains('active');
+          if (!modalActive && !licensesActive) break;
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          await wait(120);
+        }
+
+        const sidebar = document.getElementById('sidebar');
+        const settingsBtn = document.getElementById('settingsBtn');
+        const closeSidebarBtn = document.getElementById('closeSidebar');
+        const urlInput = document.getElementById('url');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const queueSection = document.getElementById('queueSection');
+        const queueCount = document.getElementById('queueCount');
+
+        assert(!!sidebar, 'Missing #sidebar.');
+        assert(!!settingsBtn, 'Missing #settingsBtn.');
+        assert(!!closeSidebarBtn, 'Missing #closeSidebar.');
+        assert(!!urlInput, 'Missing #url.');
+        assert(!!downloadBtn, 'Missing #downloadBtn.');
+        assert(!!queueSection, 'Missing #queueSection.');
+        assert(!!queueCount, 'Missing #queueCount.');
+
+        const urlLabel = document.querySelector('label[for="url"]');
+        const queueLabel = document.querySelector('label[for="queueUrlInput"]');
+        assert(!!urlLabel, 'Missing explicit label for #url.');
+        assert(!!queueLabel, 'Missing explicit label for #queueUrlInput.');
+
+        if (settingsBtn instanceof HTMLElement && sidebar instanceof HTMLElement) {
+          settingsBtn.click();
+          await wait(150);
+          assert(sidebar.classList.contains('open'), 'Sidebar did not open from settings button.');
+        }
+
+        if (closeSidebarBtn instanceof HTMLElement && sidebar instanceof HTMLElement) {
+          closeSidebarBtn.click();
+          await wait(150);
+          assert(!sidebar.classList.contains('open'), 'Sidebar did not close from close button.');
+        }
+
+        const isMac = navigator.platform.toLowerCase().includes('mac');
+        document.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: ',',
+            bubbles: true,
+            metaKey: isMac,
+            ctrlKey: !isMac,
+          })
+        );
+        await wait(150);
+        if (sidebar instanceof HTMLElement) {
+          assert(sidebar.classList.contains('open'), 'Sidebar did not open via keyboard shortcut.');
+        }
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await wait(150);
+        if (sidebar instanceof HTMLElement) {
+          assert(!sidebar.classList.contains('open'), 'Sidebar did not close via Escape.');
+        }
+
+        if (urlInput instanceof HTMLInputElement && downloadBtn instanceof HTMLButtonElement) {
+          urlInput.value = 'not-a-url';
+          urlInput.dispatchEvent(new Event('input', { bubbles: true }));
+          await wait(180);
+          assert(downloadBtn.disabled, 'Download button should be disabled for invalid URL.');
+
+          urlInput.value = 'https://example.com/watch?v=smoke';
+          urlInput.dispatchEvent(new Event('input', { bubbles: true }));
+          await wait(180);
+          assert(!downloadBtn.disabled, 'Download button should be enabled for valid URL.');
+        }
+
+        if (window.api?.clearQueue && window.api?.addToQueue) {
+          await window.api.clearQueue();
+          const addResult = await window.api.addToQueue(['https://example.com/smoke']);
+          assert(addResult && addResult.ok, 'addToQueue failed in smoke check.');
+          await wait(220);
+          const count = Number(queueCount?.textContent || '0');
+          assert(count >= 1, 'Queue count did not update after addToQueue.');
+          await window.api.clearQueue();
+          await wait(180);
+        } else {
+          failures.push('window.api queue handlers are missing.');
+        }
+      } catch (error) {
+        failures.push(
+          'Smoke execution failed: ' +
+            (error && typeof error === 'object' && 'message' in error
+              ? String(error.message)
+              : String(error))
+        );
+      }
+
+      return failures;
+    })();
+  `;
+
+  const result = await windowRef.webContents.executeJavaScript(script, true);
+  if (!Array.isArray(result)) {
+    return ['Smoke script returned an invalid response payload.'];
+  }
+  return result.filter((item): item is string => typeof item === 'string');
 }
 
 function createWindow() {
@@ -144,18 +263,40 @@ function createWindow() {
       }
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.show();
-        mainWindow.focus();
+        if (!isSmokeRun) {
+          mainWindow.focus();
+          return;
+        }
+        void runRendererSmokeChecks(mainWindow)
+          .then((failures) => {
+            if (failures.length > 0) {
+              log.error('Runtime smoke checks failed:', failures);
+              app.exit(1);
+              return;
+            }
+            log.info('Runtime smoke checks passed.');
+            app.exit(0);
+          })
+          .catch((error) => {
+            log.error('Runtime smoke checks encountered an error:', error);
+            app.exit(1);
+          });
       }
     }, SPLASH_FADE_DELAY_MS);
   });
 }
 
 app.whenReady().then(() => {
-  createSplashWindow();
+  if (!isSmokeRun) {
+    createSplashWindow();
+  }
   verifyBundledFfmpeg();
-  setTimeout(() => {
-    createWindow();
-  }, SPLASH_SHOW_DELAY_MS);
+  setTimeout(
+    () => {
+      createWindow();
+    },
+    isSmokeRun ? 0 : SPLASH_SHOW_DELAY_MS
+  );
 });
 
 app.on('window-all-closed', () => {

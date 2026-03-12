@@ -477,12 +477,14 @@
                     <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
                     <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
                   </svg>
+                  <label class="sr-only" for="url">Video URL</label>
                   <input
                     id="url"
                     type="text"
                     placeholder="https://youtube.com/watch?v=..."
                     autocomplete="off"
                     spellcheck="false"
+                    aria-label="Video URL"
                   />
                   <button
                     id="pasteUrl"
@@ -646,11 +648,13 @@
               </div>
             </div>
             <div class="queue-input-row">
+              <label class="sr-only" for="queueUrlInput">Queue URLs</label>
               <textarea
                 id="queueUrlInput"
                 class="queue-url-input"
                 placeholder="Paste URLs here (one per line)"
                 rows="2"
+                aria-label="Queue URLs"
               ></textarea>
               <button
                 id="addToQueueBtn"
@@ -937,6 +941,11 @@
 
     <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
+    <script src="modules/ui.js"></script>
+    <script src="modules/downloads.js"></script>
+    <script src="modules/queue.js"></script>
+    <script src="modules/settings.js"></script>
+    <script src="modules/updates.js"></script>
     <script src="rosiEngine.js"></script>
     <script src="msStoreDetector.js"></script>
   </body>
