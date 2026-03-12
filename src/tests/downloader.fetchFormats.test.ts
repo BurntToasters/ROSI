@@ -251,6 +251,53 @@ describe('downloader format fetch', () => {
     );
   });
 
+  it('invokes onComplete callback when download finishes', () => {
+    const proc = createProc();
+    spawnWithEnvMock.mockReturnValue(proc);
+    const send = vi.fn();
+    const onComplete = vi.fn();
+
+    startDownload(
+      '/tmp/ytdlp',
+      {
+        isDestroyed: () => false,
+        send,
+      } as any,
+      { url: 'https://example.com/video', outputPath: '/tmp/downloads' },
+      null,
+      onComplete
+    );
+
+    proc.stdout.emit('data', '/tmp/downloads/video.mp4\n');
+    proc.emit('close', 0);
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(onComplete).toHaveBeenCalledWith('✅ Download complete (no conversion).');
+  });
+
+  it('invokes onComplete callback when session is cancelled', () => {
+    const proc = createProc();
+    spawnWithEnvMock.mockReturnValue(proc);
+    const send = vi.fn();
+    const onComplete = vi.fn();
+
+    startDownload(
+      '/tmp/ytdlp',
+      {
+        isDestroyed: () => false,
+        send,
+      } as any,
+      { url: 'https://example.com/video', outputPath: '/tmp/downloads' },
+      null,
+      onComplete
+    );
+
+    cancelActiveSession(true);
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(onComplete).toHaveBeenCalledWith('⏹️ Cancelled.');
+  });
+
   it('creates missing output directory before starting download', () => {
     const proc = createProc();
     spawnWithEnvMock.mockReturnValue(proc);
