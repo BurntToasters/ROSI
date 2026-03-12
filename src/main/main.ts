@@ -472,37 +472,31 @@ async function processQueue() {
         keepOriginal: settings.convertEnabled ? settings.keepOriginalAfterConvert : undefined,
       };
 
-      const completeListener = (
-        _: Electron.IpcRendererEvent | Electron.Event,
-        statusMessage: string
-      ) => {
-        mainWindow?.webContents.removeListener('ipc-message', ipcListener);
+      let settled = false;
+      const completeListener = (statusMessage: string) => {
+        if (settled) return;
+        settled = true;
+
         const msg = String(statusMessage || '').toLowerCase();
         if (msg.includes('cancel')) {
           nextItem.status = 'cancelled';
+          nextItem.error = undefined;
         } else if (msg.includes('\u2705') || msg.includes('complete') || msg.includes('done')) {
           nextItem.status = 'completed';
+          nextItem.error = undefined;
         } else {
           nextItem.status = 'failed';
           nextItem.error = statusMessage;
         }
+
         queueActiveItemId = null;
         broadcastQueue();
         resolve();
       };
 
-      const ipcListener = (_: Electron.Event, channel: string, ...args: unknown[]) => {
-        if (channel === 'complete' && queueActiveItemId === nextItem.id) {
-          completeListener(_, args[0] as string);
-        }
-      };
-
-      mainWindow.webContents.on('ipc-message', ipcListener);
-
       try {
-        startDownload(ytdlpPath, mainWindow.webContents, options, mainWindow);
+        startDownload(ytdlpPath, mainWindow.webContents, options, mainWindow, completeListener);
       } catch (error) {
-        mainWindow?.webContents.removeListener('ipc-message', ipcListener);
         nextItem.status = 'failed';
         nextItem.error = (error as Error).message;
         queueActiveItemId = null;

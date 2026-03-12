@@ -51,6 +51,14 @@ function completeSession(
   }
   safeSend(session.sender, 'complete', statusMessage);
 
+  if (typeof session.onComplete === 'function') {
+    try {
+      session.onComplete(statusMessage);
+    } catch (error) {
+      log.error('Error in download completion callback:', error);
+    }
+  }
+
   const normalizedMsg = statusMessage.toLowerCase();
   if (normalizedMsg.includes('cancel')) {
     recordDownload('cancelled');
@@ -329,7 +337,8 @@ export function startDownload(
   ytdlpPath: string,
   sender: Electron.WebContents,
   options: DownloadRequestOptions,
-  mainWindow: Electron.BrowserWindow | null
+  mainWindow: Electron.BrowserWindow | null,
+  onComplete?: (statusMessage: string) => void
 ) {
   if (activeDownloadSession) {
     cancelActiveSession(false);
@@ -342,6 +351,7 @@ export function startDownload(
     lifecycle: createDownloadLifecycleState(),
     ytdlpProcess: null,
     ffmpegProcess: null,
+    onComplete,
   };
   activeDownloadSession = session;
 
