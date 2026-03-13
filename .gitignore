@@ -39,6 +39,8 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # Build artifacts
 build/Release
 *.tgz
+src/renderer/modules/*.js
+src/renderer/modules/*.js.map
 
 # macOS provisioning
 *.provisionprofile
