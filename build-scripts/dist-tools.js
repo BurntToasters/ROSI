@@ -33,6 +33,17 @@ function cleanBuildArtifacts() {
   cleanRendererModuleArtifacts();
 }
 
+function cleanReleaseArtifacts() {
+  const dirs = ['release'];
+  for (const dir of dirs) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
+    } catch (error) {
+      if (error && error.code === 'ENOENT') continue;
+    }
+  }
+}
+
 function cleanRendererModuleArtifacts() {
   let entries = [];
   try {
@@ -74,10 +85,15 @@ if (mode === 'clean') {
   process.exit(0);
 }
 
+if (mode === 'clean-release') {
+  cleanReleaseArtifacts();
+  process.exit(0);
+}
+
 if (mode === 'copy') {
   copyRuntimeAssets();
   process.exit(0);
 }
 
-console.error('Usage: node build-scripts/dist-tools.js <clean|copy>');
+console.error('Usage: node build-scripts/dist-tools.js <clean|clean-release|copy>');
 process.exit(1);
