@@ -1,6 +1,6 @@
 {
   "name": "rosi",
-  "version": "4.0.0-beta.2",
+  "version": "4.0.0-beta.3",
   "private": true,
   "description": "Electron GUI for yt-dlp",
   "keywords": [
@@ -67,6 +67,7 @@
     "build:win:arm64": "npm run prebuild:win:arm64 && electron-builder -c electron-builder.base.yml --win --arm64",
     "build:win:all": "npm run build:win && npm run build:win:x64 && npm run build:win:arm64",
     "build:mac:universal": "npm run prebuild:mac:universal && dotenv -e .env -- electron-builder -c electron-builder.base.yml --mac --universal",
+    "mac:ssh:keychain": "bash build-scripts/mac-keychain-ssh.sh",
     "build:linux": "npm run prebuild:linux && electron-builder -c electron-builder.base.yml --linux AppImage deb rpm --x64 --arm64",
     "build:linux:x64": "npm run prebuild:linux:x64 && node build-scripts/build-with-restore.js --prepare build-scripts/prepare-linux-x64.js -- npx electron-builder -c electron-builder.base.yml --linux AppImage deb rpm --x64",
     "build:linux:arm64": "npm run prebuild:linux:arm64 && node build-scripts/build-with-restore.js --prepare build-scripts/prepare-linux-arm64.js -- npx electron-builder -c electron-builder.base.yml --linux AppImage deb rpm --arm64",
@@ -89,6 +90,7 @@
     "release:win:x64": "npm run prebuild:win:x64 && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --win --x64 --publish always && npm run sign:gpg",
     "release:win:arm64": "npm run prebuild:win:arm64 && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --win --arm64 --publish always && npm run sign:gpg",
     "release:mac": "npm run prebuild:mac:universal && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --mac --universal --publish always && npm run sign:gpg",
+    "release:mac:ssh": "npm run mac:ssh:keychain && npm run release:mac",
     "release:linux:chain": "npm run release:linux:x64 && npm run release:linux:arm64",
     "release:linux:chain:f": "npm run release:linux:native:x64 && npm run release:linux:native:arm64",
     "release:linux": "npm run prebuild:linux && dotenv -e .env -- cross-env CHANNEL=github electron-builder -c electron-builder.github.yml --linux AppImage deb rpm --x64 --arm64 --publish always && npm run sign:gpg",
@@ -127,7 +129,7 @@
     "@vitest/coverage-v8": "^4.0.18",
     "cross-env": "^10.1.0",
     "dotenv-cli": "^11.0.0",
-    "electron": "^40.0.0",
+    "electron": "^41.0.2",
     "electron-builder": "^26.7.0",
     "eslint": "^9.39.2",
     "husky": "^9.1.7",
