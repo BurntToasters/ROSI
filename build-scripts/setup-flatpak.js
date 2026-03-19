@@ -5,6 +5,11 @@ const fs = require('fs');
 const RUNTIME_VERSION = '24.08';
 const ARCHS = ['x86_64', 'aarch64'];
 
+if (process.platform !== 'linux') {
+  console.error('Flatpak setup can only run on Linux.');
+  process.exit(1);
+}
+
 const FLATPAK_RUNTIMES = [
   'org.freedesktop.Platform',
   'org.freedesktop.Sdk',
@@ -65,7 +70,7 @@ function detectDistro() {
 }
 
 function checkRoot() {
-  if (process.getuid() !== 0) {
+  if (typeof process.getuid !== 'function' || process.getuid() !== 0) {
     console.error('This script must be run with sudo/root privileges to install system packages.');
     console.error('Usage: sudo node build-scripts/setup-flatpak.js');
     process.exit(1);

@@ -100,6 +100,15 @@ export function cancelActiveSession(notify = true) {
     return;
   }
 
+  if (typeof session.onComplete === 'function') {
+    try {
+      session.onComplete('⏹️ Cancelled.');
+    } catch (error) {
+      log.error('Error in download cancellation callback:', error);
+    }
+  }
+
+  recordDownload('cancelled');
   session.lifecycle = markTerminalEventEmitted(session.lifecycle);
   activeDownloadSession = null;
 }
@@ -214,7 +223,7 @@ async function runConversion(
     const inputPath = sanitizedInputPath;
     const inputFileExt = path.extname(inputPath);
     const inputFilename = path.basename(inputPath);
-    const targetFormat = effectiveSettings.convertFormat || 'mp4';
+    const targetFormat = (effectiveSettings.convertFormat || 'mp4').toLowerCase();
     const outputPath = inputPath.replace(/\.[^/.]+$/, `.${targetFormat}`);
     const outputFilename = path.basename(outputPath);
 
@@ -473,9 +482,15 @@ export function startDownload(
         }
         const resolvedFilePath = path.resolve(downloadedFilePath);
         const resolvedDownloadDir = path.resolve(normalizedDownloadDir);
+        const compareFilePath = isWindows ? resolvedFilePath.toLowerCase() : resolvedFilePath;
+        const compareDownloadDir = isWindows
+          ? resolvedDownloadDir.toLowerCase()
+          : resolvedDownloadDir;
+        const relativePath = path.relative(compareDownloadDir, compareFilePath);
         if (
-          !resolvedFilePath.startsWith(resolvedDownloadDir + path.sep) &&
-          resolvedFilePath !== resolvedDownloadDir
+          relativePath === '..' ||
+          relativePath.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(relativePath)
         ) {
           throw new Error(
             `Downloaded file path "${resolvedFilePath}" is outside the expected directory "${resolvedDownloadDir}".`

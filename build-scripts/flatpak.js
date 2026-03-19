@@ -10,6 +10,11 @@ const BUILD_DIR_PREFIX = 'build-dir';
 const REPO_DIR = 'repo';
 const RELEASE_DIR = 'release';
 
+if (process.platform !== 'linux') {
+  console.error('Flatpak scripts can only run on Linux.');
+  process.exit(1);
+}
+
 const ARCH_MAP = {
   x64: 'x86_64',
   arm64: 'aarch64',
@@ -92,20 +97,20 @@ function clean(archs) {
   for (const arch of archs) {
     const buildDir = `${BUILD_DIR_PREFIX}-${arch}`;
     if (fs.existsSync(path.join(ROOT, buildDir))) {
-      run(`rm -rf ${buildDir}`);
+      fs.rmSync(path.join(ROOT, buildDir), { recursive: true, force: true });
     }
   }
 
   if (fs.existsSync(path.join(ROOT, BUILD_DIR_PREFIX))) {
-    run(`rm -rf ${BUILD_DIR_PREFIX}`);
+    fs.rmSync(path.join(ROOT, BUILD_DIR_PREFIX), { recursive: true, force: true });
   }
 
   if (fs.existsSync(path.join(ROOT, REPO_DIR))) {
-    run(`rm -rf ${REPO_DIR}`);
+    fs.rmSync(path.join(ROOT, REPO_DIR), { recursive: true, force: true });
   }
 
   if (fs.existsSync(path.join(ROOT, '.flatpak-builder'))) {
-    run('rm -rf .flatpak-builder');
+    fs.rmSync(path.join(ROOT, '.flatpak-builder'), { recursive: true, force: true });
   }
 }
 

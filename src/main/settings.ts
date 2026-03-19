@@ -51,11 +51,18 @@ function readString(value: unknown, fallback: string): string {
 }
 
 const ALLOWED_AUDIO_FORMATS = new Set<AudioFormat>(['mp3', 'flac', 'ogg', 'wav', 'm4a', 'opus']);
+const ALLOWED_CONVERT_FORMATS = new Set(['mp4', 'mov', 'mp3', 'm4a']);
 
 function readAudioFormat(value: unknown): AudioFormat {
   return typeof value === 'string' && ALLOWED_AUDIO_FORMATS.has(value as AudioFormat)
     ? (value as AudioFormat)
     : defaultSettings.audioFormat;
+}
+
+function readConvertFormat(value: unknown): string {
+  return typeof value === 'string' && ALLOWED_CONVERT_FORMATS.has(value)
+    ? value
+    : defaultSettings.convertFormat;
 }
 
 function readUpdateChannel(value: unknown): Settings['updateChannel'] {
@@ -100,7 +107,7 @@ export function migrateSettings(rawSettings: unknown): Settings {
     audioOnly: readBoolean(rawSettings.audioOnly, defaultSettings.audioOnly),
     audioFormat: readAudioFormat(rawSettings.audioFormat),
     convertEnabled: readBoolean(rawSettings.convertEnabled, defaultSettings.convertEnabled),
-    convertFormat: readString(rawSettings.convertFormat, defaultSettings.convertFormat),
+    convertFormat: readConvertFormat(rawSettings.convertFormat),
     keepOriginalAfterConvert: readBoolean(
       rawSettings.keepOriginalAfterConvert,
       defaultSettings.keepOriginalAfterConvert

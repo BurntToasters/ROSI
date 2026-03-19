@@ -61,8 +61,6 @@ linux:
     - rpm
   icon: build/app-icon.png
   category: Utility
-  executableArgs:
-    - '--ozone-platform=x11'
   extraResources:
     - from: assets/
       to: assets/

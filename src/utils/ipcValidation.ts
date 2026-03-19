@@ -12,6 +12,7 @@ const ALLOWED_GPU_TYPES = new Set(['auto', 'nvidia', 'amd', 'intel']);
 const ALLOWED_UPDATE_CHANNELS = new Set(['auto', 'stable', 'beta']);
 const ALLOWED_THEMES = new Set(['system', 'light', 'dark', 'purple']);
 const ALLOWED_AUDIO_FORMATS = new Set(['mp3', 'flac', 'ogg', 'wav', 'm4a', 'opus']);
+const ALLOWED_CONVERT_FORMATS = new Set(['mp4', 'mov', 'mp3', 'm4a']);
 
 type ValidationResult<T> = { ok: true; data: T } | { ok: false; error: IpcErrorPayload };
 
@@ -96,6 +97,16 @@ export function validateDownloadRequestPayload(
       error: buildError('VALIDATION_ERROR', 'convertFormat must be a string when provided.'),
     };
   }
+  const normalizedConvertFormat = convertFormat?.trim() || undefined;
+  if (
+    normalizedConvertFormat !== undefined &&
+    !ALLOWED_CONVERT_FORMATS.has(normalizedConvertFormat)
+  ) {
+    return {
+      ok: false,
+      error: buildError('VALIDATION_ERROR', 'convertFormat must be one of: mp4, mov, mp3, m4a.'),
+    };
+  }
   if (keepOriginal !== undefined && !isBoolean(keepOriginal)) {
     return {
       ok: false,
@@ -121,7 +132,7 @@ export function validateDownloadRequestPayload(
       url: url.trim(),
       outputPath: outputPath.trim(),
       ffmpegPath: ffmpegPath?.trim() || undefined,
-      convertFormat: convertFormat?.trim() || undefined,
+      convertFormat: normalizedConvertFormat,
       keepOriginal,
       videoFormat: videoFormat?.trim() || undefined,
       audioFormat: audioFormat?.trim() || undefined,
@@ -249,6 +260,20 @@ export function validateSettingsPatchPayload(value: unknown): ValidationResult<P
         };
       }
       patch.audioFormat = rawValue as Settings['audioFormat'];
+      continue;
+    }
+
+    if (rawKey === 'convertFormat') {
+      if (!isString(rawValue) || !ALLOWED_CONVERT_FORMATS.has(rawValue)) {
+        return {
+          ok: false,
+          error: buildError(
+            'VALIDATION_ERROR',
+            'convertFormat must be one of: mp4, mov, mp3, m4a.'
+          ),
+        };
+      }
+      patch.convertFormat = rawValue;
       continue;
     }
 

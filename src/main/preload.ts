@@ -71,7 +71,7 @@ const api: RendererApi = {
   clearQueue: () => ipcRenderer.invoke('clear-queue'),
   getQueue: () => ipcRenderer.invoke('get-queue') as Promise<QueueItem[]>,
   startQueue: () => ipcRenderer.invoke('start-queue'),
-  cancelQueue: () => ipcRenderer.send('cancel-queue'),
+  cancelQueue: () => ipcRenderer.invoke('cancel-queue'),
   onQueueUpdate: (callback: (queue: QueueItem[]) => void) => {
     const listener = (_: Electron.IpcRendererEvent, queue: QueueItem[]) => callback(queue);
     ipcRenderer.on('queue-update', listener);

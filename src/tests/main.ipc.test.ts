@@ -239,12 +239,12 @@ describe('main process IPC wiring and queue behavior', () => {
       'clear-queue',
       'get-queue',
       'start-queue',
+      'cancel-queue',
       'open-external',
     ];
     expectedChannels.forEach((channel) => {
       expect(typeof handleHandlers[channel]).toBe('function');
     });
-    expect(typeof onHandlers['cancel-queue']).toBe('function');
   });
 
   it('processes queue add/start/remove/cancel/clear flow', async () => {
@@ -253,7 +253,7 @@ describe('main process IPC wiring and queue behavior', () => {
     const removeFromQueue = handleHandlers['remove-from-queue'];
     const startQueue = handleHandlers['start-queue'];
     const clearQueue = handleHandlers['clear-queue'];
-    const cancelQueue = onHandlers['cancel-queue'];
+    const cancelQueue = handleHandlers['cancel-queue'];
 
     const addResult = await addToQueue({}, ['https://example.com/a', 'invalid-url']);
     expect(addResult).toEqual({ ok: true, data: { added: 1 } });
@@ -279,7 +279,8 @@ describe('main process IPC wiring and queue behavior', () => {
     const secondAdd = await addToQueue({}, ['https://example.com/b', 'https://example.com/c']);
     expect(secondAdd).toEqual({ ok: true, data: { added: 2 } });
 
-    cancelQueue();
+    const cancelResult = await cancelQueue();
+    expect(cancelResult).toEqual({ ok: true, data: undefined });
     queue = await getQueue();
     const cancelledItems = queue.filter((item: { status: string }) => item.status === 'cancelled');
     expect(cancelledItems.length).toBeGreaterThanOrEqual(2);

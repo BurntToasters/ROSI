@@ -148,6 +148,7 @@ describe('preload api contract', () => {
     await expectInvokeCall(api, 'clearQueue', 'clear-queue');
     await expectInvokeCall(api, 'getQueue', 'get-queue');
     await expectInvokeCall(api, 'startQueue', 'start-queue');
+    await expectInvokeCall(api, 'cancelQueue', 'cancel-queue');
   });
 
   it('maps send-based methods to the correct IPC channels', () => {
@@ -157,7 +158,6 @@ describe('preload api contract', () => {
     expectSendCall(api, 'cancelFormats', 'cancel-formats');
     expectSendCall(api, 'cancelUpdateDownload', 'cancel-update-download');
     expectSendCall(api, 'installUpdate', 'install-update');
-    expectSendCall(api, 'cancelQueue', 'cancel-queue');
   });
 
   it('registers and cleans up event subscriptions', () => {

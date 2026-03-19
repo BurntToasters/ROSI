@@ -15,7 +15,7 @@
 
   interface QueueDeps {
     escapeHtml: (value: string) => string;
-    removeFromQueue: (id: string) => unknown;
+    removeFromQueue: (id: string) => Promise<unknown> | unknown;
   }
 
   interface QueueModule {
@@ -78,7 +78,10 @@
       const removeBtn = el.querySelector<HTMLButtonElement>('.queue-item-remove');
       if (removeBtn) {
         removeBtn.addEventListener('click', () => {
-          removeFromQueue(item.id);
+          removeBtn.disabled = true;
+          void Promise.resolve(removeFromQueue(item.id)).finally(() => {
+            removeBtn.disabled = false;
+          });
         });
       }
       fragment.appendChild(el);
