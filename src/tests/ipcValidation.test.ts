@@ -79,6 +79,13 @@ describe('ipc validation helpers', () => {
       validateDownloadRequestPayload({
         url: 'https://example.com',
         outputPath: '/tmp',
+        convertFormat: '../../bad',
+      }).ok
+    ).toBe(false);
+    expect(
+      validateDownloadRequestPayload({
+        url: 'https://example.com',
+        outputPath: '/tmp',
         keepOriginal: 'yes',
       }).ok
     ).toBe(false);
@@ -121,6 +128,7 @@ describe('ipc validation helpers', () => {
     expect(validateSettingsPatchPayload({ theme: 'night' }).ok).toBe(false);
     expect(validateSettingsPatchPayload({ audioOnly: 'true' }).ok).toBe(false);
     expect(validateSettingsPatchPayload({ browserChoice: 123 }).ok).toBe(false);
+    expect(validateSettingsPatchPayload({ convertFormat: '../../bad' }).ok).toBe(false);
 
     const invalid = validateSettingsPatchPayload({
       updateChannel: 'nightly',

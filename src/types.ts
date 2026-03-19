@@ -178,6 +178,6 @@ export interface RendererApi {
   clearQueue: () => Promise<IpcResult<void>>;
   getQueue: () => Promise<QueueItem[]>;
   startQueue: () => Promise<IpcResult<{ started: boolean }>>;
-  cancelQueue: () => void;
+  cancelQueue: () => Promise<IpcResult<void>>;
   onQueueUpdate: (callback: (queue: QueueItem[]) => void) => () => void;
 }

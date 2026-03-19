@@ -18,9 +18,16 @@
   <body>
     <div id="sidebar-overlay" class="sidebar-overlay"></div>
 
-    <aside id="sidebar" class="sidebar">
+    <aside
+      id="sidebar"
+      class="sidebar"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sidebarTitle"
+      aria-hidden="true"
+    >
       <div class="sidebar-header">
-        <h2>Settings</h2>
+        <h2 id="sidebarTitle">Settings</h2>
         <button id="closeSidebar" class="sidebar-close" aria-label="Close settings">
           <svg
             width="20"
@@ -40,7 +47,14 @@
 
       <div class="sidebar-content">
         <section class="settings-section">
-          <div class="settings-section-header" role="button" tabindex="0" aria-expanded="true">
+          <div
+            id="settingsSectionHeaderDownload"
+            class="settings-section-header"
+            role="button"
+            tabindex="0"
+            aria-expanded="true"
+            aria-controls="settingsSectionBodyDownload"
+          >
             <h3 class="settings-section-title">Download Options</h3>
             <svg
               class="settings-chevron"
@@ -56,7 +70,12 @@
               <polyline points="6 9 12 15 18 9"></polyline>
             </svg>
           </div>
-          <div class="settings-section-body">
+          <div
+            id="settingsSectionBodyDownload"
+            class="settings-section-body"
+            role="region"
+            aria-labelledby="settingsSectionHeaderDownload"
+          >
             <label class="toggle-switch">
               <input type="checkbox" id="bestQualityToggle" />
               <span class="toggle-slider"></span>
@@ -144,7 +163,14 @@
         </section>
 
         <section class="settings-section">
-          <div class="settings-section-header" role="button" tabindex="0" aria-expanded="true">
+          <div
+            id="settingsSectionHeaderBrowser"
+            class="settings-section-header"
+            role="button"
+            tabindex="0"
+            aria-expanded="true"
+            aria-controls="settingsSectionBodyBrowser"
+          >
             <h3 class="settings-section-title">Browser Integration</h3>
             <svg
               class="settings-chevron"
@@ -160,7 +186,12 @@
               <polyline points="6 9 12 15 18 9"></polyline>
             </svg>
           </div>
-          <div class="settings-section-body">
+          <div
+            id="settingsSectionBodyBrowser"
+            class="settings-section-body"
+            role="region"
+            aria-labelledby="settingsSectionHeaderBrowser"
+          >
             <label class="toggle-switch">
               <input type="checkbox" id="hookBrowserToggle" />
               <span class="toggle-slider"></span>
@@ -185,7 +216,14 @@
         </section>
 
         <section class="settings-section">
-          <div class="settings-section-header" role="button" tabindex="0" aria-expanded="true">
+          <div
+            id="settingsSectionHeaderInterface"
+            class="settings-section-header"
+            role="button"
+            tabindex="0"
+            aria-expanded="true"
+            aria-controls="settingsSectionBodyInterface"
+          >
             <h3 class="settings-section-title">Interface</h3>
             <svg
               class="settings-chevron"
@@ -201,7 +239,12 @@
               <polyline points="6 9 12 15 18 9"></polyline>
             </svg>
           </div>
-          <div class="settings-section-body">
+          <div
+            id="settingsSectionBodyInterface"
+            class="settings-section-body"
+            role="region"
+            aria-labelledby="settingsSectionHeaderInterface"
+          >
             <label class="toggle-switch">
               <input type="checkbox" id="consoleToggle" />
               <span class="toggle-slider"></span>
@@ -233,7 +276,14 @@
         </section>
 
         <section class="settings-section">
-          <div class="settings-section-header" role="button" tabindex="0" aria-expanded="true">
+          <div
+            id="settingsSectionHeaderApplication"
+            class="settings-section-header"
+            role="button"
+            tabindex="0"
+            aria-expanded="true"
+            aria-controls="settingsSectionBodyApplication"
+          >
             <h3 class="settings-section-title">Application</h3>
             <svg
               class="settings-chevron"
@@ -249,14 +299,24 @@
               <polyline points="6 9 12 15 18 9"></polyline>
             </svg>
           </div>
-          <div class="settings-section-body">
+          <div
+            id="settingsSectionBodyApplication"
+            class="settings-section-body"
+            role="region"
+            aria-labelledby="settingsSectionHeaderApplication"
+          >
             <label class="toggle-switch" id="checkUpdatesOnStartupLabel">
               <input type="checkbox" id="checkUpdatesOnStartupToggle" />
               <span class="toggle-slider"></span>
               <span class="toggle-text">Auto check for updates</span>
             </label>
 
-            <button id="showUpdateChannelBtn" class="settings-link-btn">
+            <button
+              id="showUpdateChannelBtn"
+              class="settings-link-btn"
+              aria-expanded="false"
+              aria-controls="updateChannelContainer"
+            >
               ▸ Update channel settings
             </button>
             <div id="updateChannelContainer" class="sub-option">
@@ -390,7 +450,7 @@
       </div>
     </aside>
 
-    <main class="main-content">
+    <main id="main-content" class="main-content">
       <div class="app-shell">
         <header class="top-bar">
           <button id="settingsBtn" class="icon-btn" title="Settings" aria-label="Settings">
@@ -485,6 +545,7 @@
                     autocomplete="off"
                     spellcheck="false"
                     aria-label="Video URL"
+                    aria-describedby="urlValidationMessage"
                   />
                   <button
                     id="pasteUrl"
@@ -545,6 +606,12 @@
                   <span>Download</span>
                 </button>
               </div>
+              <p
+                id="urlValidationMessage"
+                class="url-validation-message"
+                role="status"
+                aria-live="polite"
+              ></p>
 
               <div id="progress-container" class="progress-container">
                 <div id="progress-phases" class="progress-phases">
@@ -623,7 +690,7 @@
             </div>
           </section>
 
-          <section id="queueSection" class="queue-section">
+          <section id="queueSection" class="queue-section" aria-busy="false">
             <div class="queue-header">
               <div class="queue-header-left">
                 <svg
@@ -652,14 +719,16 @@
               <textarea
                 id="queueUrlInput"
                 class="queue-url-input"
-                placeholder="Paste URLs here (one per line)"
+                placeholder="Paste one or more URLs, one per line"
                 rows="2"
                 aria-label="Queue URLs"
+                aria-describedby="queueStatusMessage"
               ></textarea>
               <button
                 id="addToQueueBtn"
                 class="queue-action-btn queue-add-btn"
                 title="Add to queue"
+                aria-label="Add URLs to queue"
               >
                 <svg
                   width="16"
@@ -674,7 +743,7 @@
                   <line x1="12" y1="5" x2="12" y2="19" />
                   <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
-                Add
+                Add URLs
               </button>
             </div>
             <div class="queue-controls">
@@ -682,6 +751,7 @@
                 id="startQueueBtn"
                 class="queue-action-btn queue-start-btn"
                 title="Start queue"
+                aria-label="Start queue processing"
               >
                 <svg
                   width="14"
@@ -695,12 +765,13 @@
                 >
                   <polygon points="5 3 19 12 5 21 5 3" />
                 </svg>
-                Start
+                Start Queue
               </button>
               <button
                 id="cancelQueueBtn"
                 class="queue-action-btn queue-cancel-btn"
                 title="Cancel queue"
+                aria-label="Cancel active queue"
               >
                 <svg
                   width="14"
@@ -714,12 +785,13 @@
                 >
                   <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
                 </svg>
-                Cancel
+                Cancel Queue
               </button>
               <button
                 id="clearQueueBtn"
                 class="queue-action-btn queue-clear-btn"
                 title="Clear queue"
+                aria-label="Clear queued and completed items"
               >
                 <svg
                   width="14"
@@ -735,9 +807,18 @@
                     d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
                   />
                 </svg>
-                Clear
+                Clear Queue
               </button>
             </div>
+            <p
+              id="queueStatusMessage"
+              class="queue-status-message"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              Queue status updates will appear here.
+            </p>
             <div id="queueList" class="queue-list" aria-live="polite"></div>
           </section>
 
@@ -747,6 +828,7 @@
               id="historyHeader"
               role="button"
               aria-expanded="true"
+              aria-controls="history-list"
               tabindex="0"
             >
               <div class="history-header-left">
@@ -812,6 +894,7 @@
               id="consoleHeader"
               role="button"
               aria-expanded="false"
+              aria-controls="output"
               tabindex="0"
             >
               <div class="console-header-left">
@@ -877,7 +960,13 @@
             <div class="update-banner-progress">
               <div id="update-banner-bar" class="update-banner-bar"></div>
             </div>
-            <span id="update-banner-info" class="update-banner-info"></span>
+            <span
+              id="update-banner-info"
+              class="update-banner-info"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            ></span>
             <button id="update-banner-cancel" class="update-banner-cancel">Cancel</button>
           </div>
         </div>

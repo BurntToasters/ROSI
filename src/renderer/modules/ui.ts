@@ -172,35 +172,148 @@
     }
   }
 
-  function toggleSidebar() {
-    const sidebar = document.getElementById('sidebar');
-    const overlay = document.getElementById('sidebar-overlay');
-    if (!sidebar) return;
+  let sidebarTrapHandler: ((event: KeyboardEvent) => void) | null = null;
+  let sidebarFocusinHandler: ((event: FocusEvent) => void) | null = null;
+  let previousSidebarFocus: HTMLElement | null = null;
 
-    const isOpen = sidebar.classList.contains('open');
-    if (isOpen) {
-      sidebar.classList.remove('open');
-      if (overlay) overlay.classList.remove('active');
-      document.body.classList.remove('sidebar-open');
-      const settingsBtn = document.getElementById('settingsBtn');
-      if (settingsBtn instanceof HTMLElement) settingsBtn.focus();
+  function getSidebarFocusableElements(sidebar: HTMLElement): HTMLElement[] {
+    return Array.from(
+      sidebar.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter(
+      (element) =>
+        !element.hasAttribute('disabled') &&
+        element.getAttribute('aria-hidden') !== 'true' &&
+        element.tabIndex !== -1 &&
+        element.offsetParent !== null
+    );
+  }
+
+  function focusFirstSidebarElement(sidebar: HTMLElement): boolean {
+    const focusable = getSidebarFocusableElements(sidebar);
+    const first = focusable[0];
+    if (first) {
+      first.focus();
+      return true;
+    }
+    const closeBtn = sidebar.querySelector<HTMLElement>('#closeSidebar');
+    if (closeBtn) {
+      closeBtn.focus();
+      return true;
+    }
+    return false;
+  }
+
+  function setMainContentInert(isInert: boolean) {
+    const mainContent =
+      document.getElementById('main-content') || document.querySelector('.main-content');
+    if (!(mainContent instanceof HTMLElement)) return;
+    if ('inert' in mainContent) {
+      (mainContent as HTMLElement & { inert: boolean }).inert = isInert;
+    }
+    if (isInert) {
+      mainContent.setAttribute('aria-hidden', 'true');
     } else {
-      sidebar.classList.add('open');
-      if (overlay) overlay.classList.add('active');
-      document.body.classList.add('sidebar-open');
-      const closeBtn = document.getElementById('closeSidebar');
-      if (closeBtn instanceof HTMLElement) closeBtn.focus();
+      mainContent.removeAttribute('aria-hidden');
     }
   }
 
   function closeSidebar() {
     const sidebar = document.getElementById('sidebar');
     const overlay = document.getElementById('sidebar-overlay');
-    if (sidebar) sidebar.classList.remove('open');
+    if (sidebar instanceof HTMLElement) {
+      sidebar.classList.remove('open');
+      sidebar.setAttribute('aria-hidden', 'true');
+      if (sidebarTrapHandler) {
+        sidebar.removeEventListener('keydown', sidebarTrapHandler);
+      }
+      sidebarTrapHandler = null;
+      if (sidebarFocusinHandler) {
+        document.removeEventListener('focusin', sidebarFocusinHandler, true);
+      }
+      sidebarFocusinHandler = null;
+    }
     if (overlay) overlay.classList.remove('active');
     document.body.classList.remove('sidebar-open');
+    setMainContentInert(false);
+    if (previousSidebarFocus && typeof previousSidebarFocus.focus === 'function') {
+      previousSidebarFocus.focus();
+    } else {
+      const settingsBtn = document.getElementById('settingsBtn');
+      if (settingsBtn instanceof HTMLElement) {
+        settingsBtn.setAttribute('aria-expanded', 'false');
+        settingsBtn.focus();
+      }
+    }
+    previousSidebarFocus = null;
+  }
+
+  function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    if (!(sidebar instanceof HTMLElement)) return;
+
+    if (sidebar.classList.contains('open')) {
+      closeSidebar();
+      return;
+    }
+
+    previousSidebarFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    sidebar.classList.add('open');
+    sidebar.setAttribute('aria-hidden', 'false');
+    if (overlay) overlay.classList.add('active');
+    document.body.classList.add('sidebar-open');
+    setMainContentInert(true);
     const settingsBtn = document.getElementById('settingsBtn');
-    if (settingsBtn instanceof HTMLElement) settingsBtn.focus();
+    if (settingsBtn instanceof HTMLElement) {
+      settingsBtn.setAttribute('aria-expanded', 'true');
+    }
+
+    const closeBtn = document.getElementById('closeSidebar');
+    if (closeBtn instanceof HTMLElement) {
+      closeBtn.focus();
+    } else {
+      focusFirstSidebarElement(sidebar);
+    }
+
+    sidebarTrapHandler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeSidebar();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+
+      const focusable = getSidebarFocusableElements(sidebar);
+      if (focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first || !last) return;
+      const active = document.activeElement as HTMLElement | null;
+
+      if (event.shiftKey) {
+        if (!active || active === first) {
+          event.preventDefault();
+          last.focus();
+        }
+      } else if (!active || active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    sidebar.addEventListener('keydown', sidebarTrapHandler);
+
+    sidebarFocusinHandler = (event: FocusEvent) => {
+      if (!sidebar.classList.contains('open')) return;
+      const target = event.target;
+      if (target instanceof Node && sidebar.contains(target)) return;
+      focusFirstSidebarElement(sidebar);
+    };
+    document.addEventListener('focusin', sidebarFocusinHandler, true);
   }
 
   function toggleAdvancedUI(show: boolean) {

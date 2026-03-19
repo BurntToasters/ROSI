@@ -57,6 +57,14 @@ export function resolveFfmpegPath(customPath: unknown): string | null {
   if (!customPath || typeof customPath !== 'string') return null;
   const trimmed = customPath.trim();
   if (!trimmed) return null;
+  if (
+    !path.isAbsolute(trimmed) &&
+    !trimmed.includes(path.sep) &&
+    !trimmed.includes('/') &&
+    !trimmed.includes('\\')
+  ) {
+    return trimmed;
+  }
 
   const resolved = path.resolve(trimmed);
 
@@ -167,7 +175,17 @@ export function resolveBundledFfmpegPath(): string | null {
 
 export function getEffectiveFfmpegPath(customPath?: string | null): string {
   const resolved = resolveFfmpegPath(customPath);
-  if (resolved) return resolved;
+  if (resolved) {
+    const pathLike =
+      path.isAbsolute(resolved) ||
+      resolved.includes(path.sep) ||
+      resolved.includes('/') ||
+      resolved.includes('\\');
+    if (!pathLike || fs.existsSync(resolved)) {
+      return resolved;
+    }
+    log.warn(`Custom ffmpeg path does not exist, falling back: ${resolved}`);
+  }
 
   const bundled = resolveBundledFfmpegPath();
   if (bundled) return bundled;
@@ -254,12 +272,20 @@ export function resolveYtdlpPath(): string {
         try {
           fs.accessSync(resolved, fs.constants.X_OK);
         } catch {
-          const tmpDir = path.join(app.getPath('temp'), 'rosi-bin');
-          if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-          const tmpBin = path.join(tmpDir, ytdlpBinary);
-          fs.copyFileSync(resolved, tmpBin);
-          fs.chmodSync(tmpBin, 0o755);
-          resolved = tmpBin;
+          try {
+            const tmpDir = path.join(app.getPath('temp'), 'rosi-bin');
+            if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+            const tmpBin = path.join(tmpDir, ytdlpBinary);
+            fs.copyFileSync(resolved, tmpBin);
+            fs.chmodSync(tmpBin, 0o755);
+            resolved = tmpBin;
+          } catch (copyErr) {
+            dialog.showErrorBox(
+              'Permission Error',
+              `Failed to prepare yt-dlp for execution at ${resolved}.\nError: ${(copyErr as Error).message}`
+            );
+            app.quit();
+          }
         }
       } else {
         dialog.showErrorBox(

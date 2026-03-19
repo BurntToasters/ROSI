@@ -439,7 +439,10 @@ ipcMain.handle('open-file-location', async (_, filePath) => {
 
     const dir = path.dirname(validation.data);
     if (fs.existsSync(dir)) {
-      await shell.openPath(dir);
+      const openResult = await shell.openPath(dir);
+      if (typeof openResult === 'string' && openResult.trim() !== '') {
+        return errorResult('INTERNAL_ERROR', `Failed to open directory: ${openResult}`);
+      }
       return okResult({ opened: true });
     }
 
@@ -529,13 +532,14 @@ let queueActiveItemId: string | null = null;
 let queueProcessingLock = false;
 
 const queuePath = path.join(app.getPath('userData'), 'download-queue.json');
+const queueBackupPath = path.join(app.getPath('userData'), 'download-queue.backup.json');
 
-function loadPersistedQueue(): QueueItem[] {
+function readQueueFromDisk(filePath: string): QueueItem[] | null {
   try {
-    if (!fs.existsSync(queuePath)) return [];
-    const raw = fs.readFileSync(queuePath, 'utf-8');
+    if (!fs.existsSync(filePath)) return null;
+    const raw = fs.readFileSync(filePath, 'utf-8');
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
+    if (!Array.isArray(parsed)) return null;
     return parsed
       .filter(
         (item: unknown): item is QueueItem =>
@@ -549,16 +553,40 @@ function loadPersistedQueue(): QueueItem[] {
         status: item.status === 'downloading' ? ('pending' as const) : item.status,
       }));
   } catch {
-    return [];
+    return null;
   }
 }
 
+function loadPersistedQueue(): QueueItem[] {
+  const queueFromPrimary = readQueueFromDisk(queuePath);
+  if (queueFromPrimary) {
+    return queueFromPrimary;
+  }
+  const queueFromBackup = readQueueFromDisk(queueBackupPath);
+  if (queueFromBackup) {
+    log.warn('Primary queue file could not be read. Restoring queue from backup.');
+    return queueFromBackup;
+  }
+  return [];
+}
+
 function persistQueue(): void {
+  const tempPath = `${queuePath}.tmp`;
   try {
     const dir = path.dirname(queuePath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(queuePath, JSON.stringify(downloadQueue, null, 2));
+    const serialized = JSON.stringify(downloadQueue, null, 2);
+    fs.writeFileSync(tempPath, serialized, 'utf-8');
+    if (fs.existsSync(queuePath)) {
+      fs.copyFileSync(queuePath, queueBackupPath);
+      fs.rmSync(queuePath, { force: true });
+    }
+    fs.renameSync(tempPath, queuePath);
+    fs.copyFileSync(queuePath, queueBackupPath);
   } catch (error) {
+    try {
+      if (fs.existsSync(tempPath)) fs.rmSync(tempPath, { force: true });
+    } catch {}
     log.error('Failed to persist queue:', error);
   }
 }
@@ -695,8 +723,10 @@ ipcMain.handle('clear-queue', () => {
   if (isQueueRunning) {
     queueCancelled = true;
     cancelActiveSession(true);
+    isQueueRunning = false;
+    queueActiveItemId = null;
   }
-  downloadQueue = downloadQueue.filter((item) => item.status === 'downloading');
+  downloadQueue = [];
   broadcastQueue();
   return okResult(undefined);
 });
@@ -717,17 +747,23 @@ ipcMain.handle('start-queue', () => {
   return okResult({ started: true });
 });
 
-ipcMain.on('cancel-queue', () => {
-  queueCancelled = true;
-  isQueueRunning = false;
-  if (queueActiveItemId) {
-    cancelActiveSession(true);
-    queueActiveItemId = null;
-  }
-  downloadQueue.forEach((item) => {
-    if (item.status === 'pending' || item.status === 'downloading') {
-      item.status = 'cancelled';
+ipcMain.handle('cancel-queue', () => {
+  try {
+    queueCancelled = true;
+    isQueueRunning = false;
+    if (queueActiveItemId) {
+      cancelActiveSession(true);
+      queueActiveItemId = null;
     }
-  });
-  broadcastQueue();
+    downloadQueue.forEach((item) => {
+      if (item.status === 'pending' || item.status === 'downloading') {
+        item.status = 'cancelled';
+      }
+    });
+    broadcastQueue();
+    return okResult(undefined);
+  } catch (error) {
+    log.error('Error in cancel-queue handler:', error);
+    return errorResult('INTERNAL_ERROR', 'Failed to cancel queue.');
+  }
 });

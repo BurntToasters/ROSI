@@ -141,17 +141,26 @@ function appendConsoleOutput(outputEl, text) {
   }
 }
 
-// Toggle console collapsed state
-function toggleConsoleCollapse() {
+function setConsoleCollapsed(collapsed) {
   const consoleSection = document.getElementById('console-section');
   const consoleHeader = document.getElementById('consoleHeader');
-  if (consoleSection) {
-    consoleSection.classList.toggle('collapsed');
-    const isCollapsed = consoleSection.classList.contains('collapsed');
-    if (consoleHeader) consoleHeader.setAttribute('aria-expanded', String(!isCollapsed));
-    return isCollapsed;
+  const output = document.getElementById('output');
+  if (!consoleSection) return false;
+  consoleSection.classList.toggle('collapsed', !!collapsed);
+  const isCollapsed = consoleSection.classList.contains('collapsed');
+  if (consoleHeader) consoleHeader.setAttribute('aria-expanded', String(!isCollapsed));
+  if (output) output.setAttribute('aria-hidden', String(isCollapsed));
+  return isCollapsed;
+}
+
+// Toggle console collapsed state
+function toggleConsoleCollapse(forceCollapsed) {
+  const consoleSection = document.getElementById('console-section');
+  if (!consoleSection) return false;
+  if (typeof forceCollapsed === 'boolean') {
+    return setConsoleCollapsed(forceCollapsed);
   }
-  return false;
+  return setConsoleCollapsed(!consoleSection.classList.contains('collapsed'));
 }
 
 function setButtonLoading(button, isLoading, onCancel) {
@@ -183,6 +192,33 @@ let isModalActive = false;
 let currentModalData = null;
 let previousFocus = null;
 let modalTrapHandler = null;
+let modalFocusinHandler = null;
+let licensesFocusinHandler = null;
+
+function getFocusableElements(container) {
+  if (!(container instanceof HTMLElement)) return [];
+  return Array.from(
+    container.querySelectorAll(
+      'button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])'
+    )
+  ).filter(
+    (element) =>
+      !element.hasAttribute('disabled') &&
+      element.getAttribute('aria-hidden') !== 'true' &&
+      element.tabIndex !== -1 &&
+      element.offsetParent !== null
+  );
+}
+
+function focusFirstElement(container) {
+  const focusable = getFocusableElements(container);
+  const first = focusable[0];
+  if (first && typeof first.focus === 'function') {
+    first.focus();
+    return true;
+  }
+  return false;
+}
 
 function showModal({ title, message, buttons = [], priority = false, extra = null }) {
   const modalData = { title, message, buttons, priority, extra };
@@ -240,6 +276,7 @@ function displayNextModal() {
   }
   btnContainer.innerHTML = '';
 
+  modal.setAttribute('tabindex', '-1');
   modal.classList.add('showing');
   modal.classList.add('active');
 
@@ -262,36 +299,49 @@ function displayNextModal() {
   if (modalTrapHandler) {
     modal.removeEventListener('keydown', modalTrapHandler);
   }
+  if (modalFocusinHandler) {
+    document.removeEventListener('focusin', modalFocusinHandler, true);
+  }
   modalTrapHandler = (e) => {
     if (e.key === 'Escape') {
       e.preventDefault();
+      e.stopPropagation();
       hideModal(modal, null);
       return;
     }
     if (e.key !== 'Tab') return;
-    const focusable = modal.querySelectorAll(
-      'button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])'
-    );
+    const focusable = getFocusableElements(modal);
     if (focusable.length === 0) return;
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
     if (e.shiftKey) {
-      if (document.activeElement === first) {
+      if (!active || active === first) {
         e.preventDefault();
         last.focus();
       }
     } else {
-      if (document.activeElement === last) {
+      if (!active || active === last) {
         e.preventDefault();
         first.focus();
       }
     }
   };
   modal.addEventListener('keydown', modalTrapHandler);
+  modalFocusinHandler = (e) => {
+    if (!isModalActive || !modal.classList.contains('active')) return;
+    const target = e.target;
+    if (target instanceof Node && modal.contains(target)) return;
+    if (!focusFirstElement(modal) && typeof modal.focus === 'function') {
+      modal.focus();
+    }
+  };
+  document.addEventListener('focusin', modalFocusinHandler, true);
 
   requestAnimationFrame(() => {
-    const firstBtn = btnContainer.querySelector('button');
-    if (firstBtn) firstBtn.focus();
+    if (!focusFirstElement(modal) && typeof modal.focus === 'function') {
+      modal.focus();
+    }
   });
 }
 
@@ -301,6 +351,10 @@ function hideModal(modal, action) {
   if (modalTrapHandler) {
     modal.removeEventListener('keydown', modalTrapHandler);
     modalTrapHandler = null;
+  }
+  if (modalFocusinHandler) {
+    document.removeEventListener('focusin', modalFocusinHandler, true);
+    modalFocusinHandler = null;
   }
   setTimeout(() => {
     modal.classList.remove('active', 'hiding');
@@ -761,6 +815,7 @@ function showUpdateBanner() {
   if (text) text.textContent = 'Downloading update…';
   if (banner) {
     banner.classList.add('active');
+    banner.setAttribute('aria-busy', 'true');
   }
 }
 
@@ -768,6 +823,7 @@ function hideUpdateBanner() {
   const banner = document.getElementById('update-banner');
   if (banner) {
     banner.classList.remove('active');
+    banner.setAttribute('aria-busy', 'false');
   }
 }
 
@@ -919,27 +975,53 @@ function showLicenses() {
     document.body.style.overflow = 'hidden';
 
     const closeBtn = licensesOverlay.querySelector('#close-licenses');
-    if (closeBtn) {
-      requestAnimationFrame(() => closeBtn.focus());
-    }
+    licensesOverlay.setAttribute('tabindex', '-1');
+    requestAnimationFrame(() => {
+      if (closeBtn) {
+        closeBtn.focus();
+        return;
+      }
+      if (!focusFirstElement(licensesOverlay) && typeof licensesOverlay.focus === 'function') {
+        licensesOverlay.focus();
+      }
+    });
 
     licensesTrapHandler = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        hideLicenses();
+        return;
+      }
       if (e.key !== 'Tab') return;
-      const focusable = licensesOverlay.querySelectorAll(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-      );
+      const focusable = getFocusableElements(licensesOverlay);
       if (focusable.length === 0) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
+      const active = document.activeElement;
+      if (e.shiftKey) {
+        if (!active || active === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (!active || active === last) {
         e.preventDefault();
         first.focus();
       }
     };
     licensesOverlay.addEventListener('keydown', licensesTrapHandler);
+    if (licensesFocusinHandler) {
+      document.removeEventListener('focusin', licensesFocusinHandler, true);
+    }
+    licensesFocusinHandler = (e) => {
+      if (!licensesOverlay.classList.contains('active')) return;
+      const target = e.target;
+      if (target instanceof Node && licensesOverlay.contains(target)) return;
+      if (!focusFirstElement(licensesOverlay) && typeof licensesOverlay.focus === 'function') {
+        licensesOverlay.focus();
+      }
+    };
+    document.addEventListener('focusin', licensesFocusinHandler, true);
   }
 }
 
@@ -949,6 +1031,10 @@ function hideLicenses() {
     if (licensesTrapHandler) {
       licensesOverlay.removeEventListener('keydown', licensesTrapHandler);
       licensesTrapHandler = null;
+    }
+    if (licensesFocusinHandler) {
+      document.removeEventListener('focusin', licensesFocusinHandler, true);
+      licensesFocusinHandler = null;
     }
     licensesOverlay.classList.remove('active');
     setTimeout(() => {
@@ -1131,28 +1217,37 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   let persistDebounceTimer = null;
 
-  async function persistSettings(silent = false) {
+  async function persistSettings(silent = false, immediate = false) {
     if (persistDebounceTimer) clearTimeout(persistDebounceTimer);
-    return new Promise((resolve) => {
-      persistDebounceTimer = setTimeout(async () => {
-        try {
-          const result = await window.api.saveSettings(settings);
-          if (!result || result.ok !== true) {
-            if (!silent) {
-              const message = result?.error?.message || 'Could not save settings.';
-              showSettingsSaveError(`${message}\nChanges may not persist after restart.`);
-            }
-            resolve(false);
-            return;
-          }
-          settings = result.data;
-          resolve(true);
-        } catch (_error) {
+    const executeSave = async (resolve) => {
+      try {
+        const result = await window.api.saveSettings(settings);
+        if (!result || result.ok !== true) {
           if (!silent) {
-            showSettingsSaveError('Could not save settings due to an unexpected error.');
+            const message = result?.error?.message || 'Could not save settings.';
+            showSettingsSaveError(`${message}\nChanges may not persist after restart.`);
           }
           resolve(false);
+          return;
         }
+        settings = result.data;
+        resolve(true);
+      } catch (_error) {
+        if (!silent) {
+          showSettingsSaveError('Could not save settings due to an unexpected error.');
+        }
+        resolve(false);
+      }
+    };
+    return new Promise((resolve) => {
+      if (immediate) {
+        persistDebounceTimer = null;
+        void executeSave(resolve);
+        return;
+      }
+      persistDebounceTimer = setTimeout(() => {
+        persistDebounceTimer = null;
+        void executeSave(resolve);
       }, 300);
     });
   }
@@ -1198,6 +1293,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const pasteUrlBtn = document.getElementById('pasteUrl');
   const clearConsoleBtn = document.getElementById('clearConsole');
   const urlInput = document.getElementById('url');
+  const urlValidationMessage = document.getElementById('urlValidationMessage');
   const urlInputContainer = document.querySelector('.url-input-container');
   const downloadCard = document.querySelector('.download-card');
   const historyHeader = document.getElementById('historyHeader');
@@ -1217,12 +1313,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   const startQueueBtn = document.getElementById('startQueueBtn');
   const clearQueueBtn = document.getElementById('clearQueueBtn');
   const cancelQueueBtn = document.getElementById('cancelQueueBtn');
+  const queueStatusMessage = document.getElementById('queueStatusMessage');
   const queueList = document.getElementById('queueList');
   const queueCount = document.getElementById('queueCount');
   const queueSection =
     (queueModule && typeof queueModule.resolveQueueSectionElement === 'function'
       ? queueModule.resolveQueueSectionElement(document)
       : null) || document.getElementById('queueSection');
+
+  if (queueStatusMessage) {
+    queueStatusMessage.setAttribute('role', 'status');
+    queueStatusMessage.setAttribute('aria-live', 'polite');
+    queueStatusMessage.setAttribute('aria-atomic', 'true');
+  }
 
   if (fetchFormatsBtn) fetchFormatsBtn._originalClick = fetchFormats;
   if (downloadBtn) downloadBtn._originalClick = null;
@@ -1303,12 +1406,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateConsoleVisibility(settings.showConsoleOutput);
 
     // Restore console collapsed state
-    if (settings.consoleCollapsed) {
-      const consoleSection = document.getElementById('console-section');
-      const consoleHeaderEl = document.getElementById('consoleHeader');
-      if (consoleSection) consoleSection.classList.add('collapsed');
-      if (consoleHeaderEl) consoleHeaderEl.setAttribute('aria-expanded', 'false');
-    }
+    setConsoleCollapsed(!!settings.consoleCollapsed);
 
     toggleAdvancedUI(settings.advancedOptions);
 
@@ -1483,7 +1581,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (downloadCard) {
       downloadCard.classList.toggle('is-ready', validUrl);
     }
-    urlInput.setAttribute('aria-invalid', String(showInvalid));
+    if (showInvalid) {
+      urlInput.setAttribute('aria-invalid', 'true');
+      if (urlValidationMessage) {
+        urlValidationMessage.textContent = 'Enter a valid URL starting with http:// or https://';
+      }
+    } else {
+      urlInput.removeAttribute('aria-invalid');
+      if (urlValidationMessage) {
+        urlValidationMessage.textContent = '';
+      }
+    }
 
     const isLoading = downloadBtn.classList.contains('loading');
     if (!isLoading) {
@@ -1529,7 +1637,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           syncPrimaryActionState();
         }
       } catch {
-        showToast('Unable to read clipboard. Try pasting with Ctrl+V.', { type: 'info' });
+        showToast(`Unable to read clipboard. Try pasting with ${getModifierKeyName()}+V.`, {
+          type: 'info',
+        });
       }
     });
   }
@@ -1560,21 +1670,39 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderHistory();
 
   if (historyHeader) {
+    const historySection = document.getElementById('download-history');
+    const historyList = document.getElementById('history-list');
+    const setHistoryCollapsed = (collapsed) => {
+      if (!historySection) return false;
+      historySection.classList.toggle('collapsed', !!collapsed);
+      const isCollapsed = historySection.classList.contains('collapsed');
+      historyHeader.setAttribute('aria-expanded', String(!isCollapsed));
+      if (historyList) historyList.setAttribute('aria-hidden', String(isCollapsed));
+      return isCollapsed;
+    };
+    const toggleHistoryCollapsed = () => {
+      if (!historySection) return false;
+      return setHistoryCollapsed(!historySection.classList.contains('collapsed'));
+    };
+    if (historySection) {
+      setHistoryCollapsed(historySection.classList.contains('collapsed'));
+    }
+
     historyHeader.addEventListener('click', (e) => {
       if (e.target.closest('.history-clear-btn')) return;
-      const section = document.getElementById('download-history');
-      if (section) {
-        section.classList.toggle('collapsed');
-        historyHeader.setAttribute(
-          'aria-expanded',
-          String(!section.classList.contains('collapsed'))
-        );
-      }
+      toggleHistoryCollapsed();
     });
     historyHeader.addEventListener('keydown', (e) => {
+      if (e.target.closest('.history-clear-btn')) return;
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        historyHeader.click();
+        toggleHistoryCollapsed();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setHistoryCollapsed(true);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        setHistoryCollapsed(false);
       }
     });
   }
@@ -1605,16 +1733,93 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  document.querySelectorAll('.settings-section-header').forEach((header) => {
+  const settingsHeaders = Array.from(document.querySelectorAll('.settings-section-header')).filter(
+    (header) => header instanceof HTMLElement
+  );
+  const setSettingsSectionCollapsed = (header, collapsed) => {
+    if (!(header instanceof HTMLElement)) return false;
     const section = header.closest('.settings-section');
+    if (!(section instanceof HTMLElement)) return false;
+    section.classList.toggle('collapsed', !!collapsed);
+    const isCollapsed = section.classList.contains('collapsed');
+    header.setAttribute('aria-expanded', String(!isCollapsed));
+    const controlledId = header.getAttribute('aria-controls');
+    const sectionBody =
+      (controlledId ? document.getElementById(controlledId) : null) ||
+      section.querySelector('.settings-section-body');
+    if (sectionBody) {
+      sectionBody.setAttribute('aria-hidden', String(isCollapsed));
+      if (!controlledId && sectionBody.id) {
+        header.setAttribute('aria-controls', sectionBody.id);
+      }
+    }
+    return isCollapsed;
+  };
+
+  settingsHeaders.forEach((header, index) => {
+    const section = header.closest('.settings-section');
+    if (!(section instanceof HTMLElement)) return;
+
+    const controlledId = header.getAttribute('aria-controls');
+    const sectionBody =
+      (controlledId ? document.getElementById(controlledId) : null) ||
+      section.querySelector('.settings-section-body');
+    if (sectionBody instanceof HTMLElement) {
+      if (!sectionBody.id) {
+        sectionBody.id = `settingsSectionBodyAuto${index + 1}`;
+      }
+      if (!header.getAttribute('aria-controls')) {
+        header.setAttribute('aria-controls', sectionBody.id);
+      }
+      if (!header.id) {
+        header.id = `settingsSectionHeaderAuto${index + 1}`;
+      }
+      if (!sectionBody.getAttribute('aria-labelledby')) {
+        sectionBody.setAttribute('aria-labelledby', header.id);
+      }
+    }
+
+    setSettingsSectionCollapsed(header, section.classList.contains('collapsed'));
+
     header.addEventListener('click', () => {
-      section.classList.toggle('collapsed');
-      header.setAttribute('aria-expanded', String(!section.classList.contains('collapsed')));
+      const isCollapsed = section.classList.contains('collapsed');
+      setSettingsSectionCollapsed(header, !isCollapsed);
     });
     header.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        header.click();
+        const isCollapsed = section.classList.contains('collapsed');
+        setSettingsSectionCollapsed(header, !isCollapsed);
+        return;
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setSettingsSectionCollapsed(header, true);
+        return;
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        setSettingsSectionCollapsed(header, false);
+        return;
+      }
+
+      const currentIndex = settingsHeaders.indexOf(header);
+      if (currentIndex === -1) return;
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        const nextIndex = (currentIndex + 1) % settingsHeaders.length;
+        settingsHeaders[nextIndex].focus();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const nextIndex = (currentIndex - 1 + settingsHeaders.length) % settingsHeaders.length;
+        settingsHeaders[nextIndex].focus();
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        settingsHeaders[0].focus();
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        settingsHeaders[settingsHeaders.length - 1].focus();
       }
     });
   });
@@ -1641,6 +1846,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.target.closest('#clearConsole')) return;
         const isCollapsed = toggleConsoleCollapse();
         settings.consoleCollapsed = isCollapsed;
+        void persistSettings();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        settings.consoleCollapsed = toggleConsoleCollapse(true);
+        void persistSettings();
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        settings.consoleCollapsed = toggleConsoleCollapse(false);
         void persistSettings();
       }
     });
@@ -1858,9 +2071,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (showUpdateChannelBtn && updateChannelContainer) {
+    showUpdateChannelBtn.setAttribute(
+      'aria-expanded',
+      String(updateChannelContainer.classList.contains('visible'))
+    );
     showUpdateChannelBtn.addEventListener('click', () => {
       const isVisible = updateChannelContainer.classList.contains('visible');
       updateChannelContainer.classList.toggle('visible', !isVisible);
+      showUpdateChannelBtn.setAttribute('aria-expanded', String(!isVisible));
       showUpdateChannelBtn.textContent = isVisible
         ? '▸ Update channel settings'
         : '▾ Hide update channel';
@@ -1978,61 +2196,196 @@ document.addEventListener('DOMContentLoaded', async () => {
       queueModule.renderQueue(
         queue,
         { queueList, queueSection, queueCount },
-        { escapeHtml, removeFromQueue: window.api.removeFromQueue }
+        {
+          escapeHtml,
+          removeFromQueue: async (id) => {
+            const endQueueAction = beginQueueAction();
+            try {
+              const result = await window.api.removeFromQueue(id);
+              if (!result || !result.ok) {
+                const message = result?.error?.message || 'Could not remove the queue item.';
+                setQueueStatusMessage(message);
+                showToast(message, {
+                  type: 'error',
+                });
+              } else {
+                announceQueueAction('Removed item from the queue.');
+              }
+            } catch {
+              const message = 'Could not remove the queue item.';
+              setQueueStatusMessage(message);
+              showToast(message, { type: 'error' });
+            } finally {
+              endQueueAction();
+            }
+          },
+        }
       );
     }
   }
 
-  let isAddingToQueue = false;
+  let queueStatusTimer = null;
+  function setQueueStatusMessage(message) {
+    if (!queueStatusMessage) return;
+    if (queueStatusTimer) {
+      clearTimeout(queueStatusTimer);
+      queueStatusTimer = null;
+    }
+
+    const nextMessage =
+      typeof message === 'string' ? message.trim() : message == null ? '' : String(message).trim();
+    queueStatusMessage.textContent = '';
+
+    if (!nextMessage) return;
+
+    queueStatusTimer = setTimeout(() => {
+      queueStatusMessage.textContent = nextMessage;
+      queueStatusTimer = null;
+    }, 0);
+  }
+
+  function queueMessageForCount(count, singular, plural) {
+    return count === 1 ? singular : plural.replace('{count}', String(count));
+  }
+
+  function announceQueueAction(message, toastType = 'info') {
+    setQueueStatusMessage(message);
+    showToast(message, { type: toastType });
+  }
+
+  const queueActionButtons = [addToQueueBtn, startQueueBtn, clearQueueBtn, cancelQueueBtn].filter(
+    (button) => button instanceof HTMLButtonElement
+  );
+  let queueActionLocks = 0;
+  function syncQueueActionBusyState() {
+    const isBusy = queueActionLocks > 0;
+    queueActionButtons.forEach((button) => {
+      button.disabled = isBusy;
+      button.setAttribute('aria-busy', String(isBusy));
+    });
+    if (queueUrlInput) {
+      queueUrlInput.disabled = isBusy;
+    }
+    if (queueSection) {
+      queueSection.setAttribute('aria-busy', String(isBusy));
+    }
+  }
+  function beginQueueAction() {
+    queueActionLocks += 1;
+    syncQueueActionBusyState();
+    return () => {
+      queueActionLocks = Math.max(0, queueActionLocks - 1);
+      syncQueueActionBusyState();
+    };
+  }
+  syncQueueActionBusyState();
+
   if (addToQueueBtn && queueUrlInput) {
     addToQueueBtn.addEventListener('click', async () => {
-      if (isAddingToQueue) return;
+      if (queueActionLocks > 0) return;
       const raw = queueUrlInput.value.trim();
       if (!raw) {
-        showToast('Enter one or more URLs (one per line).', { type: 'warning' });
+        const message = 'Enter one or more URLs, one per line.';
+        setQueueStatusMessage(message);
+        showToast(message, { type: 'warning' });
         return;
       }
-      isAddingToQueue = true;
+      const endQueueAction = beginQueueAction();
       try {
         const urls = raw
-          .split(/[\n,]+/)
+          .split(/\r?\n+/)
           .map((u) => u.trim())
           .filter((u) => u.length > 0);
         const result = await window.api.addToQueue(urls);
         if (result && result.ok) {
           queueUrlInput.value = '';
-          showToast(`Added ${result.data.added} URL(s) to queue.`, { type: 'success' });
+          const message = queueMessageForCount(
+            result.data.added,
+            'Added 1 URL to the queue.',
+            'Added {count} URLs to the queue.'
+          );
+          announceQueueAction(message, 'success');
         } else {
-          showToast(result?.error?.message || 'Failed to add URLs.', { type: 'error' });
+          const message = result?.error?.message || 'Could not add URLs to the queue.';
+          setQueueStatusMessage(message);
+          showToast(message, { type: 'error' });
         }
+      } catch {
+        const message = 'Could not add URLs to the queue.';
+        setQueueStatusMessage(message);
+        showToast(message, { type: 'error' });
       } finally {
-        isAddingToQueue = false;
+        endQueueAction();
       }
     });
   }
 
   if (startQueueBtn) {
     startQueueBtn.addEventListener('click', async () => {
-      const result = await window.api.startQueue();
-      if (result && result.ok) {
-        showToast('Queue started.', { type: 'info' });
-      } else {
-        showToast(result?.error?.message || 'Could not start queue.', { type: 'warning' });
+      if (queueActionLocks > 0) return;
+      const endQueueAction = beginQueueAction();
+      try {
+        const result = await window.api.startQueue();
+        if (result && result.ok) {
+          announceQueueAction('Queue started processing.');
+        } else {
+          const message = result?.error?.message || 'Could not start the queue.';
+          setQueueStatusMessage(message);
+          showToast(message, { type: 'warning' });
+        }
+      } catch {
+        const message = 'Could not start the queue.';
+        setQueueStatusMessage(message);
+        showToast(message, { type: 'warning' });
+      } finally {
+        endQueueAction();
       }
     });
   }
 
   if (clearQueueBtn) {
     clearQueueBtn.addEventListener('click', async () => {
-      await window.api.clearQueue();
-      showToast('Queue cleared.', { type: 'info' });
+      if (queueActionLocks > 0) return;
+      const endQueueAction = beginQueueAction();
+      try {
+        const result = await window.api.clearQueue();
+        if (result && result.ok) {
+          announceQueueAction('Queue cleared.');
+        } else {
+          const message = result?.error?.message || 'Could not clear the queue.';
+          setQueueStatusMessage(message);
+          showToast(message, { type: 'error' });
+        }
+      } catch {
+        const message = 'Could not clear the queue.';
+        setQueueStatusMessage(message);
+        showToast(message, { type: 'error' });
+      } finally {
+        endQueueAction();
+      }
     });
   }
 
   if (cancelQueueBtn) {
-    cancelQueueBtn.addEventListener('click', () => {
-      window.api.cancelQueue();
-      showToast('Queue cancelled.', { type: 'info' });
+    cancelQueueBtn.addEventListener('click', async () => {
+      if (queueActionLocks > 0) return;
+      const endQueueAction = beginQueueAction();
+      try {
+        const result = await window.api.cancelQueue();
+        if (result && result.ok) {
+          announceQueueAction('Queue cancelled.');
+        } else {
+          const message = result?.error?.message || 'Could not cancel the queue.';
+          setQueueStatusMessage(message);
+          showToast(message, { type: 'error' });
+        }
+      } catch {
+        const message = 'Could not cancel the queue.';
+        setQueueStatusMessage(message);
+        showToast(message, { type: 'error' });
+      } finally {
+        endQueueAction();
+      }
     });
   }
 
@@ -2289,7 +2642,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
     cleanupUpdaterListeners();
-    void persistSettings(true);
+    void persistSettings(true, true);
   });
 
   // Check for updates on startup
