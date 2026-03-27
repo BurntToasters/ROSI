@@ -128,7 +128,7 @@ export interface UpdaterProgressEvent {
   total: number;
 }
 
-export type UpdateCheckResponse = unknown | { error: string; message?: string };
+export type UpdateCheckResponse = { error: string; message?: string } | null;
 
 export interface UpdateDownloadResult {
   success?: boolean;
@@ -173,6 +173,7 @@ export interface RendererApi {
   importSettings: () => Promise<IpcResult<{ imported: boolean }>>;
   getStats: () => Promise<DownloadStats>;
   resetStats: () => Promise<IpcResult<void>>;
+  logError: (message: string) => void;
   addToQueue: (urls: string[]) => Promise<IpcResult<{ added: number }>>;
   removeFromQueue: (id: string) => Promise<IpcResult<void>>;
   clearQueue: () => Promise<IpcResult<void>>;

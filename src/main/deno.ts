@@ -10,7 +10,7 @@ import {
   MAX_OUTPUT_BUFFER,
   MAX_ERROR_BUFFER,
 } from './constants';
-import { isWindows } from './platform';
+import { buildEnhancedPath, isWindows } from './platform';
 
 function getDenoSearchPaths(): string[] {
   if (isWindows) {
@@ -35,31 +35,6 @@ function getDenoSearchPaths(): string[] {
   ];
 }
 
-function buildDenoEnhancedPath(): string {
-  if (isWindows) {
-    const userProfile = process.env.USERPROFILE || '';
-    const localAppData = process.env.LOCALAPPDATA || '';
-    return [
-      path.join(userProfile, '.deno', 'bin'),
-      path.join(localAppData, 'deno', 'bin'),
-      'C:\\Program Files\\deno',
-      'C:\\deno',
-      process.env.PATH || '',
-    ].join(';');
-  }
-
-  const homeDir = process.env.HOME || '';
-  return [
-    path.join(homeDir, '.deno', 'bin'),
-    '/usr/local/bin',
-    '/opt/homebrew/bin',
-    '/usr/bin',
-    '/home/linuxbrew/.linuxbrew/bin',
-    path.join(homeDir, '.local', 'bin'),
-    process.env.PATH || '',
-  ].join(':');
-}
-
 export async function checkDenoInstalled(): Promise<boolean> {
   return new Promise((resolve) => {
     for (const denoPath of getDenoSearchPaths()) {
@@ -71,7 +46,7 @@ export async function checkDenoInstalled(): Promise<boolean> {
 
     const checkCmd = isWindows ? 'where' : 'which';
     const proc = spawn(checkCmd, ['deno'], {
-      env: { ...process.env, PATH: buildDenoEnhancedPath() },
+      env: { ...process.env, PATH: buildEnhancedPath() },
     });
 
     const timeout = setTimeout(() => {
@@ -131,7 +106,7 @@ export async function installDeno(
     }
 
     const proc = spawn(installCmd, installArgs, {
-      env: { ...process.env, PATH: buildDenoEnhancedPath() },
+      env: { ...process.env, PATH: buildEnhancedPath() },
     });
     let output = '';
     let error = '';

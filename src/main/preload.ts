@@ -66,6 +66,7 @@ const api: RendererApi = {
   importSettings: () => ipcRenderer.invoke('import-settings'),
   getStats: () => ipcRenderer.invoke('get-stats') as Promise<DownloadStats>,
   resetStats: () => ipcRenderer.invoke('reset-stats'),
+  logError: (message: string) => ipcRenderer.send('log-error', message),
   addToQueue: (urls: string[]) => ipcRenderer.invoke('add-to-queue', urls),
   removeFromQueue: (id: string) => ipcRenderer.invoke('remove-from-queue', id),
   clearQueue: () => ipcRenderer.invoke('clear-queue'),

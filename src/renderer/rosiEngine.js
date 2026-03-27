@@ -1,3 +1,11 @@
+function logError(context, error) {
+  const msg = error instanceof Error ? error.message : String(error || '');
+  const text = msg ? `${context}: ${msg}` : context;
+  if (window.api && typeof window.api.logError === 'function') {
+    window.api.logError(text);
+  }
+}
+
 const rosiModules = window.rosiModules || {};
 const uiModule = rosiModules.ui || null;
 const downloadsModule = rosiModules.downloads || null;
@@ -490,7 +498,7 @@ async function fetchFormats() {
       }
     }
   } catch (outerError) {
-    console.error('Unexpected error in fetchFormats:', outerError);
+    logError('Unexpected error in fetchFormats', outerError);
     isFetchingFormats = false;
     if (btn) setButtonLoading(btn, false);
     showModal({
@@ -1131,7 +1139,7 @@ async function checkDenoInstallation(settings) {
       });
     }
   } catch (error) {
-    console.error('Error checking Deno installation:', error);
+    logError('Error checking Deno installation', error);
   }
 }
 
@@ -1191,13 +1199,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
   } catch (e) {
-    console.error('Could not get app version:', e);
+    logError('Could not get app version', e);
   }
 
   try {
     setupAutoUpdater();
   } catch (e) {
-    console.error('Failed to setup auto-updater:', e);
+    logError('Failed to setup auto-updater', e);
   }
   let settingsSaveErrorShownAt = 0;
 
@@ -1497,7 +1505,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     updateUIFromSettings();
   } catch (e) {
-    console.error('Failed to update UI from settings:', e);
+    logError('Failed to update UI from settings', e);
   }
 
   if (!settings.hideSupportModal) {
@@ -2440,7 +2448,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
           savePath = await window.api.selectDownloadLocation();
         } catch (dialogError) {
-          console.error('Error opening save dialog:', dialogError);
+          logError('Error opening save dialog', dialogError);
           isDownloading = false;
           syncPrimaryActionState();
           showToast('Could not open the save location dialog. Please try again.', {
@@ -2495,7 +2503,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           );
         }
       } catch (downloadError) {
-        console.error('Unexpected error starting download:', downloadError);
+        logError('Unexpected error starting download', downloadError);
         isDownloading = false;
         setButtonLoading(downloadBtn, false);
         syncPrimaryActionState();
@@ -2658,7 +2666,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       await new Promise((resolve) => setTimeout(resolve, 2000));
       await window.api.checkForUpdates();
     } catch (e) {
-      console.error('Startup update check failed:', e);
+      logError('Startup update check failed', e);
     }
   }
 
