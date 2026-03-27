@@ -98,8 +98,10 @@ describe('preload api contract', () => {
         'installUpdate',
         'isPackaged',
         'logError',
+        'notifySettingsFlushed',
         'onComplete',
         'onDownloadProgress',
+        'onPrepareForClose',
         'onProgress',
         'onQueueUpdate',
         'onUpdaterProgress',
@@ -160,6 +162,7 @@ describe('preload api contract', () => {
     expectSendCall(api, 'cancelFormats', 'cancel-formats');
     expectSendCall(api, 'cancelUpdateDownload', 'cancel-update-download');
     expectSendCall(api, 'installUpdate', 'install-update');
+    expectSendCall(api, 'notifySettingsFlushed', 'settings-flush-complete');
   });
 
   it('registers and cleans up event subscriptions', () => {
@@ -192,6 +195,17 @@ describe('preload api contract', () => {
     validateSubscription('onProgress', 'progress', 'line');
     validateSubscription('onComplete', 'complete', 'done');
     validateSubscription('onQueueUpdate', 'queue-update', [{ id: 'q_1' }]);
+
+    onMock.mockClear();
+    removeListenerMock.mockClear();
+    callback.mockClear();
+    const unsubscribePrepareForClose = api.onPrepareForClose(callback);
+    expect(onMock).toHaveBeenCalledWith('prepare-for-close', expect.any(Function));
+    const prepareForCloseListener = onMock.mock.calls[0][1] as (...args: unknown[]) => void;
+    prepareForCloseListener({});
+    expect(callback).toHaveBeenCalledTimes(1);
+    unsubscribePrepareForClose();
+    expect(removeListenerMock).toHaveBeenCalledWith('prepare-for-close', prepareForCloseListener);
   });
 
   it('returns expected channel by environment flags', async () => {

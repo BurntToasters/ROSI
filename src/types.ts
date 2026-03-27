@@ -139,7 +139,7 @@ export interface UpdateDownloadResult {
 export interface RendererApi {
   restartApp: () => Promise<void>;
   getChannel: () => DistributionChannel;
-  getFormats: (url: string) => Promise<string>;
+  getFormats: (url: string) => Promise<IpcResult<string>>;
   selectDownloadLocation: () => Promise<string | null>;
   getSettings: () => Promise<Settings>;
   saveSettings: (settings: Partial<Settings>) => Promise<IpcResult<Settings>>;
@@ -174,11 +174,13 @@ export interface RendererApi {
   getStats: () => Promise<DownloadStats>;
   resetStats: () => Promise<IpcResult<void>>;
   logError: (message: string) => void;
+  notifySettingsFlushed: () => void;
   addToQueue: (urls: string[]) => Promise<IpcResult<{ added: number }>>;
   removeFromQueue: (id: string) => Promise<IpcResult<void>>;
   clearQueue: () => Promise<IpcResult<void>>;
   getQueue: () => Promise<QueueItem[]>;
   startQueue: () => Promise<IpcResult<{ started: boolean }>>;
   cancelQueue: () => Promise<IpcResult<void>>;
+  onPrepareForClose: (callback: () => void | Promise<void>) => () => void;
   onQueueUpdate: (callback: (queue: QueueItem[]) => void) => () => void;
 }
