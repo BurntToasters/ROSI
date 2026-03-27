@@ -433,9 +433,25 @@ async function fetchFormats() {
     if (videoSelect) videoSelect.innerHTML = '<option value="">Loading...</option>';
     if (audioSelect) audioSelect.innerHTML = '<option value="">Loading...</option>';
     try {
-      const output = await window.api.getFormats(videoUrl);
+      const formatResult = await window.api.getFormats(videoUrl);
       if (wasCancelled) return;
-      const lines = output.split('\n');
+      if (!formatResult || formatResult.ok !== true) {
+        const errorMessage = formatResult?.error?.message || 'Unknown error';
+        const cancelled =
+          wasCancelled ||
+          (typeof errorMessage === 'string' && errorMessage.toLowerCase().includes('cancel'));
+        if (cancelled) return;
+        if (videoSelect) videoSelect.innerHTML = '<option value="">Error loading formats</option>';
+        if (audioSelect) audioSelect.innerHTML = '<option value="">Error loading formats</option>';
+        showModal({
+          title: 'Format Fetch Failed',
+          message: `Could not retrieve formats.\nError: ${errorMessage}`,
+          buttons: [{ label: 'OK' }],
+        });
+        return;
+      }
+
+      const lines = formatResult.data.split('\n');
       if (videoSelect) videoSelect.innerHTML = '<option value="">Select Video Format</option>';
       if (audioSelect) audioSelect.innerHTML = '<option value="">Select Audio Format</option>';
       let videoFormatsFound = 0,
@@ -480,10 +496,6 @@ async function fetchFormats() {
         audioSelect.innerHTML = '<option value="">No audio formats found</option>';
     } catch (e) {
       const errorMessage = typeof e === 'string' ? e : e.message || 'Unknown error';
-      const cancelled =
-        wasCancelled ||
-        (typeof errorMessage === 'string' && errorMessage.toLowerCase().includes('cancel'));
-      if (cancelled) return;
       if (videoSelect) videoSelect.innerHTML = '<option value="">Error loading formats</option>';
       if (audioSelect) audioSelect.innerHTML = '<option value="">Error loading formats</option>';
       showModal({
@@ -2636,6 +2648,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     })
   );
 
+  let closePreparationInProgress = false;
+  ipcCleanupFunctions.push(
+    window.api.onPrepareForClose(async () => {
+      if (closePreparationInProgress) {
+        return;
+      }
+      closePreparationInProgress = true;
+      try {
+        await persistSettings(true, true);
+      } catch {}
+      window.api.notifySettingsFlushed();
+    })
+  );
+
   window.api
     .getQueue()
     .then((queue) => renderQueue(queue))
@@ -2650,7 +2676,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
     cleanupUpdaterListeners();
-    void persistSettings(true, true);
   });
 
   // Check for updates on startup

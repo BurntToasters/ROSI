@@ -25,10 +25,12 @@ const {
     };
     once: (event: string, cb: () => void) => void;
     loadFile: (...args: unknown[]) => void;
+    on: (event: string, cb: (...args: unknown[]) => void) => void;
     isDestroyed: () => boolean;
     show: () => void;
     focus: () => void;
     close: () => void;
+    destroy: () => void;
     center: () => void;
     removeMenu: () => void;
     setMenuBarVisibility: (...args: unknown[]) => void;
@@ -51,12 +53,16 @@ const {
     }
 
     loadFile = vi.fn();
+    on = vi.fn();
     setMenuBarVisibility = vi.fn();
     setAutoHideMenuBar = vi.fn();
     removeMenu = vi.fn();
     show = vi.fn();
     focus = vi.fn();
     close = vi.fn(() => {
+      this.destroyed = true;
+    });
+    destroy = vi.fn(() => {
       this.destroyed = true;
     });
     center = vi.fn();

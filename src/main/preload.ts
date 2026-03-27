@@ -67,12 +67,20 @@ const api: RendererApi = {
   getStats: () => ipcRenderer.invoke('get-stats') as Promise<DownloadStats>,
   resetStats: () => ipcRenderer.invoke('reset-stats'),
   logError: (message: string) => ipcRenderer.send('log-error', message),
+  notifySettingsFlushed: () => ipcRenderer.send('settings-flush-complete'),
   addToQueue: (urls: string[]) => ipcRenderer.invoke('add-to-queue', urls),
   removeFromQueue: (id: string) => ipcRenderer.invoke('remove-from-queue', id),
   clearQueue: () => ipcRenderer.invoke('clear-queue'),
   getQueue: () => ipcRenderer.invoke('get-queue') as Promise<QueueItem[]>,
   startQueue: () => ipcRenderer.invoke('start-queue'),
   cancelQueue: () => ipcRenderer.invoke('cancel-queue'),
+  onPrepareForClose: (callback: () => void | Promise<void>) => {
+    const listener = () => {
+      void callback();
+    };
+    ipcRenderer.on('prepare-for-close', listener);
+    return () => ipcRenderer.removeListener('prepare-for-close', listener);
+  },
   onQueueUpdate: (callback: (queue: QueueItem[]) => void) => {
     const listener = (_: Electron.IpcRendererEvent, queue: QueueItem[]) => callback(queue);
     ipcRenderer.on('queue-update', listener);

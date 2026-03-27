@@ -61,12 +61,26 @@ process.on('unhandledRejection', (reason) => {
 
 const ytdlpPath = resolveYtdlpPath();
 const isSmokeRun = process.argv.includes('--smoke') || process.env.ROSI_SMOKE === '1';
+const isPrimaryInstance =
+  isSmokeRun || typeof app.requestSingleInstanceLock !== 'function'
+    ? true
+    : app.requestSingleInstanceLock();
+const SETTINGS_FLUSH_TIMEOUT_MS = 1500;
 
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
+let mainWindowCloseInProgress = false;
+let mainWindowCloseTimer: NodeJS.Timeout | null = null;
 
 function getMainWindow() {
   return mainWindow;
+}
+
+function clearMainWindowCloseTimer() {
+  if (mainWindowCloseTimer) {
+    clearTimeout(mainWindowCloseTimer);
+    mainWindowCloseTimer = null;
+  }
 }
 
 function createSplashWindow() {
@@ -228,6 +242,40 @@ function createWindow() {
     show: false,
   });
   mainWindow.loadFile(path.join(__dirname, '..', '..', 'src', 'renderer', 'index.html'));
+  mainWindowCloseInProgress = false;
+  clearMainWindowCloseTimer();
+
+  mainWindow.on('close', (event) => {
+    if (isSmokeRun || mainWindowCloseInProgress) {
+      return;
+    }
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+
+    event.preventDefault();
+    mainWindowCloseInProgress = true;
+
+    if (mainWindow.webContents.isDestroyed()) {
+      mainWindow.destroy();
+      return;
+    }
+
+    mainWindowCloseTimer = setTimeout(() => {
+      log.warn('Timed out waiting for renderer settings flush. Closing window.');
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.destroy();
+      }
+    }, SETTINGS_FLUSH_TIMEOUT_MS);
+
+    mainWindow.webContents.send('prepare-for-close');
+  });
+
+  mainWindow.on('closed', () => {
+    clearMainWindowCloseTimer();
+    mainWindowCloseInProgress = false;
+    mainWindow = null;
+  });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isSafeExternalUrl(url)) {
@@ -287,7 +335,27 @@ function createWindow() {
   });
 }
 
+if (isPrimaryInstance && !isSmokeRun) {
+  app.on('second-instance', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+      return;
+    }
+
+    if (app.isReady()) {
+      createWindow();
+    }
+  });
+}
+
 app.whenReady().then(() => {
+  if (!isPrimaryInstance) {
+    app.quit();
+    return;
+  }
+
   if (!isSmokeRun) {
     createSplashWindow();
   }
@@ -319,6 +387,21 @@ ipcMain.on('log-error', (_, message) => {
   if (typeof message === 'string') {
     log.error(`[renderer] ${message}`);
   }
+});
+
+ipcMain.on('settings-flush-complete', (event) => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  if (!mainWindowCloseInProgress) {
+    return;
+  }
+  if (event.sender.id !== mainWindow.webContents.id) {
+    return;
+  }
+
+  clearMainWindowCloseTimer();
+  mainWindow.destroy();
 });
 
 ipcMain.handle('get-app-version', () => app.getVersion());
@@ -396,11 +479,26 @@ ipcMain.handle('select-download-location', async () => {
   }
 });
 
-ipcMain.handle('getFormats', (_, url) => {
+ipcMain.handle('getFormats', async (_, url) => {
   if (typeof url !== 'string' || !isSafeHttpUrl(url)) {
-    return Promise.reject('Invalid URL provided');
+    return errorResult('INVALID_URL', 'Invalid URL provided.');
   }
-  return fetchFormats(ytdlpPath, url);
+
+  try {
+    const formats = await fetchFormats(ytdlpPath, url);
+    return okResult(formats);
+  } catch (error) {
+    const message =
+      typeof error === 'string'
+        ? error
+        : error instanceof Error
+          ? error.message
+          : 'Failed to fetch formats.';
+    if (message.toLowerCase().includes('cancel')) {
+      return errorResult('NOT_AVAILABLE', message);
+    }
+    return errorResult('INTERNAL_ERROR', message);
+  }
 });
 ipcMain.on('cancel-formats', () => cancelFormats());
 
