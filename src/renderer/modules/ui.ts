@@ -31,7 +31,7 @@
   type RosiWindow = Window & typeof globalThis & { rosiModules?: UiModules };
 
   type UiButtonElement = HTMLButtonElement & {
-    _originalClick?: ((this: GlobalEventHandlers, ev: MouseEvent) => unknown) | null;
+    _originalClick?: HTMLButtonElement['onclick'];
   };
 
   const TOAST_ICONS: Record<ToastType, string> = {
