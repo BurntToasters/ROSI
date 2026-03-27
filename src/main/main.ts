@@ -46,12 +46,13 @@ log.initialize();
 process.on('uncaughtException', (error) => {
   log.error('Uncaught exception:', error);
   try {
-    const { dialog: dlg } = require('electron');
-    dlg.showErrorBox(
+    dialog.showErrorBox(
       'Fatal Error',
       `ROSI encountered an unexpected error and must close.\n\n${error.message}`
     );
-  } catch {}
+  } catch (dialogErr) {
+    log.error('Failed to show error dialog:', dialogErr);
+  }
   process.exit(1);
 });
 
@@ -235,6 +236,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webSecurity: true,
       spellcheck: false,
       devTools: isDev,
     },
@@ -284,6 +286,13 @@ function createWindow() {
       });
     }
     return { action: 'deny' as const };
+  });
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    log.error(`Renderer process gone: ${details.reason} (exit code: ${details.exitCode})`);
+    if (details.reason !== 'clean-exit' && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.reload();
+    }
   });
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
@@ -377,15 +386,24 @@ app.on('activate', () => {
 });
 
 app.on('before-quit', () => {
-  killAllProcesses();
-  cancelFormats();
+  try {
+    killAllProcesses();
+  } catch (error) {
+    log.error('Error killing processes on quit:', error);
+  }
+  try {
+    cancelFormats();
+  } catch (error) {
+    log.error('Error cancelling formats on quit:', error);
+  }
 });
 
 setupAutoUpdater(getMainWindow, loadSettings);
 
 ipcMain.on('log-error', (_, message) => {
   if (typeof message === 'string') {
-    log.error(`[renderer] ${message}`);
+    const truncated = message.length > 2000 ? message.slice(0, 2000) + '...(truncated)' : message;
+    log.error(`[renderer] ${truncated}`);
   }
 });
 
@@ -789,7 +807,10 @@ async function processQueue() {
   }
 }
 
-ipcMain.handle('add-to-queue', (_, urls) => {
+ipcMain.handle('add-to-queue', (event, urls) => {
+  if (mainWindow && !mainWindow.isDestroyed() && event.sender?.id !== mainWindow.webContents.id) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
   if (!Array.isArray(urls)) {
     return errorResult('VALIDATION_ERROR', 'URLs must be an array.');
   }
@@ -808,7 +829,10 @@ ipcMain.handle('add-to-queue', (_, urls) => {
   return okResult({ added: validUrls.length });
 });
 
-ipcMain.handle('remove-from-queue', (_, id) => {
+ipcMain.handle('remove-from-queue', (event, id) => {
+  if (mainWindow && !mainWindow.isDestroyed() && event.sender?.id !== mainWindow.webContents.id) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
   if (typeof id !== 'string') {
     return errorResult('VALIDATION_ERROR', 'Queue item ID must be a string.');
   }

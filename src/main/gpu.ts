@@ -24,10 +24,15 @@ export async function detectGpu(): Promise<GpuDetectionResult> {
     const proc = spawnWithEnv(ffmpegCommand, ['-hide_banner', '-encoders'], { shell: false });
     const output = await new Promise<string>((resolve) => {
       let buf = '';
+      let settled = false;
       const timeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
         try {
           proc.kill();
-        } catch {}
+        } catch (killErr) {
+          log.warn('Error killing GPU detection process on timeout:', killErr);
+        }
         resolve('');
       }, GPU_DETECT_TIMEOUT_MS);
 
@@ -38,11 +43,16 @@ export async function detectGpu(): Promise<GpuDetectionResult> {
         if (buf.length < MAX_ERROR_BUFFER) buf += data.toString();
       });
       proc.on('close', () => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timeout);
         resolve(buf);
       });
-      proc.on('error', () => {
+      proc.on('error', (err) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timeout);
+        log.warn('GPU detection process error:', err);
         resolve('');
       });
     });

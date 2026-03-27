@@ -52,7 +52,9 @@ export async function checkDenoInstalled(): Promise<boolean> {
     const timeout = setTimeout(() => {
       try {
         proc.kill();
-      } catch {}
+      } catch (killErr) {
+        log.warn('Error killing deno check process:', killErr);
+      }
       resolve(false);
     }, DENO_CHECK_TIMEOUT_MS);
 
@@ -88,7 +90,7 @@ export async function installDeno(
     return { cancelled: true };
   }
 
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     let installCmd: string;
     let installArgs: string[];
 
@@ -110,12 +112,17 @@ export async function installDeno(
     });
     let output = '';
     let error = '';
+    let settled = false;
 
     const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
       try {
         proc.kill();
-      } catch {}
-      reject({ success: false, error: 'Installation timed out after 2 minutes' });
+      } catch (killErr) {
+        log.warn('Error killing deno install process on timeout:', killErr);
+      }
+      resolve({ success: false, error: 'Installation timed out after 2 minutes' });
     }, DENO_INSTALL_TIMEOUT_MS);
 
     proc.stdout?.on('data', (data) => {
@@ -127,18 +134,22 @@ export async function installDeno(
     });
 
     proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
       if (code === 0) {
         resolve({ success: true, output });
       } else {
-        reject({ success: false, error: error || output });
+        resolve({ success: false, error: error || output });
       }
     });
 
     proc.on('error', (err) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
       log.error('Deno install error:', err);
-      reject({ success: false, error: err.message });
+      resolve({ success: false, error: err.message });
     });
   });
 }

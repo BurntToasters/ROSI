@@ -22,6 +22,7 @@ vi.mock('../main/platform', () => ({
   getEffectiveFfmpegPath: vi.fn(() => 'ffmpeg'),
   ytdlpBinary: 'yt-dlp',
   isWindows: process.platform === 'win32',
+  isMac: process.platform === 'darwin',
 }));
 
 vi.mock('../main/settings', () => ({

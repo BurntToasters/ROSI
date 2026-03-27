@@ -22,7 +22,8 @@ export function buildEnhancedPath() {
       'C:\\Program Files\\deno',
       'C:\\deno',
     ];
-    return [...extraPaths, currentPath].filter(Boolean).join(';');
+    const result = [...extraPaths, currentPath].filter(Boolean).join(';');
+    return result || 'C:\\Windows\\System32';
   }
 
   const homeDir = process.env.HOME || '';
@@ -38,7 +39,8 @@ export function buildEnhancedPath() {
     path.join(homeDir, '.local', 'bin'),
   ];
 
-  return [...extraPaths, currentPath].filter(Boolean).join(':');
+  const result = [...extraPaths, currentPath].filter(Boolean).join(':');
+  return result || '/usr/local/bin:/usr/bin:/bin';
 }
 
 export function spawnWithEnv(
@@ -82,7 +84,8 @@ export function resolveFfmpegPath(customPath: unknown): string | null {
         candidate = withExe;
       }
     }
-  } catch {
+  } catch (err) {
+    log.warn(`Error resolving ffmpeg path for '${trimmed}':`, err);
     return resolved;
   }
 
@@ -107,9 +110,12 @@ function ensureExecutable(filePath: string): string {
           } catch {
             try {
               const binaryName = path.basename(filePath);
-              const tmpDir = path.join(app.getPath('temp'), 'rosi-bin');
-              if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-              const tmpBin = path.join(tmpDir, binaryName);
+              const isFlatpak = Boolean(process.env.FLATPAK_ID);
+              const binDir = isFlatpak
+                ? path.join(app.getPath('userData'), '.bin')
+                : path.join(app.getPath('temp'), 'rosi-bin');
+              if (!fs.existsSync(binDir)) fs.mkdirSync(binDir, { recursive: true });
+              const tmpBin = path.join(binDir, binaryName);
               fs.copyFileSync(filePath, tmpBin);
               fs.chmodSync(tmpBin, 0o755);
               return tmpBin;
@@ -122,8 +128,8 @@ function ensureExecutable(filePath: string): string {
         }
       }
     }
-  } catch {
-    // statSync failed — ignore
+  } catch (statErr) {
+    log.warn(`statSync failed for ${filePath}:`, statErr);
   }
 
   return filePath;
@@ -273,9 +279,12 @@ export function resolveYtdlpPath(): string {
           fs.accessSync(resolved, fs.constants.X_OK);
         } catch {
           try {
-            const tmpDir = path.join(app.getPath('temp'), 'rosi-bin');
-            if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-            const tmpBin = path.join(tmpDir, ytdlpBinary);
+            const isFlatpak = Boolean(process.env.FLATPAK_ID);
+            const binDir = isFlatpak
+              ? path.join(app.getPath('userData'), '.bin')
+              : path.join(app.getPath('temp'), 'rosi-bin');
+            if (!fs.existsSync(binDir)) fs.mkdirSync(binDir, { recursive: true });
+            const tmpBin = path.join(binDir, ytdlpBinary);
             fs.copyFileSync(resolved, tmpBin);
             fs.chmodSync(tmpBin, 0o755);
             resolved = tmpBin;

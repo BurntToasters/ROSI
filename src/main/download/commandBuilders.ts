@@ -2,7 +2,7 @@ import type { DownloadRequestOptions, GpuDetectionResult, Settings } from '../..
 import { detectGpu } from '../gpu';
 import { ALLOWED_AUDIO_FORMATS } from '../constants';
 
-const VALID_FORMAT_ID = /^\d+$/;
+const VALID_FORMAT_ID = /^\d{1,8}$/;
 const ALLOWED_BROWSERS = new Set([
   'brave',
   'chrome',

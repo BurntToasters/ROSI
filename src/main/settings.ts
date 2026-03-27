@@ -150,7 +150,8 @@ export function loadSettings(): Settings {
     const raw = fs.readFileSync(settingsPath, 'utf-8');
     const loaded = JSON.parse(raw);
     return normalizeSettingsVersion(migrateSettings(loaded));
-  } catch {
+  } catch (error) {
+    log.warn('Failed to load settings, using defaults:', error);
     return { ...defaultSettings };
   }
 }
@@ -220,7 +221,8 @@ export function loadStats(): DownloadStats {
     if (typeof loaded.firstDownloadAt === 'number') stats.firstDownloadAt = loaded.firstDownloadAt;
     if (typeof loaded.lastDownloadAt === 'number') stats.lastDownloadAt = loaded.lastDownloadAt;
     return stats;
-  } catch {
+  } catch (error) {
+    log.warn('Failed to load stats, using defaults:', error);
     return getDefaultStats();
   }
 }
@@ -304,6 +306,10 @@ export async function importSettingsFromFile(
   try {
     const raw = fs.readFileSync(filePaths[0], 'utf-8');
     const loaded = JSON.parse(raw);
+    if (!loaded || typeof loaded !== 'object' || Array.isArray(loaded)) {
+      log.warn('Imported settings file has invalid structure.');
+      return false;
+    }
     const migrated = normalizeSettingsVersion(migrateSettings(loaded));
     const dir = path.dirname(settingsPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });

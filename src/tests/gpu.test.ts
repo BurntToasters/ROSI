@@ -24,6 +24,7 @@ vi.mock('../main/platform', () => ({
 vi.mock('electron-log/main', () => ({
   default: {
     error: logErrorMock,
+    warn: vi.fn(),
   },
 }));
 

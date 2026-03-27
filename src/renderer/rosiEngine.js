@@ -655,7 +655,16 @@ function loadHistory() {
 function saveHistory(history) {
   try {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-  } catch {}
+  } catch (e) {
+    if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.code === 22)) {
+      history.length = Math.max(1, Math.floor(history.length / 2));
+      try {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+      } catch {
+        /* give up */
+      }
+    }
+  }
 }
 
 function addHistoryEntry(entry) {
