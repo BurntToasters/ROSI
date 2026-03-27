@@ -118,10 +118,22 @@ export function validateDownloadRequestPayload(
       error: buildError('VALIDATION_ERROR', 'videoFormat must be a string when provided.'),
     };
   }
+  if (videoFormat !== undefined && !/^\d{1,8}$/.test(videoFormat.trim())) {
+    return {
+      ok: false,
+      error: buildError('VALIDATION_ERROR', 'videoFormat must be a numeric format ID.'),
+    };
+  }
   if (!isOptionalString(audioFormat)) {
     return {
       ok: false,
       error: buildError('VALIDATION_ERROR', 'audioFormat must be a string when provided.'),
+    };
+  }
+  if (audioFormat !== undefined && !/^\d{1,8}$/.test(audioFormat.trim())) {
+    return {
+      ok: false,
+      error: buildError('VALIDATION_ERROR', 'audioFormat must be a numeric format ID.'),
     };
   }
 
@@ -291,6 +303,12 @@ export function validateSettingsPatchPayload(value: unknown): ValidationResult<P
       return {
         ok: false,
         error: buildError('VALIDATION_ERROR', `${rawKey} must be a string.`),
+      };
+    }
+    if (rawValue.length > 1024) {
+      return {
+        ok: false,
+        error: buildError('VALIDATION_ERROR', `${rawKey} exceeds maximum length of 1024.`),
       };
     }
     patch[rawKey] = rawValue;

@@ -40,6 +40,7 @@ vi.mock('electron', () => ({
 vi.mock('electron-log/main', () => ({
   default: {
     error: logErrorMock,
+    warn: vi.fn(),
   },
 }));
 

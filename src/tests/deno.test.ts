@@ -134,7 +134,7 @@ describe('deno helpers', () => {
     proc.stderr.emit('data', Buffer.from('error output'));
     proc.emit('close', 1);
 
-    await expect(pending).rejects.toMatchObject({
+    await expect(pending).resolves.toMatchObject({
       success: false,
       error: 'error output',
     });

@@ -158,6 +158,9 @@
       button.dataset.defaultText = button.textContent?.trim() ?? '';
     }
     if (isLoading) {
+      if (button._originalClick === undefined) {
+        button._originalClick = button.onclick;
+      }
       button.classList.add('loading');
       button.innerHTML = '<img src="loader.svg" class="loader-icon" alt="Loading...">';
       button.disabled = false;

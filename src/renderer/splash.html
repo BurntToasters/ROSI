@@ -349,5 +349,11 @@
       </div>
     </div>
     <div class="version" id="version-display">v4.0.0</div>
+    <script>
+      setTimeout(function () {
+        var label = document.querySelector('.loading-label');
+        if (label) label.textContent = 'Still loading — this is taking longer than usual…';
+      }, 15000);
+    </script>
   </body>
 </html>

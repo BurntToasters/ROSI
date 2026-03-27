@@ -7,6 +7,7 @@ import { spawnWithEnv, getEffectiveFfmpegPath, ytdlpBinary, isWindows } from './
 import { loadSettings, recordDownload } from './settings';
 import { buildFfmpegArgs, buildYtdlpArgs, resolveVideoEncoder } from './download/commandBuilders';
 import { isSafeHttpUrl } from '../utils/validation';
+import { isMac } from './platform';
 import {
   createDownloadLifecycleState,
   markDownloadCancelled,
@@ -27,8 +28,11 @@ function isActiveSession(session: DownloadSession | null) {
 }
 
 function safeSend(sender: Electron.WebContents, channel: string, message: unknown) {
-  if (sender && !sender.isDestroyed()) {
+  if (!sender || sender.isDestroyed()) return;
+  try {
     sender.send(channel, message);
+  } catch (error) {
+    log.warn(`Failed to send IPC '${channel}':`, error);
   }
 }
 
@@ -135,7 +139,9 @@ export function fetchFormats(ytdlpPath: string, url: string): Promise<string> {
       try {
         formatsProcess.cancelled = true;
         formatsProcess.proc.kill();
-      } catch {}
+      } catch (error) {
+        log.warn('Error killing previous formats process:', error);
+      }
     }
     const proc = spawnWithEnv(ytdlpPath, ['-F', url]);
     formatsProcess = { proc, cancelled: false };
@@ -146,7 +152,9 @@ export function fetchFormats(ytdlpPath: string, url: string): Promise<string> {
       try {
         formatsProcess!.cancelled = true;
         proc.kill();
-      } catch {}
+      } catch (error) {
+        log.warn('Error killing formats process on timeout:', error);
+      }
       reject('Format fetch timed out after 60 seconds. The server may be slow or unresponsive.');
     }, FORMAT_FETCH_TIMEOUT_MS);
 
@@ -187,7 +195,9 @@ export function cancelFormats() {
     formatsProcess.cancelled = true;
     try {
       formatsProcess.proc.kill();
-    } catch {}
+    } catch (error) {
+      log.warn('Error killing formats process:', error);
+    }
   }
 }
 
@@ -436,7 +446,7 @@ export function startDownload(
     ytProc.stdout?.on('data', (data) => {
       if (!isActiveSession(session)) return;
       const message = data.toString();
-      if (downloadOutputData.length > MAX_OUTPUT_BUFFER) {
+      if (downloadOutputData.length + message.length > MAX_OUTPUT_BUFFER) {
         downloadOutputData = downloadOutputData.slice(-MAX_OUTPUT_BUFFER / 2);
       }
       downloadOutputData += message;
@@ -477,20 +487,21 @@ export function startDownload(
           .filter((l) => l.length > 0 && !l.startsWith('[') && !l.startsWith('WARNING'));
         downloadedFilePath =
           pathLines.length > 0 ? (pathLines[pathLines.length - 1] ?? null) : null;
-        if (!downloadedFilePath) {
+        if (!downloadedFilePath || downloadedFilePath.trim() === '') {
           throw new Error("Could not find a valid filepath in yt-dlp's output.");
         }
         const resolvedFilePath = path.resolve(downloadedFilePath);
         const resolvedDownloadDir = path.resolve(normalizedDownloadDir);
-        const compareFilePath = isWindows ? resolvedFilePath.toLowerCase() : resolvedFilePath;
-        const compareDownloadDir = isWindows
+        const caseInsensitive = isWindows || isMac;
+        const compareFilePath = caseInsensitive ? resolvedFilePath.toLowerCase() : resolvedFilePath;
+        const compareDownloadDir = caseInsensitive
           ? resolvedDownloadDir.toLowerCase()
           : resolvedDownloadDir;
         const relativePath = path.relative(compareDownloadDir, compareFilePath);
         if (
           relativePath === '..' ||
           relativePath.startsWith(`..${path.sep}`) ||
-          path.isAbsolute(relativePath)
+          relativePath.startsWith('../')
         ) {
           throw new Error(
             `Downloaded file path "${resolvedFilePath}" is outside the expected directory "${resolvedDownloadDir}".`
