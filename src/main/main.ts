@@ -40,7 +40,6 @@ import {
 } from '../utils/ipcValidation';
 import { SPLASH_SHOW_DELAY_MS, SPLASH_FADE_DELAY_MS } from './constants';
 import type { DownloadRequestOptions, QueueItem } from '../types';
-import { isSafeHttpUrl as isSafeHttpUrlCheck } from '../utils/validation';
 
 log.initialize();
 
@@ -81,6 +80,7 @@ function createSplashWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
     roundedCorners: true,
   });
@@ -220,6 +220,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
       spellcheck: false,
       devTools: isDev,
     },
@@ -313,6 +314,12 @@ app.on('before-quit', () => {
 });
 
 setupAutoUpdater(getMainWindow, loadSettings);
+
+ipcMain.on('log-error', (_, message) => {
+  if (typeof message === 'string') {
+    log.error(`[renderer] ${message}`);
+  }
+});
 
 ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('is-packaged', () => isPackaged);
@@ -688,7 +695,7 @@ ipcMain.handle('add-to-queue', (_, urls) => {
   if (!Array.isArray(urls)) {
     return errorResult('VALIDATION_ERROR', 'URLs must be an array.');
   }
-  const validUrls = urls.filter((u): u is string => typeof u === 'string' && isSafeHttpUrlCheck(u));
+  const validUrls = urls.filter((u): u is string => typeof u === 'string' && isSafeHttpUrl(u));
   if (validUrls.length === 0) {
     return errorResult('VALIDATION_ERROR', 'No valid URLs provided.');
   }

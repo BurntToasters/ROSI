@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { app, dialog } from 'electron';
 import log from 'electron-log/main';
 import type { AudioFormat, DownloadStats, Settings } from '../types';
+import { ALLOWED_AUDIO_FORMATS, ALLOWED_CONVERT_FORMATS } from './constants';
 
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 const statsPath = path.join(app.getPath('userData'), 'download-stats.json');
@@ -49,9 +50,6 @@ function readBoolean(value: unknown, fallback: boolean): boolean {
 function readString(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback;
 }
-
-const ALLOWED_AUDIO_FORMATS = new Set<AudioFormat>(['mp3', 'flac', 'ogg', 'wav', 'm4a', 'opus']);
-const ALLOWED_CONVERT_FORMATS = new Set(['mp4', 'mov', 'mp3', 'm4a']);
 
 function readAudioFormat(value: unknown): AudioFormat {
   return typeof value === 'string' && ALLOWED_AUDIO_FORMATS.has(value as AudioFormat)

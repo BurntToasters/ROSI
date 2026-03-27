@@ -31,6 +31,7 @@ vi.mock('electron', () => ({
 
 vi.mock('../main/platform', () => ({
   isWindows: process.platform === 'win32',
+  buildEnhancedPath: () => process.env.PATH || '',
 }));
 
 vi.mock('electron-log/main', () => ({

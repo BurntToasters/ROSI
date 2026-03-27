@@ -97,6 +97,7 @@ describe('preload api contract', () => {
         'installDeno',
         'installUpdate',
         'isPackaged',
+        'logError',
         'onComplete',
         'onDownloadProgress',
         'onProgress',
@@ -153,6 +154,7 @@ describe('preload api contract', () => {
 
   it('maps send-based methods to the correct IPC channels', () => {
     const api = getExposedApi();
+    expectSendCall(api, 'logError', 'log-error', ['test error']);
     expectSendCall(api, 'resetSettings', 'reset-settings');
     expectSendCall(api, 'cancelDownload', 'cancel-download');
     expectSendCall(api, 'cancelFormats', 'cancel-formats');

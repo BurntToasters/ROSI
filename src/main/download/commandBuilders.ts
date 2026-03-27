@@ -1,5 +1,6 @@
 import type { DownloadRequestOptions, GpuDetectionResult, Settings } from '../../types';
 import { detectGpu } from '../gpu';
+import { ALLOWED_AUDIO_FORMATS } from '../constants';
 
 const VALID_FORMAT_ID = /^\d+$/;
 const ALLOWED_BROWSERS = new Set([
@@ -13,7 +14,6 @@ const ALLOWED_BROWSERS = new Set([
   'vivaldi',
   'whale',
 ]);
-const ALLOWED_AUDIO_FORMATS = new Set(['mp3', 'flac', 'ogg', 'wav', 'm4a', 'opus']);
 
 export async function resolveVideoEncoder(settings: Settings): Promise<string> {
   if (!settings.gpuAcceleration) return 'copy';

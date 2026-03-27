@@ -7,12 +7,11 @@ import type {
   Settings,
 } from '../types';
 import { isSafeExternalUrl, isSafeHttpUrl } from './validation';
+import { ALLOWED_AUDIO_FORMATS, ALLOWED_CONVERT_FORMATS } from '../main/constants';
 
 const ALLOWED_GPU_TYPES = new Set(['auto', 'nvidia', 'amd', 'intel']);
 const ALLOWED_UPDATE_CHANNELS = new Set(['auto', 'stable', 'beta']);
 const ALLOWED_THEMES = new Set(['system', 'light', 'dark', 'purple']);
-const ALLOWED_AUDIO_FORMATS = new Set(['mp3', 'flac', 'ogg', 'wav', 'm4a', 'opus']);
-const ALLOWED_CONVERT_FORMATS = new Set(['mp4', 'mov', 'mp3', 'm4a']);
 
 type ValidationResult<T> = { ok: true; data: T } | { ok: false; error: IpcErrorPayload };
 
