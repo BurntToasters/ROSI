@@ -33,6 +33,8 @@ export default tseslint.config(
       'no-useless-escape': 'warn',
 
       'no-empty': ['error', { allowEmptyCatch: true }],
+      '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-misused-promises': ['error', { checksVoidReturn: false }],
     },
   },
   {

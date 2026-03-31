@@ -7,7 +7,11 @@ import type {
   Settings,
 } from '../types';
 import { isSafeExternalUrl, isSafeHttpUrl } from './validation';
-import { ALLOWED_AUDIO_FORMATS, ALLOWED_CONVERT_FORMATS } from '../main/constants';
+import {
+  ALLOWED_AUDIO_FORMATS,
+  ALLOWED_CONVERT_FORMATS,
+  CURRENT_SETTINGS_VERSION,
+} from '../main/constants';
 
 const ALLOWED_GPU_TYPES = new Set(['auto', 'nvidia', 'amd', 'intel']);
 const ALLOWED_UPDATE_CHANNELS = new Set(['auto', 'stable', 'beta']);
@@ -192,12 +196,17 @@ export function validateSettingsPatchPayload(value: unknown): ValidationResult<P
     if (!isValidSettingsKey(rawKey)) continue;
 
     if (rawKey === 'settingsVersion') {
-      if (typeof rawValue !== 'number' || !Number.isInteger(rawValue) || rawValue < 1) {
+      if (
+        typeof rawValue !== 'number' ||
+        !Number.isInteger(rawValue) ||
+        rawValue < 1 ||
+        rawValue > CURRENT_SETTINGS_VERSION
+      ) {
         return {
           ok: false,
           error: buildError(
             'VALIDATION_ERROR',
-            'settingsVersion must be an integer greater than or equal to 1.'
+            `settingsVersion must be an integer between 1 and ${CURRENT_SETTINGS_VERSION}.`
           ),
         };
       }
@@ -324,7 +333,20 @@ export function validateFileLocationPayload(value: unknown): ValidationResult<st
       error: buildError('INVALID_PATH', 'File path must be a non-empty string.'),
     };
   }
-  return { ok: true, data: value.trim() };
+  const trimmed = value.trim();
+  if (trimmed.length > 4096) {
+    return {
+      ok: false,
+      error: buildError('INVALID_PATH', 'File path exceeds maximum length.'),
+    };
+  }
+  if (!/^(\/|[A-Za-z]:\\)/.test(trimmed)) {
+    return {
+      ok: false,
+      error: buildError('INVALID_PATH', 'File path must be absolute.'),
+    };
+  }
+  return { ok: true, data: trimmed };
 }
 
 export function validateNotificationPayload(value: unknown): ValidationResult<NotificationRequest> {
@@ -346,6 +368,17 @@ export function validateNotificationPayload(value: unknown): ValidationResult<No
         'VALIDATION_ERROR',
         'Notification title, body, and filePath must be strings when provided.'
       ),
+    };
+  }
+
+  if (
+    (title && title.length > 256) ||
+    (body && body.length > 1024) ||
+    (filePath && filePath.length > 4096)
+  ) {
+    return {
+      ok: false,
+      error: buildError('VALIDATION_ERROR', 'Notification field exceeds maximum length.'),
     };
   }
 

@@ -46,7 +46,7 @@ export async function checkDenoInstalled(): Promise<boolean> {
 
     const checkCmd = isWindows ? 'where' : 'which';
     const proc = spawn(checkCmd, ['deno'], {
-      env: { ...process.env, PATH: buildEnhancedPath() },
+      env: { PATH: buildEnhancedPath() },
     });
 
     const timeout = setTimeout(() => {

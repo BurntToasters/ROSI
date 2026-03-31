@@ -206,6 +206,8 @@ vi.mock('../main/downloader', () => ({
 vi.mock('../main/constants', () => ({
   SPLASH_SHOW_DELAY_MS: 0,
   SPLASH_FADE_DELAY_MS: 0,
+  MAX_QUEUE_SIZE: 500,
+  CURRENT_SETTINGS_VERSION: 2,
 }));
 
 function clearHandlerMaps() {

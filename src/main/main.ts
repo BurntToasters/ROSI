@@ -38,13 +38,16 @@ import {
   validateNotificationPayload,
   validateSettingsPatchPayload,
 } from '../utils/ipcValidation';
-import { SPLASH_SHOW_DELAY_MS, SPLASH_FADE_DELAY_MS } from './constants';
+import { SPLASH_SHOW_DELAY_MS, SPLASH_FADE_DELAY_MS, MAX_QUEUE_SIZE } from './constants';
 import type { DownloadRequestOptions, QueueItem } from '../types';
 
 log.initialize();
 
 process.on('uncaughtException', (error) => {
   log.error('Uncaught exception:', error);
+  try {
+    killAllProcesses();
+  } catch {}
   try {
     dialog.showErrorBox(
       'Fatal Error',
@@ -99,7 +102,7 @@ function createSplashWindow() {
     },
     roundedCorners: true,
   });
-  splashWindow.loadFile(path.join(__dirname, '..', '..', 'src', 'renderer', 'splash.html'));
+  void splashWindow.loadFile(path.join(__dirname, '..', '..', 'src', 'renderer', 'splash.html'));
   splashWindow.center();
 }
 
@@ -243,7 +246,7 @@ function createWindow() {
     autoHideMenuBar: !isDev,
     show: false,
   });
-  mainWindow.loadFile(path.join(__dirname, '..', '..', 'src', 'renderer', 'index.html'));
+  void mainWindow.loadFile(path.join(__dirname, '..', '..', 'src', 'renderer', 'index.html'));
   mainWindowCloseInProgress = false;
   clearMainWindowCloseTimer();
 
@@ -359,7 +362,7 @@ if (isPrimaryInstance && !isSmokeRun) {
   });
 }
 
-app.whenReady().then(() => {
+void app.whenReady().then(() => {
   if (!isPrimaryInstance) {
     app.quit();
     return;
@@ -817,6 +820,9 @@ ipcMain.handle('add-to-queue', (event, urls) => {
   const validUrls = urls.filter((u): u is string => typeof u === 'string' && isSafeHttpUrl(u));
   if (validUrls.length === 0) {
     return errorResult('VALIDATION_ERROR', 'No valid URLs provided.');
+  }
+  if (downloadQueue.length + validUrls.length > MAX_QUEUE_SIZE) {
+    return errorResult('VALIDATION_ERROR', `Queue limit reached (max ${MAX_QUEUE_SIZE} items).`);
   }
   const newItems: QueueItem[] = validUrls.map((url) => ({
     id: generateQueueId(),

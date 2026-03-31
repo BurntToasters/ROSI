@@ -10,6 +10,7 @@ import type {
 } from '../types';
 
 let updateDownloadCancellationToken: CancellationToken | null = null;
+let isUpdateDownloading = false;
 
 interface ParsedVersion {
   major: number;
@@ -71,7 +72,7 @@ export function compareVersions(a: string, b: string): number {
 export function resolveUseBeta(channel: Settings['updateChannel']): boolean {
   if (channel === 'beta') return true;
   if (channel === 'stable') return false;
-  return isBetaVersion(app.getVersion());
+  return false;
 }
 
 export function applyChannel(useBeta: boolean) {
@@ -204,13 +205,19 @@ export async function checkForUpdates(isPackaged: boolean, loadSettings: () => S
 }
 
 export async function downloadUpdate(): Promise<UpdateDownloadResult> {
+  if (isUpdateDownloading) {
+    return { error: 'A download is already in progress.' };
+  }
   try {
+    isUpdateDownloading = true;
     updateDownloadCancellationToken = new CancellationToken();
     await autoUpdater.downloadUpdate(updateDownloadCancellationToken);
     updateDownloadCancellationToken = null;
+    isUpdateDownloading = false;
     return { success: true };
   } catch (error) {
     updateDownloadCancellationToken = null;
+    isUpdateDownloading = false;
     if ((error as Error).message?.includes('cancelled')) {
       return { cancelled: true };
     }
@@ -222,6 +229,7 @@ export function cancelUpdateDownload(getMainWindow: () => BrowserWindow | null) 
   if (updateDownloadCancellationToken) {
     updateDownloadCancellationToken.cancel();
     updateDownloadCancellationToken = null;
+    isUpdateDownloading = false;
     const win = getMainWindow();
     if (win && !win.isDestroyed()) {
       const cancelledEvent: UpdaterStatusEvent = { status: 'cancelled' };

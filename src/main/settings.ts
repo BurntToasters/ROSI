@@ -3,11 +3,17 @@ import * as fs from 'fs';
 import { app, dialog } from 'electron';
 import log from 'electron-log/main';
 import type { AudioFormat, DownloadStats, Settings } from '../types';
-import { ALLOWED_AUDIO_FORMATS, ALLOWED_CONVERT_FORMATS } from './constants';
+import {
+  ALLOWED_AUDIO_FORMATS,
+  ALLOWED_CONVERT_FORMATS,
+  MAX_FORMAT_COUNTS,
+  MAX_SETTINGS_IMPORT_BYTES,
+  CURRENT_SETTINGS_VERSION,
+} from './constants';
 
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 const statsPath = path.join(app.getPath('userData'), 'download-stats.json');
-export const CURRENT_SETTINGS_VERSION = 2;
+export { CURRENT_SETTINGS_VERSION } from './constants';
 
 const defaultSettings: Settings = {
   settingsVersion: CURRENT_SETTINGS_VERSION,
@@ -82,7 +88,12 @@ function readGpuType(value: unknown): Settings['gpuType'] {
 }
 
 function readSettingsVersion(value: unknown): number {
-  if (typeof value === 'number' && Number.isInteger(value) && value >= 1) {
+  if (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value <= CURRENT_SETTINGS_VERSION
+  ) {
     return value;
   }
   return CURRENT_SETTINGS_VERSION;
@@ -168,7 +179,7 @@ export function saveSettings(
       migrateSettings({ ...existing, ...newSettings })
     );
     const tmpPath = `${settingsPath}.tmp`;
-    fs.writeFileSync(tmpPath, JSON.stringify(completeSettings, null, 2));
+    fs.writeFileSync(tmpPath, JSON.stringify(completeSettings, null, 2), { mode: 0o600 });
     fs.renameSync(tmpPath, settingsPath);
     return true;
   } catch (error) {
@@ -232,7 +243,7 @@ export function saveStats(stats: DownloadStats): boolean {
     const dir = path.dirname(statsPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const tmpPath = `${statsPath}.tmp`;
-    fs.writeFileSync(tmpPath, JSON.stringify(stats, null, 2));
+    fs.writeFileSync(tmpPath, JSON.stringify(stats, null, 2), { mode: 0o600 });
     fs.renameSync(tmpPath, statsPath);
     return true;
   } catch (error) {
@@ -254,7 +265,7 @@ export function recordDownload(
 
   if (outcome === 'success') {
     stats.successfulDownloads += 1;
-    if (format) {
+    if (format && Object.keys(stats.formatCounts).length < MAX_FORMAT_COUNTS) {
       stats.formatCounts[format] = (stats.formatCounts[format] || 0) + 1;
     }
     if (typeof bytes === 'number' && bytes > 0) {
@@ -304,6 +315,13 @@ export async function importSettingsFromFile(
   });
   if (canceled || !filePaths[0]) return false;
   try {
+    const stat = fs.statSync(filePaths[0]);
+    if (stat.size > MAX_SETTINGS_IMPORT_BYTES) {
+      log.warn(
+        `Settings import file too large: ${stat.size} bytes (max ${MAX_SETTINGS_IMPORT_BYTES}).`
+      );
+      return false;
+    }
     const raw = fs.readFileSync(filePaths[0], 'utf-8');
     const loaded = JSON.parse(raw);
     if (!loaded || typeof loaded !== 'object' || Array.isArray(loaded)) {
@@ -314,7 +332,7 @@ export async function importSettingsFromFile(
     const dir = path.dirname(settingsPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const tmpPath = `${settingsPath}.tmp`;
-    fs.writeFileSync(tmpPath, JSON.stringify(migrated, null, 2));
+    fs.writeFileSync(tmpPath, JSON.stringify(migrated, null, 2), { mode: 0o600 });
     fs.renameSync(tmpPath, settingsPath);
     return true;
   } catch (error) {

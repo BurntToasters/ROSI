@@ -11,7 +11,7 @@ describe('settings import persistence contract', () => {
 
     expect(settingsSource).toMatch(/const tmpPath = `\$\{settingsPath\}\.tmp`;/);
     expect(settingsSource).toMatch(
-      /fs\.writeFileSync\(tmpPath, JSON\.stringify\(migrated, null, 2\)\);/
+      /fs\.writeFileSync\(tmpPath, JSON\.stringify\(migrated, null, 2\).*\);/
     );
     expect(settingsSource).toMatch(/fs\.renameSync\(tmpPath, settingsPath\);/);
   });

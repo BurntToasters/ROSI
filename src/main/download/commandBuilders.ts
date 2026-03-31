@@ -92,6 +92,7 @@ export function buildYtdlpArgs({
     '1',
     '-f',
     settings.bestQuality ? 'bestvideo+bestaudio/best' : 'best[ext=mp4]/best[ext=webm]/best',
+    '--',
     url,
   ];
   const statusMessages: string[] = [];

@@ -1,5 +1,6 @@
 appId: com.burnttoasters.rosi
 productName: Rosi
+asar: true
 files:
   - 'dist/**/*'
   - 'src/renderer/**/*'
