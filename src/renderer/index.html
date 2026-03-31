@@ -80,7 +80,7 @@
             <label class="toggle-switch">
               <input type="checkbox" id="bestQualityToggle" />
               <span class="toggle-slider"></span>
-              <span class="toggle-text">Best quality (requires FFmpeg)</span>
+              <span class="toggle-text">Best quality</span>
             </label>
 
             <label class="toggle-switch">
@@ -1030,6 +1030,143 @@
     </div>
 
     <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+    <!-- Setup Wizard Overlay -->
+    <div
+      id="setup-wizard"
+      class="wizard-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="wizard-title"
+    >
+      <div class="wizard-card">
+        <div class="wizard-progress">
+          <div class="wizard-progress-bar" id="wizard-progress-bar"></div>
+        </div>
+
+        <!-- Step 1: Welcome -->
+        <div class="wizard-step active" data-step="0">
+          <div class="wizard-icon">
+            <img src="app.png" alt="ROSI" width="72" height="72" />
+          </div>
+          <h2 id="wizard-title" class="wizard-heading">Welcome to ROSI</h2>
+          <p class="wizard-description">
+            Let's get you set up in just a few quick steps.<br />
+            You can always change these later in Settings.
+          </p>
+        </div>
+
+        <!-- Step 2: Theme -->
+        <div class="wizard-step" data-step="1">
+          <h2 class="wizard-heading">Choose Your Theme</h2>
+          <p class="wizard-description">Pick the look that suits you best.</p>
+          <div class="wizard-theme-grid">
+            <label class="wizard-theme-option">
+              <input type="radio" name="wizard-theme" value="system" checked />
+              <span class="wizard-theme-card">
+                <span class="wizard-theme-preview wizard-preview-system"></span>
+                <span class="wizard-theme-label">System</span>
+              </span>
+            </label>
+            <label class="wizard-theme-option">
+              <input type="radio" name="wizard-theme" value="dark" />
+              <span class="wizard-theme-card">
+                <span class="wizard-theme-preview wizard-preview-dark"></span>
+                <span class="wizard-theme-label">Dark</span>
+              </span>
+            </label>
+            <label class="wizard-theme-option">
+              <input type="radio" name="wizard-theme" value="light" />
+              <span class="wizard-theme-card">
+                <span class="wizard-theme-preview wizard-preview-light"></span>
+                <span class="wizard-theme-label">Light</span>
+              </span>
+            </label>
+            <label class="wizard-theme-option">
+              <input type="radio" name="wizard-theme" value="purple" />
+              <span class="wizard-theme-card">
+                <span class="wizard-theme-preview wizard-preview-purple"></span>
+                <span class="wizard-theme-label">Purple</span>
+              </span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Step 3: Download Preferences -->
+        <div class="wizard-step" data-step="2">
+          <h2 class="wizard-heading">Download Preferences</h2>
+          <p class="wizard-description">Customize how ROSI downloads your videos.</p>
+          <div class="wizard-options">
+            <label class="wizard-toggle">
+              <input type="checkbox" id="wizard-best-quality" />
+              <span class="toggle-slider"></span>
+              <span class="wizard-toggle-text">
+                <strong>Best quality</strong>
+                <small>Downloads the highest quality available</small>
+              </span>
+            </label>
+            <label class="wizard-toggle">
+              <input type="checkbox" id="wizard-audio-only" />
+              <span class="toggle-slider"></span>
+              <span class="wizard-toggle-text">
+                <strong>Audio-only mode</strong>
+                <small>Download audio tracks instead of video</small>
+              </span>
+            </label>
+            <label class="wizard-toggle">
+              <input type="checkbox" id="wizard-notifications" checked />
+              <span class="toggle-slider"></span>
+              <span class="wizard-toggle-text">
+                <strong>Download notifications</strong>
+                <small>Get notified when downloads finish</small>
+              </span>
+            </label>
+            <label class="wizard-toggle">
+              <input type="checkbox" id="wizard-auto-updates" checked />
+              <span class="toggle-slider"></span>
+              <span class="wizard-toggle-text">
+                <strong>Auto check for updates</strong>
+                <small>Automatically check for new versions on startup</small>
+              </span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Finalize setup -->
+        <div class="wizard-step" data-step="3">
+          <div class="wizard-icon">
+            <svg
+              width="64"
+              height="64"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--success)"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+              <polyline points="22 4 12 14.01 9 11.01" />
+            </svg>
+          </div>
+          <h2 class="wizard-heading">You're All Set!</h2>
+          <p class="wizard-description">
+            ROSI is ready to go. Paste a video URL to start downloading.<br />
+            You can tweak any setting later via the gear icon.
+          </p>
+        </div>
+
+        <div class="wizard-nav">
+          <button id="wizard-back" class="wizard-btn wizard-btn-secondary" type="button">
+            Back
+          </button>
+          <div class="wizard-dots" id="wizard-dots"></div>
+          <button id="wizard-next" class="wizard-btn wizard-btn-primary" type="button">
+            Get Started
+          </button>
+        </div>
+      </div>
+    </div>
 
     <script src="modules/ui.js"></script>
     <script src="modules/downloads.js"></script>

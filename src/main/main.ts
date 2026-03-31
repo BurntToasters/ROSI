@@ -128,6 +128,16 @@ async function runRendererSmokeChecks(windowRef: BrowserWindow): Promise<string[
           await wait(120);
         }
 
+        // Dismiss setup wizard if visible
+        const wizardOverlay = document.getElementById('setup-wizard');
+        if (wizardOverlay && wizardOverlay.classList.contains('active')) {
+          const wizardNext = document.getElementById('wizard-next');
+          for (let i = 0; i < 5 && wizardOverlay.classList.contains('active'); i++) {
+            if (wizardNext) wizardNext.click();
+            await wait(100);
+          }
+        }
+
         const sidebar = document.getElementById('sidebar');
         const settingsBtn = document.getElementById('settingsBtn');
         const closeSidebarBtn = document.getElementById('closeSidebar');

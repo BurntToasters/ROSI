@@ -1164,6 +1164,136 @@ async function checkDenoInstallation(settings) {
   }
 }
 
+function launchSetupWizard(settings, applyThemeFn, persistSettingsFn, onComplete) {
+  const TOTAL_STEPS = 4;
+  let currentStep = 0;
+
+  const overlay = document.getElementById('setup-wizard');
+  const progressBar = document.getElementById('wizard-progress-bar');
+  const backBtn = document.getElementById('wizard-back');
+  const nextBtn = document.getElementById('wizard-next');
+  const dotsContainer = document.getElementById('wizard-dots');
+  const steps = overlay ? overlay.querySelectorAll('.wizard-step') : [];
+
+  if (!overlay || !progressBar || !backBtn || !nextBtn || !dotsContainer || steps.length === 0) {
+    settings.firstLaunch = false;
+    void persistSettingsFn();
+    onComplete();
+    return;
+  }
+
+  // Build dots
+  dotsContainer.innerHTML = '';
+  for (let i = 0; i < TOTAL_STEPS; i++) {
+    const dot = document.createElement('span');
+    dot.className = 'wizard-dot' + (i === 0 ? ' active' : '');
+    dotsContainer.appendChild(dot);
+  }
+
+  // Live theme preview
+  const themeRadios = overlay.querySelectorAll('input[name="wizard-theme"]');
+  themeRadios.forEach((radio) => {
+    radio.addEventListener('change', () => {
+      applyThemeFn(radio.value);
+    });
+  });
+
+  function updateUI() {
+    // Steps
+    steps.forEach((step, i) => {
+      step.classList.toggle('active', i === currentStep);
+    });
+
+    // Progress bar
+    progressBar.style.width = ((currentStep + 1) / TOTAL_STEPS) * 100 + '%';
+
+    // Dots
+    const dots = dotsContainer.querySelectorAll('.wizard-dot');
+    dots.forEach((dot, i) => {
+      dot.classList.toggle('active', i === currentStep);
+    });
+
+    // Back button
+    backBtn.classList.toggle('hidden', currentStep === 0);
+
+    // Next button text
+    if (currentStep === 0) {
+      nextBtn.textContent = 'Get Started';
+    } else if (currentStep === TOTAL_STEPS - 1) {
+      nextBtn.textContent = 'Finish';
+    } else {
+      nextBtn.textContent = 'Next';
+    }
+  }
+
+  function gatherSettings() {
+    // Theme
+    const selectedTheme = overlay.querySelector('input[name="wizard-theme"]:checked');
+    if (selectedTheme) {
+      settings.theme = selectedTheme.value;
+      applyThemeFn(settings.theme);
+    }
+
+    // Download prefs
+    const bestQuality = document.getElementById('wizard-best-quality');
+    const audioOnly = document.getElementById('wizard-audio-only');
+    const notifications = document.getElementById('wizard-notifications');
+    const autoUpdates = document.getElementById('wizard-auto-updates');
+
+    if (bestQuality) settings.bestQuality = bestQuality.checked;
+    if (audioOnly) settings.audioOnly = audioOnly.checked;
+    if (notifications) settings.notifications = notifications.checked;
+    if (autoUpdates) settings.checkUpdatesOnStartup = autoUpdates.checked;
+  }
+
+  function close() {
+    gatherSettings();
+    settings.firstLaunch = false;
+    void persistSettingsFn(false, true);
+    overlay.classList.remove('active');
+
+    // Sync sidebar controls to reflect wizard choices
+    const themeSelect = document.getElementById('themeSelect');
+    if (themeSelect) themeSelect.value = settings.theme || 'system';
+    const bestQualityToggle = document.getElementById('bestQualityToggle');
+    if (bestQualityToggle) bestQualityToggle.checked = settings.bestQuality;
+    const audioOnlyToggle = document.getElementById('audioOnlyToggle');
+    if (audioOnlyToggle) audioOnlyToggle.checked = settings.audioOnly;
+    const notificationsToggle = document.getElementById('notificationsToggle');
+    if (notificationsToggle) notificationsToggle.checked = settings.notifications;
+    const checkUpdatesToggle = document.getElementById('checkUpdatesOnStartupToggle');
+    if (checkUpdatesToggle) checkUpdatesToggle.checked = settings.checkUpdatesOnStartup;
+
+    onComplete();
+  }
+
+  nextBtn.addEventListener('click', () => {
+    if (currentStep < TOTAL_STEPS - 1) {
+      currentStep++;
+      updateUI();
+    } else {
+      close();
+    }
+  });
+
+  backBtn.addEventListener('click', () => {
+    if (currentStep > 0) {
+      currentStep--;
+      updateUI();
+    }
+  });
+
+  // Set initial selected theme radio to match current settings
+  const initialTheme = settings.theme || 'system';
+  const matchingRadio = overlay.querySelector(
+    `input[name="wizard-theme"][value="${initialTheme}"]`
+  );
+  if (matchingRadio) matchingRadio.checked = true;
+
+  updateUI();
+  overlay.classList.add('active');
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   let settings;
   try {
@@ -1529,7 +1659,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     logError('Failed to update UI from settings', e);
   }
 
-  if (!settings.hideSupportModal) {
+  if (!settings.hideSupportModal && !settings.firstLaunch) {
     showModal({
       title: 'Support This Project?',
       message:
@@ -2705,23 +2835,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (settings.firstLaunch) {
-    // Save immediately - change
-    settings.firstLaunch = false;
-    void persistSettings();
-
-    showModal({
-      title: 'Welcome to ROSI!',
-      message:
-        'ROSI includes a bundled FFmpeg for downloading and converting videos.\nYou can change the FFmpeg path in Settings if needed.\nEnjoy!',
-      buttons: [
-        {
-          label: 'OK',
-          action: () => {
-            checkDenoInstallation(settings);
-            checkUpdatesOnStartup();
-          },
-        },
-      ],
+    launchSetupWizard(settings, applyTheme, persistSettings, () => {
+      checkDenoInstallation(settings);
+      checkUpdatesOnStartup();
     });
   } else {
     // check Deno
