@@ -82,7 +82,13 @@ function completeSession(
 function killProcess(proc: ChildProcess | null, label: string) {
   if (!proc) return;
   try {
-    proc.kill();
+    proc.kill('SIGTERM');
+    const forceKillTimer = setTimeout(() => {
+      try {
+        if (!proc.killed) proc.kill('SIGKILL');
+      } catch {}
+    }, 5000);
+    proc.once('exit', () => clearTimeout(forceKillTimer));
   } catch (error) {
     log.error(`Error killing ${label} process:`, error);
   }
@@ -333,7 +339,7 @@ async function runConversion(
         );
         completeSession(session, '❌ Conversion failed (FFmpeg not found).');
         if (mainWindow && !mainWindow.isDestroyed()) {
-          dialog.showMessageBox(mainWindow, {
+          void dialog.showMessageBox(mainWindow, {
             type: 'error',
             title: 'FFmpeg Error',
             message: `Failed to start conversion: FFmpeg not found at ${ffmpegCommand}.`,

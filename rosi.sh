@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 export TMPDIR="$XDG_RUNTIME_DIR/app/$FLATPAK_ID"
 export ELECTRON_IS_DEV=0
 cd /app/rosi

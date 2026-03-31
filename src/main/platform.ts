@@ -1,4 +1,5 @@
 import * as path from 'path';
+import * as os from 'os';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { app, dialog } from 'electron';
@@ -9,6 +10,55 @@ export const isMac = process.platform === 'darwin';
 export const isLinux = process.platform === 'linux';
 export const isArm64 = process.arch === 'arm64';
 export const isPackaged = app.isPackaged;
+
+const ENV_ALLOWLIST = [
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TERM',
+  'TMPDIR',
+  'TEMP',
+  'TMP',
+  'USERPROFILE',
+  'LOCALAPPDATA',
+  'APPDATA',
+  'SystemRoot',
+  'SYSTEMDRIVE',
+  'PROGRAMFILES',
+  'PROGRAMFILES(X86)',
+  'COMSPEC',
+  'WINDIR',
+  'XDG_RUNTIME_DIR',
+  'XDG_DATA_HOME',
+  'XDG_CONFIG_HOME',
+  'XDG_CACHE_HOME',
+  'FLATPAK_ID',
+  'DISPLAY',
+  'WAYLAND_DISPLAY',
+  'DBUS_SESSION_BUS_ADDRESS',
+  'PYTHONUNBUFFERED',
+];
+
+function buildSafeEnv(): Record<string, string> {
+  const safe: Record<string, string> = {};
+  for (const key of ENV_ALLOWLIST) {
+    const val = process.env[key];
+    if (val !== undefined) safe[key] = val;
+  }
+  return safe;
+}
+
+function safeHomeDir(): string {
+  try {
+    return os.homedir();
+  } catch {
+    return process.env.HOME || process.env.USERPROFILE || '';
+  }
+}
 
 export function buildEnhancedPath() {
   const currentPath = process.env.PATH || '';
@@ -26,7 +76,7 @@ export function buildEnhancedPath() {
     return result || 'C:\\Windows\\System32';
   }
 
-  const homeDir = process.env.HOME || '';
+  const homeDir = safeHomeDir();
   const extraPaths = [
     path.join(homeDir, '.deno', 'bin'),
     '/opt/homebrew/bin',
@@ -51,7 +101,7 @@ export function spawnWithEnv(
   const baseEnv = (options.env as Record<string, string> | undefined) || {};
   return spawn(command, args, {
     ...options,
-    env: { ...process.env, ...baseEnv, PATH: buildEnhancedPath() },
+    env: { ...buildSafeEnv(), ...baseEnv, PATH: buildEnhancedPath() },
   } as Parameters<typeof spawn>[2]);
 }
 
@@ -149,9 +199,9 @@ function getBundledFfmpegDir(): string | null {
     const archDir = path.join(baseDir, process.arch);
     if (fs.existsSync(archDir)) return archDir;
     const x64Dir = path.join(baseDir, 'x64');
-    if (process.arch === 'x64' && fs.existsSync(x64Dir)) return x64Dir;
+    if (fs.existsSync(x64Dir)) return x64Dir;
     const arm64Dir = path.join(baseDir, 'arm64');
-    if (process.arch === 'arm64' && fs.existsSync(arm64Dir)) return arm64Dir;
+    if (fs.existsSync(arm64Dir)) return arm64Dir;
   }
 
   if (fs.existsSync(baseDir)) return baseDir;
