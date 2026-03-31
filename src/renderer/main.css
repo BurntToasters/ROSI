@@ -14,8 +14,8 @@
   --weight-semibold: 600;
   --weight-bold: 700;
 
-  --bg-gradient-start: #040507;
-  --bg-gradient-mid: #0b0d11;
+  --bg-gradient-start: #0a0c10;
+  --bg-gradient-mid: #0d0f14;
   --bg-gradient-end: #10131a;
   --surface-1: rgba(255, 255, 255, 0.04);
   --surface-2: rgba(255, 255, 255, 0.07);
@@ -74,10 +74,10 @@
   --radius-xl: 26px;
   --radius-full: 50%;
 
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
-  --shadow-glow: 0 0 18px var(--accent-glow);
+  --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.15);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.25);
+  --shadow-glow: none;
 
   --transition-fast: 150ms ease;
   --transition-normal: 250ms ease;
@@ -128,23 +128,19 @@
     -1px -1px 0 rgba(255, 255, 255, 0.34), 1px -1px 0 rgba(255, 255, 255, 0.34),
     -1px 1px 0 rgba(255, 255, 255, 0.34), 1px 1px 0 rgba(255, 255, 255, 0.34),
     0 0 5px rgba(255, 255, 255, 0.2);
-  --download-btn-radial: radial-gradient(
-    circle at 50% 50%,
-    rgba(255, 255, 255, 0.14) 0%,
-    transparent 60%
-  );
+  --download-btn-radial: none;
 }
 
 :root[data-theme='dark'] {
-  --bg-gradient-start: #040507;
-  --bg-gradient-mid: #0b0d11;
+  --bg-gradient-start: #0a0c10;
+  --bg-gradient-mid: #0d0f14;
   --bg-gradient-end: #10131a;
 }
 
 :root[data-theme='purple'] {
-  --bg-gradient-start: #0f0a1a;
-  --bg-gradient-mid: #1a1030;
-  --bg-gradient-end: #2d1f4e;
+  --bg-gradient-start: #120e1e;
+  --bg-gradient-mid: #18122a;
+  --bg-gradient-end: #1e163a;
   --surface-1: rgba(255, 255, 255, 0.03);
   --surface-2: rgba(255, 255, 255, 0.06);
   --surface-3: rgba(255, 255, 255, 0.09);
@@ -166,8 +162,8 @@
   --overlay-bg: rgba(0, 0, 0, 0.5);
   --overlay-bg-heavy: rgba(0, 0, 0, 0.6);
   --sidebar-bg-start: rgba(20, 15, 35, 0.98);
-  --sidebar-bg-end: rgba(15, 10, 26, 0.98);
-  --modal-bg-start: rgba(30, 25, 50, 0.98);
+  --sidebar-bg-end: rgba(18, 13, 30, 0.98);
+  --modal-bg-start: rgba(25, 20, 42, 0.98);
   --modal-bg-end: rgba(20, 15, 35, 0.98);
   --console-bg: rgba(0, 0, 0, 0.4);
   --console-header-bg: rgba(0, 0, 0, 0.3);
@@ -220,9 +216,9 @@
   --console-header-bg: rgba(15, 23, 42, 0.1);
   --console-header-hover-bg: rgba(15, 23, 42, 0.14);
   --console-text: #166534;
-  --shadow-sm: 0 2px 8px rgba(15, 23, 42, 0.08);
-  --shadow-md: 0 4px 16px rgba(15, 23, 42, 0.12);
-  --shadow-lg: 0 8px 32px rgba(15, 23, 42, 0.18);
+  --shadow-sm: 0 1px 4px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 2px 8px rgba(15, 23, 42, 0.1);
+  --shadow-lg: 0 4px 16px rgba(15, 23, 42, 0.14);
   --topbar-shadow-color: rgba(15, 23, 42, 0.08);
   --logo-char-white-color: #f8fafc;
   --logo-char-white-shadow: 0 0 1px rgba(15, 23, 42, 0.2), 0 0 3px rgba(15, 23, 42, 0.12);
@@ -232,11 +228,7 @@
     -1px -1px 0 rgba(248, 250, 252, 0.5), 1px -1px 0 rgba(248, 250, 252, 0.5),
     -1px 1px 0 rgba(248, 250, 252, 0.5), 1px 1px 0 rgba(248, 250, 252, 0.5),
     0 0 5px rgba(248, 250, 252, 0.2);
-  --download-btn-radial: radial-gradient(
-    circle at 50% 50%,
-    rgba(255, 255, 255, 0.24) 0%,
-    transparent 60%
-  );
+  --download-btn-radial: none;
 }
 
 *,
@@ -255,12 +247,7 @@ html {
 
 body {
   font-family: var(--font-sans);
-  background: linear-gradient(
-    145deg,
-    var(--bg-gradient-start) 0%,
-    var(--bg-gradient-mid) 50%,
-    var(--bg-gradient-end) 100%
-  );
+  background: var(--bg-gradient-mid);
   background-attachment: fixed;
   min-height: 100vh;
   color: var(--text-primary);
@@ -270,8 +257,7 @@ body {
 }
 
 body.animate-bg {
-  background-size: 200% 200%;
-  animation: gradientShift 20s ease infinite;
+  background: var(--bg-gradient-mid);
 }
 
 .skip-link {
@@ -299,7 +285,7 @@ body.animate-bg {
     background-position: 0% 50%;
   }
   50% {
-    background-position: 100% 50%;
+    background-position: 0% 50%;
   }
 }
 
@@ -325,7 +311,7 @@ body.animate-bg {
   left: 0;
   width: var(--sidebar-width);
   height: 100vh;
-  background: linear-gradient(180deg, var(--sidebar-bg-start) 0%, var(--sidebar-bg-end) 100%);
+  background: var(--sidebar-bg-start);
   backdrop-filter: blur(var(--blur-lg));
   border-right: 1px solid var(--border-subtle);
   transform: translateX(-100%);
@@ -762,7 +748,7 @@ select option {
   text-transform: uppercase;
   padding: 1px 6px;
   border-radius: 4px;
-  background: linear-gradient(135deg, var(--warning), var(--warning-dark));
+  background: var(--warning);
   color: var(--text-primary);
   line-height: 1.4;
 }
@@ -806,11 +792,10 @@ select option {
   background: var(--accent-subtle);
   border-color: var(--accent);
   color: var(--accent-light);
-  transform: scale(1.05);
 }
 
 .icon-btn:active {
-  transform: scale(0.95);
+  transform: scale(0.97);
 }
 
 .app-brand {
@@ -822,7 +807,7 @@ select option {
 .app-logo {
   width: 32px;
   height: 32px;
-  filter: drop-shadow(0 2px 8px var(--accent-glow));
+  filter: none;
 }
 
 .app-name {
@@ -864,11 +849,10 @@ select option {
 .top-bar-links a:hover {
   background: var(--surface-2);
   color: var(--text-primary);
-  transform: scale(1.08);
 }
 
 .top-bar-links a:active {
-  transform: scale(0.95);
+  transform: scale(0.97);
 }
 
 .download-section {
@@ -886,26 +870,14 @@ select option {
   max-width: var(--download-card-max-width);
   padding: var(--spacing-2xl);
   background: var(--surface-1);
-  border: 1px solid transparent;
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg), var(--shadow-glow);
+  box-shadow: var(--shadow-lg);
   animation: cardEntrance 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .download-card::before {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: calc(var(--radius-xl) + 1px);
-  background: linear-gradient(
-    135deg,
-    var(--accent-subtle),
-    transparent 40%,
-    transparent 60%,
-    var(--accent-subtle)
-  );
-  z-index: -1;
-  pointer-events: none;
+  content: none;
 }
 
 @keyframes cardEntrance {
@@ -921,9 +893,7 @@ select option {
 
 .download-card.drag-over {
   border-color: var(--accent);
-  box-shadow:
-    var(--shadow-lg),
-    0 0 60px var(--accent-glow);
+  box-shadow: var(--shadow-md);
   transform: scale(1.01);
   transition:
     transform var(--transition-fast),
@@ -936,10 +906,7 @@ select option {
   font-weight: var(--weight-bold);
   text-align: center;
   margin-bottom: var(--spacing-sm);
-  background: linear-gradient(135deg, var(--text-primary), var(--accent-light));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--text-primary);
 }
 
 .download-subtitle {
@@ -1042,7 +1009,7 @@ select option {
   align-items: center;
   gap: var(--spacing-sm);
   padding: var(--spacing-md) var(--spacing-xl);
-  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+  background: var(--accent);
   border: none;
   border-radius: var(--radius-lg);
   color: var(--text-primary);
@@ -1058,30 +1025,17 @@ select option {
 }
 
 .download-btn::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: var(--download-btn-radial);
-  opacity: 0;
-  transition: opacity 0.4s ease;
-  pointer-events: none;
+  content: none;
 }
 
 .download-btn:hover {
-  background: linear-gradient(135deg, var(--accent-light), var(--accent));
-  transform: translateY(-2px);
-  box-shadow:
-    var(--shadow-md),
-    0 0 30px var(--accent-glow);
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
 .download-btn:active {
   transform: translateY(0);
-}
-
-.download-btn:active::after {
-  opacity: 1;
-  transition: opacity 0s;
 }
 
 .download-btn.loading {
@@ -1152,8 +1106,8 @@ select option {
 
 .progress-phase.active .phase-dot {
   background: var(--accent);
-  box-shadow: 0 0 8px var(--accent-glow);
-  animation: pulseDot 1.5s ease infinite;
+  box-shadow: none;
+  animation: none;
 }
 
 .progress-phase.completed .phase-dot {
@@ -1185,7 +1139,7 @@ select option {
 }
 
 .progress-bar.active-glow {
-  box-shadow: 0 0 8px var(--accent-glow);
+  box-shadow: none;
 }
 
 .progress-complete-icon {
@@ -1251,21 +1205,14 @@ select option {
 .progress-bar {
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, var(--accent), var(--accent-light));
+  background: var(--accent);
   border-radius: 4px;
   transition: width 0.3s ease;
 }
 
 .progress-bar.indeterminate {
   width: 100%;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    var(--accent),
-    var(--accent-light),
-    var(--accent),
-    transparent
-  );
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
   background-size: 200% 100%;
   animation: indeterminate 1.5s linear infinite;
 }
@@ -1744,10 +1691,10 @@ select option {
   width: 90%;
   max-width: var(--modal-max-width);
   padding: var(--spacing-xl);
-  background: linear-gradient(180deg, var(--modal-bg-start) 0%, var(--modal-bg-end) 100%);
+  background: var(--modal-bg-start);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg), var(--shadow-glow);
+  box-shadow: var(--shadow-lg);
   transform: scale(1) translateY(0);
   opacity: 1;
   transition:
@@ -1811,20 +1758,20 @@ select option {
 }
 
 .modal-buttons button:first-child {
-  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+  background: var(--accent);
   border-color: transparent;
   color: var(--text-primary);
 }
 
 .modal-buttons button:first-child:hover {
-  background: linear-gradient(135deg, var(--accent-light), var(--accent));
+  background: var(--accent-hover);
 }
 
 .licenses-container {
   width: 90%;
   max-width: var(--licenses-max-width);
   height: 80vh;
-  background: linear-gradient(180deg, var(--modal-bg-start) 0%, var(--modal-bg-end) 100%);
+  background: var(--modal-bg-start);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg);
@@ -1888,7 +1835,7 @@ select option {
 
 .update-progress-bar {
   height: 100%;
-  background: linear-gradient(90deg, var(--success), var(--success-light));
+  background: var(--success);
   border-radius: 3px;
   transition: width 0.3s ease;
 }
@@ -1942,7 +1889,7 @@ select option {
 
 .update-banner-bar {
   height: 100%;
-  background: linear-gradient(90deg, var(--success), var(--success-light));
+  background: var(--success);
   border-radius: 2px;
   transition: width 0.3s ease;
   width: 0%;
@@ -2207,14 +2154,8 @@ select option {
   border: none;
   border-bottom: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent);
   backdrop-filter: blur(var(--blur-sm));
-  box-shadow:
-    0 1px 0 color-mix(in srgb, var(--border-default) 70%, transparent),
-    0 10px 22px color-mix(in srgb, var(--topbar-shadow-color) 40%, transparent);
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--surface-2) 86%, transparent) 0%,
-    color-mix(in srgb, var(--surface-1) 84%, transparent) 100%
-  );
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--border-default) 70%, transparent);
+  background: color-mix(in srgb, var(--surface-1) 92%, transparent);
 }
 
 .download-section {
@@ -2228,36 +2169,18 @@ select option {
   width: 100%;
   max-width: var(--download-card-max-width);
   padding: clamp(1.35rem, 3vw, 2.15rem);
-  box-shadow:
-    0 18px 44px color-mix(in srgb, #000000 40%, transparent),
-    0 1px 0 color-mix(in srgb, var(--border-subtle) 80%, transparent);
+  box-shadow: var(--shadow-md);
   border: 1px solid color-mix(in srgb, var(--border-default) 85%, transparent);
-  background: linear-gradient(
-    160deg,
-    color-mix(in srgb, var(--surface-2) 72%, transparent) 0%,
-    color-mix(in srgb, var(--surface-1) 86%, transparent) 56%,
-    color-mix(in srgb, var(--surface-1) 92%, transparent) 100%
-  );
+  background: color-mix(in srgb, var(--surface-1) 90%, transparent);
   backdrop-filter: blur(var(--blur-md));
 }
 
 .download-card::before {
-  opacity: 0.24;
+  content: none;
 }
 
 .download-card::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: var(--radius-xl);
-  pointer-events: none;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, #ffffff 13%, transparent) 0%,
-    transparent 38%,
-    transparent 100%
-  );
-  opacity: 0.85;
+  content: none;
 }
 
 .download-card.drag-over {
@@ -2331,16 +2254,12 @@ select option {
   min-width: 170px;
   border: 1px solid color-mix(in srgb, var(--accent-light) 35%, transparent);
   letter-spacing: 0.018em;
-  box-shadow:
-    0 8px 22px color-mix(in srgb, var(--accent-glow) 60%, transparent),
-    inset 0 1px 0 color-mix(in srgb, #ffffff 18%, transparent);
+  box-shadow: var(--shadow-sm);
 }
 
 .download-btn:hover {
   transform: translateY(-1px);
-  box-shadow:
-    0 12px 28px color-mix(in srgb, var(--accent-glow) 70%, transparent),
-    inset 0 1px 0 color-mix(in srgb, #ffffff 22%, transparent);
+  box-shadow: var(--shadow-md);
 }
 
 .download-btn:disabled,
@@ -2366,38 +2285,28 @@ select option {
   width: 100%;
   margin: 0;
   border: 1px solid color-mix(in srgb, var(--border-default) 80%, transparent);
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--surface-2) 76%, transparent) 0%,
-    color-mix(in srgb, var(--surface-1) 88%, transparent) 100%
-  );
+  background: color-mix(in srgb, var(--surface-1) 90%, transparent);
   backdrop-filter: blur(var(--blur-sm));
-  box-shadow:
-    0 8px 20px color-mix(in srgb, #000000 22%, transparent),
-    inset 0 1px 0 color-mix(in srgb, #ffffff 8%, transparent);
+  box-shadow: var(--shadow-sm);
 }
 
 .app-logo {
-  filter: drop-shadow(0 1px 4px color-mix(in srgb, var(--accent-glow) 55%, transparent));
+  filter: none;
 }
 
 .progress-phase.active .phase-dot {
-  box-shadow: 0 0 4px color-mix(in srgb, var(--accent-glow) 60%, transparent);
+  box-shadow: none;
   animation: none;
 }
 
 .progress-bar.active-glow {
-  box-shadow: 0 0 6px color-mix(in srgb, var(--accent-glow) 60%, transparent);
+  box-shadow: none;
 }
 
 .history-header,
 .console-header {
   min-height: 44px;
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--console-header-bg) 94%, transparent) 0%,
-    color-mix(in srgb, var(--surface-1) 72%, transparent) 100%
-  );
+  background: color-mix(in srgb, var(--console-header-bg) 94%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--border-default) 65%, transparent);
 }
 
@@ -2437,7 +2346,7 @@ select option {
 
 .settings-section-header:hover {
   background: color-mix(in srgb, var(--surface-2) 72%, transparent);
-  border-color: color-mix(in srgb, var(--border-default) 75%, transparent);
+  border-color: color-mix(in srgb, var(--border-default) 60%, transparent);
 }
 
 .settings-section-header:focus-visible {
@@ -2465,7 +2374,7 @@ select option {
 
 .settings-btn:hover,
 .settings-link-btn:hover {
-  transform: translateY(-1px);
+  transform: none;
 }
 
 .modal-box {
@@ -2488,24 +2397,8 @@ select option {
 }
 
 body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(
-      1100px 360px at 50% 8%,
-      color-mix(in srgb, var(--accent-subtle) 40%, transparent),
-      transparent 72%
-    ),
-    radial-gradient(
-      900px 360px at 50% 100%,
-      color-mix(in srgb, var(--surface-2) 30%, transparent),
-      transparent 78%
-    );
-  z-index: -1;
+  content: none;
 }
-
 @media (max-width: 960px) {
   .top-bar {
     padding: 0 var(--spacing-sm);
@@ -2536,20 +2429,14 @@ body::before {
 /* ── Queue Section ── */
 
 .queue-section {
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--surface-2) 74%, transparent) 0%,
-    color-mix(in srgb, var(--surface-1) 88%, transparent) 100%
-  );
+  background: color-mix(in srgb, var(--surface-1) 90%, transparent);
   border: 1px solid color-mix(in srgb, var(--border-default) 80%, transparent);
   border-radius: var(--radius-lg);
   overflow: hidden;
   display: flex;
   flex-direction: column;
   animation: slideDown 0.3s ease;
-  box-shadow:
-    0 8px 20px color-mix(in srgb, #000000 20%, transparent),
-    inset 0 1px 0 color-mix(in srgb, #ffffff 8%, transparent);
+  box-shadow: var(--shadow-sm);
 }
 
 .queue-header {
@@ -2557,11 +2444,7 @@ body::before {
   align-items: center;
   justify-content: space-between;
   padding: var(--spacing-sm) var(--spacing-md);
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--console-header-bg) 94%, transparent) 0%,
-    color-mix(in srgb, var(--surface-1) 72%, transparent) 100%
-  );
+  background: color-mix(in srgb, var(--console-header-bg) 94%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--border-default) 65%, transparent);
 }
 
@@ -2655,13 +2538,11 @@ body::before {
   cursor: pointer;
   transition: var(--transition-fast);
   min-height: 32px;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 8%, transparent);
 }
 
 .queue-action-btn:hover {
   background: var(--surface-2);
   border-color: var(--border-strong);
-  transform: translateY(-1px);
 }
 
 .queue-action-btn:disabled {
