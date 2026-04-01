@@ -6,9 +6,11 @@ ROSI is an Electron GUI for yt-dlp
 
 <p align="center">
 
-<img width="45%" height="1012" alt="ROSI-3-1-1" src="https://github.com/user-attachments/assets/e66cebfb-6925-409d-9843-e94cfd868891" />
+<img width="45%" height="1012" alt="ROSI-v" src="https://media.rosie.run/rosi/gallery/ghv4/dark.png" />
   &nbsp;
-  <img width="45%" height="1012" alt="ROSI-3-x-app" src="https://github.com/user-attachments/assets/7a15cea3-1f32-432e-a142-aaded90c9f2a" />
+  <img width="45%" height="1012" alt="ROSI-4" src="https://media.rosie.run/rosi/gallery/ghv4/purple.png" />
+  &nbsp;
+  <img width="45%" height="1012" alt="ROSI-4" src="https://media.rosie.run/rosi/gallery/ghv4/sidebar.png" />
 
 </p>
 
@@ -41,7 +43,7 @@ Download ROSI source code from source (main)
 
 # ROSI LTS Version
 
-There is an LTS version of the previous stable full release of ROSI (which is now `v2.x.x`) which can be found at <b>[➡️ROSI-LTS's Repo](https://github.com/BurntToasters/ROSI-LTS)</b>
+There is an LTS version of the previous stable full release of ROSI (which is now `v3.x.x`) which can be found at <b>[➡️ROSI-LTS's Repo](https://github.com/BurntToasters/ROSI-LTS)</b>
 
 This is mainly for people who perfered the previous look of ROSI, or has a current issue with a newly released major version.
 
