@@ -15,7 +15,7 @@ try {
   run('git', ['reset', '--hard', '@{u}']);
   run('git', ['clean', '-fd']);
   run('git', ['pull']);
-  run('npm', ['i']);
+  run('npm', ['ci']);
 
   const branch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8' }).trim();
   const green = '\x1b[32m';
