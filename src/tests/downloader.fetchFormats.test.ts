@@ -19,13 +19,16 @@ vi.mock('fs', () => ({
 vi.mock('../main/platform', () => ({
   spawnWithEnv: spawnWithEnvMock,
   resolveFfmpegPath: vi.fn(() => null),
+  getEffectiveFfmpegPath: vi.fn(() => 'ffmpeg'),
   ytdlpBinary: 'yt-dlp',
   isWindows: process.platform === 'win32',
+  isMac: process.platform === 'darwin',
 }));
 
 vi.mock('../main/settings', () => ({
   loadSettings: vi.fn(() => ({
     settingsVersion: 1,
+    theme: 'system',
     showConsoleOutput: false,
     consoleCollapsed: false,
     advancedOptions: false,
@@ -46,7 +49,9 @@ vi.mock('../main/settings', () => ({
     hideSupportModal: false,
     checkUpdatesOnStartup: true,
     updateChannel: 'auto',
+    audioFormat: 'mp3',
   })),
+  recordDownload: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -245,6 +250,53 @@ describe('downloader format fetch', () => {
       expect.arrayContaining(['https://example.com/video']),
       expect.any(Object)
     );
+  });
+
+  it('invokes onComplete callback when download finishes', () => {
+    const proc = createProc();
+    spawnWithEnvMock.mockReturnValue(proc);
+    const send = vi.fn();
+    const onComplete = vi.fn();
+
+    startDownload(
+      '/tmp/ytdlp',
+      {
+        isDestroyed: () => false,
+        send,
+      } as any,
+      { url: 'https://example.com/video', outputPath: '/tmp/downloads' },
+      null,
+      onComplete
+    );
+
+    proc.stdout.emit('data', '/tmp/downloads/video.mp4\n');
+    proc.emit('close', 0);
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(onComplete).toHaveBeenCalledWith('✅ Download complete (no conversion).');
+  });
+
+  it('invokes onComplete callback when session is cancelled', () => {
+    const proc = createProc();
+    spawnWithEnvMock.mockReturnValue(proc);
+    const send = vi.fn();
+    const onComplete = vi.fn();
+
+    startDownload(
+      '/tmp/ytdlp',
+      {
+        isDestroyed: () => false,
+        send,
+      } as any,
+      { url: 'https://example.com/video', outputPath: '/tmp/downloads' },
+      null,
+      onComplete
+    );
+
+    cancelActiveSession(true);
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(onComplete).toHaveBeenCalledWith('⏹️ Cancelled.');
   });
 
   it('creates missing output directory before starting download', () => {

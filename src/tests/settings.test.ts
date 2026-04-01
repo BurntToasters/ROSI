@@ -5,6 +5,7 @@ const {
   readFileSyncMock,
   writeFileSyncMock,
   mkdirSyncMock,
+  renameSyncMock,
   showErrorBoxMock,
   logErrorMock,
 } = vi.hoisted(() => {
@@ -13,6 +14,7 @@ const {
     readFileSyncMock: vi.fn(),
     writeFileSyncMock: vi.fn(),
     mkdirSyncMock: vi.fn(),
+    renameSyncMock: vi.fn(),
     showErrorBoxMock: vi.fn(),
     logErrorMock: vi.fn(),
   };
@@ -23,6 +25,7 @@ vi.mock('fs', () => ({
   readFileSync: readFileSyncMock,
   writeFileSync: writeFileSyncMock,
   mkdirSync: mkdirSyncMock,
+  renameSync: renameSyncMock,
 }));
 
 vi.mock('electron', () => ({
@@ -37,6 +40,7 @@ vi.mock('electron', () => ({
 vi.mock('electron-log/main', () => ({
   default: {
     error: logErrorMock,
+    warn: vi.fn(),
   },
 }));
 
@@ -71,12 +75,14 @@ describe('settings persistence', () => {
       JSON.stringify({
         ...getDefaultSettings(),
         settingsVersion: 0,
+        theme: 'dark',
         updateChannel: 'beta',
       })
     );
 
     const loaded = loadSettings();
     expect(loaded.settingsVersion).toBe(CURRENT_SETTINGS_VERSION);
+    expect(loaded.theme).toBe('dark');
     expect(loaded.updateChannel).toBe('beta');
   });
 
@@ -84,6 +90,7 @@ describe('settings persistence', () => {
     const result = saveSettings(
       {
         audioOnly: true,
+        theme: 'purple',
         updateChannel: 'stable',
       },
       null
@@ -92,9 +99,10 @@ describe('settings persistence', () => {
     expect(result).toBe(true);
     expect(writeFileSyncMock).toHaveBeenCalledOnce();
 
-    const [, writtenPayload] = writeFileSyncMock.mock.calls[0];
+    const [, writtenPayload] = writeFileSyncMock.mock.calls[0]!;
     const parsed = JSON.parse(writtenPayload);
     expect(parsed.audioOnly).toBe(true);
+    expect(parsed.theme).toBe('purple');
     expect(parsed.updateChannel).toBe('stable');
     expect(parsed.settingsVersion).toBe(CURRENT_SETTINGS_VERSION);
   });
@@ -108,7 +116,7 @@ describe('settings persistence', () => {
   });
 
   it('returns false and shows error when write fails', () => {
-    writeFileSyncMock.mockImplementation(() => {
+    writeFileSyncMock.mockImplementationOnce(() => {
       throw new Error('disk full');
     });
     const mainWindow = { isDestroyed: () => false } as any;
@@ -120,5 +128,26 @@ describe('settings persistence', () => {
       'Settings Save Error',
       expect.stringContaining('disk full')
     );
+  });
+
+  it('writes to .tmp file then renames atomically', () => {
+    const result = saveSettings({ audioOnly: true }, null);
+
+    expect(result).toBe(true);
+    expect(writeFileSyncMock).toHaveBeenCalledOnce();
+    const writtenPath = writeFileSyncMock.mock.calls[0]![0] as string;
+    expect(writtenPath).toMatch(/\.tmp$/);
+    expect(renameSyncMock).toHaveBeenCalledOnce();
+    expect(renameSyncMock).toHaveBeenCalledWith(writtenPath, expect.not.stringContaining('.tmp'));
+  });
+
+  it('returns false when rename fails during atomic write', () => {
+    renameSyncMock.mockImplementation(() => {
+      throw new Error('rename failed');
+    });
+    const result = saveSettings({ audioOnly: true }, null);
+
+    expect(result).toBe(false);
+    expect(logErrorMock).toHaveBeenCalled();
   });
 });

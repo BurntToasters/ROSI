@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Rosi
+Comment=Electron GUI for yt-dlp video downloading
+Exec=rosi %U
+Icon=com.burnttoasters.rosi
+Type=Application
+Categories=Utility;AudioVideo;Network;
+StartupNotify=true
+StartupWMClass=Rosi
+Keywords=video;download;yt-dlp;youtube;converter;ffmpeg;

@@ -4,8 +4,13 @@ import { spawn } from 'child_process';
 import { BrowserWindow, dialog } from 'electron';
 import log from 'electron-log/main';
 import type { MessageBoxOptions } from 'electron';
-import { DENO_CHECK_TIMEOUT_MS, DENO_INSTALL_TIMEOUT_MS } from './constants';
-import { isWindows } from './platform';
+import {
+  DENO_CHECK_TIMEOUT_MS,
+  DENO_INSTALL_TIMEOUT_MS,
+  MAX_OUTPUT_BUFFER,
+  MAX_ERROR_BUFFER,
+} from './constants';
+import { buildEnhancedPath, isWindows } from './platform';
 
 function getDenoSearchPaths(): string[] {
   if (isWindows) {
@@ -30,31 +35,6 @@ function getDenoSearchPaths(): string[] {
   ];
 }
 
-function buildDenoEnhancedPath(): string {
-  if (isWindows) {
-    const userProfile = process.env.USERPROFILE || '';
-    const localAppData = process.env.LOCALAPPDATA || '';
-    return [
-      path.join(userProfile, '.deno', 'bin'),
-      path.join(localAppData, 'deno', 'bin'),
-      'C:\\Program Files\\deno',
-      'C:\\deno',
-      process.env.PATH || '',
-    ].join(';');
-  }
-
-  const homeDir = process.env.HOME || '';
-  return [
-    path.join(homeDir, '.deno', 'bin'),
-    '/usr/local/bin',
-    '/opt/homebrew/bin',
-    '/usr/bin',
-    '/home/linuxbrew/.linuxbrew/bin',
-    path.join(homeDir, '.local', 'bin'),
-    process.env.PATH || '',
-  ].join(':');
-}
-
 export async function checkDenoInstalled(): Promise<boolean> {
   return new Promise((resolve) => {
     for (const denoPath of getDenoSearchPaths()) {
@@ -66,13 +46,15 @@ export async function checkDenoInstalled(): Promise<boolean> {
 
     const checkCmd = isWindows ? 'where' : 'which';
     const proc = spawn(checkCmd, ['deno'], {
-      env: { ...process.env, PATH: buildDenoEnhancedPath() },
+      env: { PATH: buildEnhancedPath() },
     });
 
     const timeout = setTimeout(() => {
       try {
         proc.kill();
-      } catch {}
+      } catch (killErr) {
+        log.warn('Error killing deno check process:', killErr);
+      }
       resolve(false);
     }, DENO_CHECK_TIMEOUT_MS);
 
@@ -108,7 +90,7 @@ export async function installDeno(
     return { cancelled: true };
   }
 
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     let installCmd: string;
     let installArgs: string[];
 
@@ -126,39 +108,48 @@ export async function installDeno(
     }
 
     const proc = spawn(installCmd, installArgs, {
-      env: { ...process.env, PATH: buildDenoEnhancedPath() },
+      env: { ...process.env, PATH: buildEnhancedPath() },
     });
     let output = '';
     let error = '';
+    let settled = false;
 
     const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
       try {
         proc.kill();
-      } catch {}
-      reject({ success: false, error: 'Installation timed out after 2 minutes' });
+      } catch (killErr) {
+        log.warn('Error killing deno install process on timeout:', killErr);
+      }
+      resolve({ success: false, error: 'Installation timed out after 2 minutes' });
     }, DENO_INSTALL_TIMEOUT_MS);
 
     proc.stdout?.on('data', (data) => {
-      output += data.toString();
+      if (output.length < MAX_OUTPUT_BUFFER) output += data.toString();
     });
 
     proc.stderr?.on('data', (data) => {
-      error += data.toString();
+      if (error.length < MAX_ERROR_BUFFER) error += data.toString();
     });
 
     proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
       if (code === 0) {
         resolve({ success: true, output });
       } else {
-        reject({ success: false, error: error || output });
+        resolve({ success: false, error: error || output });
       }
     });
 
     proc.on('error', (err) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
       log.error('Deno install error:', err);
-      reject({ success: false, error: err.message });
+      resolve({ success: false, error: err.message });
     });
   });
 }

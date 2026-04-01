@@ -39,10 +39,20 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # Build artifacts
 build/Release
 *.tgz
+src/renderer/modules/*.js
+src/renderer/modules/*.js.map
 
 # macOS provisioning
 *.provisionprofile
 *.mobileprovision
+
+# FFmpeg binaries (downloaded locally, not committed)
+resources/ffmpeg/**/ffmpeg
+resources/ffmpeg/**/ffmpeg.exe
+resources/ffmpeg/**/ffprobe
+resources/ffmpeg/**/ffprobe.exe
+resources/ffmpeg/**/ffplay
+resources/ffmpeg/**/ffplay.exe
 
 # REPL history
 .node_repl_history

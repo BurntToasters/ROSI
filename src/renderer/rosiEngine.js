@@ -1,16 +1,43 @@
+function logError(context, error) {
+  const msg = error instanceof Error ? error.message : String(error || '');
+  const text = msg ? `${context}: ${msg}` : context;
+  if (window.api && typeof window.api.logError === 'function') {
+    window.api.logError(text);
+  }
+}
+
+const rosiModules = window.rosiModules || {};
+const uiModule = rosiModules.ui || null;
+const downloadsModule = rosiModules.downloads || null;
+const queueModule = rosiModules.queue || null;
+const settingsModule = rosiModules.settings || null;
+const updatesModule = rosiModules.updates || null;
+
 function isMac() {
+  if (uiModule && typeof uiModule.isMac === 'function') {
+    return uiModule.isMac();
+  }
   return navigator.platform.toLowerCase().includes('mac');
 }
 
 function getModifierKey() {
+  if (uiModule && typeof uiModule.getModifierKey === 'function') {
+    return uiModule.getModifierKey();
+  }
   return isMac() ? 'metaKey' : 'ctrlKey';
 }
 
 function getModifierKeyName() {
+  if (uiModule && typeof uiModule.getModifierKeyName === 'function') {
+    return uiModule.getModifierKeyName();
+  }
   return isMac() ? 'Cmd' : 'Ctrl';
 }
 
 function isValidUrl(string) {
+  if (uiModule && typeof uiModule.isValidUrl === 'function') {
+    return uiModule.isValidUrl(string);
+  }
   try {
     const url = new URL(string);
     return url.protocol === 'http:' || url.protocol === 'https:';
@@ -19,103 +46,151 @@ function isValidUrl(string) {
   }
 }
 
-// toggles console output visibility
-function updateConsoleVisibility(show) {
-  const consoleSection = document.getElementById('console-section');
-  if (consoleSection) {
-    if (show) {
-      consoleSection.classList.add('visible');
-    } else {
-      consoleSection.classList.remove('visible');
+let systemThemeMediaQuery = null;
+let systemThemeMediaQueryHandler = null;
+let appliedTheme = 'dark';
+let themePreference = 'system';
+
+function resolveAppliedTheme(preference) {
+  if (preference === 'light' || preference === 'dark' || preference === 'purple') {
+    return preference;
+  }
+  const query =
+    systemThemeMediaQuery ||
+    (typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-color-scheme: dark)')
+      : null);
+  return query && query.matches ? 'dark' : 'light';
+}
+
+function syncLicensesTheme(theme) {
+  try {
+    const frame = document.getElementById('licenses-frame');
+    const root = frame?.contentDocument?.documentElement;
+    if (root) {
+      root.dataset.theme = theme;
     }
+  } catch (_) {
+    /* ignore */
   }
 }
 
-const OUTPUT_MAX_CHARS = 200000;
+function teardownSystemThemeListener() {
+  if (!systemThemeMediaQuery || !systemThemeMediaQueryHandler) {
+    return;
+  }
+  if (typeof systemThemeMediaQuery.removeEventListener === 'function') {
+    systemThemeMediaQuery.removeEventListener('change', systemThemeMediaQueryHandler);
+  } else if (typeof systemThemeMediaQuery.removeListener === 'function') {
+    systemThemeMediaQuery.removeListener(systemThemeMediaQueryHandler);
+  }
+  systemThemeMediaQueryHandler = null;
+}
+
+function ensureSystemThemeListener() {
+  if (themePreference !== 'system') {
+    teardownSystemThemeListener();
+    return;
+  }
+  if (!systemThemeMediaQuery && typeof window.matchMedia === 'function') {
+    systemThemeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  }
+  if (!systemThemeMediaQuery || systemThemeMediaQueryHandler) {
+    return;
+  }
+  systemThemeMediaQueryHandler = () => {
+    if (themePreference !== 'system') {
+      return;
+    }
+    appliedTheme = resolveAppliedTheme('system');
+    document.documentElement.dataset.theme = appliedTheme;
+    syncLicensesTheme(appliedTheme);
+  };
+  if (typeof systemThemeMediaQuery.addEventListener === 'function') {
+    systemThemeMediaQuery.addEventListener('change', systemThemeMediaQueryHandler);
+  } else if (typeof systemThemeMediaQuery.addListener === 'function') {
+    systemThemeMediaQuery.addListener(systemThemeMediaQueryHandler);
+  }
+}
+
+function applyTheme(preference) {
+  themePreference =
+    preference === 'light' || preference === 'dark' || preference === 'purple'
+      ? preference
+      : 'system';
+  ensureSystemThemeListener();
+  appliedTheme = resolveAppliedTheme(themePreference);
+  document.documentElement.dataset.theme = appliedTheme;
+  syncLicensesTheme(appliedTheme);
+  return appliedTheme;
+}
+
+function updateConsoleVisibility(show) {
+  if (uiModule && typeof uiModule.updateConsoleVisibility === 'function') {
+    uiModule.updateConsoleVisibility(show);
+    return;
+  }
+  const consoleSection = document.getElementById('console-section');
+  if (consoleSection) {
+    consoleSection.classList.toggle('visible', !!show);
+  }
+  document.body.classList.toggle('console-visible', !!show);
+}
+
+function showToast(message, { type = 'info', duration = 4000 } = {}) {
+  if (uiModule && typeof uiModule.showToast === 'function') {
+    uiModule.showToast(message, { type, duration });
+  }
+}
 
 function appendConsoleOutput(outputEl, text) {
-  if (!outputEl) return;
-  const nextText = outputEl.textContent + text + '\n';
-  if (nextText.length <= OUTPUT_MAX_CHARS) {
-    outputEl.textContent = nextText;
-  } else {
-    outputEl.textContent = nextText.slice(-OUTPUT_MAX_CHARS);
+  if (uiModule && typeof uiModule.appendConsoleOutput === 'function') {
+    uiModule.appendConsoleOutput(outputEl, text);
   }
-  outputEl.scrollTop = outputEl.scrollHeight;
+}
+
+function setConsoleCollapsed(collapsed) {
+  const consoleSection = document.getElementById('console-section');
+  const consoleHeader = document.getElementById('consoleHeader');
+  const output = document.getElementById('output');
+  if (!consoleSection) return false;
+  consoleSection.classList.toggle('collapsed', !!collapsed);
+  const isCollapsed = consoleSection.classList.contains('collapsed');
+  if (consoleHeader) consoleHeader.setAttribute('aria-expanded', String(!isCollapsed));
+  if (output) output.setAttribute('aria-hidden', String(isCollapsed));
+  return isCollapsed;
 }
 
 // Toggle console collapsed state
-function toggleConsoleCollapse() {
+function toggleConsoleCollapse(forceCollapsed) {
   const consoleSection = document.getElementById('console-section');
-  const consoleHeader = document.getElementById('consoleHeader');
-  if (consoleSection) {
-    consoleSection.classList.toggle('collapsed');
-    const isCollapsed = consoleSection.classList.contains('collapsed');
-    if (consoleHeader) consoleHeader.setAttribute('aria-expanded', String(!isCollapsed));
-    return isCollapsed;
+  if (!consoleSection) return false;
+  if (typeof forceCollapsed === 'boolean') {
+    return setConsoleCollapsed(forceCollapsed);
   }
-  return false;
+  return setConsoleCollapsed(!consoleSection.classList.contains('collapsed'));
 }
 
-// handles loader in button, swaps text for spinner, click cancels
 function setButtonLoading(button, isLoading, onCancel) {
-  if (!button) return;
-  if (!button.dataset.defaultHtml) {
-    button.dataset.defaultHtml = button.innerHTML;
-  }
-  if (!button.dataset.defaultText) {
-    button.dataset.defaultText = button.textContent.trim();
-  }
-  if (isLoading) {
-    button.classList.add('loading');
-    button.innerHTML = `<img src="loader.svg" class="loader-icon" alt="Loading...">`;
-    button.disabled = false;
-    button.setAttribute('aria-busy', 'true');
-    button.onclick = typeof onCancel === 'function' ? onCancel : null;
-  } else {
-    button.classList.remove('loading');
-    button.innerHTML = button.dataset.defaultHtml || button.dataset.defaultText || 'Action';
-    button.disabled = false;
-    button.removeAttribute('aria-busy');
-    button.onclick = button._originalClick || null;
+  if (uiModule && typeof uiModule.setButtonLoading === 'function') {
+    uiModule.setButtonLoading(button, isLoading, onCancel);
   }
 }
 
 function toggleSidebar() {
-  const sidebar = document.getElementById('sidebar');
-  const overlay = document.getElementById('sidebar-overlay');
-  if (!sidebar) return;
-
-  const isOpen = sidebar.classList.contains('open');
-  if (isOpen) {
-    sidebar.classList.remove('open');
-    if (overlay) overlay.classList.remove('active');
-    const settingsBtn = document.getElementById('settingsBtn');
-    if (settingsBtn) settingsBtn.focus();
-  } else {
-    sidebar.classList.add('open');
-    if (overlay) overlay.classList.add('active');
-    const closeBtn = document.getElementById('closeSidebar');
-    if (closeBtn) closeBtn.focus();
+  if (uiModule && typeof uiModule.toggleSidebar === 'function') {
+    uiModule.toggleSidebar();
   }
 }
 
 function closeSidebar() {
-  const sidebar = document.getElementById('sidebar');
-  const overlay = document.getElementById('sidebar-overlay');
-  if (sidebar) sidebar.classList.remove('open');
-  if (overlay) overlay.classList.remove('active');
-  const settingsBtn = document.getElementById('settingsBtn');
-  if (settingsBtn) settingsBtn.focus();
+  if (uiModule && typeof uiModule.closeSidebar === 'function') {
+    uiModule.closeSidebar();
+  }
 }
 function toggleAdvancedUI(show) {
-  const formatSection = document.getElementById('formatOptions');
-  if (formatSection) {
-    if (show) {
-      formatSection.classList.add('visible');
-    } else {
-      formatSection.classList.remove('visible');
-    }
+  if (uiModule && typeof uiModule.toggleAdvancedUI === 'function') {
+    uiModule.toggleAdvancedUI(show);
   }
 }
 
@@ -125,6 +200,33 @@ let isModalActive = false;
 let currentModalData = null;
 let previousFocus = null;
 let modalTrapHandler = null;
+let modalFocusinHandler = null;
+let licensesFocusinHandler = null;
+
+function getFocusableElements(container) {
+  if (!(container instanceof HTMLElement)) return [];
+  return Array.from(
+    container.querySelectorAll(
+      'button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])'
+    )
+  ).filter(
+    (element) =>
+      !element.hasAttribute('disabled') &&
+      element.getAttribute('aria-hidden') !== 'true' &&
+      element.tabIndex !== -1 &&
+      element.offsetParent !== null
+  );
+}
+
+function focusFirstElement(container) {
+  const focusable = getFocusableElements(container);
+  const first = focusable[0];
+  if (first && typeof first.focus === 'function') {
+    first.focus();
+    return true;
+  }
+  return false;
+}
 
 function showModal({ title, message, buttons = [], priority = false, extra = null }) {
   const modalData = { title, message, buttons, priority, extra };
@@ -182,6 +284,7 @@ function displayNextModal() {
   }
   btnContainer.innerHTML = '';
 
+  modal.setAttribute('tabindex', '-1');
   modal.classList.add('showing');
   modal.classList.add('active');
 
@@ -204,29 +307,49 @@ function displayNextModal() {
   if (modalTrapHandler) {
     modal.removeEventListener('keydown', modalTrapHandler);
   }
+  if (modalFocusinHandler) {
+    document.removeEventListener('focusin', modalFocusinHandler, true);
+  }
   modalTrapHandler = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      hideModal(modal, null);
+      return;
+    }
     if (e.key !== 'Tab') return;
-    const focusable = modal.querySelectorAll('button');
+    const focusable = getFocusableElements(modal);
     if (focusable.length === 0) return;
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
     if (e.shiftKey) {
-      if (document.activeElement === first) {
+      if (!active || active === first) {
         e.preventDefault();
         last.focus();
       }
     } else {
-      if (document.activeElement === last) {
+      if (!active || active === last) {
         e.preventDefault();
         first.focus();
       }
     }
   };
   modal.addEventListener('keydown', modalTrapHandler);
+  modalFocusinHandler = (e) => {
+    if (!isModalActive || !modal.classList.contains('active')) return;
+    const target = e.target;
+    if (target instanceof Node && modal.contains(target)) return;
+    if (!focusFirstElement(modal) && typeof modal.focus === 'function') {
+      modal.focus();
+    }
+  };
+  document.addEventListener('focusin', modalFocusinHandler, true);
 
   requestAnimationFrame(() => {
-    const firstBtn = btnContainer.querySelector('button');
-    if (firstBtn) firstBtn.focus();
+    if (!focusFirstElement(modal) && typeof modal.focus === 'function') {
+      modal.focus();
+    }
   });
 }
 
@@ -236,6 +359,10 @@ function hideModal(modal, action) {
   if (modalTrapHandler) {
     modal.removeEventListener('keydown', modalTrapHandler);
     modalTrapHandler = null;
+  }
+  if (modalFocusinHandler) {
+    document.removeEventListener('focusin', modalFocusinHandler, true);
+    modalFocusinHandler = null;
   }
   setTimeout(() => {
     modal.classList.remove('active', 'hiding');
@@ -306,9 +433,25 @@ async function fetchFormats() {
     if (videoSelect) videoSelect.innerHTML = '<option value="">Loading...</option>';
     if (audioSelect) audioSelect.innerHTML = '<option value="">Loading...</option>';
     try {
-      const output = await window.api.getFormats(videoUrl);
+      const formatResult = await window.api.getFormats(videoUrl);
       if (wasCancelled) return;
-      const lines = output.split('\n');
+      if (!formatResult || formatResult.ok !== true) {
+        const errorMessage = formatResult?.error?.message || 'Unknown error';
+        const cancelled =
+          wasCancelled ||
+          (typeof errorMessage === 'string' && errorMessage.toLowerCase().includes('cancel'));
+        if (cancelled) return;
+        if (videoSelect) videoSelect.innerHTML = '<option value="">Error loading formats</option>';
+        if (audioSelect) audioSelect.innerHTML = '<option value="">Error loading formats</option>';
+        showModal({
+          title: 'Format Fetch Failed',
+          message: `Could not retrieve formats.\nError: ${errorMessage}`,
+          buttons: [{ label: 'OK' }],
+        });
+        return;
+      }
+
+      const lines = formatResult.data.split('\n');
       if (videoSelect) videoSelect.innerHTML = '<option value="">Select Video Format</option>';
       if (audioSelect) audioSelect.innerHTML = '<option value="">Select Audio Format</option>';
       let videoFormatsFound = 0,
@@ -353,10 +496,6 @@ async function fetchFormats() {
         audioSelect.innerHTML = '<option value="">No audio formats found</option>';
     } catch (e) {
       const errorMessage = typeof e === 'string' ? e : e.message || 'Unknown error';
-      const cancelled =
-        wasCancelled ||
-        (typeof errorMessage === 'string' && errorMessage.toLowerCase().includes('cancel'));
-      if (cancelled) return;
       if (videoSelect) videoSelect.innerHTML = '<option value="">Error loading formats</option>';
       if (audioSelect) audioSelect.innerHTML = '<option value="">Error loading formats</option>';
       showModal({
@@ -371,7 +510,7 @@ async function fetchFormats() {
       }
     }
   } catch (outerError) {
-    console.error('Unexpected error in fetchFormats:', outerError);
+    logError('Unexpected error in fetchFormats', outerError);
     isFetchingFormats = false;
     if (btn) setButtonLoading(btn, false);
     showModal({
@@ -386,6 +525,47 @@ async function fetchFormats() {
 let isDownloading = false;
 let downloadAbort = null;
 let lastDownloadedFilePath = null;
+
+function setProgressPhase(phase) {
+  const phases = document.querySelectorAll('.progress-phase');
+  const phaseOrder = ['download', 'merge', 'convert'];
+  const phaseIndex = phaseOrder.indexOf(phase);
+
+  phases.forEach((el) => {
+    const elPhase = el.dataset.phase;
+    const elIndex = phaseOrder.indexOf(elPhase);
+    el.classList.remove('active', 'completed');
+    if (elIndex < phaseIndex) {
+      el.classList.add('completed');
+    } else if (elIndex === phaseIndex) {
+      el.classList.add('active');
+    }
+  });
+}
+
+function configureProgressPhases(showMerge, showConvert) {
+  const mergePhase = document.querySelector('.progress-phase[data-phase="merge"]');
+  const convertPhase = document.querySelector('.progress-phase[data-phase="convert"]');
+  const connectors = document.querySelectorAll('.progress-phase-connector');
+
+  if (mergePhase) mergePhase.style.display = showMerge ? 'flex' : 'none';
+  if (convertPhase) convertPhase.style.display = showConvert ? 'flex' : 'none';
+
+  if (connectors[0]) connectors[0].style.display = showMerge ? 'block' : 'none';
+  if (connectors[1])
+    connectors[1].style.display =
+      showMerge && showConvert ? 'block' : showConvert ? 'block' : 'none';
+}
+
+function showProgressComplete() {
+  const icon = document.getElementById('progress-complete-icon');
+  if (icon) icon.classList.add('visible');
+}
+
+function hideProgressComplete() {
+  const icon = document.getElementById('progress-complete-icon');
+  if (icon) icon.classList.remove('visible');
+}
 
 function showProgressBar(status = 'Downloading...') {
   const container = document.getElementById('progress-container');
@@ -402,8 +582,11 @@ function showProgressBar(status = 'Downloading...') {
   if (bar) {
     bar.style.width = '0%';
     bar.classList.remove('indeterminate');
+    bar.classList.add('active-glow');
   }
   if (details) details.textContent = '';
+  hideProgressComplete();
+  setProgressPhase('download');
 }
 
 function updateProgressBar(percent, statusText = null, detailsText = null) {
@@ -435,43 +618,146 @@ function setProgressIndeterminate(status = 'Processing...') {
 
 function hideProgressBar() {
   const container = document.getElementById('progress-container');
+  const bar = document.getElementById('progress-bar');
   if (container) {
     container.classList.remove('visible');
   }
+  if (bar) bar.classList.remove('active-glow');
+  hideProgressComplete();
 }
 
 function parseYtdlpProgress(message) {
-  const progressMatch = message.match(
-    /\[download\]\s+(\d+\.?\d*)%\s+of\s+~?(\S+)\s+at\s+(\S+)\s+ETA\s+(\S+)/
-  );
-  if (progressMatch) {
-    return {
-      percent: parseFloat(progressMatch[1]),
-      totalSize: progressMatch[2],
-      speed: progressMatch[3],
-      eta: progressMatch[4],
-    };
+  if (downloadsModule && typeof downloadsModule.parseYtdlpProgress === 'function') {
+    return downloadsModule.parseYtdlpProgress(message);
   }
-
-  const simpleMatch = message.match(/\[download\]\s+(\d+\.?\d*)%\s+of\s+~?(\S+)/);
-  if (simpleMatch) {
-    return {
-      percent: parseFloat(simpleMatch[1]),
-      totalSize: simpleMatch[2],
-      speed: null,
-      eta: null,
-    };
-  }
-
   return null;
 }
 
 function formatBytes(bytes) {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  if (downloadsModule && typeof downloadsModule.formatBytes === 'function') {
+    return downloadsModule.formatBytes(bytes);
+  }
+  return String(bytes);
+}
+
+const HISTORY_KEY = 'rosi-download-history';
+const HISTORY_MAX = 20;
+
+function loadHistory() {
+  try {
+    const data = localStorage.getItem(HISTORY_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(history) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  } catch (e) {
+    if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.code === 22)) {
+      history.length = Math.max(1, Math.floor(history.length / 2));
+      try {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+      } catch {
+        /* give up */
+      }
+    }
+  }
+}
+
+function addHistoryEntry(entry) {
+  const history = loadHistory();
+  history.unshift({
+    filename: entry.filename,
+    path: entry.path || null,
+    timestamp: Date.now(),
+    status: entry.status,
+  });
+  if (history.length > HISTORY_MAX) history.length = HISTORY_MAX;
+  saveHistory(history);
+  renderHistory();
+}
+
+function formatRelativeTime(timestamp) {
+  const diff = Date.now() - timestamp;
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return 'Just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(timestamp).toLocaleDateString();
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function renderHistory() {
+  const historySection = document.getElementById('download-history');
+  const listEl = document.getElementById('history-list');
+  const countEl = document.getElementById('history-count');
+  if (!listEl || !historySection) return;
+
+  const history = loadHistory();
+  if (countEl) countEl.textContent = String(history.length);
+
+  if (history.length === 0) {
+    historySection.classList.remove('visible');
+    listEl.innerHTML = '';
+    return;
+  }
+
+  historySection.classList.add('visible');
+  listEl.innerHTML = '';
+  const fragment = document.createDocumentFragment();
+
+  history.forEach((entry) => {
+    const item = document.createElement('div');
+    item.className = 'history-item';
+
+    const statusLabel =
+      entry.status === 'success'
+        ? 'Completed'
+        : entry.status === 'cancelled'
+          ? 'Cancelled'
+          : 'Failed';
+
+    item.innerHTML = `
+      <div class="history-item-info">
+        <span class="history-filename" title="${escapeHtml(entry.filename)}">${escapeHtml(entry.filename)}</span>
+        <span class="history-time">${formatRelativeTime(entry.timestamp)}</span>
+      </div>
+      <div class="history-item-actions">
+        <span class="history-status ${entry.status}">${statusLabel}</span>
+        ${entry.status === 'success' && entry.path ? '<button class="history-open-btn">Open</button>' : ''}
+      </div>
+    `;
+
+    if (entry.path) {
+      const openBtn = item.querySelector('.history-open-btn');
+      if (openBtn) {
+        openBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          window.api.openFileLocation(entry.path);
+        });
+      }
+    }
+
+    fragment.appendChild(item);
+  });
+  listEl.appendChild(fragment);
+}
+
+function clearHistory() {
+  saveHistory([]);
+  renderHistory();
 }
 
 let isManualUpdateCheck = false;
@@ -558,6 +844,7 @@ function showUpdateBanner() {
   if (text) text.textContent = 'Downloading update…';
   if (banner) {
     banner.classList.add('active');
+    banner.setAttribute('aria-busy', 'true');
   }
 }
 
@@ -565,6 +852,7 @@ function hideUpdateBanner() {
   const banner = document.getElementById('update-banner');
   if (banner) {
     banner.classList.remove('active');
+    banner.setAttribute('aria-busy', 'false');
   }
 }
 
@@ -588,7 +876,11 @@ function setupAutoUpdater() {
           updateVersion = data.version;
           const wasManualCheck = isManualUpdateCheck;
           isManualUpdateCheck = false;
-          const isBetaUpdate = data.isBeta || /-(beta|alpha|rc)/i.test(data.version);
+          const isBetaUpdate =
+            data.isBeta ||
+            (updatesModule && typeof updatesModule.isPrereleaseVersion === 'function'
+              ? updatesModule.isPrereleaseVersion(data.version)
+              : /-(beta|alpha|rc)/i.test(data.version));
           showModal({
             title: isBetaUpdate ? 'Beta Update Available!' : 'Update Available!',
             message: isBetaUpdate
@@ -673,10 +965,14 @@ function setupAutoUpdater() {
       }
 
       if (progressInfo) {
-        const speed = formatBytes(data.bytesPerSecond) + '/s';
-        const downloaded = formatBytes(data.transferred);
-        const total = formatBytes(data.total);
-        progressInfo.textContent = `${downloaded} / ${total} (${speed}) — ${Math.round(data.percent)}%`;
+        if (updatesModule && typeof updatesModule.formatUpdateProgressInfo === 'function') {
+          progressInfo.textContent = updatesModule.formatUpdateProgressInfo(data, formatBytes);
+        } else {
+          const speed = formatBytes(data.bytesPerSecond) + '/s';
+          const downloaded = formatBytes(data.transferred);
+          const total = formatBytes(data.total);
+          progressInfo.textContent = `${downloaded} / ${total} (${speed}) — ${Math.round(data.percent)}%`;
+        }
       }
     })
   );
@@ -703,30 +999,58 @@ function showLicenses() {
   if (licensesOverlay) {
     licensesPreviousFocus = document.activeElement;
     licensesOverlay.classList.add('active');
+    syncLicensesTheme(appliedTheme);
+    document.body.classList.add('licenses-open');
     document.body.style.overflow = 'hidden';
 
     const closeBtn = licensesOverlay.querySelector('#close-licenses');
-    if (closeBtn) {
-      requestAnimationFrame(() => closeBtn.focus());
-    }
+    licensesOverlay.setAttribute('tabindex', '-1');
+    requestAnimationFrame(() => {
+      if (closeBtn) {
+        closeBtn.focus();
+        return;
+      }
+      if (!focusFirstElement(licensesOverlay) && typeof licensesOverlay.focus === 'function') {
+        licensesOverlay.focus();
+      }
+    });
 
     licensesTrapHandler = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        hideLicenses();
+        return;
+      }
       if (e.key !== 'Tab') return;
-      const focusable = licensesOverlay.querySelectorAll(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-      );
+      const focusable = getFocusableElements(licensesOverlay);
       if (focusable.length === 0) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
+      const active = document.activeElement;
+      if (e.shiftKey) {
+        if (!active || active === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (!active || active === last) {
         e.preventDefault();
         first.focus();
       }
     };
     licensesOverlay.addEventListener('keydown', licensesTrapHandler);
+    if (licensesFocusinHandler) {
+      document.removeEventListener('focusin', licensesFocusinHandler, true);
+    }
+    licensesFocusinHandler = (e) => {
+      if (!licensesOverlay.classList.contains('active')) return;
+      const target = e.target;
+      if (target instanceof Node && licensesOverlay.contains(target)) return;
+      if (!focusFirstElement(licensesOverlay) && typeof licensesOverlay.focus === 'function') {
+        licensesOverlay.focus();
+      }
+    };
+    document.addEventListener('focusin', licensesFocusinHandler, true);
   }
 }
 
@@ -737,9 +1061,14 @@ function hideLicenses() {
       licensesOverlay.removeEventListener('keydown', licensesTrapHandler);
       licensesTrapHandler = null;
     }
+    if (licensesFocusinHandler) {
+      document.removeEventListener('focusin', licensesFocusinHandler, true);
+      licensesFocusinHandler = null;
+    }
     licensesOverlay.classList.remove('active');
     setTimeout(() => {
       document.body.style.overflow = '';
+      document.body.classList.remove('licenses-open');
     }, 300);
     if (licensesPreviousFocus) {
       licensesPreviousFocus.focus();
@@ -831,8 +1160,138 @@ async function checkDenoInstallation(settings) {
       });
     }
   } catch (error) {
-    console.error('Error checking Deno installation:', error);
+    logError('Error checking Deno installation', error);
   }
+}
+
+function launchSetupWizard(settings, applyThemeFn, persistSettingsFn, onComplete) {
+  const TOTAL_STEPS = 4;
+  let currentStep = 0;
+
+  const overlay = document.getElementById('setup-wizard');
+  const progressBar = document.getElementById('wizard-progress-bar');
+  const backBtn = document.getElementById('wizard-back');
+  const nextBtn = document.getElementById('wizard-next');
+  const dotsContainer = document.getElementById('wizard-dots');
+  const steps = overlay ? overlay.querySelectorAll('.wizard-step') : [];
+
+  if (!overlay || !progressBar || !backBtn || !nextBtn || !dotsContainer || steps.length === 0) {
+    settings.firstLaunch = false;
+    void persistSettingsFn();
+    onComplete();
+    return;
+  }
+
+  // Build dots
+  dotsContainer.innerHTML = '';
+  for (let i = 0; i < TOTAL_STEPS; i++) {
+    const dot = document.createElement('span');
+    dot.className = 'wizard-dot' + (i === 0 ? ' active' : '');
+    dotsContainer.appendChild(dot);
+  }
+
+  // Live theme preview
+  const themeRadios = overlay.querySelectorAll('input[name="wizard-theme"]');
+  themeRadios.forEach((radio) => {
+    radio.addEventListener('change', () => {
+      applyThemeFn(radio.value);
+    });
+  });
+
+  function updateUI() {
+    // Steps
+    steps.forEach((step, i) => {
+      step.classList.toggle('active', i === currentStep);
+    });
+
+    // Progress bar
+    progressBar.style.width = ((currentStep + 1) / TOTAL_STEPS) * 100 + '%';
+
+    // Dots
+    const dots = dotsContainer.querySelectorAll('.wizard-dot');
+    dots.forEach((dot, i) => {
+      dot.classList.toggle('active', i === currentStep);
+    });
+
+    // Back button
+    backBtn.classList.toggle('hidden', currentStep === 0);
+
+    // Next button text
+    if (currentStep === 0) {
+      nextBtn.textContent = 'Get Started';
+    } else if (currentStep === TOTAL_STEPS - 1) {
+      nextBtn.textContent = 'Finish';
+    } else {
+      nextBtn.textContent = 'Next';
+    }
+  }
+
+  function gatherSettings() {
+    // Theme
+    const selectedTheme = overlay.querySelector('input[name="wizard-theme"]:checked');
+    if (selectedTheme) {
+      settings.theme = selectedTheme.value;
+      applyThemeFn(settings.theme);
+    }
+
+    // Download prefs
+    const bestQuality = document.getElementById('wizard-best-quality');
+    const audioOnly = document.getElementById('wizard-audio-only');
+    const notifications = document.getElementById('wizard-notifications');
+    const autoUpdates = document.getElementById('wizard-auto-updates');
+
+    if (bestQuality) settings.bestQuality = bestQuality.checked;
+    if (audioOnly) settings.audioOnly = audioOnly.checked;
+    if (notifications) settings.notifications = notifications.checked;
+    if (autoUpdates) settings.checkUpdatesOnStartup = autoUpdates.checked;
+  }
+
+  function close() {
+    gatherSettings();
+    settings.firstLaunch = false;
+    void persistSettingsFn(false, true);
+    overlay.classList.remove('active');
+
+    // Sync sidebar controls to reflect wizard choices
+    const themeSelect = document.getElementById('themeSelect');
+    if (themeSelect) themeSelect.value = settings.theme || 'system';
+    const bestQualityToggle = document.getElementById('bestQualityToggle');
+    if (bestQualityToggle) bestQualityToggle.checked = settings.bestQuality;
+    const audioOnlyToggle = document.getElementById('audioOnlyToggle');
+    if (audioOnlyToggle) audioOnlyToggle.checked = settings.audioOnly;
+    const notificationsToggle = document.getElementById('notificationsToggle');
+    if (notificationsToggle) notificationsToggle.checked = settings.notifications;
+    const checkUpdatesToggle = document.getElementById('checkUpdatesOnStartupToggle');
+    if (checkUpdatesToggle) checkUpdatesToggle.checked = settings.checkUpdatesOnStartup;
+
+    onComplete();
+  }
+
+  nextBtn.addEventListener('click', () => {
+    if (currentStep < TOTAL_STEPS - 1) {
+      currentStep++;
+      updateUI();
+    } else {
+      close();
+    }
+  });
+
+  backBtn.addEventListener('click', () => {
+    if (currentStep > 0) {
+      currentStep--;
+      updateUI();
+    }
+  });
+
+  // Set initial selected theme radio to match current settings
+  const initialTheme = settings.theme || 'system';
+  const matchingRadio = overlay.querySelector(
+    `input[name="wizard-theme"][value="${initialTheme}"]`
+  );
+  if (matchingRadio) matchingRadio.checked = true;
+
+  updateUI();
+  overlay.classList.add('active');
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -841,7 +1300,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     settings = await window.api.getSettings();
   } catch (error) {
     settings = {
-      settingsVersion: 1,
+      settingsVersion: 2,
+      theme: 'system',
       showConsoleOutput: false,
       advancedOptions: false,
       convertEnabled: false,
@@ -868,6 +1328,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       buttons: [{ label: 'OK' }],
     });
   }
+  applyTheme(settings.theme ?? 'system');
 
   try {
     const version = await window.api.getAppVersion();
@@ -879,20 +1340,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         event.preventDefault();
         window.api.openExternal(`https://github.com/BurntToasters/ROSI/releases/tag/v${version}`);
       });
-      const isBeta = /-(beta|alpha|rc)/i.test(version);
+      const isBeta =
+        updatesModule && typeof updatesModule.isPrereleaseVersion === 'function'
+          ? updatesModule.isPrereleaseVersion(version)
+          : /-(beta|alpha|rc)/i.test(version);
       if (isBeta) {
         versionLink.classList.add('beta-version');
         if (betaBadge) betaBadge.classList.remove('hidden');
       }
     }
   } catch (e) {
-    console.error('Could not get app version:', e);
+    logError('Could not get app version', e);
   }
 
   try {
     setupAutoUpdater();
   } catch (e) {
-    console.error('Failed to setup auto-updater:', e);
+    logError('Failed to setup auto-updater', e);
   }
   let settingsSaveErrorShownAt = 0;
 
@@ -910,24 +1374,41 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  async function persistSettings(silent = false) {
-    try {
-      const result = await window.api.saveSettings(settings);
-      if (!result || result.ok !== true) {
-        if (!silent) {
-          const message = result?.error?.message || 'Could not save settings.';
-          showSettingsSaveError(`${message}\nChanges may not persist after restart.`);
+  let persistDebounceTimer = null;
+
+  async function persistSettings(silent = false, immediate = false) {
+    if (persistDebounceTimer) clearTimeout(persistDebounceTimer);
+    const executeSave = async (resolve) => {
+      try {
+        const result = await window.api.saveSettings(settings);
+        if (!result || result.ok !== true) {
+          if (!silent) {
+            const message = result?.error?.message || 'Could not save settings.';
+            showSettingsSaveError(`${message}\nChanges may not persist after restart.`);
+          }
+          resolve(false);
+          return;
         }
-        return false;
+        settings = result.data;
+        resolve(true);
+      } catch (_error) {
+        if (!silent) {
+          showSettingsSaveError('Could not save settings due to an unexpected error.');
+        }
+        resolve(false);
       }
-      settings = result.data;
-      return true;
-    } catch (_error) {
-      if (!silent) {
-        showSettingsSaveError('Could not save settings due to an unexpected error.');
+    };
+    return new Promise((resolve) => {
+      if (immediate) {
+        persistDebounceTimer = null;
+        void executeSave(resolve);
+        return;
       }
-      return false;
-    }
+      persistDebounceTimer = setTimeout(() => {
+        persistDebounceTimer = null;
+        void executeSave(resolve);
+      }, 300);
+    });
   }
 
   const consoleToggle = document.getElementById('consoleToggle');
@@ -951,8 +1432,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   const downloadBtn = document.getElementById('downloadBtn');
   const checkUpdateBtn = document.getElementById('checkUpdateBtn');
   const animateBackgroundToggle = document.getElementById('animateBackgroundToggle');
+  const themeSelect = document.getElementById('themeSelect');
   const bestQualityToggle = document.getElementById('bestQualityToggle');
   const audioOnlyToggle = document.getElementById('audioOnlyToggle');
+  const audioFormatContainer = document.getElementById('audioFormatContainer');
+  const audioFormatSelect = document.getElementById('audioFormatSelect');
   const notificationsToggle = document.getElementById('notificationsToggle');
   const checkUpdatesOnStartupToggle = document.getElementById('checkUpdatesOnStartupToggle');
   const checkUpdatesOnStartupLabel = document.getElementById('checkUpdatesOnStartupLabel');
@@ -965,14 +1449,42 @@ document.addEventListener('DOMContentLoaded', async () => {
   const sidebarOverlay = document.getElementById('sidebar-overlay');
   const shortcutsBtn = document.getElementById('shortcutsBtn');
   const clearUrlBtn = document.getElementById('clearUrl');
+  const pasteUrlBtn = document.getElementById('pasteUrl');
   const clearConsoleBtn = document.getElementById('clearConsole');
   const urlInput = document.getElementById('url');
+  const urlValidationMessage = document.getElementById('urlValidationMessage');
+  const urlInputContainer = document.querySelector('.url-input-container');
+  const downloadCard = document.querySelector('.download-card');
+  const historyHeader = document.getElementById('historyHeader');
+  const clearHistoryBtn = document.getElementById('clearHistory');
   const browserCookiesHelp = document.getElementById('browserCookiesHelp');
   const helpLink = document.getElementById('helpLink');
   const supportLink = document.getElementById('supportLink');
   const websiteLink = document.getElementById('websiteLink');
   const supportProjectLink = document.getElementById('supportProjectLink');
   const licensesLink = document.getElementById('licensesLink');
+  const licensesFrame = document.getElementById('licenses-frame');
+  const exportSettingsBtn = document.getElementById('exportSettingsBtn');
+  const importSettingsBtn = document.getElementById('importSettingsBtn');
+  const viewStatsBtn = document.getElementById('viewStatsBtn');
+  const queueUrlInput = document.getElementById('queueUrlInput');
+  const addToQueueBtn = document.getElementById('addToQueueBtn');
+  const startQueueBtn = document.getElementById('startQueueBtn');
+  const clearQueueBtn = document.getElementById('clearQueueBtn');
+  const cancelQueueBtn = document.getElementById('cancelQueueBtn');
+  const queueStatusMessage = document.getElementById('queueStatusMessage');
+  const queueList = document.getElementById('queueList');
+  const queueCount = document.getElementById('queueCount');
+  const queueSection =
+    (queueModule && typeof queueModule.resolveQueueSectionElement === 'function'
+      ? queueModule.resolveQueueSectionElement(document)
+      : null) || document.getElementById('queueSection');
+
+  if (queueStatusMessage) {
+    queueStatusMessage.setAttribute('role', 'status');
+    queueStatusMessage.setAttribute('aria-live', 'polite');
+    queueStatusMessage.setAttribute('aria-atomic', 'true');
+  }
 
   if (fetchFormatsBtn) fetchFormatsBtn._originalClick = fetchFormats;
   if (downloadBtn) downloadBtn._originalClick = null;
@@ -1053,12 +1565,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateConsoleVisibility(settings.showConsoleOutput);
 
     // Restore console collapsed state
-    if (settings.consoleCollapsed) {
-      const consoleSection = document.getElementById('console-section');
-      const consoleHeaderEl = document.getElementById('consoleHeader');
-      if (consoleSection) consoleSection.classList.add('collapsed');
-      if (consoleHeaderEl) consoleHeaderEl.setAttribute('aria-expanded', 'false');
-    }
+    setConsoleCollapsed(!!settings.consoleCollapsed);
 
     toggleAdvancedUI(settings.advancedOptions);
 
@@ -1066,6 +1573,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (animateBackgroundToggle) {
       animateBackgroundToggle.checked = settings.animateBackground ?? true;
       updateBackgroundAnimation(settings.animateBackground ?? true);
+    }
+    if (themeSelect) {
+      const nextTheme =
+        settings.theme === 'light' ||
+        settings.theme === 'dark' ||
+        settings.theme === 'purple' ||
+        settings.theme === 'system'
+          ? settings.theme
+          : 'system';
+      themeSelect.value = nextTheme;
+      applyTheme(nextTheme);
     }
     if (bestQualityToggle) {
       bestQualityToggle.checked = settings.bestQuality ?? false;
@@ -1093,13 +1611,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         audioOnlyToggle.parentElement.title = '';
       }
     }
+    if (audioFormatSelect) {
+      audioFormatSelect.value = settings.audioFormat ?? 'mp3';
+    }
+    if (audioFormatContainer) {
+      if (settings.audioOnly) {
+        audioFormatContainer.classList.add('visible');
+      } else {
+        audioFormatContainer.classList.remove('visible');
+      }
+    }
     // disable convert when audio-only is enabled
     if (convertToggle) {
       convertToggle.disabled = settings.audioOnly ?? false;
       if (settings.audioOnly) {
         convertToggle.parentElement.classList.add('disabled');
-        convertToggle.parentElement.title =
-          'Disabled when Audio-only mode is enabled (audio already extracted as MP3)';
+        convertToggle.parentElement.title = 'Disabled when Audio-only mode is enabled';
       } else {
         convertToggle.parentElement.classList.remove('disabled');
         convertToggle.parentElement.title = '';
@@ -1129,10 +1656,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     updateUIFromSettings();
   } catch (e) {
-    console.error('Failed to update UI from settings:', e);
+    logError('Failed to update UI from settings', e);
   }
 
-  if (!settings.hideSupportModal) {
+  if (!settings.hideSupportModal && !settings.firstLaunch) {
     showModal({
       title: 'Support This Project?',
       message:
@@ -1164,6 +1691,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (shortcutsBtn) shortcutsBtn.addEventListener('click', showKeyboardShortcuts);
 
   const bindExternalLink = (element, url) => {
+    if (settingsModule && typeof settingsModule.bindExternalLink === 'function') {
+      settingsModule.bindExternalLink(element, url, window.api.openExternal);
+      return;
+    }
     if (element) {
       element.addEventListener('click', (event) => {
         event.preventDefault();
@@ -1184,17 +1715,175 @@ document.addEventListener('DOMContentLoaded', async () => {
       showLicenses();
     });
   }
+  if (licensesFrame) {
+    licensesFrame.addEventListener('load', () => {
+      syncLicensesTheme(appliedTheme);
+    });
+  }
+
+  let hasUrlValidationIntent = false;
+  function syncPrimaryActionState() {
+    const hasInput = !!urlInput;
+    const hasPrimaryButton = !!downloadBtn;
+    if (!hasInput || !hasPrimaryButton) return;
+    const raw = urlInput.value || '';
+    const trimmed = raw.trim();
+    const hasValue = trimmed.length > 0;
+    const validUrl = hasValue && isValidUrl(trimmed);
+    const showInvalid = hasUrlValidationIntent && hasValue && !validUrl;
+
+    if (urlInputContainer) {
+      urlInputContainer.classList.toggle('is-empty', !hasValue);
+      urlInputContainer.classList.toggle('is-valid', validUrl);
+      urlInputContainer.classList.toggle('is-invalid', showInvalid);
+    }
+    if (downloadCard) {
+      downloadCard.classList.toggle('is-ready', validUrl);
+    }
+    if (showInvalid) {
+      urlInput.setAttribute('aria-invalid', 'true');
+      if (urlValidationMessage) {
+        urlValidationMessage.textContent = 'Enter a valid URL starting with http:// or https://';
+      }
+    } else {
+      urlInput.removeAttribute('aria-invalid');
+      if (urlValidationMessage) {
+        urlValidationMessage.textContent = '';
+      }
+    }
+
+    const isLoading = downloadBtn.classList.contains('loading');
+    if (!isLoading) {
+      downloadBtn.disabled = !validUrl;
+      downloadBtn.classList.toggle('is-disabled', !validUrl);
+    }
+  }
+
+  function updateUrlButtons() {
+    const hasValue = urlInput && urlInput.value.length > 0;
+    if (clearUrlBtn) clearUrlBtn.classList.toggle('hidden', !hasValue);
+    if (pasteUrlBtn) pasteUrlBtn.classList.toggle('hidden', hasValue);
+    syncPrimaryActionState();
+  }
 
   if (clearUrlBtn && urlInput) {
     clearUrlBtn.addEventListener('click', () => {
       urlInput.value = '';
       urlInput.focus();
-      clearUrlBtn.classList.add('hidden');
+      hasUrlValidationIntent = false;
+      updateUrlButtons();
     });
     urlInput.addEventListener('input', () => {
-      clearUrlBtn.classList.toggle('hidden', urlInput.value.length === 0);
+      hasUrlValidationIntent = true;
+      updateUrlButtons();
     });
-    clearUrlBtn.classList.toggle('hidden', urlInput.value.length === 0);
+    urlInput.addEventListener('blur', () => {
+      hasUrlValidationIntent = true;
+      syncPrimaryActionState();
+    });
+    updateUrlButtons();
+  }
+
+  if (pasteUrlBtn && urlInput) {
+    pasteUrlBtn.addEventListener('click', async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text && text.trim()) {
+          urlInput.value = text.trim();
+          urlInput.dispatchEvent(new Event('input'));
+          urlInput.focus();
+          hasUrlValidationIntent = true;
+          syncPrimaryActionState();
+        }
+      } catch {
+        showToast(`Unable to read clipboard. Try pasting with ${getModifierKeyName()}+V.`, {
+          type: 'info',
+        });
+      }
+    });
+  }
+
+  if (downloadCard && urlInput) {
+    downloadCard.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      downloadCard.classList.add('drag-over');
+    });
+    downloadCard.addEventListener('dragleave', () => {
+      downloadCard.classList.remove('drag-over');
+    });
+    downloadCard.addEventListener('drop', (e) => {
+      e.preventDefault();
+      downloadCard.classList.remove('drag-over');
+      const text = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+      if (text && isValidUrl(text.trim())) {
+        urlInput.value = text.trim();
+        urlInput.dispatchEvent(new Event('input'));
+        hasUrlValidationIntent = true;
+        syncPrimaryActionState();
+      } else if (text) {
+        showToast('Dropped content is not a valid URL.', { type: 'warning' });
+      }
+    });
+  }
+
+  renderHistory();
+
+  if (historyHeader) {
+    const historySection = document.getElementById('download-history');
+    const historyList = document.getElementById('history-list');
+    const setHistoryCollapsed = (collapsed) => {
+      if (!historySection) return false;
+      historySection.classList.toggle('collapsed', !!collapsed);
+      const isCollapsed = historySection.classList.contains('collapsed');
+      historyHeader.setAttribute('aria-expanded', String(!isCollapsed));
+      if (historyList) historyList.setAttribute('aria-hidden', String(isCollapsed));
+      return isCollapsed;
+    };
+    const toggleHistoryCollapsed = () => {
+      if (!historySection) return false;
+      return setHistoryCollapsed(!historySection.classList.contains('collapsed'));
+    };
+    if (historySection) {
+      setHistoryCollapsed(historySection.classList.contains('collapsed'));
+    }
+
+    historyHeader.addEventListener('click', (e) => {
+      if (e.target.closest('.history-clear-btn')) return;
+      toggleHistoryCollapsed();
+    });
+    historyHeader.addEventListener('keydown', (e) => {
+      if (e.target.closest('.history-clear-btn')) return;
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggleHistoryCollapsed();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setHistoryCollapsed(true);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        setHistoryCollapsed(false);
+      }
+    });
+  }
+
+  if (clearHistoryBtn) {
+    clearHistoryBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showModal({
+        title: 'Clear History',
+        message: 'Clear all download history?',
+        buttons: [
+          { label: 'Cancel' },
+          {
+            label: 'Clear',
+            action: () => {
+              clearHistory();
+              showToast('Download history cleared.', { type: 'info' });
+            },
+          },
+        ],
+      });
+    });
   }
 
   if (clearConsoleBtn && outputEl) {
@@ -1202,6 +1891,97 @@ document.addEventListener('DOMContentLoaded', async () => {
       outputEl.textContent = '';
     });
   }
+
+  const settingsHeaders = Array.from(document.querySelectorAll('.settings-section-header')).filter(
+    (header) => header instanceof HTMLElement
+  );
+  const setSettingsSectionCollapsed = (header, collapsed) => {
+    if (!(header instanceof HTMLElement)) return false;
+    const section = header.closest('.settings-section');
+    if (!(section instanceof HTMLElement)) return false;
+    section.classList.toggle('collapsed', !!collapsed);
+    const isCollapsed = section.classList.contains('collapsed');
+    header.setAttribute('aria-expanded', String(!isCollapsed));
+    const controlledId = header.getAttribute('aria-controls');
+    const sectionBody =
+      (controlledId ? document.getElementById(controlledId) : null) ||
+      section.querySelector('.settings-section-body');
+    if (sectionBody) {
+      sectionBody.setAttribute('aria-hidden', String(isCollapsed));
+      if (!controlledId && sectionBody.id) {
+        header.setAttribute('aria-controls', sectionBody.id);
+      }
+    }
+    return isCollapsed;
+  };
+
+  settingsHeaders.forEach((header, index) => {
+    const section = header.closest('.settings-section');
+    if (!(section instanceof HTMLElement)) return;
+
+    const controlledId = header.getAttribute('aria-controls');
+    const sectionBody =
+      (controlledId ? document.getElementById(controlledId) : null) ||
+      section.querySelector('.settings-section-body');
+    if (sectionBody instanceof HTMLElement) {
+      if (!sectionBody.id) {
+        sectionBody.id = `settingsSectionBodyAuto${index + 1}`;
+      }
+      if (!header.getAttribute('aria-controls')) {
+        header.setAttribute('aria-controls', sectionBody.id);
+      }
+      if (!header.id) {
+        header.id = `settingsSectionHeaderAuto${index + 1}`;
+      }
+      if (!sectionBody.getAttribute('aria-labelledby')) {
+        sectionBody.setAttribute('aria-labelledby', header.id);
+      }
+    }
+
+    setSettingsSectionCollapsed(header, section.classList.contains('collapsed'));
+
+    header.addEventListener('click', () => {
+      const isCollapsed = section.classList.contains('collapsed');
+      setSettingsSectionCollapsed(header, !isCollapsed);
+    });
+    header.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        const isCollapsed = section.classList.contains('collapsed');
+        setSettingsSectionCollapsed(header, !isCollapsed);
+        return;
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setSettingsSectionCollapsed(header, true);
+        return;
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        setSettingsSectionCollapsed(header, false);
+        return;
+      }
+
+      const currentIndex = settingsHeaders.indexOf(header);
+      if (currentIndex === -1) return;
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        const nextIndex = (currentIndex + 1) % settingsHeaders.length;
+        settingsHeaders[nextIndex].focus();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const nextIndex = (currentIndex - 1 + settingsHeaders.length) % settingsHeaders.length;
+        settingsHeaders[nextIndex].focus();
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        settingsHeaders[0].focus();
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        settingsHeaders[settingsHeaders.length - 1].focus();
+      }
+    });
+  });
 
   if (consoleToggle)
     consoleToggle.addEventListener('change', (e) => {
@@ -1225,6 +2005,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.target.closest('#clearConsole')) return;
         const isCollapsed = toggleConsoleCollapse();
         settings.consoleCollapsed = isCollapsed;
+        void persistSettings();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        settings.consoleCollapsed = toggleConsoleCollapse(true);
+        void persistSettings();
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        settings.consoleCollapsed = toggleConsoleCollapse(false);
         void persistSettings();
       }
     });
@@ -1358,6 +2146,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       void persistSettings();
     });
   }
+  if (themeSelect) {
+    themeSelect.addEventListener('change', (e) => {
+      settings.theme = e.target.value;
+      applyTheme(settings.theme);
+      void persistSettings();
+    });
+  }
 
   if (bestQualityToggle) {
     bestQualityToggle.addEventListener('change', (e) => {
@@ -1370,6 +2165,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (audioOnlyToggle) {
     audioOnlyToggle.addEventListener('change', (e) => {
       settings.audioOnly = e.target.checked;
+
+      if (audioFormatContainer) {
+        if (e.target.checked) {
+          audioFormatContainer.classList.add('visible');
+        } else {
+          audioFormatContainer.classList.remove('visible');
+        }
+      }
 
       if (bestQualityToggle) {
         bestQualityToggle.disabled = e.target.checked;
@@ -1390,8 +2193,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           convertToggle.checked = false;
           settings.convertEnabled = false;
           convertToggle.parentElement.classList.add('disabled');
-          convertToggle.parentElement.title =
-            'Disabled when Audio-only mode is enabled (audio already extracted as MP3)';
+          convertToggle.parentElement.title = 'Disabled when Audio-only mode is enabled';
           if (convertFormatContainer) convertFormatContainer.classList.remove('visible');
           if (keepOriginalLabel) keepOriginalLabel.classList.remove('visible');
         } else {
@@ -1400,6 +2202,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
 
+      void persistSettings();
+    });
+  }
+
+  if (audioFormatSelect) {
+    audioFormatSelect.addEventListener('change', (e) => {
+      settings.audioFormat = e.target.value;
       void persistSettings();
     });
   }
@@ -1421,9 +2230,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (showUpdateChannelBtn && updateChannelContainer) {
+    showUpdateChannelBtn.setAttribute(
+      'aria-expanded',
+      String(updateChannelContainer.classList.contains('visible'))
+    );
     showUpdateChannelBtn.addEventListener('click', () => {
       const isVisible = updateChannelContainer.classList.contains('visible');
       updateChannelContainer.classList.toggle('visible', !isVisible);
+      showUpdateChannelBtn.setAttribute('aria-expanded', String(!isVisible));
       showUpdateChannelBtn.textContent = isVisible
         ? '▸ Update channel settings'
         : '▾ Hide update channel';
@@ -1449,6 +2263,291 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
     });
 
+  if (exportSettingsBtn) {
+    exportSettingsBtn.addEventListener('click', async () => {
+      try {
+        const result = await window.api.exportSettings();
+        if (result && result.ok) {
+          showToast('Settings exported successfully.', { type: 'success' });
+        } else if (result && !result.ok) {
+          showToast(result.error?.message || 'Export failed.', { type: 'error' });
+        }
+      } catch {
+        showToast('An unexpected error occurred during export.', { type: 'error' });
+      }
+    });
+  }
+
+  if (importSettingsBtn) {
+    importSettingsBtn.addEventListener('click', async () => {
+      showModal({
+        title: 'Import Settings',
+        message:
+          'Importing settings will overwrite your current settings and restart ROSI. Continue?',
+        buttons: [
+          { label: 'Cancel' },
+          {
+            label: 'Import',
+            action: async () => {
+              try {
+                const result = await window.api.importSettings();
+                if (result && result.ok) {
+                  showToast('Settings imported. Restarting...', { type: 'success' });
+                  setTimeout(() => window.api.restartApp(), 1000);
+                } else {
+                  showToast(result?.error?.message || 'Import failed or was cancelled.', {
+                    type: 'error',
+                  });
+                }
+              } catch {
+                showToast('An unexpected error occurred during import.', { type: 'error' });
+              }
+            },
+          },
+        ],
+      });
+    });
+  }
+
+  if (viewStatsBtn) {
+    viewStatsBtn.addEventListener('click', async () => {
+      try {
+        const stats = await window.api.getStats();
+        const formatList = Object.entries(stats.formatCounts || {})
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5)
+          .map(([fmt, count]) => `${fmt}: ${count}`)
+          .join(', ');
+        showModal({
+          title: 'Download Statistics',
+          message: [
+            `Total downloads: ${stats.totalDownloads}`,
+            `Successful: ${stats.successfulDownloads}`,
+            `Failed: ${stats.failedDownloads}`,
+            `Cancelled: ${stats.cancelledDownloads}`,
+            `Total downloaded: ${formatBytes(stats.totalBytesDownloaded)}`,
+            formatList ? `Top formats: ${formatList}` : '',
+            stats.lastDownloadAt
+              ? `Last download: ${formatRelativeTime(stats.lastDownloadAt)}`
+              : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          buttons: [
+            {
+              label: 'Reset Stats',
+              action: async () => {
+                await window.api.resetStats();
+                showToast('Statistics reset.', { type: 'info' });
+              },
+            },
+            { label: 'Close' },
+          ],
+        });
+      } catch (e) {
+        showToast('Could not load statistics.', { type: 'error' });
+      }
+    });
+  }
+
+  function renderQueue(queue) {
+    if (queueModule && typeof queueModule.renderQueue === 'function') {
+      queueModule.renderQueue(
+        queue,
+        { queueList, queueSection, queueCount },
+        {
+          escapeHtml,
+          removeFromQueue: async (id) => {
+            const endQueueAction = beginQueueAction();
+            try {
+              const result = await window.api.removeFromQueue(id);
+              if (!result || !result.ok) {
+                const message = result?.error?.message || 'Could not remove the queue item.';
+                setQueueStatusMessage(message);
+                showToast(message, {
+                  type: 'error',
+                });
+              } else {
+                announceQueueAction('Removed item from the queue.');
+              }
+            } catch {
+              const message = 'Could not remove the queue item.';
+              setQueueStatusMessage(message);
+              showToast(message, { type: 'error' });
+            } finally {
+              endQueueAction();
+            }
+          },
+        }
+      );
+    }
+  }
+
+  let queueStatusTimer = null;
+  function setQueueStatusMessage(message) {
+    if (!queueStatusMessage) return;
+    if (queueStatusTimer) {
+      clearTimeout(queueStatusTimer);
+      queueStatusTimer = null;
+    }
+
+    const nextMessage =
+      typeof message === 'string' ? message.trim() : message == null ? '' : String(message).trim();
+    queueStatusMessage.textContent = '';
+
+    if (!nextMessage) return;
+
+    queueStatusTimer = setTimeout(() => {
+      queueStatusMessage.textContent = nextMessage;
+      queueStatusTimer = null;
+    }, 0);
+  }
+
+  function queueMessageForCount(count, singular, plural) {
+    return count === 1 ? singular : plural.replace('{count}', String(count));
+  }
+
+  function announceQueueAction(message, toastType = 'info') {
+    setQueueStatusMessage(message);
+    showToast(message, { type: toastType });
+  }
+
+  const queueActionButtons = [addToQueueBtn, startQueueBtn, clearQueueBtn, cancelQueueBtn].filter(
+    (button) => button instanceof HTMLButtonElement
+  );
+  let queueActionLocks = 0;
+  function syncQueueActionBusyState() {
+    const isBusy = queueActionLocks > 0;
+    queueActionButtons.forEach((button) => {
+      button.disabled = isBusy;
+      button.setAttribute('aria-busy', String(isBusy));
+    });
+    if (queueUrlInput) {
+      queueUrlInput.disabled = isBusy;
+    }
+    if (queueSection) {
+      queueSection.setAttribute('aria-busy', String(isBusy));
+    }
+  }
+  function beginQueueAction() {
+    queueActionLocks += 1;
+    syncQueueActionBusyState();
+    return () => {
+      queueActionLocks = Math.max(0, queueActionLocks - 1);
+      syncQueueActionBusyState();
+    };
+  }
+  syncQueueActionBusyState();
+
+  if (addToQueueBtn && queueUrlInput) {
+    addToQueueBtn.addEventListener('click', async () => {
+      if (queueActionLocks > 0) return;
+      const raw = queueUrlInput.value.trim();
+      if (!raw) {
+        const message = 'Enter one or more URLs, one per line.';
+        setQueueStatusMessage(message);
+        showToast(message, { type: 'warning' });
+        return;
+      }
+      const endQueueAction = beginQueueAction();
+      try {
+        const urls = raw
+          .split(/\r?\n+/)
+          .map((u) => u.trim())
+          .filter((u) => u.length > 0);
+        const result = await window.api.addToQueue(urls);
+        if (result && result.ok) {
+          queueUrlInput.value = '';
+          const message = queueMessageForCount(
+            result.data.added,
+            'Added 1 URL to the queue.',
+            'Added {count} URLs to the queue.'
+          );
+          announceQueueAction(message, 'success');
+        } else {
+          const message = result?.error?.message || 'Could not add URLs to the queue.';
+          setQueueStatusMessage(message);
+          showToast(message, { type: 'error' });
+        }
+      } catch {
+        const message = 'Could not add URLs to the queue.';
+        setQueueStatusMessage(message);
+        showToast(message, { type: 'error' });
+      } finally {
+        endQueueAction();
+      }
+    });
+  }
+
+  if (startQueueBtn) {
+    startQueueBtn.addEventListener('click', async () => {
+      if (queueActionLocks > 0) return;
+      const endQueueAction = beginQueueAction();
+      try {
+        const result = await window.api.startQueue();
+        if (result && result.ok) {
+          announceQueueAction('Queue started processing.');
+        } else {
+          const message = result?.error?.message || 'Could not start the queue.';
+          setQueueStatusMessage(message);
+          showToast(message, { type: 'warning' });
+        }
+      } catch {
+        const message = 'Could not start the queue.';
+        setQueueStatusMessage(message);
+        showToast(message, { type: 'warning' });
+      } finally {
+        endQueueAction();
+      }
+    });
+  }
+
+  if (clearQueueBtn) {
+    clearQueueBtn.addEventListener('click', async () => {
+      if (queueActionLocks > 0) return;
+      const endQueueAction = beginQueueAction();
+      try {
+        const result = await window.api.clearQueue();
+        if (result && result.ok) {
+          announceQueueAction('Queue cleared.');
+        } else {
+          const message = result?.error?.message || 'Could not clear the queue.';
+          setQueueStatusMessage(message);
+          showToast(message, { type: 'error' });
+        }
+      } catch {
+        const message = 'Could not clear the queue.';
+        setQueueStatusMessage(message);
+        showToast(message, { type: 'error' });
+      } finally {
+        endQueueAction();
+      }
+    });
+  }
+
+  if (cancelQueueBtn) {
+    cancelQueueBtn.addEventListener('click', async () => {
+      if (queueActionLocks > 0) return;
+      const endQueueAction = beginQueueAction();
+      try {
+        const result = await window.api.cancelQueue();
+        if (result && result.ok) {
+          announceQueueAction('Queue cancelled.');
+        } else {
+          const message = result?.error?.message || 'Could not cancel the queue.';
+          setQueueStatusMessage(message);
+          showToast(message, { type: 'error' });
+        }
+      } catch {
+        const message = 'Could not cancel the queue.';
+        setQueueStatusMessage(message);
+        showToast(message, { type: 'error' });
+      } finally {
+        endQueueAction();
+      }
+    });
+  }
+
   if (fetchFormatsBtn) {
     fetchFormatsBtn.onclick = fetchFormats;
   }
@@ -1460,26 +2559,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (isDownloading) return;
 
         isDownloading = true;
+        hasUrlValidationIntent = true;
+        syncPrimaryActionState();
 
         const urlInput = document.getElementById('url');
         const url = urlInput ? urlInput.value : null;
         if (!url || url.trim() === '') {
           isDownloading = false;
-          showModal({
-            title: 'Input Error',
-            message: 'Please enter a video URL.',
-            buttons: [{ label: 'OK' }],
-          });
+          syncPrimaryActionState();
+          showToast('Please enter a video URL.', { type: 'warning' });
           return;
         }
 
         // Validate URL format
         if (!isValidUrl(url.trim())) {
           isDownloading = false;
-          showModal({
-            title: 'Invalid URL',
-            message: 'Please enter a valid URL starting with http:// or https://',
-            buttons: [{ label: 'OK' }],
+          syncPrimaryActionState();
+          showToast('Please enter a valid URL starting with http:// or https://', {
+            type: 'warning',
           });
           return;
         }
@@ -1491,10 +2588,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           (!videoSelect || !audioSelect || !videoSelect.value || !audioSelect.value)
         ) {
           isDownloading = false;
-          showModal({
-            title: 'Format Selection Needed',
-            message: 'Please check resolutions and select video/audio formats first.',
-            buttons: [{ label: 'OK' }],
+          syncPrimaryActionState();
+          showToast('Please check resolutions and select video/audio formats first.', {
+            type: 'warning',
           });
           return;
         }
@@ -1503,18 +2599,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
           savePath = await window.api.selectDownloadLocation();
         } catch (dialogError) {
-          console.error('Error opening save dialog:', dialogError);
+          logError('Error opening save dialog', dialogError);
           isDownloading = false;
-          showModal({
-            title: 'Error',
-            message: 'Could not open the save location dialog. Please try again.',
-            buttons: [{ label: 'OK' }],
+          syncPrimaryActionState();
+          showToast('Could not open the save location dialog. Please try again.', {
+            type: 'error',
           });
           return;
         }
 
         if (!savePath) {
           isDownloading = false;
+          syncPrimaryActionState();
           if (outputEl) outputEl.textContent = '⚠️ Download cancelled: No save location selected.';
           return;
         }
@@ -1522,6 +2618,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         downloadAbort = () => {
           isDownloading = false;
           setButtonLoading(downloadBtn, false);
+          syncPrimaryActionState();
         };
         setButtonLoading(downloadBtn, true, () => {
           window.api.cancelDownload();
@@ -1529,11 +2626,13 @@ document.addEventListener('DOMContentLoaded', async () => {
           hideProgressBar();
         });
 
-        showProgressBar('Starting download...');
-
         const videoFormat = settings.advancedOptions ? videoSelect.value : null;
         const audioFormat = settings.advancedOptions ? audioSelect.value : null;
         const convertFormat = settings.convertEnabled ? convertFormatSelect.value : null;
+        const needsMerge = settings.bestQuality || (videoFormat && audioFormat);
+        const needsConvert = settings.convertEnabled && convertFormat;
+        configureProgressPhases(!!needsMerge, !!needsConvert);
+        showProgressBar('Starting download...');
         const keepOriginal = settings.convertEnabled ? keepOriginalToggle.checked : null;
         const startResult = await window.api.downloadVideo({
           url,
@@ -1547,23 +2646,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!startResult || startResult.ok !== true) {
           isDownloading = false;
           setButtonLoading(downloadBtn, false);
+          syncPrimaryActionState();
           hideProgressBar();
-          showModal({
-            title: 'Download Validation Error',
-            message:
-              startResult?.error?.message || 'Download request was rejected before starting.',
-            buttons: [{ label: 'OK' }],
-          });
+          showToast(
+            startResult?.error?.message || 'Download request was rejected before starting.',
+            { type: 'error' }
+          );
         }
       } catch (downloadError) {
-        console.error('Unexpected error starting download:', downloadError);
+        logError('Unexpected error starting download', downloadError);
         isDownloading = false;
         setButtonLoading(downloadBtn, false);
+        syncPrimaryActionState();
         hideProgressBar();
-        showModal({
-          title: 'Download Error',
-          message: 'An unexpected error occurred while starting the download. Please try again.',
-          buttons: [{ label: 'OK' }],
+        showToast('An unexpected error occurred while starting the download. Please try again.', {
+          type: 'error',
         });
       }
     };
@@ -1592,8 +2689,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       } else if (message.includes('[download] Destination:')) {
         setProgressIndeterminate('Preparing download...');
       } else if (message.includes('Merging formats')) {
+        setProgressPhase('merge');
         setProgressIndeterminate('Merging video and audio...');
       } else if (message.includes('Converting') || message.includes('[ffmpeg]')) {
+        setProgressPhase('convert');
         setProgressIndeterminate('Converting...');
       } else if (message.includes('100%')) {
         updateProgressBar(100, 'Download complete!', '');
@@ -1613,6 +2712,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (downloadBtn) {
         isDownloading = false;
         setButtonLoading(downloadBtn, false);
+        syncPrimaryActionState();
 
         const normalizedStatus = String(statusMessage || '').toLowerCase();
         const isCancelled = normalizedStatus.includes('cancel');
@@ -1621,6 +2721,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (isSuccess) {
           updateProgressBar(100, 'Complete!', '');
+          showProgressComplete();
 
           if (settings.notifications) {
             window.api.showNotification({
@@ -1637,8 +2738,18 @@ document.addEventListener('DOMContentLoaded', async () => {
           hideProgressBar();
         }, 2000);
 
+        const filename = lastDownloadedFilePath
+          ? lastDownloadedFilePath.split(/[/\\]/).pop()
+          : 'Unknown file';
+        addHistoryEntry({
+          filename,
+          path: lastDownloadedFilePath,
+          status: isSuccess ? 'success' : isCancelled ? 'cancelled' : 'failed',
+        });
+
         const restoreDefaultDownloadButton = () => {
           setButtonLoading(downloadBtn, false);
+          syncPrimaryActionState();
         };
 
         if (isSuccess && lastDownloadedFilePath) {
@@ -1670,6 +2781,31 @@ document.addEventListener('DOMContentLoaded', async () => {
     })
   );
 
+  ipcCleanupFunctions.push(
+    window.api.onQueueUpdate((queue) => {
+      renderQueue(queue);
+    })
+  );
+
+  let closePreparationInProgress = false;
+  ipcCleanupFunctions.push(
+    window.api.onPrepareForClose(async () => {
+      if (closePreparationInProgress) {
+        return;
+      }
+      closePreparationInProgress = true;
+      try {
+        await persistSettings(true, true);
+      } catch {}
+      window.api.notifySettingsFlushed();
+    })
+  );
+
+  window.api
+    .getQueue()
+    .then((queue) => renderQueue(queue))
+    .catch(() => {});
+
   window.addEventListener('beforeunload', () => {
     ipcCleanupFunctions.forEach((cleanup) => {
       if (typeof cleanup === 'function') {
@@ -1679,7 +2815,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
     cleanupUpdaterListeners();
-    void persistSettings(true);
   });
 
   // Check for updates on startup
@@ -1695,32 +2830,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       await new Promise((resolve) => setTimeout(resolve, 2000));
       await window.api.checkForUpdates();
     } catch (e) {
-      console.error('Startup update check failed:', e);
+      logError('Startup update check failed', e);
     }
   }
 
   if (settings.firstLaunch) {
-    // Save immediately - change
-    settings.firstLaunch = false;
-    void persistSettings();
-
-    showModal({
-      title: 'Dependency FFMPEG is Required for this app.',
-      message:
-        'ROSI uses FFMPEG for yt-dlp and converting files to MP4.\nPlease ensure FFMPEG is installed and accessible in your system\'s PATH, or set a custom FFmpeg path in Settings.\nClick "More Info" for guidance.',
-      buttons: [
-        {
-          label: 'More Info',
-          action: () => window.api.openExternal('https://help.rosie.run/installing-ffmpeg'),
-        },
-        {
-          label: 'OK',
-          action: () => {
-            checkDenoInstallation(settings);
-            checkUpdatesOnStartup();
-          },
-        },
-      ],
+    launchSetupWizard(settings, applyTheme, persistSettings, () => {
+      checkDenoInstallation(settings);
+      checkUpdatesOnStartup();
     });
   } else {
     // check Deno

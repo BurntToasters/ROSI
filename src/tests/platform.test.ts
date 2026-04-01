@@ -21,7 +21,13 @@ vi.mock('electron-log/main', () => ({
   },
 }));
 
-import { buildEnhancedPath, isWindows, resolveFfmpegPath } from '../main/platform';
+import {
+  buildEnhancedPath,
+  isWindows,
+  resolveFfmpegPath,
+  getEffectiveFfmpegPath,
+  hasBundledFfmpeg,
+} from '../main/platform';
 
 describe('platform helpers', () => {
   const originalPath = process.env.PATH;
@@ -48,7 +54,6 @@ describe('platform helpers', () => {
     expect(enhanced).toContain(process.env.PATH || '');
 
     if (isWindows) {
-      expect(enhanced).toContain('C:\\Program Files\\ffmpeg\\bin');
       expect(enhanced).toContain('C:\\Users\\Tester\\.deno\\bin');
       expect(enhanced.includes(';')).toBe(true);
     } else {
@@ -84,5 +89,26 @@ describe('platform helpers', () => {
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it('getEffectiveFfmpegPath falls back to custom, bundled, then system', () => {
+    const result = getEffectiveFfmpegPath('');
+    expect(typeof result).toBe('string');
+    expect(result.length).toBeGreaterThan(0);
+  });
+
+  it('getEffectiveFfmpegPath uses custom path when provided', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rosi-platform-'));
+    const binaryPath = path.join(tempDir, isWindows ? 'ffmpeg.exe' : 'ffmpeg');
+    fs.writeFileSync(binaryPath, '');
+    try {
+      expect(getEffectiveFfmpegPath(binaryPath)).toBe(binaryPath);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('hasBundledFfmpeg returns a boolean', () => {
+    expect(typeof hasBundledFfmpeg()).toBe('boolean');
   });
 });

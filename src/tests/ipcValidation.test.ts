@@ -79,6 +79,13 @@ describe('ipc validation helpers', () => {
       validateDownloadRequestPayload({
         url: 'https://example.com',
         outputPath: '/tmp',
+        convertFormat: '../../bad',
+      }).ok
+    ).toBe(false);
+    expect(
+      validateDownloadRequestPayload({
+        url: 'https://example.com',
+        outputPath: '/tmp',
         keepOriginal: 'yes',
       }).ok
     ).toBe(false);
@@ -103,6 +110,7 @@ describe('ipc validation helpers', () => {
 
     const valid = validateSettingsPatchPayload({
       settingsVersion: 1,
+      theme: 'system',
       showConsoleOutput: true,
       browserChoice: 'Firefox',
       updateChannel: 'stable',
@@ -112,17 +120,29 @@ describe('ipc validation helpers', () => {
     expect(valid.ok).toBe(true);
     if (!valid.ok) return;
     expect(valid.data.settingsVersion).toBe(1);
+    expect(valid.data.theme).toBe('system');
     expect(valid.data.browserChoice).toBe('Firefox');
     expect(Object.keys(valid.data)).not.toContain('unknownField');
 
     expect(validateSettingsPatchPayload({ settingsVersion: 0 }).ok).toBe(false);
+    expect(validateSettingsPatchPayload({ theme: 'night' }).ok).toBe(false);
     expect(validateSettingsPatchPayload({ audioOnly: 'true' }).ok).toBe(false);
     expect(validateSettingsPatchPayload({ browserChoice: 123 }).ok).toBe(false);
+    expect(validateSettingsPatchPayload({ convertFormat: '../../bad' }).ok).toBe(false);
 
     const invalid = validateSettingsPatchPayload({
       updateChannel: 'nightly',
     });
     expect(invalid.ok).toBe(false);
+  });
+
+  it('validates audioFormat in settings patch payload', () => {
+    const valid = validateSettingsPatchPayload({ audioFormat: 'flac' });
+    expect(valid.ok).toBe(true);
+    if (valid.ok) expect(valid.data.audioFormat).toBe('flac');
+
+    expect(validateSettingsPatchPayload({ audioFormat: 'invalid' }).ok).toBe(false);
+    expect(validateSettingsPatchPayload({ audioFormat: 42 }).ok).toBe(false);
   });
 
   it('validates external URL and file path payloads', () => {

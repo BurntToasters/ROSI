@@ -68,6 +68,7 @@ import type { Settings } from '../types';
 function createSettings(overrides: Partial<Settings> = {}): Settings {
   return {
     settingsVersion: 1,
+    theme: 'system',
     showConsoleOutput: false,
     consoleCollapsed: false,
     advancedOptions: false,
@@ -88,6 +89,7 @@ function createSettings(overrides: Partial<Settings> = {}): Settings {
     hideSupportModal: false,
     checkUpdatesOnStartup: true,
     updateChannel: 'auto',
+    audioFormat: 'mp3',
     ...overrides,
   };
 }

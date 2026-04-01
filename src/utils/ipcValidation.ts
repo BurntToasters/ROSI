@@ -7,9 +7,15 @@ import type {
   Settings,
 } from '../types';
 import { isSafeExternalUrl, isSafeHttpUrl } from './validation';
+import {
+  ALLOWED_AUDIO_FORMATS,
+  ALLOWED_CONVERT_FORMATS,
+  CURRENT_SETTINGS_VERSION,
+} from '../main/constants';
 
 const ALLOWED_GPU_TYPES = new Set(['auto', 'nvidia', 'amd', 'intel']);
 const ALLOWED_UPDATE_CHANNELS = new Set(['auto', 'stable', 'beta']);
+const ALLOWED_THEMES = new Set(['system', 'light', 'dark', 'purple']);
 
 type ValidationResult<T> = { ok: true; data: T } | { ok: false; error: IpcErrorPayload };
 
@@ -94,6 +100,16 @@ export function validateDownloadRequestPayload(
       error: buildError('VALIDATION_ERROR', 'convertFormat must be a string when provided.'),
     };
   }
+  const normalizedConvertFormat = convertFormat?.trim() || undefined;
+  if (
+    normalizedConvertFormat !== undefined &&
+    !ALLOWED_CONVERT_FORMATS.has(normalizedConvertFormat)
+  ) {
+    return {
+      ok: false,
+      error: buildError('VALIDATION_ERROR', 'convertFormat must be one of: mp4, mov, mp3, m4a.'),
+    };
+  }
   if (keepOriginal !== undefined && !isBoolean(keepOriginal)) {
     return {
       ok: false,
@@ -106,10 +122,22 @@ export function validateDownloadRequestPayload(
       error: buildError('VALIDATION_ERROR', 'videoFormat must be a string when provided.'),
     };
   }
+  if (videoFormat !== undefined && !/^\d{1,8}$/.test(videoFormat.trim())) {
+    return {
+      ok: false,
+      error: buildError('VALIDATION_ERROR', 'videoFormat must be a numeric format ID.'),
+    };
+  }
   if (!isOptionalString(audioFormat)) {
     return {
       ok: false,
       error: buildError('VALIDATION_ERROR', 'audioFormat must be a string when provided.'),
+    };
+  }
+  if (audioFormat !== undefined && !/^\d{1,8}$/.test(audioFormat.trim())) {
+    return {
+      ok: false,
+      error: buildError('VALIDATION_ERROR', 'audioFormat must be a numeric format ID.'),
     };
   }
 
@@ -119,7 +147,7 @@ export function validateDownloadRequestPayload(
       url: url.trim(),
       outputPath: outputPath.trim(),
       ffmpegPath: ffmpegPath?.trim() || undefined,
-      convertFormat: convertFormat?.trim() || undefined,
+      convertFormat: normalizedConvertFormat,
       keepOriginal,
       videoFormat: videoFormat?.trim() || undefined,
       audioFormat: audioFormat?.trim() || undefined,
@@ -130,10 +158,12 @@ export function validateDownloadRequestPayload(
 function isValidSettingsKey(key: string): key is keyof Settings {
   return (
     key === 'settingsVersion' ||
+    key === 'theme' ||
     key === 'showConsoleOutput' ||
     key === 'consoleCollapsed' ||
     key === 'advancedOptions' ||
     key === 'audioOnly' ||
+    key === 'audioFormat' ||
     key === 'convertEnabled' ||
     key === 'convertFormat' ||
     key === 'keepOriginalAfterConvert' ||
@@ -166,12 +196,17 @@ export function validateSettingsPatchPayload(value: unknown): ValidationResult<P
     if (!isValidSettingsKey(rawKey)) continue;
 
     if (rawKey === 'settingsVersion') {
-      if (typeof rawValue !== 'number' || !Number.isInteger(rawValue) || rawValue < 1) {
+      if (
+        typeof rawValue !== 'number' ||
+        !Number.isInteger(rawValue) ||
+        rawValue < 1 ||
+        rawValue > CURRENT_SETTINGS_VERSION
+      ) {
         return {
           ok: false,
           error: buildError(
             'VALIDATION_ERROR',
-            'settingsVersion must be an integer greater than or equal to 1.'
+            `settingsVersion must be an integer between 1 and ${CURRENT_SETTINGS_VERSION}.`
           ),
         };
       }
@@ -206,6 +241,20 @@ export function validateSettingsPatchPayload(value: unknown): ValidationResult<P
       continue;
     }
 
+    if (rawKey === 'theme') {
+      if (!isString(rawValue) || !ALLOWED_THEMES.has(rawValue)) {
+        return {
+          ok: false,
+          error: buildError(
+            'VALIDATION_ERROR',
+            'theme must be one of: system, light, dark, purple.'
+          ),
+        };
+      }
+      patch.theme = rawValue as Settings['theme'];
+      continue;
+    }
+
     if (rawKey === 'gpuType') {
       if (!isString(rawValue) || !ALLOWED_GPU_TYPES.has(rawValue)) {
         return {
@@ -217,6 +266,34 @@ export function validateSettingsPatchPayload(value: unknown): ValidationResult<P
         };
       }
       patch.gpuType = rawValue as Settings['gpuType'];
+      continue;
+    }
+
+    if (rawKey === 'audioFormat') {
+      if (!isString(rawValue) || !ALLOWED_AUDIO_FORMATS.has(rawValue)) {
+        return {
+          ok: false,
+          error: buildError(
+            'VALIDATION_ERROR',
+            'audioFormat must be one of: mp3, flac, ogg, wav, m4a, opus.'
+          ),
+        };
+      }
+      patch.audioFormat = rawValue as Settings['audioFormat'];
+      continue;
+    }
+
+    if (rawKey === 'convertFormat') {
+      if (!isString(rawValue) || !ALLOWED_CONVERT_FORMATS.has(rawValue)) {
+        return {
+          ok: false,
+          error: buildError(
+            'VALIDATION_ERROR',
+            'convertFormat must be one of: mp4, mov, mp3, m4a.'
+          ),
+        };
+      }
+      patch.convertFormat = rawValue;
       continue;
     }
 
@@ -237,6 +314,12 @@ export function validateSettingsPatchPayload(value: unknown): ValidationResult<P
         error: buildError('VALIDATION_ERROR', `${rawKey} must be a string.`),
       };
     }
+    if (rawValue.length > 1024) {
+      return {
+        ok: false,
+        error: buildError('VALIDATION_ERROR', `${rawKey} exceeds maximum length of 1024.`),
+      };
+    }
     patch[rawKey] = rawValue;
   }
 
@@ -250,7 +333,20 @@ export function validateFileLocationPayload(value: unknown): ValidationResult<st
       error: buildError('INVALID_PATH', 'File path must be a non-empty string.'),
     };
   }
-  return { ok: true, data: value.trim() };
+  const trimmed = value.trim();
+  if (trimmed.length > 4096) {
+    return {
+      ok: false,
+      error: buildError('INVALID_PATH', 'File path exceeds maximum length.'),
+    };
+  }
+  if (!/^(\/|[A-Za-z]:\\)/.test(trimmed)) {
+    return {
+      ok: false,
+      error: buildError('INVALID_PATH', 'File path must be absolute.'),
+    };
+  }
+  return { ok: true, data: trimmed };
 }
 
 export function validateNotificationPayload(value: unknown): ValidationResult<NotificationRequest> {
@@ -272,6 +368,17 @@ export function validateNotificationPayload(value: unknown): ValidationResult<No
         'VALIDATION_ERROR',
         'Notification title, body, and filePath must be strings when provided.'
       ),
+    };
+  }
+
+  if (
+    (title && title.length > 256) ||
+    (body && body.length > 1024) ||
+    (filePath && filePath.length > 4096)
+  ) {
+    return {
+      ok: false,
+      error: buildError('VALIDATION_ERROR', 'Notification field exceeds maximum length.'),
     };
   }
 

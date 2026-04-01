@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'events';
 
-const { loadSettingsMock, resolveFfmpegPathMock, spawnWithEnvMock, logErrorMock } = vi.hoisted(
+const { loadSettingsMock, getEffectiveFfmpegPathMock, spawnWithEnvMock, logErrorMock } = vi.hoisted(
   () => {
     return {
       loadSettingsMock: vi.fn(),
-      resolveFfmpegPathMock: vi.fn(),
+      getEffectiveFfmpegPathMock: vi.fn(),
       spawnWithEnvMock: vi.fn(),
       logErrorMock: vi.fn(),
     };
@@ -17,17 +17,18 @@ vi.mock('../main/settings', () => ({
 }));
 
 vi.mock('../main/platform', () => ({
-  resolveFfmpegPath: resolveFfmpegPathMock,
+  getEffectiveFfmpegPath: getEffectiveFfmpegPathMock,
   spawnWithEnv: spawnWithEnvMock,
 }));
 
 vi.mock('electron-log/main', () => ({
   default: {
     error: logErrorMock,
+    warn: vi.fn(),
   },
 }));
 
-import { detectGpu } from '../main/gpu';
+import { detectGpu, clearGpuCache } from '../main/gpu';
 
 function createProc() {
   const proc = new EventEmitter() as EventEmitter & {
@@ -44,10 +45,11 @@ function createProc() {
 describe('gpu detection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearGpuCache();
     loadSettingsMock.mockReturnValue({
       ffmpegPath: '',
     });
-    resolveFfmpegPathMock.mockReturnValue(null);
+    getEffectiveFfmpegPathMock.mockReturnValue('ffmpeg');
   });
 
   it('detects supported GPU encoders from ffmpeg output', async () => {
@@ -95,5 +97,47 @@ describe('gpu detection', () => {
       intel: false,
     });
     expect(logErrorMock).toHaveBeenCalled();
+  });
+
+  it('returns cached result on second call within TTL', async () => {
+    const proc = createProc();
+    spawnWithEnvMock.mockReturnValue(proc);
+
+    const pending = detectGpu();
+    proc.stdout.emit('data', Buffer.from('h264_nvenc\n'));
+    proc.emit('close', 0);
+    await pending;
+
+    const second = await detectGpu();
+    expect(second).toEqual({ nvidia: true, amd: false, intel: false });
+    expect(spawnWithEnvMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-detects after cache TTL expires', async () => {
+    vi.useFakeTimers();
+    try {
+      const proc1 = createProc();
+      spawnWithEnvMock.mockReturnValue(proc1);
+
+      const pending1 = detectGpu();
+      proc1.stdout.emit('data', Buffer.from('h264_nvenc\n'));
+      proc1.emit('close', 0);
+      await pending1;
+
+      vi.advanceTimersByTime(300_001);
+
+      const proc2 = createProc();
+      spawnWithEnvMock.mockReturnValue(proc2);
+
+      const pending2 = detectGpu();
+      proc2.stdout.emit('data', Buffer.from('h264_amf\n'));
+      proc2.emit('close', 0);
+      const result = await pending2;
+
+      expect(result).toEqual({ nvidia: false, amd: true, intel: false });
+      expect(spawnWithEnvMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

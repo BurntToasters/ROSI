@@ -1,4 +1,5 @@
 import * as path from 'path';
+import * as os from 'os';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { app, dialog } from 'electron';
@@ -10,6 +11,55 @@ export const isLinux = process.platform === 'linux';
 export const isArm64 = process.arch === 'arm64';
 export const isPackaged = app.isPackaged;
 
+const ENV_ALLOWLIST = [
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TERM',
+  'TMPDIR',
+  'TEMP',
+  'TMP',
+  'USERPROFILE',
+  'LOCALAPPDATA',
+  'APPDATA',
+  'SystemRoot',
+  'SYSTEMDRIVE',
+  'PROGRAMFILES',
+  'PROGRAMFILES(X86)',
+  'COMSPEC',
+  'WINDIR',
+  'XDG_RUNTIME_DIR',
+  'XDG_DATA_HOME',
+  'XDG_CONFIG_HOME',
+  'XDG_CACHE_HOME',
+  'FLATPAK_ID',
+  'DISPLAY',
+  'WAYLAND_DISPLAY',
+  'DBUS_SESSION_BUS_ADDRESS',
+  'PYTHONUNBUFFERED',
+];
+
+function buildSafeEnv(): Record<string, string> {
+  const safe: Record<string, string> = {};
+  for (const key of ENV_ALLOWLIST) {
+    const val = process.env[key];
+    if (val !== undefined) safe[key] = val;
+  }
+  return safe;
+}
+
+function safeHomeDir(): string {
+  try {
+    return os.homedir();
+  } catch {
+    return process.env.HOME || process.env.USERPROFILE || '';
+  }
+}
+
 export function buildEnhancedPath() {
   const currentPath = process.env.PATH || '';
 
@@ -19,15 +69,14 @@ export function buildEnhancedPath() {
     const extraPaths = [
       path.join(userProfile, '.deno', 'bin'),
       path.join(localAppData, 'deno', 'bin'),
-      'C:\\Program Files\\ffmpeg\\bin',
-      'C:\\ffmpeg\\bin',
       'C:\\Program Files\\deno',
       'C:\\deno',
     ];
-    return [...extraPaths, currentPath].filter(Boolean).join(';');
+    const result = [...extraPaths, currentPath].filter(Boolean).join(';');
+    return result || 'C:\\Windows\\System32';
   }
 
-  const homeDir = process.env.HOME || '';
+  const homeDir = safeHomeDir();
   const extraPaths = [
     path.join(homeDir, '.deno', 'bin'),
     '/opt/homebrew/bin',
@@ -40,7 +89,8 @@ export function buildEnhancedPath() {
     path.join(homeDir, '.local', 'bin'),
   ];
 
-  return [...extraPaths, currentPath].filter(Boolean).join(':');
+  const result = [...extraPaths, currentPath].filter(Boolean).join(':');
+  return result || '/usr/local/bin:/usr/bin:/bin';
 }
 
 export function spawnWithEnv(
@@ -51,7 +101,7 @@ export function spawnWithEnv(
   const baseEnv = (options.env as Record<string, string> | undefined) || {};
   return spawn(command, args, {
     ...options,
-    env: { ...process.env, ...baseEnv, PATH: buildEnhancedPath() },
+    env: { ...buildSafeEnv(), ...baseEnv, PATH: buildEnhancedPath() },
   } as Parameters<typeof spawn>[2]);
 }
 
@@ -59,8 +109,18 @@ export function resolveFfmpegPath(customPath: unknown): string | null {
   if (!customPath || typeof customPath !== 'string') return null;
   const trimmed = customPath.trim();
   if (!trimmed) return null;
+  if (
+    !path.isAbsolute(trimmed) &&
+    !trimmed.includes(path.sep) &&
+    !trimmed.includes('/') &&
+    !trimmed.includes('\\')
+  ) {
+    return trimmed;
+  }
 
-  let candidate = trimmed;
+  const resolved = path.resolve(trimmed);
+
+  let candidate = resolved;
 
   try {
     if (fs.existsSync(candidate)) {
@@ -74,11 +134,152 @@ export function resolveFfmpegPath(customPath: unknown): string | null {
         candidate = withExe;
       }
     }
-  } catch {
-    return trimmed;
+  } catch (err) {
+    log.warn(`Error resolving ffmpeg path for '${trimmed}':`, err);
+    return resolved;
   }
 
   return candidate;
+}
+
+function ensureExecutable(filePath: string): string {
+  if (isWindows) return filePath;
+
+  try {
+    const stats = fs.statSync(filePath);
+    const isExec = (stats.mode & 0o111) !== 0;
+
+    if (!isExec) {
+      try {
+        fs.chmodSync(filePath, stats.mode | 0o755);
+      } catch (chmodErr) {
+        const code = (chmodErr as NodeJS.ErrnoException).code;
+        if (code === 'EROFS' || code === 'EACCES') {
+          try {
+            fs.accessSync(filePath, fs.constants.X_OK);
+          } catch {
+            try {
+              const binaryName = path.basename(filePath);
+              const isFlatpak = Boolean(process.env.FLATPAK_ID);
+              const binDir = isFlatpak
+                ? path.join(app.getPath('userData'), '.bin')
+                : path.join(app.getPath('temp'), 'rosi-bin');
+              if (!fs.existsSync(binDir)) fs.mkdirSync(binDir, { recursive: true });
+              const tmpBin = path.join(binDir, binaryName);
+              fs.copyFileSync(filePath, tmpBin);
+              fs.chmodSync(tmpBin, 0o755);
+              return tmpBin;
+            } catch (copyErr) {
+              log.error(
+                `Failed to copy ffmpeg to temp for execution: ${(copyErr as Error).message}`
+              );
+            }
+          }
+        }
+      }
+    }
+  } catch (statErr) {
+    log.warn(`statSync failed for ${filePath}:`, statErr);
+  }
+
+  return filePath;
+}
+
+function getBundledFfmpegDir(): string | null {
+  if (typeof process.resourcesPath !== 'string') return null;
+
+  const baseDir = path.join(process.resourcesPath, 'ffmpeg');
+  const ffmpegName = isWindows ? 'ffmpeg.exe' : 'ffmpeg';
+
+  if (fs.existsSync(path.join(baseDir, ffmpegName))) {
+    return baseDir;
+  }
+
+  if (isMac || isWindows) {
+    const archDir = path.join(baseDir, process.arch);
+    if (fs.existsSync(archDir)) return archDir;
+    const x64Dir = path.join(baseDir, 'x64');
+    if (fs.existsSync(x64Dir)) return x64Dir;
+    const arm64Dir = path.join(baseDir, 'arm64');
+    if (fs.existsSync(arm64Dir)) return arm64Dir;
+  }
+
+  if (fs.existsSync(baseDir)) return baseDir;
+  return null;
+}
+
+let cachedBundledFfmpegPath: string | null | undefined;
+
+export function resolveBundledFfmpegPath(): string | null {
+  if (cachedBundledFfmpegPath !== undefined) return cachedBundledFfmpegPath;
+
+  const bundledDir = getBundledFfmpegDir();
+  if (bundledDir) {
+    const ext = isWindows ? '.exe' : '';
+    const bundledPath = path.join(bundledDir, `ffmpeg${ext}`);
+    if (fs.existsSync(bundledPath)) {
+      const effectivePath = ensureExecutable(bundledPath);
+      cachedBundledFfmpegPath = effectivePath;
+      log.info(`Resolved bundled ffmpeg at: ${effectivePath}`);
+      return effectivePath;
+    }
+  }
+
+  cachedBundledFfmpegPath = null;
+  return null;
+}
+
+export function getEffectiveFfmpegPath(customPath?: string | null): string {
+  const resolved = resolveFfmpegPath(customPath);
+  if (resolved) {
+    const pathLike =
+      path.isAbsolute(resolved) ||
+      resolved.includes(path.sep) ||
+      resolved.includes('/') ||
+      resolved.includes('\\');
+    if (!pathLike || fs.existsSync(resolved)) {
+      return resolved;
+    }
+    log.warn(`Custom ffmpeg path does not exist, falling back: ${resolved}`);
+  }
+
+  const bundled = resolveBundledFfmpegPath();
+  if (bundled) return bundled;
+
+  return 'ffmpeg';
+}
+
+export function hasBundledFfmpeg(): boolean {
+  return resolveBundledFfmpegPath() !== null;
+}
+
+export function verifyBundledFfmpeg(): void {
+  const ffmpegPath = resolveBundledFfmpegPath();
+  if (!ffmpegPath) {
+    log.info('No bundled ffmpeg found; will rely on system ffmpeg.');
+    return;
+  }
+
+  try {
+    const proc = spawnWithEnv(ffmpegPath, ['-version'], { shell: false });
+    let output = '';
+    proc.stdout?.on('data', (data: Buffer) => {
+      if (output.length < 512) output += data.toString();
+    });
+    proc.on('close', (code: number | null) => {
+      if (code === 0 && output) {
+        const firstLine = output.split('\n')[0]?.trim() ?? '';
+        log.info(`Bundled ffmpeg verified: ${firstLine}`);
+      } else {
+        log.warn(`Bundled ffmpeg at ${ffmpegPath} exited with code ${code}`);
+      }
+    });
+    proc.on('error', (err: Error) => {
+      log.warn(`Bundled ffmpeg at ${ffmpegPath} failed to execute: ${err.message}`);
+    });
+  } catch (err) {
+    log.warn(`Failed to verify bundled ffmpeg: ${(err as Error).message}`);
+  }
 }
 
 function getYtdlpBinaryName() {
@@ -127,12 +328,23 @@ export function resolveYtdlpPath(): string {
         try {
           fs.accessSync(resolved, fs.constants.X_OK);
         } catch {
-          const tmpDir = path.join(app.getPath('temp'), 'rosi-bin');
-          if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-          const tmpBin = path.join(tmpDir, ytdlpBinary);
-          fs.copyFileSync(resolved, tmpBin);
-          fs.chmodSync(tmpBin, 0o755);
-          resolved = tmpBin;
+          try {
+            const isFlatpak = Boolean(process.env.FLATPAK_ID);
+            const binDir = isFlatpak
+              ? path.join(app.getPath('userData'), '.bin')
+              : path.join(app.getPath('temp'), 'rosi-bin');
+            if (!fs.existsSync(binDir)) fs.mkdirSync(binDir, { recursive: true });
+            const tmpBin = path.join(binDir, ytdlpBinary);
+            fs.copyFileSync(resolved, tmpBin);
+            fs.chmodSync(tmpBin, 0o755);
+            resolved = tmpBin;
+          } catch (copyErr) {
+            dialog.showErrorBox(
+              'Permission Error',
+              `Failed to prepare yt-dlp for execution at ${resolved}.\nError: ${(copyErr as Error).message}`
+            );
+            app.quit();
+          }
         }
       } else {
         dialog.showErrorBox(
