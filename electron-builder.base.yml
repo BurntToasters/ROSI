@@ -1,5 +1,6 @@
 appId: com.burnttoasters.rosi
 productName: Rosi
+asar: true
 files:
   - 'dist/**/*'
   - 'src/renderer/**/*'
@@ -7,6 +8,7 @@ files:
   - '!**/node_modules/*/{test,__tests__,tests}/**'
   - '!**/*.md'
   # yt-dlp binaries are NOT in files — they are copied per-platform via extraResources
+  # ffmpeg binaries are in resources/ffmpeg/<platform>/<arch>/ and copied to resources/ffmpeg/
 directories:
   output: release
 publish:
@@ -21,6 +23,14 @@ win:
       to: assets/
       filter:
         - 'yt-dlp*.exe'
+    - from: resources/ffmpeg/win/${arch}
+      to: ffmpeg
+    - from: resources/ffmpeg/NOTICE.txt
+      to: ffmpeg/NOTICE.txt
+    - from: resources/ffmpeg/ffmpeg_license.txt
+      to: ffmpeg/LICENSE.txt
+    - from: resources/ffmpeg/SOURCE_OFFER.txt
+      to: ffmpeg/SOURCE_OFFER.txt
 nsis:
   artifactName: ROSI-Windows-${arch}.${ext}
   allowToChangeInstallationDirectory: false
@@ -35,6 +45,16 @@ mac:
   extraResources:
     - from: assets/yt-dlp_macos
       to: assets/yt-dlp_macos
+    - from: resources/ffmpeg/mac/${arch}
+      to: ffmpeg
+      filter:
+        - '**/*'
+    - from: resources/ffmpeg/NOTICE.txt
+      to: ffmpeg/NOTICE.txt
+    - from: resources/ffmpeg/ffmpeg_license.txt
+      to: ffmpeg/LICENSE.txt
+    - from: resources/ffmpeg/SOURCE_OFFER.txt
+      to: ffmpeg/SOURCE_OFFER.txt
 linux:
   target:
     - AppImage
@@ -42,13 +62,19 @@ linux:
     - rpm
   icon: build/app-icon.png
   category: Utility
-  executableArgs:
-    - '--ozone-platform=x11'
   extraResources:
     - from: assets/
       to: assets/
       filter:
         - 'yt-dlp_linux*'
+    - from: resources/ffmpeg/linux/${arch}
+      to: ffmpeg
+    - from: resources/ffmpeg/NOTICE.txt
+      to: ffmpeg/NOTICE.txt
+    - from: resources/ffmpeg/ffmpeg_license.txt
+      to: ffmpeg/LICENSE.txt
+    - from: resources/ffmpeg/SOURCE_OFFER.txt
+      to: ffmpeg/SOURCE_OFFER.txt
 appImage:
   artifactName: ROSI-Linux-${arch}.${ext}
 deb:

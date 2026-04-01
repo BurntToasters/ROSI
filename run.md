@@ -24,6 +24,16 @@ npm run build:linux:x64
 
 npm run build:linux:arm64
 
+# FFmpeg prebuild checks
+
+# Validate all required FFmpeg binaries
+
+npm run ffmpeg:check:all
+
+# Validate only a specific target
+
+npm run ffmpeg:check -- --target win:x64
+
 # Licenses
 
 npx npm-license-crawler --production --json licenses.json

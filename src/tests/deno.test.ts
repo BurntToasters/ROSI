@@ -31,6 +31,7 @@ vi.mock('electron', () => ({
 
 vi.mock('../main/platform', () => ({
   isWindows: process.platform === 'win32',
+  buildEnhancedPath: () => process.env.PATH || '',
 }));
 
 vi.mock('electron-log/main', () => ({
@@ -91,7 +92,7 @@ describe('deno helpers', () => {
     await installDeno(null);
 
     expect(showMessageBoxMock).toHaveBeenCalledTimes(1);
-    const call = showMessageBoxMock.mock.calls[0];
+    const call = showMessageBoxMock.mock.calls[0]!;
     expect(call).toHaveLength(1);
     expect(call[0]).toMatchObject({ type: 'warning' });
   });
@@ -103,7 +104,7 @@ describe('deno helpers', () => {
     await installDeno(null);
 
     expect(showMessageBoxMock).toHaveBeenCalledTimes(1);
-    const call = showMessageBoxMock.mock.calls[0];
+    const call = showMessageBoxMock.mock.calls[0]!;
     expect(call).toHaveLength(2);
     expect(call[0]).toBe(focusedWindow);
     expect(call[1]).toMatchObject({ type: 'warning' });
@@ -133,7 +134,7 @@ describe('deno helpers', () => {
     proc.stderr.emit('data', Buffer.from('error output'));
     proc.emit('close', 1);
 
-    await expect(pending).rejects.toMatchObject({
+    await expect(pending).resolves.toMatchObject({
       success: false,
       error: 'error output',
     });

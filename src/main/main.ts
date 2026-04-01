@@ -2,8 +2,16 @@ import { app, BrowserWindow, ipcMain, dialog, shell, Notification } from 'electr
 import * as path from 'path';
 import * as fs from 'fs';
 import log from 'electron-log/main';
-import { isPackaged, resolveYtdlpPath } from './platform';
-import { loadSettings, saveSettings, getDefaultSettings } from './settings';
+import { isPackaged, resolveYtdlpPath, verifyBundledFfmpeg } from './platform';
+import {
+  loadSettings,
+  saveSettings,
+  getDefaultSettings,
+  loadStats,
+  resetStats,
+  exportSettingsToFile,
+  importSettingsFromFile,
+} from './settings';
 import {
   setupAutoUpdater,
   checkForUpdates,
@@ -30,18 +38,53 @@ import {
   validateNotificationPayload,
   validateSettingsPatchPayload,
 } from '../utils/ipcValidation';
-import { SPLASH_SHOW_DELAY_MS, SPLASH_FADE_DELAY_MS } from './constants';
-import type { DownloadRequestOptions } from '../types';
+import { SPLASH_SHOW_DELAY_MS, SPLASH_FADE_DELAY_MS, MAX_QUEUE_SIZE } from './constants';
+import type { DownloadRequestOptions, QueueItem } from '../types';
 
 log.initialize();
 
+process.on('uncaughtException', (error) => {
+  log.error('Uncaught exception:', error);
+  try {
+    killAllProcesses();
+  } catch {}
+  try {
+    dialog.showErrorBox(
+      'Fatal Error',
+      `ROSI encountered an unexpected error and must close.\n\n${error.message}`
+    );
+  } catch (dialogErr) {
+    log.error('Failed to show error dialog:', dialogErr);
+  }
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  log.error('Unhandled rejection:', reason);
+});
+
 const ytdlpPath = resolveYtdlpPath();
+const isSmokeRun = process.argv.includes('--smoke') || process.env.ROSI_SMOKE === '1';
+const isPrimaryInstance =
+  isSmokeRun || typeof app.requestSingleInstanceLock !== 'function'
+    ? true
+    : app.requestSingleInstanceLock();
+const SETTINGS_FLUSH_TIMEOUT_MS = 1500;
 
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
+let mainWindowCloseInProgress = false;
+let mainWindowCloseTimer: NodeJS.Timeout | null = null;
 
 function getMainWindow() {
   return mainWindow;
+}
+
+function clearMainWindowCloseTimer() {
+  if (mainWindowCloseTimer) {
+    clearTimeout(mainWindowCloseTimer);
+    mainWindowCloseTimer = null;
+  }
 }
 
 function createSplashWindow() {
@@ -55,11 +98,140 @@ function createSplashWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
     roundedCorners: true,
   });
-  splashWindow.loadFile(path.join(__dirname, '..', '..', 'src', 'renderer', 'splash.html'));
+  void splashWindow.loadFile(path.join(__dirname, '..', '..', 'src', 'renderer', 'splash.html'));
   splashWindow.center();
+}
+
+async function runRendererSmokeChecks(windowRef: BrowserWindow): Promise<string[]> {
+  const script = `
+    (async () => {
+      const failures = [];
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const assert = (condition, message) => {
+        if (!condition) failures.push(message);
+      };
+
+      try {
+        assert(!!window.rosiModules, 'window.rosiModules is missing.');
+
+        for (let i = 0; i < 5; i += 1) {
+          const modalActive = document.getElementById('app-modal')?.classList.contains('active');
+          const licensesActive = document
+            .getElementById('licenses-overlay')
+            ?.classList.contains('active');
+          if (!modalActive && !licensesActive) break;
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          await wait(120);
+        }
+
+        // Dismiss setup wizard if visible
+        const wizardOverlay = document.getElementById('setup-wizard');
+        if (wizardOverlay && wizardOverlay.classList.contains('active')) {
+          const wizardNext = document.getElementById('wizard-next');
+          for (let i = 0; i < 5 && wizardOverlay.classList.contains('active'); i++) {
+            if (wizardNext) wizardNext.click();
+            await wait(100);
+          }
+        }
+
+        const sidebar = document.getElementById('sidebar');
+        const settingsBtn = document.getElementById('settingsBtn');
+        const closeSidebarBtn = document.getElementById('closeSidebar');
+        const urlInput = document.getElementById('url');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const queueSection = document.getElementById('queueSection');
+        const queueCount = document.getElementById('queueCount');
+
+        assert(!!sidebar, 'Missing #sidebar.');
+        assert(!!settingsBtn, 'Missing #settingsBtn.');
+        assert(!!closeSidebarBtn, 'Missing #closeSidebar.');
+        assert(!!urlInput, 'Missing #url.');
+        assert(!!downloadBtn, 'Missing #downloadBtn.');
+        assert(!!queueSection, 'Missing #queueSection.');
+        assert(!!queueCount, 'Missing #queueCount.');
+
+        const urlLabel = document.querySelector('label[for="url"]');
+        const queueLabel = document.querySelector('label[for="queueUrlInput"]');
+        assert(!!urlLabel, 'Missing explicit label for #url.');
+        assert(!!queueLabel, 'Missing explicit label for #queueUrlInput.');
+
+        if (settingsBtn instanceof HTMLElement && sidebar instanceof HTMLElement) {
+          settingsBtn.click();
+          await wait(150);
+          assert(sidebar.classList.contains('open'), 'Sidebar did not open from settings button.');
+        }
+
+        if (closeSidebarBtn instanceof HTMLElement && sidebar instanceof HTMLElement) {
+          closeSidebarBtn.click();
+          await wait(150);
+          assert(!sidebar.classList.contains('open'), 'Sidebar did not close from close button.');
+        }
+
+        const isMac = navigator.platform.toLowerCase().includes('mac');
+        document.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: ',',
+            bubbles: true,
+            metaKey: isMac,
+            ctrlKey: !isMac,
+          })
+        );
+        await wait(150);
+        if (sidebar instanceof HTMLElement) {
+          assert(sidebar.classList.contains('open'), 'Sidebar did not open via keyboard shortcut.');
+        }
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await wait(150);
+        if (sidebar instanceof HTMLElement) {
+          assert(!sidebar.classList.contains('open'), 'Sidebar did not close via Escape.');
+        }
+
+        if (urlInput instanceof HTMLInputElement && downloadBtn instanceof HTMLButtonElement) {
+          urlInput.value = 'not-a-url';
+          urlInput.dispatchEvent(new Event('input', { bubbles: true }));
+          await wait(180);
+          assert(downloadBtn.disabled, 'Download button should be disabled for invalid URL.');
+
+          urlInput.value = 'https://example.com/watch?v=smoke';
+          urlInput.dispatchEvent(new Event('input', { bubbles: true }));
+          await wait(180);
+          assert(!downloadBtn.disabled, 'Download button should be enabled for valid URL.');
+        }
+
+        if (window.api?.clearQueue && window.api?.addToQueue) {
+          await window.api.clearQueue();
+          const addResult = await window.api.addToQueue(['https://example.com/smoke']);
+          assert(addResult && addResult.ok, 'addToQueue failed in smoke check.');
+          await wait(220);
+          const count = Number(queueCount?.textContent || '0');
+          assert(count >= 1, 'Queue count did not update after addToQueue.');
+          await window.api.clearQueue();
+          await wait(180);
+        } else {
+          failures.push('window.api queue handlers are missing.');
+        }
+      } catch (error) {
+        failures.push(
+          'Smoke execution failed: ' +
+            (error && typeof error === 'object' && 'message' in error
+              ? String(error.message)
+              : String(error))
+        );
+      }
+
+      return failures;
+    })();
+  `;
+
+  const result = await windowRef.webContents.executeJavaScript(script, true);
+  if (!Array.isArray(result)) {
+    return ['Smoke script returned an invalid response payload.'];
+  }
+  return result.filter((item): item is string => typeof item === 'string');
 }
 
 function createWindow() {
@@ -76,13 +248,49 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
       spellcheck: false,
       devTools: isDev,
     },
     autoHideMenuBar: !isDev,
     show: false,
   });
-  mainWindow.loadFile(path.join(__dirname, '..', '..', 'src', 'renderer', 'index.html'));
+  void mainWindow.loadFile(path.join(__dirname, '..', '..', 'src', 'renderer', 'index.html'));
+  mainWindowCloseInProgress = false;
+  clearMainWindowCloseTimer();
+
+  mainWindow.on('close', (event) => {
+    if (isSmokeRun || mainWindowCloseInProgress) {
+      return;
+    }
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+
+    event.preventDefault();
+    mainWindowCloseInProgress = true;
+
+    if (mainWindow.webContents.isDestroyed()) {
+      mainWindow.destroy();
+      return;
+    }
+
+    mainWindowCloseTimer = setTimeout(() => {
+      log.warn('Timed out waiting for renderer settings flush. Closing window.');
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.destroy();
+      }
+    }, SETTINGS_FLUSH_TIMEOUT_MS);
+
+    mainWindow.webContents.send('prepare-for-close');
+  });
+
+  mainWindow.on('closed', () => {
+    clearMainWindowCloseTimer();
+    mainWindowCloseInProgress = false;
+    mainWindow = null;
+  });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isSafeExternalUrl(url)) {
@@ -91,6 +299,13 @@ function createWindow() {
       });
     }
     return { action: 'deny' as const };
+  });
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    log.error(`Renderer process gone: ${details.reason} (exit code: ${details.exitCode})`);
+    if (details.reason !== 'clean-exit' && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.reload();
+    }
   });
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
@@ -119,17 +334,60 @@ function createWindow() {
       }
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.show();
-        mainWindow.focus();
+        if (!isSmokeRun) {
+          mainWindow.focus();
+          return;
+        }
+        void runRendererSmokeChecks(mainWindow)
+          .then((failures) => {
+            if (failures.length > 0) {
+              log.error('Runtime smoke checks failed:', failures);
+              app.exit(1);
+              return;
+            }
+            log.info('Runtime smoke checks passed.');
+            app.exit(0);
+          })
+          .catch((error) => {
+            log.error('Runtime smoke checks encountered an error:', error);
+            app.exit(1);
+          });
       }
     }, SPLASH_FADE_DELAY_MS);
   });
 }
 
-app.whenReady().then(() => {
-  createSplashWindow();
-  setTimeout(() => {
-    createWindow();
-  }, SPLASH_SHOW_DELAY_MS);
+if (isPrimaryInstance && !isSmokeRun) {
+  app.on('second-instance', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+      return;
+    }
+
+    if (app.isReady()) {
+      createWindow();
+    }
+  });
+}
+
+void app.whenReady().then(() => {
+  if (!isPrimaryInstance) {
+    app.quit();
+    return;
+  }
+
+  if (!isSmokeRun) {
+    createSplashWindow();
+  }
+  verifyBundledFfmpeg();
+  setTimeout(
+    () => {
+      createWindow();
+    },
+    isSmokeRun ? 0 : SPLASH_SHOW_DELAY_MS
+  );
 });
 
 app.on('window-all-closed', () => {
@@ -141,10 +399,41 @@ app.on('activate', () => {
 });
 
 app.on('before-quit', () => {
-  killAllProcesses();
+  try {
+    killAllProcesses();
+  } catch (error) {
+    log.error('Error killing processes on quit:', error);
+  }
+  try {
+    cancelFormats();
+  } catch (error) {
+    log.error('Error cancelling formats on quit:', error);
+  }
 });
 
 setupAutoUpdater(getMainWindow, loadSettings);
+
+ipcMain.on('log-error', (_, message) => {
+  if (typeof message === 'string') {
+    const truncated = message.length > 2000 ? message.slice(0, 2000) + '...(truncated)' : message;
+    log.error(`[renderer] ${truncated}`);
+  }
+});
+
+ipcMain.on('settings-flush-complete', (event) => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  if (!mainWindowCloseInProgress) {
+    return;
+  }
+  if (event.sender.id !== mainWindow.webContents.id) {
+    return;
+  }
+
+  clearMainWindowCloseTimer();
+  mainWindow.destroy();
+});
 
 ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('is-packaged', () => isPackaged);
@@ -221,11 +510,26 @@ ipcMain.handle('select-download-location', async () => {
   }
 });
 
-ipcMain.handle('getFormats', (_, url) => {
+ipcMain.handle('getFormats', async (_, url) => {
   if (typeof url !== 'string' || !isSafeHttpUrl(url)) {
-    return Promise.reject('Invalid URL provided');
+    return errorResult('INVALID_URL', 'Invalid URL provided.');
   }
-  return fetchFormats(ytdlpPath, url);
+
+  try {
+    const formats = await fetchFormats(ytdlpPath, url);
+    return okResult(formats);
+  } catch (error) {
+    const message =
+      typeof error === 'string'
+        ? error
+        : error instanceof Error
+          ? error.message
+          : 'Failed to fetch formats.';
+    if (message.toLowerCase().includes('cancel')) {
+      return errorResult('NOT_AVAILABLE', message);
+    }
+    return errorResult('INTERNAL_ERROR', message);
+  }
 });
 ipcMain.on('cancel-formats', () => cancelFormats());
 
@@ -271,7 +575,10 @@ ipcMain.handle('open-file-location', async (_, filePath) => {
 
     const dir = path.dirname(validation.data);
     if (fs.existsSync(dir)) {
-      await shell.openPath(dir);
+      const openResult = await shell.openPath(dir);
+      if (typeof openResult === 'string' && openResult.trim() !== '') {
+        return errorResult('INTERNAL_ERROR', `Failed to open directory: ${openResult}`);
+      }
       return okResult({ opened: true });
     }
 
@@ -319,5 +626,289 @@ ipcMain.handle('show-notification', (_, options) => {
   } catch (error) {
     log.error('Error showing notification:', error);
     return errorResult('INTERNAL_ERROR', 'Failed to show notification.');
+  }
+});
+
+ipcMain.handle('export-settings', async () => {
+  try {
+    const parentWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const success = await exportSettingsToFile(parentWindow);
+    if (!success) return errorResult('INTERNAL_ERROR', 'Export cancelled or failed.');
+    return okResult({ exported: true });
+  } catch (error) {
+    log.error('Error exporting settings:', error);
+    return errorResult('INTERNAL_ERROR', 'Failed to export settings.');
+  }
+});
+
+ipcMain.handle('import-settings', async () => {
+  try {
+    const parentWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const success = await importSettingsFromFile(parentWindow);
+    if (!success) return errorResult('INTERNAL_ERROR', 'Import cancelled or failed.');
+    return okResult({ imported: true });
+  } catch (error) {
+    log.error('Error importing settings:', error);
+    return errorResult('INTERNAL_ERROR', 'Failed to import settings.');
+  }
+});
+
+ipcMain.handle('get-stats', () => loadStats());
+
+ipcMain.handle('reset-stats', () => {
+  const success = resetStats();
+  if (!success) return errorResult('INTERNAL_ERROR', 'Failed to reset stats.');
+  return okResult(undefined);
+});
+
+let downloadQueue: QueueItem[] = [];
+let isQueueRunning = false;
+let queueCancelled = false;
+let queueActiveItemId: string | null = null;
+let queueProcessingLock = false;
+
+const queuePath = path.join(app.getPath('userData'), 'download-queue.json');
+const queueBackupPath = path.join(app.getPath('userData'), 'download-queue.backup.json');
+
+function readQueueFromDisk(filePath: string): QueueItem[] | null {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed
+      .filter(
+        (item: unknown): item is QueueItem =>
+          item !== null &&
+          typeof item === 'object' &&
+          typeof (item as QueueItem).id === 'string' &&
+          typeof (item as QueueItem).url === 'string'
+      )
+      .map((item: QueueItem) => ({
+        ...item,
+        status: item.status === 'downloading' ? ('pending' as const) : item.status,
+      }));
+  } catch {
+    return null;
+  }
+}
+
+function loadPersistedQueue(): QueueItem[] {
+  const queueFromPrimary = readQueueFromDisk(queuePath);
+  if (queueFromPrimary) {
+    return queueFromPrimary;
+  }
+  const queueFromBackup = readQueueFromDisk(queueBackupPath);
+  if (queueFromBackup) {
+    log.warn('Primary queue file could not be read. Restoring queue from backup.');
+    return queueFromBackup;
+  }
+  return [];
+}
+
+function persistQueue(): void {
+  const tempPath = `${queuePath}.tmp`;
+  try {
+    const dir = path.dirname(queuePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const serialized = JSON.stringify(downloadQueue, null, 2);
+    fs.writeFileSync(tempPath, serialized, 'utf-8');
+    if (fs.existsSync(queuePath)) {
+      fs.copyFileSync(queuePath, queueBackupPath);
+      fs.rmSync(queuePath, { force: true });
+    }
+    fs.renameSync(tempPath, queuePath);
+    fs.copyFileSync(queuePath, queueBackupPath);
+  } catch (error) {
+    try {
+      if (fs.existsSync(tempPath)) fs.rmSync(tempPath, { force: true });
+    } catch {}
+    log.error('Failed to persist queue:', error);
+  }
+}
+
+downloadQueue = loadPersistedQueue();
+
+function generateQueueId(): string {
+  return `q_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function broadcastQueue() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('queue-update', downloadQueue);
+  }
+  persistQueue();
+}
+
+async function processQueue() {
+  if (!isQueueRunning || queueProcessingLock) return;
+  queueProcessingLock = true;
+
+  try {
+    const nextItem = downloadQueue.find((item) => item.status === 'pending');
+    if (!nextItem || queueCancelled) {
+      isQueueRunning = false;
+      queueCancelled = false;
+      queueActiveItemId = null;
+      broadcastQueue();
+      return;
+    }
+
+    nextItem.status = 'downloading';
+    queueActiveItemId = nextItem.id;
+    broadcastQueue();
+
+    await new Promise<void>((resolve) => {
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        nextItem.status = 'failed';
+        nextItem.error = 'Window closed';
+        queueActiveItemId = null;
+        broadcastQueue();
+        resolve();
+        return;
+      }
+
+      const settings = loadSettings();
+      const options: DownloadRequestOptions = {
+        url: nextItem.url,
+        outputPath: app.getPath('downloads'),
+        ffmpegPath: settings.ffmpegPath || undefined,
+        convertFormat: settings.convertEnabled ? settings.convertFormat : undefined,
+        keepOriginal: settings.convertEnabled ? settings.keepOriginalAfterConvert : undefined,
+      };
+
+      let settled = false;
+      const completeListener = (statusMessage: string) => {
+        if (settled) return;
+        settled = true;
+
+        const msg = String(statusMessage || '').toLowerCase();
+        if (msg.includes('cancel')) {
+          nextItem.status = 'cancelled';
+          nextItem.error = undefined;
+        } else if (msg.includes('\u2705') || msg.includes('complete') || msg.includes('done')) {
+          nextItem.status = 'completed';
+          nextItem.error = undefined;
+        } else {
+          nextItem.status = 'failed';
+          nextItem.error = statusMessage;
+        }
+
+        queueActiveItemId = null;
+        broadcastQueue();
+        resolve();
+      };
+
+      try {
+        startDownload(ytdlpPath, mainWindow.webContents, options, mainWindow, completeListener);
+      } catch (error) {
+        nextItem.status = 'failed';
+        nextItem.error = (error as Error).message;
+        queueActiveItemId = null;
+        broadcastQueue();
+        resolve();
+      }
+    });
+
+    if (isQueueRunning && !queueCancelled) {
+      queueProcessingLock = false;
+      void processQueue();
+      return;
+    }
+  } finally {
+    queueProcessingLock = false;
+  }
+}
+
+ipcMain.handle('add-to-queue', (event, urls) => {
+  if (mainWindow && !mainWindow.isDestroyed() && event.sender?.id !== mainWindow.webContents.id) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
+  if (!Array.isArray(urls)) {
+    return errorResult('VALIDATION_ERROR', 'URLs must be an array.');
+  }
+  const validUrls = urls.filter((u): u is string => typeof u === 'string' && isSafeHttpUrl(u));
+  if (validUrls.length === 0) {
+    return errorResult('VALIDATION_ERROR', 'No valid URLs provided.');
+  }
+  if (downloadQueue.length + validUrls.length > MAX_QUEUE_SIZE) {
+    return errorResult('VALIDATION_ERROR', `Queue limit reached (max ${MAX_QUEUE_SIZE} items).`);
+  }
+  const newItems: QueueItem[] = validUrls.map((url) => ({
+    id: generateQueueId(),
+    url,
+    status: 'pending' as const,
+    addedAt: Date.now(),
+  }));
+  downloadQueue.push(...newItems);
+  broadcastQueue();
+  return okResult({ added: validUrls.length });
+});
+
+ipcMain.handle('remove-from-queue', (event, id) => {
+  if (mainWindow && !mainWindow.isDestroyed() && event.sender?.id !== mainWindow.webContents.id) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
+  if (typeof id !== 'string') {
+    return errorResult('VALIDATION_ERROR', 'Queue item ID must be a string.');
+  }
+  const idx = downloadQueue.findIndex((item) => item.id === id);
+  if (idx === -1) return errorResult('NOT_AVAILABLE', 'Queue item not found.');
+  const item = downloadQueue[idx];
+  if (!item) return errorResult('NOT_AVAILABLE', 'Queue item not found.');
+  if (item.status === 'downloading') {
+    return errorResult('VALIDATION_ERROR', 'Cannot remove an actively downloading item.');
+  }
+  downloadQueue.splice(idx, 1);
+  broadcastQueue();
+  return okResult(undefined);
+});
+
+ipcMain.handle('clear-queue', () => {
+  if (isQueueRunning) {
+    queueCancelled = true;
+    cancelActiveSession(true);
+    isQueueRunning = false;
+    queueActiveItemId = null;
+  }
+  downloadQueue = [];
+  broadcastQueue();
+  return okResult(undefined);
+});
+
+ipcMain.handle('get-queue', () => downloadQueue);
+
+ipcMain.handle('start-queue', () => {
+  const pending = downloadQueue.filter((item) => item.status === 'pending');
+  if (pending.length === 0) {
+    return errorResult('NOT_AVAILABLE', 'No pending items in queue.');
+  }
+  if (isQueueRunning) {
+    return errorResult('VALIDATION_ERROR', 'Queue is already running.');
+  }
+  isQueueRunning = true;
+  queueCancelled = false;
+  void processQueue();
+  return okResult({ started: true });
+});
+
+ipcMain.handle('cancel-queue', () => {
+  try {
+    queueCancelled = true;
+    isQueueRunning = false;
+    if (queueActiveItemId) {
+      cancelActiveSession(true);
+      queueActiveItemId = null;
+    }
+    downloadQueue.forEach((item) => {
+      if (item.status === 'pending' || item.status === 'downloading') {
+        item.status = 'cancelled';
+      }
+    });
+    broadcastQueue();
+    return okResult(undefined);
+  } catch (error) {
+    log.error('Error in cancel-queue handler:', error);
+    return errorResult('INTERNAL_ERROR', 'Failed to cancel queue.');
   }
 });

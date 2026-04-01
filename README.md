@@ -19,15 +19,13 @@ ROSI is an Electron GUI for yt-dlp
 
 # Requirements
 
-ROSI requires ffmpeg to be installed in your system and available in its PATH.
-Learn how to install ffmpeg: [https://help.rosie.run/installing-ffmpeg](https://help.rosie.run/installing-ffmpeg)
+Official ROSI builds bundle FFmpeg per platform and architecture.
 
-- **MacOS:** `brew install ffmpeg`
-- **Windows:** `winget install ffmpeg`
-- **Linux:**
-- - **Debian/Ubuntu:** `sudo apt install ffmpeg -y`
-  - **Fedora:** `sudo dnf install ffmpeg -y`
-  - **Arch:** `sudo pacman -S ffmpeg -y`
+When building from source, you must place FFmpeg binaries in `resources/ffmpeg/<platform>/<arch>/`
+before packaging. See [resources/ffmpeg/README.md](resources/ffmpeg/README.md) for the required
+layout.
+
+You can optionally set a custom FFmpeg path in Settings to override the bundled binary.
 
 ## ℹ️ The Microsoft Store version of ROSI is now integrated into the main codebase. Its customizations are run via electron-builder when specifying to release for the ms store.
 

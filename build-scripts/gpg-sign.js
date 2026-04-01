@@ -421,6 +421,7 @@ async function uploadSignatures(release, filesToUpload) {
   }
 
   console.log('\nUploading to GitHub release...');
+  const uploadFailures = [];
 
   for (const filePath of filesToUpload) {
     if (!filePath) continue;
@@ -435,7 +436,14 @@ async function uploadSignatures(release, filesToUpload) {
       }
     } catch (error) {
       console.log('✗ ' + error.message);
+      uploadFailures.push(fileName + ': ' + error.message);
     }
+  }
+
+  if (uploadFailures.length > 0) {
+    throw new Error(
+      'One or more uploads failed:\n' + uploadFailures.map((item) => '  - ' + item).join('\n')
+    );
   }
 }
 
@@ -497,6 +505,13 @@ async function main() {
   const checksumSig = signFile(checksumFile);
   if (checksumSig) signatureFiles.push(checksumSig);
 
+  const expectedSignatureCount = files.length + 1;
+  if (signatureFiles.length !== expectedSignatureCount) {
+    throw new Error(
+      `Signing failed for one or more artifacts. Expected ${expectedSignatureCount} signatures, generated ${signatureFiles.length}.`
+    );
+  }
+
   const filesToUpload = [...signatureFiles, checksumFile];
 
   console.log('\nFiles queued for upload:');
@@ -515,7 +530,7 @@ async function main() {
   console.log('\n' + '═'.repeat(60));
   console.log('✓ COMPLETE');
   console.log('═'.repeat(60));
-  console.log('\nGenerated files in dist/:');
+  console.log('\nGenerated files in release/:');
 
   const generatedFiles = fs
     .readdirSync(RELEASE_DIR)
@@ -531,4 +546,7 @@ async function main() {
   }
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

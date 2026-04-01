@@ -1,9 +1,13 @@
+export type AudioFormat = 'mp3' | 'flac' | 'ogg' | 'wav' | 'm4a' | 'opus';
+
 export interface Settings {
   settingsVersion: number;
+  theme: ThemePreference;
   showConsoleOutput: boolean;
   consoleCollapsed: boolean;
   advancedOptions: boolean;
   audioOnly: boolean;
+  audioFormat: AudioFormat;
   convertEnabled: boolean;
   convertFormat: string;
   keepOriginalAfterConvert: boolean;
@@ -23,6 +27,7 @@ export interface Settings {
 }
 
 export type UpdateChannel = 'auto' | 'stable' | 'beta';
+export type ThemePreference = 'system' | 'light' | 'dark' | 'purple';
 
 export type DistributionChannel = 'github' | 'msstore';
 
@@ -53,6 +58,7 @@ export interface DownloadSession {
   lifecycle: DownloadLifecycleState;
   ytdlpProcess: import('child_process').ChildProcess | null;
   ffmpegProcess: import('child_process').ChildProcess | null;
+  onComplete?: (statusMessage: string) => void;
 }
 
 export interface DownloadRequestOptions {
@@ -82,6 +88,26 @@ export interface NotificationRequest {
   filePath?: string;
 }
 
+export interface DownloadStats {
+  totalDownloads: number;
+  successfulDownloads: number;
+  failedDownloads: number;
+  cancelledDownloads: number;
+  totalBytesDownloaded: number;
+  formatCounts: Record<string, number>;
+  firstDownloadAt: number | null;
+  lastDownloadAt: number | null;
+}
+
+export interface QueueItem {
+  id: string;
+  url: string;
+  status: 'pending' | 'downloading' | 'completed' | 'failed' | 'cancelled';
+  addedAt: number;
+  filename?: string;
+  error?: string;
+}
+
 export type UpdaterStatusEvent =
   | { status: 'checking' }
   | {
@@ -102,7 +128,7 @@ export interface UpdaterProgressEvent {
   total: number;
 }
 
-export type UpdateCheckResponse = unknown | { error: string; message?: string };
+export type UpdateCheckResponse = { error: string; message?: string } | null;
 
 export interface UpdateDownloadResult {
   success?: boolean;
@@ -113,7 +139,7 @@ export interface UpdateDownloadResult {
 export interface RendererApi {
   restartApp: () => Promise<void>;
   getChannel: () => DistributionChannel;
-  getFormats: (url: string) => Promise<string>;
+  getFormats: (url: string) => Promise<IpcResult<string>>;
   selectDownloadLocation: () => Promise<string | null>;
   getSettings: () => Promise<Settings>;
   saveSettings: (settings: Partial<Settings>) => Promise<IpcResult<Settings>>;
@@ -143,4 +169,18 @@ export interface RendererApi {
   onComplete: (callback: (message: string) => void) => () => void;
   openFileLocation: (filePath: string) => Promise<IpcResult<{ opened: boolean }>>;
   showNotification: (options: NotificationRequest) => Promise<IpcResult<{ shown: boolean }>>;
+  exportSettings: () => Promise<IpcResult<{ exported: boolean }>>;
+  importSettings: () => Promise<IpcResult<{ imported: boolean }>>;
+  getStats: () => Promise<DownloadStats>;
+  resetStats: () => Promise<IpcResult<void>>;
+  logError: (message: string) => void;
+  notifySettingsFlushed: () => void;
+  addToQueue: (urls: string[]) => Promise<IpcResult<{ added: number }>>;
+  removeFromQueue: (id: string) => Promise<IpcResult<void>>;
+  clearQueue: () => Promise<IpcResult<void>>;
+  getQueue: () => Promise<QueueItem[]>;
+  startQueue: () => Promise<IpcResult<{ started: boolean }>>;
+  cancelQueue: () => Promise<IpcResult<void>>;
+  onPrepareForClose: (callback: () => void | Promise<void>) => () => void;
+  onQueueUpdate: (callback: (queue: QueueItem[]) => void) => () => void;
 }

@@ -1,0 +1,75 @@
+app-id: com.burnttoasters.rosi
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+base: org.electronjs.Electron2.BaseApp
+base-version: '24.08'
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.node22
+command: rosi
+separate-locales: false
+
+finish-args:
+  # X11 + XShm access
+  - --share=ipc
+  - --socket=x11
+  # Wayland access
+  - --socket=wayland
+  # Network access (for downloading videos & updates)
+  - --share=network
+  # GPU acceleration (for hardware-accelerated encoding)
+  - --device=dri
+  # File system access for saving downloads
+  - --filesystem=home
+  - --filesystem=xdg-videos
+  - --filesystem=xdg-download
+  # Notifications
+  - --talk-name=org.freedesktop.Notifications
+  # KDE/GNOME tray host (StatusNotifierItem)
+  - --talk-name=org.kde.StatusNotifierWatcher
+  # Needed for Electron
+  - --env=ELECTRON_OZONE_PLATFORM_HINT=auto
+
+modules:
+  - name: rosi
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/node22/bin
+      build-args:
+        - --share=network
+      env:
+        ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        npm_config_cache: /run/build/rosi/flatpak-node/npm-cache
+        HUSKY: '0'
+    build-commands:
+      # Install dependencies
+      - npm install --legacy-peer-deps
+
+      # Build the application
+      - npm run compile
+
+      # Copy application files to /app
+      - mkdir -p /app/rosi/src/renderer
+      - cp -r dist /app/rosi/
+      - cp -r assets /app/rosi/
+      - cp -r resources /app/rosi/
+      - cp -r node_modules /app/rosi/
+      - cp -r src/renderer /app/rosi/src/
+      - cp package.json /app/rosi/
+      - cp licenses.json /app/rosi/
+
+      # Install icon
+      - install -Dm644 build/app-icon.png /app/share/icons/hicolor/512x512/apps/com.burnttoasters.rosi.png
+
+      # Create desktop file
+      - install -Dm644 com.burnttoasters.rosi.desktop /app/share/applications/com.burnttoasters.rosi.desktop
+
+      # Create AppStream metadata
+      - install -Dm644 com.burnttoasters.rosi.metainfo.xml /app/share/metainfo/com.burnttoasters.rosi.metainfo.xml
+
+      # Create wrapper script
+      - install -Dm755 rosi.sh /app/bin/rosi
+
+    sources:
+      - type: dir
+        path: .

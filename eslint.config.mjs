@@ -5,7 +5,7 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ['dist/', 'release/', 'node_modules/', 'build-scripts/', 'src/renderer/', '._temp_*/', '*.js', '!eslint.config.mjs'],
+    ignores: ['dist/', 'release/', 'node_modules/', 'src/renderer/', '._temp_*/', '*.js', '!eslint.config.mjs', '!build-scripts/*.js'],
   },
   {
     files: ['src/**/*.ts'],
@@ -33,12 +33,45 @@ export default tseslint.config(
       'no-useless-escape': 'warn',
 
       'no-empty': ['error', { allowEmptyCatch: true }],
+      '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-misused-promises': ['error', { checksVoidReturn: false }],
     },
   },
   {
     files: ['src/tests/**/*.ts'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'warn',
+    },
+  },
+  {
+    files: ['build-scripts/*.js'],
+    languageOptions: {
+      globals: {
+        require: 'readonly',
+        module: 'readonly',
+        exports: 'readonly',
+        __dirname: 'readonly',
+        __filename: 'readonly',
+        process: 'readonly',
+        console: 'readonly',
+        Buffer: 'readonly',
+        setTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearTimeout: 'readonly',
+        clearInterval: 'readonly',
+        URL: 'readonly',
+      },
+    },
+    rules: {
+      'no-var': 'error',
+      'prefer-const': 'error',
+      eqeqeq: ['error', 'always', { null: 'ignore' }],
+      'no-eval': 'error',
+      'no-implied-eval': 'error',
+      'no-new-func': 'error',
+      '@typescript-eslint/no-require-imports': 'off',
+      '@typescript-eslint/no-unused-vars': 'off',
+      'no-control-regex': 'off',
     },
   }
 );
