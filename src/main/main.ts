@@ -49,6 +49,9 @@ process.on('uncaughtException', (error) => {
     killAllProcesses();
   } catch {}
   try {
+    cancelFormats();
+  } catch {}
+  try {
     dialog.showErrorBox(
       'Fatal Error',
       `ROSI encountered an unexpected error and must close.\n\n${error.message}`
@@ -75,6 +78,7 @@ let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 let mainWindowCloseInProgress = false;
 let mainWindowCloseTimer: NodeJS.Timeout | null = null;
+let appQuitting = false;
 
 function getMainWindow() {
   return mainWindow;
@@ -278,6 +282,7 @@ function createWindow() {
 
     mainWindowCloseTimer = setTimeout(() => {
       log.warn('Timed out waiting for renderer settings flush. Closing window.');
+      mainWindowCloseInProgress = false;
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.destroy();
       }
@@ -391,7 +396,7 @@ void app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  if (process.platform !== 'darwin' || appQuitting) app.quit();
 });
 
 app.on('activate', () => {
@@ -399,6 +404,7 @@ app.on('activate', () => {
 });
 
 app.on('before-quit', () => {
+  appQuitting = true;
   try {
     killAllProcesses();
   } catch (error) {
@@ -461,7 +467,10 @@ ipcMain.handle('save-settings', (_, data) => {
 
 ipcMain.handle('detect-gpu', () => detectGpu());
 
-ipcMain.on('reset-settings', () => {
+ipcMain.on('reset-settings', (event) => {
+  if (mainWindow && !mainWindow.isDestroyed() && event.sender?.id !== mainWindow.webContents.id) {
+    return;
+  }
   try {
     const saved = saveSettings(getDefaultSettings(), mainWindow);
     if (!saved) {
@@ -531,9 +540,17 @@ ipcMain.handle('getFormats', async (_, url) => {
     return errorResult('INTERNAL_ERROR', message);
   }
 });
-ipcMain.on('cancel-formats', () => cancelFormats());
+ipcMain.on('cancel-formats', (event) => {
+  if (mainWindow && !mainWindow.isDestroyed() && event.sender?.id !== mainWindow.webContents.id) {
+    return;
+  }
+  cancelFormats();
+});
 
 ipcMain.handle('download-video', (event, options) => {
+  if (mainWindow && !mainWindow.isDestroyed() && event.sender?.id !== mainWindow.webContents.id) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
   const validation = validateDownloadRequestPayload(options);
   if (!validation.ok) {
     return errorResult(validation.error.code, validation.error.message, validation.error.details);
@@ -548,7 +565,10 @@ ipcMain.handle('download-video', (event, options) => {
   }
 });
 
-ipcMain.on('cancel-download', () => {
+ipcMain.on('cancel-download', (event) => {
+  if (mainWindow && !mainWindow.isDestroyed() && event.sender?.id !== mainWindow.webContents.id) {
+    return;
+  }
   try {
     cancelActiveSession(true);
   } catch (error) {
@@ -609,9 +629,10 @@ ipcMain.handle('show-notification', (_, options) => {
 
     notification.on('click', () => {
       try {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          if (mainWindow.isMinimized()) mainWindow.restore();
-          mainWindow.focus();
+        const win = getMainWindow();
+        if (win && !win.isDestroyed()) {
+          if (win.isMinimized()) win.restore();
+          win.focus();
         }
         if (validation.data.filePath) {
           shell.showItemInFolder(validation.data.filePath);

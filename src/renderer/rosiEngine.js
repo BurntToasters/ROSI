@@ -595,9 +595,10 @@ function updateProgressBar(percent, statusText = null, detailsText = null) {
   const bar = document.getElementById('progress-bar');
   const details = document.getElementById('progress-details');
 
-  if (percentEl) percentEl.textContent = `${Math.round(percent)}%`;
+  const clamped = Math.max(0, Math.min(100, percent));
+  if (percentEl) percentEl.textContent = `${Math.round(clamped)}%`;
   if (bar) {
-    bar.style.width = `${percent}%`;
+    bar.style.width = `${clamped}%`;
     bar.classList.remove('indeterminate');
   }
   if (statusText && statusEl) statusEl.textContent = statusText;
