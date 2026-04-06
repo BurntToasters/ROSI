@@ -21,7 +21,7 @@ function listFlatpakBuildDirs() {
 }
 
 function cleanBuildArtifacts() {
-  const dirs = ['release', 'dist', ...listFlatpakBuildDirs()];
+  const dirs = ['dist', ...listFlatpakBuildDirs()];
   for (const dir of dirs) {
     try {
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
