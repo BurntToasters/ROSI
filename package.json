@@ -21,7 +21,7 @@
     "gitprune:force": "node build-scripts/git-prune-local-branches.js --force",
     "prepare": "node build-scripts/install-hooks.js",
     "hooks:install": "node build-scripts/install-hooks.js",
-    "clean": "node build-scripts/dist-tools.js clean",
+    "clean": "node build-scripts/dist-tools.js clean && node build-scripts/dist-tools.js clean-release",
     "licenses": "npx npm-license-crawler --production --json licenses.json",
     "compile:main": "tsc --project tsconfig.main.json",
     "compile:renderer": "tsc --project tsconfig.renderer.json",
