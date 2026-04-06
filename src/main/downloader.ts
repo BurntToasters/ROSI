@@ -485,18 +485,18 @@ export function startDownload(
         return;
       }
 
-      let downloadedFilePath: string | null = null;
+      let downloadedFilePath: string;
       try {
         const outputLines = downloadOutputData.trim().split('\n');
         const pathLines = outputLines
           .map((l) => l.trim())
           .filter((l) => l.length > 0 && !l.startsWith('[') && !l.startsWith('WARNING'));
-        downloadedFilePath =
+        const rawPath: string | null =
           pathLines.length > 0 ? (pathLines[pathLines.length - 1] ?? null) : null;
-        if (!downloadedFilePath || downloadedFilePath.trim() === '') {
+        if (!rawPath || rawPath.trim() === '') {
           throw new Error("Could not find a valid filepath in yt-dlp's output.");
         }
-        const resolvedFilePath = path.resolve(downloadedFilePath);
+        const resolvedFilePath = path.resolve(rawPath);
         const resolvedDownloadDir = path.resolve(normalizedDownloadDir);
         const caseInsensitive = isWindows || isMac;
         const compareFilePath = caseInsensitive ? resolvedFilePath.toLowerCase() : resolvedFilePath;

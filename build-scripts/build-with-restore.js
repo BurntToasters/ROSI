@@ -10,15 +10,16 @@ function usage() {
   process.exit(1);
 }
 
-function resolveCommand(command) {
-  if (process.platform === 'win32' && (command === 'npm' || command === 'npx')) {
-    return `${command}.cmd`;
-  }
-  return command;
-}
-
 function run(command, commandArgs, envOverrides) {
-  const result = spawnSync(resolveCommand(command), commandArgs, {
+  let finalCommand = command;
+  let finalArgs = commandArgs;
+
+  if (process.platform === 'win32' && (command === 'npm' || command === 'npx')) {
+    finalCommand = 'cmd.exe';
+    finalArgs = ['/c', `${command}.cmd`, ...commandArgs];
+  }
+
+  const result = spawnSync(finalCommand, finalArgs, {
     stdio: 'inherit',
     env: { ...process.env, ...envOverrides },
     shell: false,
