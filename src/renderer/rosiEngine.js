@@ -1354,10 +1354,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     logError('Could not get app version', e);
   }
 
-  try {
-    setupAutoUpdater();
-  } catch (e) {
-    logError('Failed to setup auto-updater', e);
+  if (window.api.getChannel() !== 'msstore') {
+    try {
+      setupAutoUpdater();
+    } catch (e) {
+      logError('Failed to setup auto-updater', e);
+    }
   }
   let settingsSaveErrorShownAt = 0;
 
