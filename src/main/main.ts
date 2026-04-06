@@ -417,7 +417,9 @@ app.on('before-quit', () => {
   }
 });
 
-setupAutoUpdater(getMainWindow, loadSettings);
+if (!process.windowsStore) {
+  setupAutoUpdater(getMainWindow, loadSettings);
+}
 
 ipcMain.on('log-error', (_, message) => {
   if (typeof message === 'string') {
@@ -443,10 +445,12 @@ ipcMain.on('settings-flush-complete', (event) => {
 
 ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('is-packaged', () => isPackaged);
-ipcMain.handle('check-for-updates', () => checkForUpdates(isPackaged, loadSettings));
-ipcMain.handle('download-update', () => downloadUpdate());
-ipcMain.on('cancel-update-download', () => cancelUpdateDownload(getMainWindow));
-ipcMain.on('install-update', () => installUpdate());
+if (!process.windowsStore) {
+  ipcMain.handle('check-for-updates', () => checkForUpdates(isPackaged, loadSettings));
+  ipcMain.handle('download-update', () => downloadUpdate());
+  ipcMain.on('cancel-update-download', () => cancelUpdateDownload(getMainWindow));
+  ipcMain.on('install-update', () => installUpdate());
+}
 
 ipcMain.handle('check-deno-installed', () => checkDenoInstalled());
 ipcMain.handle('install-deno', () => installDeno(mainWindow));
