@@ -29,7 +29,12 @@ export async function detectGpu(): Promise<GpuDetectionResult> {
         if (settled) return;
         settled = true;
         try {
-          proc.kill();
+          proc.kill('SIGTERM');
+          setTimeout(() => {
+            try {
+              if (!proc.killed) proc.kill('SIGKILL');
+            } catch {}
+          }, 3000);
         } catch (killErr) {
           log.warn('Error killing GPU detection process on timeout:', killErr);
         }

@@ -15,7 +15,12 @@ import {
   markTerminalEventEmitted,
   classifyDownloadExit,
 } from '../utils/downloadLifecycle';
-import { MAX_OUTPUT_BUFFER, MAX_ERROR_BUFFER, FORMAT_FETCH_TIMEOUT_MS } from './constants';
+import {
+  MAX_OUTPUT_BUFFER,
+  MAX_ERROR_BUFFER,
+  FORMAT_FETCH_TIMEOUT_MS,
+  FFMPEG_CONVERT_TIMEOUT_MS,
+} from './constants';
 import type { ChildProcess } from 'child_process';
 import type { DownloadSession, DownloadRequestOptions, FormatsProcess, Settings } from '../types';
 
@@ -172,6 +177,9 @@ export function fetchFormats(ytdlpPath: string, url: string): Promise<string> {
     });
     proc.on('close', (code) => {
       clearTimeout(timeout);
+      proc.removeAllListeners();
+      proc.stdout?.removeAllListeners();
+      proc.stderr?.removeAllListeners();
       const wasCancelled = formatsProcess?.proc === proc && formatsProcess.cancelled;
       if (formatsProcess?.proc === proc) {
         formatsProcess = null;
@@ -188,6 +196,9 @@ export function fetchFormats(ytdlpPath: string, url: string): Promise<string> {
     });
     proc.on('error', (err) => {
       clearTimeout(timeout);
+      proc.removeAllListeners();
+      proc.stdout?.removeAllListeners();
+      proc.stderr?.removeAllListeners();
       if (formatsProcess?.proc === proc) {
         formatsProcess = null;
       }
@@ -270,6 +281,12 @@ async function runConversion(
     const ffProc = spawnWithEnv(ffmpegCommand, ffmpegArgs);
     session.ffmpegProcess = ffProc;
 
+    const conversionTimeout = setTimeout(() => {
+      if (!isActiveSession(session) || !ffProc || ffProc.killed) return;
+      sendProgress(session, '❌ Conversion timed out after 10 minutes.');
+      killProcess(ffProc, 'ffmpeg-timeout');
+    }, FFMPEG_CONVERT_TIMEOUT_MS);
+
     ffProc.stdout?.on('data', (data) => {
       if (!isActiveSession(session)) return;
       sendProgress(session, `[ffmpeg] ${data.toString().trim()}`);
@@ -280,6 +297,7 @@ async function runConversion(
     });
 
     ffProc.on('close', (ffmpegCode) => {
+      clearTimeout(conversionTimeout);
       if (!isActiveSession(session)) return;
       session.ffmpegProcess = null;
       const ffExitType = classifyDownloadExit(session.lifecycle, ffmpegCode ?? 1);
@@ -321,11 +339,15 @@ async function runConversion(
           `❌ Conversion failed: FFmpeg process exited with code ${ffmpegCode}`
         );
         sendProgress(session, `   Check FFmpeg output above for details.`);
+        try {
+          if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+        } catch {}
         completeSession(session, '❌ Conversion failed.');
       }
     });
 
     ffProc.on('error', (err) => {
+      clearTimeout(conversionTimeout);
       if (!isActiveSession(session)) return;
       session.ffmpegProcess = null;
       if (classifyDownloadExit(session.lifecycle, 1) === 'cancelled') {

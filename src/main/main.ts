@@ -834,14 +834,11 @@ async function processQueue() {
         resolve();
       }
     });
-
-    if (isQueueRunning && !queueCancelled) {
-      queueProcessingLock = false;
-      void processQueue();
-      return;
-    }
   } finally {
     queueProcessingLock = false;
+    if (isQueueRunning && !queueCancelled) {
+      void processQueue();
+    }
   }
 }
 
