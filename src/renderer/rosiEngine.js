@@ -2629,14 +2629,14 @@ document.addEventListener('DOMContentLoaded', async () => {
           hideProgressBar();
         });
 
-        const videoFormat = settings.advancedOptions ? videoSelect.value : null;
-        const audioFormat = settings.advancedOptions ? audioSelect.value : null;
-        const convertFormat = settings.convertEnabled ? convertFormatSelect.value : null;
+        const videoFormat = settings.advancedOptions ? videoSelect.value : undefined;
+        const audioFormat = settings.advancedOptions ? audioSelect.value : undefined;
+        const convertFormat = settings.convertEnabled ? convertFormatSelect.value : undefined;
         const needsMerge = settings.bestQuality || (videoFormat && audioFormat);
         const needsConvert = settings.convertEnabled && convertFormat;
         configureProgressPhases(!!needsMerge, !!needsConvert);
         showProgressBar('Starting download...');
-        const keepOriginal = settings.convertEnabled ? keepOriginalToggle.checked : null;
+        const keepOriginal = settings.convertEnabled ? keepOriginalToggle.checked : undefined;
         const startResult = await window.api.downloadVideo({
           url,
           videoFormat,
