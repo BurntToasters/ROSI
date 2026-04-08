@@ -4,6 +4,7 @@ export const FORMAT_FETCH_TIMEOUT_MS = 60_000;
 export const DENO_CHECK_TIMEOUT_MS = 10_000;
 export const DENO_INSTALL_TIMEOUT_MS = 120_000;
 export const GPU_DETECT_TIMEOUT_MS = 10_000;
+export const FFMPEG_CONVERT_TIMEOUT_MS = 600_000;
 export const MAX_OUTPUT_BUFFER = 500_000;
 export const MAX_ERROR_BUFFER = 100_000;
 
