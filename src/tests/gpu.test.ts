@@ -1,16 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'events';
 
-const { loadSettingsMock, getEffectiveFfmpegPathMock, spawnWithEnvMock, logErrorMock } = vi.hoisted(
-  () => {
-    return {
-      loadSettingsMock: vi.fn(),
-      getEffectiveFfmpegPathMock: vi.fn(),
-      spawnWithEnvMock: vi.fn(),
-      logErrorMock: vi.fn(),
-    };
-  }
-);
+const {
+  loadSettingsMock,
+  getEffectiveFfmpegPathMock,
+  spawnWithEnvMock,
+  logErrorMock,
+  logWarnMock,
+} = vi.hoisted(() => {
+  return {
+    loadSettingsMock: vi.fn(),
+    getEffectiveFfmpegPathMock: vi.fn(),
+    spawnWithEnvMock: vi.fn(),
+    logErrorMock: vi.fn(),
+    logWarnMock: vi.fn(),
+  };
+});
 
 vi.mock('../main/settings', () => ({
   loadSettings: loadSettingsMock,
@@ -24,7 +29,7 @@ vi.mock('../main/platform', () => ({
 vi.mock('electron-log/main', () => ({
   default: {
     error: logErrorMock,
-    warn: vi.fn(),
+    warn: logWarnMock,
   },
 }));
 
@@ -35,9 +40,11 @@ function createProc() {
     stdout: EventEmitter;
     stderr: EventEmitter;
     kill: () => void;
+    killed: boolean;
   };
   proc.stdout = new EventEmitter();
   proc.stderr = new EventEmitter();
+  proc.killed = false;
   proc.kill = vi.fn();
   return proc;
 }
@@ -83,6 +90,50 @@ describe('gpu detection', () => {
       amd: false,
       intel: false,
     });
+  });
+
+  it('returns all false and kills process on timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const proc = createProc();
+      spawnWithEnvMock.mockReturnValue(proc);
+
+      const pending = detectGpu();
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      await expect(pending).resolves.toEqual({
+        nvidia: false,
+        amd: false,
+        intel: false,
+      });
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
+      expect(proc.kill).toHaveBeenCalledWith('SIGKILL');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('logs timeout kill failures', async () => {
+    vi.useFakeTimers();
+    try {
+      const proc = createProc();
+      proc.kill = vi.fn(() => {
+        throw new Error('kill denied');
+      });
+      spawnWithEnvMock.mockReturnValue(proc);
+
+      const pending = detectGpu();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await pending;
+
+      expect(logWarnMock).toHaveBeenCalledWith(
+        'Error killing GPU detection process on timeout:',
+        expect.any(Error)
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('logs and returns default result if spawn throws', async () => {
