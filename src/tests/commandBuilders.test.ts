@@ -89,6 +89,11 @@ describe('command builders', () => {
     expect(args).toEqual(['-i', 'input.mp4', '-vn', '-c:a', 'libmp3lame', '-y', 'output.mp3']);
   });
 
+  it('builds ffmpeg args for m4a audio extraction', () => {
+    const args = buildFfmpegArgs('input.mp4', 'output.m4a', 'm4a', 'copy');
+    expect(args).toEqual(['-i', 'input.mp4', '-vn', '-c:a', 'aac', '-y', 'output.m4a']);
+  });
+
   it('builds ffmpeg args for video conversion', () => {
     const args = buildFfmpegArgs('input.webm', 'output.mp4', 'mp4', 'h264_nvenc');
     expect(args).toEqual([
@@ -198,6 +203,41 @@ describe('command builders', () => {
     });
 
     expect(result.args).toContain('137+140');
+  });
+
+  it('builds yt-dlp args for video-only format override', () => {
+    const result = buildYtdlpArgs({
+      normalizedDownloadDir: '/tmp/downloads',
+      url: 'https://example.com/video',
+      settings: createSettings({ bestQuality: true }),
+      options: {
+        url: 'https://example.com/video',
+        outputPath: '/tmp/downloads',
+        videoFormat: '248',
+      },
+      ffmpegLocation: null,
+    });
+
+    expect(result.args).toContain('248');
+    expect(result.statusMessages).toContain('📹 Using video format: 248');
+  });
+
+  it('builds yt-dlp args for audio-only format override', () => {
+    const result = buildYtdlpArgs({
+      normalizedDownloadDir: '/tmp/downloads',
+      url: 'https://example.com/video',
+      settings: createSettings({ audioOnly: true }),
+      options: {
+        url: 'https://example.com/video',
+        outputPath: '/tmp/downloads',
+        audioFormat: '251',
+      },
+      ffmpegLocation: null,
+    });
+
+    expect(result.args).toContain('251');
+    expect(result.args).not.toContain('-x');
+    expect(result.statusMessages).toContain('🎵 Using audio format: 251');
   });
 
   it('ignores unrecognised browser names', () => {
