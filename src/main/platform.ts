@@ -118,7 +118,7 @@ export function resolveFfmpegPath(customPath: unknown): string | null {
     return trimmed;
   }
 
-  const resolved = path.resolve(trimmed);
+  const resolved = isWindows ? path.win32.resolve(trimmed) : path.resolve(trimmed);
 
   let candidate = resolved;
 
