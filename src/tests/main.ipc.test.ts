@@ -34,9 +34,9 @@ const {
   fetchFormatsMock,
   cancelFormatsMock,
 } = vi.hoisted(() => {
-  const handleMap: Record<string, (...args: unknown[]) => unknown> = {};
-  const onMap: Record<string, (...args: unknown[]) => unknown> = {};
-  const appOnMap: Record<string, (...args: unknown[]) => unknown> = {};
+  const handleMap: Record<string, any> = {};
+  const onMap: Record<string, any> = {};
+  const appOnMap: Record<string, any> = {};
   const send = vi.fn();
   const windows: Array<{
     destroyed: boolean;
@@ -167,7 +167,12 @@ const {
     resetStatsMock: vi.fn(() => true),
     exportSettingsToFileMock: vi.fn(async () => true),
     importSettingsFromFileMock: vi.fn(async () => true),
-    showOpenDialogMock: vi.fn(async () => ({ canceled: true, filePaths: [] })),
+    showOpenDialogMock: vi.fn(
+      async (): Promise<{ canceled: boolean; filePaths: string[] }> => ({
+        canceled: true,
+        filePaths: [],
+      })
+    ),
     openExternalMock: vi.fn(async () => {}),
     openPathMock: vi.fn(async () => ''),
     showItemInFolderMock: vi.fn(),
@@ -796,7 +801,7 @@ describe('main process IPC wiring and queue behavior', () => {
     const mainWindow = getPrimaryWindow();
     const closeHandler = getWindowHandler(mainWindow, 'close');
     const preventDefault = vi.fn();
-    mainWindow.destroy();
+    (mainWindow.destroy as unknown as () => void)();
 
     closeHandler({ preventDefault });
 
@@ -844,7 +849,7 @@ describe('main process IPC wiring and queue behavior', () => {
     expect(await handleHandlers['select-download-location']!()).toBeNull();
 
     for (const windowRef of BrowserWindowMock.getAllWindows() as unknown as MockWindow[]) {
-      windowRef.destroy();
+      (windowRef.destroy as unknown as () => void)();
     }
     expect(await handleHandlers['select-download-location']!()).toBeNull();
 
@@ -1098,13 +1103,17 @@ describe('main process IPC wiring and queue behavior', () => {
     expect(mainWindow.show).toHaveBeenCalled();
     expect(mainWindow.focus).toHaveBeenCalled();
 
-    mainWindow.destroy();
+    (mainWindow.destroy as unknown as () => void)();
     const countBeforeSecondInstance = BrowserWindowMock.getAllWindows().length;
     appOnHandlers['second-instance']!();
     expect(BrowserWindowMock.getAllWindows().length).toBeGreaterThan(countBeforeSecondInstance);
 
     appOnHandlers['window-all-closed']!();
-    expect(appMock.quit).toHaveBeenCalled();
+    if (process.platform === 'darwin') {
+      expect(appMock.quit).not.toHaveBeenCalled();
+    } else {
+      expect(appMock.quit).toHaveBeenCalled();
+    }
 
     appOnHandlers['before-quit']!();
     expect(killAllProcessesMock).toHaveBeenCalled();
@@ -1119,7 +1128,7 @@ describe('main process IPC wiring and queue behavior', () => {
     expect(() => appOnHandlers['before-quit']!()).not.toThrow();
 
     for (const windowRef of BrowserWindowMock.getAllWindows() as unknown as MockWindow[]) {
-      windowRef.destroy();
+      (windowRef.destroy as unknown as () => void)();
     }
     appOnHandlers['activate']!();
     expect(BrowserWindowMock.getAllWindows().length).toBeGreaterThan(0);
@@ -1177,7 +1186,7 @@ describe('main process IPC wiring and queue behavior', () => {
   it('marks queued item failed when processing without a live window', async () => {
     await handleHandlers['add-to-queue']!({}, ['https://example.com/window-closed']);
     const mainWindow = getPrimaryWindow();
-    mainWindow.destroy();
+    (mainWindow.destroy as unknown as () => void)();
 
     expect(await handleHandlers['start-queue']!()).toEqual({ ok: true, data: { started: true } });
     await new Promise((resolve) => setTimeout(resolve, 10));

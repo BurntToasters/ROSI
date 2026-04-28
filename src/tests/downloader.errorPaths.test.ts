@@ -188,7 +188,7 @@ describe('download error paths', () => {
     buildYtdlpArgsMock.mockReturnValueOnce({
       args: ['--print', 'after_move:filepath', 'https://example.com/video'],
       statusMessages: ['ℹ️ builder status'],
-    });
+    } as any);
 
     startDownload(
       '/tmp/ytdlp',
@@ -1137,9 +1137,10 @@ describe('download error paths', () => {
   it('does not emit progress on destroyed sender', () => {
     const proc = createProc();
     spawnWithEnvMock.mockReturnValue(proc);
+    const sendMock = vi.fn();
     const sender = {
       isDestroyed: () => true,
-      send: vi.fn(),
+      send: sendMock,
     } as unknown as Electron.WebContents;
 
     startDownload(
@@ -1154,9 +1155,7 @@ describe('download error paths', () => {
 
     proc.stdout.emit('data', 'some progress\n');
 
-    const progressCalls = sender.send.mock.calls.filter(
-      ([channel]: [string]) => channel === 'progress'
-    );
+    const progressCalls = sendMock.mock.calls.filter((call) => call[0] === 'progress');
     expect(progressCalls.length).toBe(0);
   });
 });

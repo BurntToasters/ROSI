@@ -27,7 +27,7 @@ function getExposedApi() {
   if (!call) {
     throw new Error('API was not exposed');
   }
-  return call[1] as Record<string, (...args: unknown[]) => unknown>;
+  return call[1] as any;
 }
 
 async function loadPreloadModule() {
@@ -42,25 +42,28 @@ async function loadPreloadModule() {
   await import('../main/preload');
 }
 
+function getApiMethod(api: any, methodName: string): (...args: unknown[]) => unknown {
+  const method = api[methodName];
+  if (typeof method !== 'function') {
+    throw new Error(`API method missing: ${methodName}`);
+  }
+  return method;
+}
+
 async function expectInvokeCall(
-  api: Record<string, (...args: unknown[]) => unknown>,
+  api: any,
   methodName: string,
   channel: string,
   args: unknown[] = []
 ) {
   invokeMock.mockClear();
-  await api[methodName](...args);
+  await getApiMethod(api, methodName)(...args);
   expect(invokeMock).toHaveBeenCalledWith(channel, ...args);
 }
 
-function expectSendCall(
-  api: Record<string, (...args: unknown[]) => unknown>,
-  methodName: string,
-  channel: string,
-  args: unknown[] = []
-) {
+function expectSendCall(api: any, methodName: string, channel: string, args: unknown[] = []) {
   sendMock.mockClear();
-  api[methodName](...args);
+  getApiMethod(api, methodName)(...args);
   expect(sendMock).toHaveBeenCalledWith(channel, ...args);
 }
 
@@ -179,9 +182,13 @@ describe('preload api contract', () => {
       removeListenerMock.mockClear();
       callback.mockClear();
 
-      const unsubscribe = api[methodName](callback);
+      const unsubscribe = getApiMethod(api, methodName)(callback) as () => void;
       expect(onMock).toHaveBeenCalledWith(channel, expect.any(Function));
-      const listener = onMock.mock.calls[0][1] as (...args: unknown[]) => void;
+      const firstOnCall = onMock.mock.calls[0];
+      if (!firstOnCall) {
+        throw new Error('Expected ipcRenderer.on to be called');
+      }
+      const listener = firstOnCall[1] as (...args: unknown[]) => void;
       listener({}, payload);
       expect(callback).toHaveBeenCalledWith(expectedCallbackArg);
 
@@ -199,9 +206,16 @@ describe('preload api contract', () => {
     onMock.mockClear();
     removeListenerMock.mockClear();
     callback.mockClear();
-    const unsubscribePrepareForClose = api.onPrepareForClose(callback);
+    const unsubscribePrepareForClose = getApiMethod(
+      api,
+      'onPrepareForClose'
+    )(callback) as () => void;
     expect(onMock).toHaveBeenCalledWith('prepare-for-close', expect.any(Function));
-    const prepareForCloseListener = onMock.mock.calls[0][1] as (...args: unknown[]) => void;
+    const firstOnCall = onMock.mock.calls[0];
+    if (!firstOnCall) {
+      throw new Error('Expected prepare-for-close listener to be registered');
+    }
+    const prepareForCloseListener = firstOnCall[1] as (...args: unknown[]) => void;
     prepareForCloseListener({});
     expect(callback).toHaveBeenCalledTimes(1);
     unsubscribePrepareForClose();
