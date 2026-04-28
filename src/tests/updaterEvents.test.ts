@@ -59,8 +59,11 @@ vi.mock('electron-log/main', () => ({
 import {
   cancelUpdateDownload,
   checkForUpdates,
+  comparePrerelease,
+  compareVersions,
   downloadUpdate,
   installUpdate,
+  parseVersion,
   setupAutoUpdater,
 } from '../main/updater';
 import type { Settings } from '../types';
@@ -192,6 +195,74 @@ describe('updater event wiring and control flow', () => {
     });
   });
 
+  it('handles beta channel rejecting stable updates', () => {
+    const sendMock = vi.fn();
+    setupAutoUpdater(
+      () =>
+        ({
+          isDestroyed: () => false,
+          webContents: { send: sendMock },
+        }) as any,
+      () => createSettings({ updateChannel: 'beta' })
+    );
+
+    emit('update-available', { version: '3.5.0', releaseNotes: null });
+    expect(sendMock).toHaveBeenCalledWith('updater-status', {
+      status: 'not-available',
+      version: '3.4.3',
+      isBeta: true,
+    });
+  });
+
+  it('handles null release notes and missing not-available version', () => {
+    const sendMock = vi.fn();
+    setupAutoUpdater(
+      () =>
+        ({
+          isDestroyed: () => false,
+          webContents: { send: sendMock },
+        }) as any,
+      () => createSettings({ updateChannel: 'stable' })
+    );
+
+    emit('update-available', { version: '3.5.0' });
+    emit('update-not-available', {});
+
+    expect(sendMock).toHaveBeenCalledWith('updater-status', {
+      status: 'available',
+      version: '3.5.0',
+      releaseNotes: null,
+      isBeta: false,
+    });
+    expect(sendMock).toHaveBeenCalledWith('updater-status', {
+      status: 'not-available',
+      version: '3.4.3',
+      isBeta: false,
+    });
+  });
+
+  it('does not send updater events when window is unavailable or destroyed', () => {
+    const sendMock = vi.fn();
+    setupAutoUpdater(
+      () =>
+        ({
+          isDestroyed: () => true,
+          webContents: { send: sendMock },
+        }) as any,
+      () => createSettings({ updateChannel: 'stable' })
+    );
+
+    emit('checking-for-update');
+    emit('download-progress', {
+      percent: 25,
+      bytesPerSecond: 100,
+      transferred: 1,
+      total: 4,
+    });
+
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
   it('ignores updates that are not newer than current version', () => {
     const sendMock = vi.fn();
     setupAutoUpdater(
@@ -223,6 +294,11 @@ describe('updater event wiring and control flow', () => {
     await expect(checkForUpdates(true, () => createSettings())).resolves.toEqual({
       updateInfo: { version: '3.5.0' },
     });
+
+    autoUpdaterMock.checkForUpdates.mockRejectedValueOnce(new Error('check failed'));
+    await expect(checkForUpdates(true, () => createSettings())).resolves.toEqual({
+      error: 'check failed',
+    });
   });
 
   it('handles successful and error update download responses', async () => {
@@ -234,6 +310,34 @@ describe('updater event wiring and control flow', () => {
 
     autoUpdaterMock.downloadUpdate.mockRejectedValueOnce(new Error('network'));
     await expect(downloadUpdate()).resolves.toEqual({ error: 'network' });
+  });
+
+  it('rejects concurrent update downloads', async () => {
+    const sendMock = vi.fn();
+    setupAutoUpdater(
+      () =>
+        ({
+          isDestroyed: () => false,
+          webContents: { send: sendMock },
+        }) as any,
+      () => createSettings({ updateChannel: 'stable' })
+    );
+
+    autoUpdaterMock.downloadUpdate.mockImplementationOnce(() => new Promise(() => {}));
+    void downloadUpdate();
+    await Promise.resolve();
+
+    await expect(downloadUpdate()).resolves.toEqual({
+      error: 'A download is already in progress.',
+    });
+
+    cancelUpdateDownload(
+      () =>
+        ({
+          isDestroyed: () => false,
+          webContents: { send: sendMock },
+        }) as any
+    );
   });
 
   it('can cancel active update download and emit cancelled status', async () => {
@@ -265,5 +369,33 @@ describe('updater event wiring and control flow', () => {
   it('invokes installUpdate quitAndInstall', () => {
     installUpdate();
     expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledWith(false, true);
+  });
+
+  it('parses and compares version edge cases', () => {
+    expect(parseVersion('garbage')).toEqual({
+      major: 0,
+      minor: 0,
+      patch: 0,
+      prerelease: [],
+    });
+    expect(parseVersion('v4+build.1')).toEqual({
+      major: 4,
+      minor: 0,
+      patch: 0,
+      prerelease: [],
+    });
+
+    expect(comparePrerelease(['beta'], ['beta', '1'])).toBe(-1);
+    expect(comparePrerelease(['beta', '2'], ['beta'])).toBe(1);
+    expect(comparePrerelease(['beta', '2'], ['beta', '10'])).toBe(-1);
+    expect(comparePrerelease(['beta', 'x'], ['beta', '1'])).toBe(1);
+    expect(comparePrerelease(['beta', '1'], ['beta', 'x'])).toBe(-1);
+    expect(comparePrerelease(['rc'], ['beta'])).toBeGreaterThan(0);
+    expect(comparePrerelease(['beta'], ['beta'])).toBe(0);
+
+    expect(compareVersions('4.0.0', '3.9.9')).toBe(1);
+    expect(compareVersions('3.3.0', '3.4.0')).toBe(-1);
+    expect(compareVersions('3.4.2', '3.4.3')).toBe(-1);
+    expect(compareVersions('3.4.3-beta.1', '3.4.3')).toBe(-1);
   });
 });

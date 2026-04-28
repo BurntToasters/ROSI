@@ -1,14 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'events';
 
-const { existsSyncMock, statSyncMock, mkdirSyncMock, spawnWithEnvMock } = vi.hoisted(() => {
-  return {
-    existsSyncMock: vi.fn(),
-    statSyncMock: vi.fn(),
-    mkdirSyncMock: vi.fn(),
-    spawnWithEnvMock: vi.fn(),
-  };
-});
+const { existsSyncMock, statSyncMock, mkdirSyncMock, spawnWithEnvMock, logWarnMock } = vi.hoisted(
+  () => {
+    return {
+      existsSyncMock: vi.fn(),
+      statSyncMock: vi.fn(),
+      mkdirSyncMock: vi.fn(),
+      spawnWithEnvMock: vi.fn(),
+      logWarnMock: vi.fn(),
+    };
+  }
+);
 
 vi.mock('fs', () => ({
   existsSync: existsSyncMock,
@@ -57,6 +60,12 @@ vi.mock('../main/settings', () => ({
 vi.mock('electron', () => ({
   dialog: {
     showMessageBox: vi.fn(),
+  },
+}));
+
+vi.mock('electron-log/main', () => ({
+  default: {
+    warn: logWarnMock,
   },
 }));
 
@@ -131,6 +140,55 @@ describe('downloader format fetch', () => {
     await expect(pending).rejects.toContain('yt-dlp exited with code 2');
   });
 
+  it('rejects when format process fails to start', async () => {
+    const proc = createProc();
+    spawnWithEnvMock.mockReturnValue(proc);
+
+    const pending = fetchFormats('/tmp/ytdlp', 'https://example.com');
+    proc.emit('error', new Error('spawn failed'));
+
+    await expect(pending).rejects.toContain('Failed to start yt-dlp: spawn failed');
+  });
+
+  it('cancels previous format process before starting another', async () => {
+    const firstProc = createProc();
+    const secondProc = createProc();
+    spawnWithEnvMock.mockReturnValueOnce(firstProc).mockReturnValueOnce(secondProc);
+
+    const firstPending = fetchFormats('/tmp/ytdlp', 'https://example.com/one');
+    const secondPending = fetchFormats('/tmp/ytdlp', 'https://example.com/two');
+
+    expect(firstProc.kill).toHaveBeenCalled();
+    firstProc.emit('close', 1);
+    secondProc.stdout.emit('data', 'second output');
+    secondProc.emit('close', 0);
+
+    await expect(firstPending).rejects.toContain('yt-dlp exited with code 1');
+    await expect(secondPending).resolves.toBe('second output');
+  });
+
+  it('logs warning when previous format process cannot be killed', async () => {
+    const firstProc = createProc();
+    const secondProc = createProc();
+    firstProc.kill = vi.fn(() => {
+      throw new Error('kill denied');
+    });
+    spawnWithEnvMock.mockReturnValueOnce(firstProc).mockReturnValueOnce(secondProc);
+
+    const firstPending = fetchFormats('/tmp/ytdlp', 'https://example.com/one');
+    const secondPending = fetchFormats('/tmp/ytdlp', 'https://example.com/two');
+
+    firstProc.emit('close', 1);
+    secondProc.emit('close', 0);
+
+    await expect(firstPending).rejects.toContain('yt-dlp exited with code 1');
+    await expect(secondPending).resolves.toBe('');
+    expect(logWarnMock).toHaveBeenCalledWith(
+      'Error killing previous formats process:',
+      expect.any(Error)
+    );
+  });
+
   it('supports cancellation via cancelFormats', async () => {
     const proc = createProc();
     spawnWithEnvMock.mockReturnValue(proc);
@@ -149,6 +207,39 @@ describe('downloader format fetch', () => {
     const rejection = expect(pending).rejects.toContain('timed out after 60 seconds');
     await vi.advanceTimersByTimeAsync(60_000);
     await rejection;
+  });
+
+  it('logs warning when timeout kill throws', async () => {
+    vi.useFakeTimers();
+    const proc = createProc();
+    proc.kill = vi.fn(() => {
+      throw new Error('timeout kill denied');
+    });
+    spawnWithEnvMock.mockReturnValue(proc);
+
+    const pending = fetchFormats('/tmp/ytdlp', 'https://example.com');
+    const rejection = expect(pending).rejects.toContain('timed out after 60 seconds');
+    await vi.advanceTimersByTimeAsync(60_000);
+    await rejection;
+    expect(logWarnMock).toHaveBeenCalledWith(
+      'Error killing formats process on timeout:',
+      expect.any(Error)
+    );
+  });
+
+  it('logs warning when cancelFormats kill throws', async () => {
+    const proc = createProc();
+    proc.kill = vi.fn(() => {
+      throw new Error('cancel kill denied');
+    });
+    spawnWithEnvMock.mockReturnValue(proc);
+
+    const pending = fetchFormats('/tmp/ytdlp', 'https://example.com');
+    cancelFormats();
+    proc.emit('close', 1);
+
+    await expect(pending).rejects.toContain('cancelled');
+    expect(logWarnMock).toHaveBeenCalledWith('Error killing formats process:', expect.any(Error));
   });
 
   it('rejects startDownload with invalid URL', () => {
