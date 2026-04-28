@@ -401,19 +401,23 @@ describe('platform env and ffmpeg verification', () => {
 
   it('copies yt-dlp to Flatpak app data bin when bundled binary is read-only', async () => {
     vi.stubEnv('FLATPAK_ID', 'com.burnttoasters.rosi');
-    const { mod, mocks } = await loadPlatform((m) => {
-      m.existsSyncMock.mockImplementation((target: string) =>
-        target.replace(/\\/g, '/').endsWith('/assets/yt-dlp_linux')
-      );
-      m.chmodSyncMock.mockImplementationOnce(() => {
-        const err = new Error('readonly') as NodeJS.ErrnoException;
-        err.code = 'EACCES';
-        throw err;
-      });
-      m.accessSyncMock.mockImplementation(() => {
-        throw new Error('not executable');
-      });
-    }, 'linux');
+    const { mod, mocks } = await loadPlatform(
+      (m) => {
+        m.existsSyncMock.mockImplementation((target: string) =>
+          target.replace(/\\/g, '/').endsWith('/assets/yt-dlp_linux')
+        );
+        m.chmodSyncMock.mockImplementationOnce(() => {
+          const err = new Error('readonly') as NodeJS.ErrnoException;
+          err.code = 'EACCES';
+          throw err;
+        });
+        m.accessSyncMock.mockImplementation(() => {
+          throw new Error('not executable');
+        });
+      },
+      'linux',
+      'x64'
+    );
 
     const resolved = mod.resolveYtdlpPath();
 
@@ -422,22 +426,26 @@ describe('platform env and ffmpeg verification', () => {
   });
 
   it('shows permission error when yt-dlp temp copy fails', async () => {
-    const { mod, mocks } = await loadPlatform((m) => {
-      m.existsSyncMock.mockImplementation((target: string) =>
-        target.replace(/\\/g, '/').endsWith('/assets/yt-dlp_linux')
-      );
-      m.chmodSyncMock.mockImplementationOnce(() => {
-        const err = new Error('readonly') as NodeJS.ErrnoException;
-        err.code = 'EROFS';
-        throw err;
-      });
-      m.accessSyncMock.mockImplementation(() => {
-        throw new Error('not executable');
-      });
-      m.copyFileSyncMock.mockImplementation(() => {
-        throw new Error('copy failed');
-      });
-    }, 'linux');
+    const { mod, mocks } = await loadPlatform(
+      (m) => {
+        m.existsSyncMock.mockImplementation((target: string) =>
+          target.replace(/\\/g, '/').endsWith('/assets/yt-dlp_linux')
+        );
+        m.chmodSyncMock.mockImplementationOnce(() => {
+          const err = new Error('readonly') as NodeJS.ErrnoException;
+          err.code = 'EROFS';
+          throw err;
+        });
+        m.accessSyncMock.mockImplementation(() => {
+          throw new Error('not executable');
+        });
+        m.copyFileSyncMock.mockImplementation(() => {
+          throw new Error('copy failed');
+        });
+      },
+      'linux',
+      'x64'
+    );
 
     mod.resolveYtdlpPath();
 
@@ -449,16 +457,20 @@ describe('platform env and ffmpeg verification', () => {
   });
 
   it('shows permission error when yt-dlp chmod fails unexpectedly', async () => {
-    const { mod, mocks } = await loadPlatform((m) => {
-      m.existsSyncMock.mockImplementation((target: string) =>
-        target.replace(/\\/g, '/').endsWith('/assets/yt-dlp_linux')
-      );
-      m.chmodSyncMock.mockImplementationOnce(() => {
-        const err = new Error('permission denied') as NodeJS.ErrnoException;
-        err.code = 'EPERM';
-        throw err;
-      });
-    }, 'linux');
+    const { mod, mocks } = await loadPlatform(
+      (m) => {
+        m.existsSyncMock.mockImplementation((target: string) =>
+          target.replace(/\\/g, '/').endsWith('/assets/yt-dlp_linux')
+        );
+        m.chmodSyncMock.mockImplementationOnce(() => {
+          const err = new Error('permission denied') as NodeJS.ErrnoException;
+          err.code = 'EPERM';
+          throw err;
+        });
+      },
+      'linux',
+      'x64'
+    );
 
     mod.resolveYtdlpPath();
 
