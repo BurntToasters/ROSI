@@ -396,7 +396,8 @@ void app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin' || appQuitting) app.quit();
+  const shouldQuit = process.platform !== 'darwin' || appQuitting;
+  if (shouldQuit) app.quit();
 });
 
 app.on('activate', () => {
