@@ -136,15 +136,15 @@
     "@vitest/coverage-v8": "^4.0.18",
     "cross-env": "^10.1.0",
     "dotenv-cli": "^11.0.0",
-    "electron": "^41.0.2",
+    "electron": "^41.5.0",
     "electron-builder": "^26.7.0",
-    "eslint": "^10.2.0",
+    "eslint": "^10.3.0",
     "husky": "^9.1.7",
     "js-yaml": "^4.1.0",
     "lint-staged": "^16.2.7",
     "prettier": "^3.8.1",
     "typescript": "^6.0.2",
-    "typescript-eslint": "^8.56.0",
+    "typescript-eslint": "^8.59.2",
     "vitest": "^4.0.16"
   },
   "dependencies": {
