@@ -1,7 +1,7 @@
 import type { BrowserWindow } from 'electron';
 import { app } from 'electron';
 import { autoUpdater, CancellationToken } from 'electron-updater';
-import log from 'electron-log/main';
+import log from 'electron-log/main.js';
 import type {
   Settings,
   UpdateDownloadResult,

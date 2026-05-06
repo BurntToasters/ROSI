@@ -41,7 +41,7 @@ vi.mock('../main/platform', () => ({
   buildEnhancedPath: () => process.env.PATH || '',
 }));
 
-vi.mock('electron-log/main', () => ({
+vi.mock('electron-log/main.js', () => ({
   default: {
     error: logErrorMock,
     warn: logWarnMock,

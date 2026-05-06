@@ -36,7 +36,7 @@ async function loadPlatformModule(resourcesPath: string) {
     },
   }));
 
-  vi.doMock('electron-log/main', () => ({
+  vi.doMock('electron-log/main.js', () => ({
     default: {
       info: vi.fn(),
       error: vi.fn(),
