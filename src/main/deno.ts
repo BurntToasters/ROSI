@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { BrowserWindow, dialog } from 'electron';
-import log from 'electron-log/main';
+import log from 'electron-log/main.js';
 import type { MessageBoxOptions } from 'electron';
 import {
   DENO_CHECK_TIMEOUT_MS,

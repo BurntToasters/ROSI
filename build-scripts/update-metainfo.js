@@ -72,6 +72,7 @@ if (currentReleaseMatch) {
 
   if (currentVersion === version && currentDate === dateStr) {
     console.log('✓ AppStream metadata already up to date');
+    updateSplash();
     process.exit(0);
   }
 }
@@ -90,6 +91,7 @@ if (releaseSelfClosingRegex.test(updatedSection)) {
 
 if (updatedSection === releasesSectionMatch[0]) {
   console.log('✓ AppStream metadata already up to date');
+  updateSplash();
   process.exit(0);
 }
 
@@ -97,3 +99,26 @@ const updatedXml = xml.replace(releasesSectionRegex, updatedSection);
 fs.writeFileSync(xmlPath, updatedXml, 'utf8');
 
 console.log(`✓ Updated AppStream release to ${version} (${dateStr})`);
+
+updateSplash();
+
+function updateSplash() {
+  const splashPath = path.join(repoRoot, 'src', 'renderer', 'splash.html');
+  if (!fs.existsSync(splashPath)) {
+    console.warn(`⚠ splash.html not found at ${splashPath}`);
+    return;
+  }
+  const splashHtml = fs.readFileSync(splashPath, 'utf8');
+  const splashRegex = /(<div class="version" id="version-display">)v[^<]*(<\/div>)/;
+  if (!splashRegex.test(splashHtml)) {
+    console.warn('⚠ Could not locate version-display element in splash.html');
+    return;
+  }
+  const updatedSplash = splashHtml.replace(splashRegex, `$1v${version}$2`);
+  if (updatedSplash === splashHtml) {
+    console.log('✓ Splash screen version already up to date');
+    return;
+  }
+  fs.writeFileSync(splashPath, updatedSplash, 'utf8');
+  console.log(`✓ Updated splash screen version to v${version}`);
+}
