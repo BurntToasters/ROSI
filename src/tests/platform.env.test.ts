@@ -97,7 +97,7 @@ async function loadPlatform(
     },
   }));
 
-  vi.doMock('electron-log/main', () => ({
+  vi.doMock('electron-log/main.js', () => ({
     default: {
       info: mocks.logInfoMock,
       warn: mocks.logWarnMock,

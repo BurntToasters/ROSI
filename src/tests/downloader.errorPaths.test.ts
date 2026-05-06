@@ -73,7 +73,7 @@ vi.mock('electron', () => ({
   dialog: { showMessageBox: showMessageBoxMock },
 }));
 
-vi.mock('electron-log/main', () => ({
+vi.mock('electron-log/main.js', () => ({
   default: {
     error: logErrorMock,
     warn: logWarnMock,

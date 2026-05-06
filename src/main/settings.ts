@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { app, dialog } from 'electron';
-import log from 'electron-log/main';
+import log from 'electron-log/main.js';
 import type { AudioFormat, DownloadStats, Settings } from '../types';
 import {
   ALLOWED_AUDIO_FORMATS,

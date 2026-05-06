@@ -49,7 +49,7 @@ vi.mock('electron-updater', () => ({
   },
 }));
 
-vi.mock('electron-log/main', () => ({
+vi.mock('electron-log/main.js', () => ({
   default: {
     info: logInfoMock,
     error: logErrorMock,

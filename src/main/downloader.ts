@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import sanitize from 'sanitize-filename';
 import { dialog } from 'electron';
-import log from 'electron-log/main';
+import log from 'electron-log/main.js';
 import { spawnWithEnv, getEffectiveFfmpegPath, ytdlpBinary, isWindows } from './platform';
 import { loadSettings, recordDownload } from './settings';
 import { buildFfmpegArgs, buildYtdlpArgs, resolveVideoEncoder } from './download/commandBuilders';

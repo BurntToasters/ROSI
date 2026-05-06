@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Notification } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
-import log from 'electron-log/main';
+import log from 'electron-log/main.js';
 import { isPackaged, resolveYtdlpPath, verifyBundledFfmpeg } from './platform';
 import {
   loadSettings,
