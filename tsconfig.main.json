@@ -1,4 +1,9 @@
 {
   "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node10",
+    "ignoreDeprecations": "6.0"
+  },
   "exclude": ["node_modules", "dist", "src/renderer/**", "src/**/*.test.ts"]
 }
