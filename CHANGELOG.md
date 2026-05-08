@@ -1,3 +1,11 @@
+<!-- hidden <p align="center">
+
+<img width="45%" height="1012" alt="ROSI-3-1-1" src="https://github.com/user-attachments/assets/c42baa99-5ffa-4700-86c1-cc9aad3b9c7c" />
+  &nbsp;
+  <img width="45%" height="1012" alt="ROSI-3-x-app" src="https://github.com/user-attachments/assets/2105b523-7392-4c4c-8241-425b0096ca24" />
+
+</p> -->
+
  <!-- >[!NOTE]
 > 🅱️ This is a beta build.
 -->
@@ -8,9 +16,9 @@
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                        | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> MacOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                                                                      |
 | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[Universal EXE](https://github.com/BurntToasters/ROSI/releases/download/v4.0.11/ROSI-Windows.exe)** <br>_(Both x64 and arm64)_                                                                         | **[Universal DMG](https://github.com/BurntToasters/ROSI/releases/download/v4.0.11/ROSI-MacOS-universal.dmg)**   | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.0.11/ROSI-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.0.11/ROSI-Linux-arm64.AppImage) |
-| **Other:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.0.11/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.0.11/ROSI-Windows-arm64.exe) |                                                                                                                 | **DEB:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.0.11/ROSI-linux_amd64.deb) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.0.11/ROSI-linux_arm64.deb)                 |
-|                                                                                                                                                                                                          |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.0.11/ROSI-linux.x86_64.rpm) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.0.11/ROSI-linux.aarch64.rpm)              |
+| **[Universal EXE](https://github.com/BurntToasters/ROSI/releases/download/v4.0.12/ROSI-Windows.exe)** <br>_(Both x64 and arm64)_                                                                         | **[Universal DMG](https://github.com/BurntToasters/ROSI/releases/download/v4.0.12/ROSI-MacOS-universal.dmg)**   | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.0.12/ROSI-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.0.12/ROSI-Linux-arm64.AppImage) |
+| **Other:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.0.12/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.0.12/ROSI-Windows-arm64.exe) |                                                                                                                 | **DEB:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.0.12/ROSI-linux_amd64.deb) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.0.12/ROSI-linux_arm64.deb)                 |
+|                                                                                                                                                                                                          |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.0.12/ROSI-linux.x86_64.rpm) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.0.12/ROSI-linux.aarch64.rpm)              |
 
 <!-- REMOVED <details>
   <summary>🛠️ Build Status & OS App Store Publishing Status (for NERDS)</summary>
@@ -27,11 +35,10 @@
 
 ---
 
-## Changes in `v4.0.11:`
+## Changes in `v4.0.12:`
 
-_Note: 4.0.9 and 4.0.10 were removed as they contained the same crashing issue._
-
-- **Crash:** Fixed an issue with electron-log that caused the app to crash at launch.
+- **Electron:** Updated electron to `42.0.0`.
+- **PKG:** Updated packages.
 
 ## Changes in `v4.0.9:`
 
