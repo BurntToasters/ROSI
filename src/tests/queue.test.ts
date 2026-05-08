@@ -201,6 +201,15 @@ vi.mock('../main/constants', () => ({
   CURRENT_SETTINGS_VERSION: 2,
 }));
 
+vi.mock('electron-log/main.js', () => ({
+  default: {
+    initialize: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 function clearHandlerMaps() {
   for (const key of Object.keys(handleHandlers)) delete handleHandlers[key];
 }
