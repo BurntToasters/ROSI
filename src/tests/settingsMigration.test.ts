@@ -9,6 +9,15 @@ vi.mock('electron', () => ({
   },
 }));
 
+vi.mock('electron-log/main.js', () => ({
+  default: {
+    initialize: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 import { CURRENT_SETTINGS_VERSION, getDefaultSettings, migrateSettings } from '../main/settings';
 
 describe('settings migration', () => {
