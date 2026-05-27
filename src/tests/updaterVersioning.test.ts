@@ -29,6 +29,15 @@ vi.mock('electron-updater', () => ({
   },
 }));
 
+vi.mock('electron-log/main.js', () => ({
+  default: {
+    initialize: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 import {
   applyChannel,
   comparePrerelease,
