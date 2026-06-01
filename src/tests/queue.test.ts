@@ -108,10 +108,10 @@ const {
         _sender: unknown,
         _options: unknown,
         _mainWindow: unknown,
-        onComplete?: (status: string) => void
+        onComplete?: (status: string, outcome: string) => void
       ) => {
         if (typeof onComplete === 'function') {
-          onComplete('✅ Done');
+          onComplete('✅ Done', 'success');
         }
       }
     ),
@@ -383,9 +383,9 @@ describe('queue edge cases and error handling', () => {
         _sender: unknown,
         _options: unknown,
         _mainWindow: unknown,
-        onComplete?: (status: string) => void
+        onComplete?: (status: string, outcome: string) => void
       ) => {
-        if (typeof onComplete === 'function') onComplete('❌ Download failed.');
+        if (typeof onComplete === 'function') onComplete('❌ Download failed.', 'failed');
       }
     );
 
@@ -409,9 +409,9 @@ describe('queue edge cases and error handling', () => {
         _sender: unknown,
         _options: unknown,
         _mainWindow: unknown,
-        onComplete?: (status: string) => void
+        onComplete?: (status: string, outcome: string) => void
       ) => {
-        if (typeof onComplete === 'function') onComplete('⏹️ Cancelled.');
+        if (typeof onComplete === 'function') onComplete('⏹️ Cancelled.', 'cancelled');
       }
     );
 

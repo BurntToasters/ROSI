@@ -12,6 +12,7 @@ const {
   loadSettingsMock,
   getEffectiveFfmpegPathMock,
   resolveVideoEncoderMock,
+  probeMediaCodecsMock,
   buildFfmpegArgsMock,
   buildYtdlpArgsMock,
   showMessageBoxMock,
@@ -30,6 +31,7 @@ const {
     loadSettingsMock: vi.fn(),
     getEffectiveFfmpegPathMock: vi.fn(() => 'ffmpeg'),
     resolveVideoEncoderMock: vi.fn(async () => 'copy'),
+    probeMediaCodecsMock: vi.fn(async () => ({})),
     buildFfmpegArgsMock: vi.fn(() => ['-i', 'in.mp4', '-c:v', 'copy', '-y', 'out.mp4']),
     buildYtdlpArgsMock: vi.fn(({ url }: { url: string }) => ({
       args: ['--print', 'after_move:filepath', '-o', '%(title)s.%(ext)s', url],
@@ -67,6 +69,7 @@ vi.mock('../main/download/commandBuilders', () => ({
   resolveVideoEncoder: resolveVideoEncoderMock,
   buildFfmpegArgs: buildFfmpegArgsMock,
   buildYtdlpArgs: buildYtdlpArgsMock,
+  probeMediaCodecs: probeMediaCodecsMock,
 }));
 
 vi.mock('electron', () => ({
@@ -113,6 +116,12 @@ function createSender() {
     isDestroyed: () => false,
     send: vi.fn(),
   } as unknown as Electron.WebContents;
+}
+
+async function flush() {
+  for (let i = 0; i < 5; i += 1) {
+    await Promise.resolve();
+  }
 }
 
 describe('download error paths', () => {
@@ -333,7 +342,7 @@ describe('download error paths', () => {
     proc.stdout.emit('data', '/tmp/downloads/video.mp4\n');
     proc.emit('close', 0);
 
-    expect(onComplete).toHaveBeenCalledWith('✅ Download complete (no conversion).');
+    expect(onComplete).toHaveBeenCalledWith('✅ Download complete (no conversion).', 'success');
   });
 
   it('calls onComplete callback on cancellation', () => {
@@ -355,7 +364,7 @@ describe('download error paths', () => {
 
     cancelActiveSession(true);
 
-    expect(onComplete).toHaveBeenCalledWith('⏹️ Cancelled.');
+    expect(onComplete).toHaveBeenCalledWith('⏹️ Cancelled.', 'cancelled');
   });
 
   it('logs onComplete callback errors during silent cancellation', () => {
@@ -431,7 +440,7 @@ describe('download error paths', () => {
     proc.stdout.emit('data', '/tmp/downloads/video.mp4\n');
     proc.emit('close', 0);
 
-    expect(recordDownloadMock).toHaveBeenCalledWith('success');
+    expect(recordDownloadMock).toHaveBeenCalledWith('success', 'mp4', undefined);
   });
 
   it('records cancelled outcome on cancel', () => {
@@ -602,7 +611,7 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/????\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
     ffProc.emit('close', 0);
 
     expect(renameSyncMock.mock.calls[0]?.[0].replace(/\\/g, '/')).toMatch(
@@ -638,7 +647,7 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/video.mp4\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
 
     expect(sender.send).toHaveBeenCalledWith('complete', '✅ Done (Already MP4).');
   });
@@ -668,7 +677,7 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/bad:name.webm\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
     ffProc.stdout.emit('data', Buffer.from('ffmpeg output'));
     ffProc.stderr.emit('data', Buffer.from('ffmpeg warning'));
     ffProc.emit('close', 0);
@@ -703,7 +712,7 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/video.webm\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
     ffProc.emit('close', 0);
 
     expect(sender.send).toHaveBeenCalledWith(
@@ -737,7 +746,7 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/video.webm\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
     ffProc.emit('close', 1);
 
     expect(unlinkSyncMock).toHaveBeenCalled();
@@ -769,7 +778,7 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/video.webm\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
     ffProc.emit('error', new Error('ENOENT'));
 
     expect(sender.send).toHaveBeenCalledWith(
@@ -808,7 +817,7 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/video.webm\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
     ffProc.emit('error', new Error('permission denied'));
 
     expect(sender.send).toHaveBeenCalledWith(
@@ -843,7 +852,7 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/bad:name.webm\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
 
     expect(sender.send).toHaveBeenCalledWith('complete', '❌ Conversion failed (setup error).');
   });
@@ -995,7 +1004,7 @@ describe('download error paths', () => {
     expect(getEffectiveFfmpegPathMock).toHaveBeenCalledWith('/custom/ffmpeg');
     ytProc.stdout.emit('data', '/tmp/downloads/video.webm\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
     ffProc.emit('close', 0);
 
     expect(unlinkSyncMock).toHaveBeenCalled();
@@ -1072,6 +1081,16 @@ describe('download error paths', () => {
     const ffProc = createProc();
     spawnWithEnvMock.mockReturnValueOnce(ytProc).mockReturnValueOnce(ffProc);
     resolveVideoEncoderMock.mockResolvedValueOnce('h264_nvenc');
+    buildFfmpegArgsMock.mockReturnValueOnce([
+      '-i',
+      'in.webm',
+      '-c:v',
+      'h264_nvenc',
+      '-c:a',
+      'aac',
+      '-y',
+      'out.mp4',
+    ]);
     const sender = createSender();
 
     loadSettingsMock.mockReturnValue({
@@ -1093,7 +1112,8 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/video.webm\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
+    await flush();
 
     expect(sender.send).toHaveBeenCalledWith('progress', '🖥️ Using GPU acceleration (h264_nvenc)');
   });
@@ -1124,7 +1144,7 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/video.webm\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
     await vi.advanceTimersByTimeAsync(600_000);
 
     expect(sender.send).toHaveBeenCalledWith(

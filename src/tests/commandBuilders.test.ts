@@ -6,6 +6,14 @@ vi.mock('../main/gpu', () => ({
   detectGpu: detectGpuMock,
 }));
 
+vi.mock('../main/platform', () => ({
+  spawnWithEnv: vi.fn(),
+}));
+
+vi.mock('electron-log/main.js', () => ({
+  default: { warn: vi.fn(), error: vi.fn() },
+}));
+
 import {
   buildFfmpegArgs,
   buildYtdlpArgs,
@@ -110,6 +118,54 @@ describe('command builders', () => {
     ]);
   });
 
+  it('copies a container-compatible video stream instead of re-encoding', () => {
+    const args = buildFfmpegArgs('input.mkv', 'output.mp4', 'mp4', 'h264_nvenc', {
+      video: 'h264',
+      audio: 'aac',
+    });
+    expect(args).toEqual([
+      '-i',
+      'input.mkv',
+      '-c:v',
+      'copy',
+      '-c:a',
+      'copy',
+      '-movflags',
+      '+faststart',
+      '-y',
+      'output.mp4',
+    ]);
+  });
+
+  it('re-encodes an incompatible video stream with the chosen encoder', () => {
+    const args = buildFfmpegArgs('input.webm', 'output.mp4', 'mp4', 'h264_nvenc', {
+      video: 'vp9',
+      audio: 'opus',
+    });
+    expect(args).toEqual([
+      '-i',
+      'input.webm',
+      '-c:v',
+      'h264_nvenc',
+      '-c:a',
+      'aac',
+      '-movflags',
+      '+faststart',
+      '-y',
+      'output.mp4',
+    ]);
+  });
+
+  it('copies already-aac audio when extracting to m4a', () => {
+    const args = buildFfmpegArgs('input.mp4', 'output.m4a', 'm4a', 'copy', { audio: 'aac' });
+    expect(args).toEqual(['-i', 'input.mp4', '-vn', '-c:a', 'copy', '-y', 'output.m4a']);
+  });
+
+  it('re-encodes non-aac audio when extracting to m4a', () => {
+    const args = buildFfmpegArgs('input.webm', 'output.m4a', 'm4a', 'copy', { audio: 'opus' });
+    expect(args).toEqual(['-i', 'input.webm', '-vn', '-c:a', 'aac', '-y', 'output.m4a']);
+  });
+
   it('builds yt-dlp args for selected audio/video formats', () => {
     const result = buildYtdlpArgs({
       normalizedDownloadDir: '/tmp/downloads',
@@ -168,7 +224,7 @@ describe('command builders', () => {
     expect(result.statusMessages).toContain('🎵 Audio-only mode enabled (FLAC)');
   });
 
-  it('rejects non-numeric format IDs and uses default format', () => {
+  it('rejects unsafe format IDs and uses default format', () => {
     const result = buildYtdlpArgs({
       normalizedDownloadDir: '/tmp/downloads',
       url: 'https://example.com/video',
@@ -177,15 +233,32 @@ describe('command builders', () => {
         url: 'https://example.com/video',
         outputPath: '/tmp/downloads',
         videoFormat: '137; rm -rf /',
-        audioFormat: 'abc',
+        audioFormat: 'best audio',
       },
       ffmpegLocation: null,
     });
 
     expect(result.args).not.toContain('137; rm -rf /');
-    expect(result.args).not.toContain('abc');
+    expect(result.args).not.toContain('best audio');
     const fIdx = result.args.indexOf('-f');
     expect(result.args[fIdx + 1]).toContain('best');
+  });
+
+  it('accepts non-numeric yt-dlp format IDs', () => {
+    const result = buildYtdlpArgs({
+      normalizedDownloadDir: '/tmp/downloads',
+      url: 'https://example.com/video',
+      settings: createSettings(),
+      options: {
+        url: 'https://example.com/video',
+        outputPath: '/tmp/downloads',
+        videoFormat: 'hls-1080',
+        audioFormat: '233-drc',
+      },
+      ffmpegLocation: null,
+    });
+
+    expect(result.args).toContain('hls-1080+233-drc');
   });
 
   it('accepts valid numeric format IDs', () => {

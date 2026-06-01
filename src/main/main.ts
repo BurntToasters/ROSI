@@ -39,9 +39,11 @@ import {
   validateSettingsPatchPayload,
 } from '../utils/ipcValidation';
 import { SPLASH_SHOW_DELAY_MS, SPLASH_FADE_DELAY_MS, MAX_QUEUE_SIZE } from './constants';
-import type { DownloadRequestOptions, QueueItem } from '../types';
+import type { DownloadRequestOptions, DownloadOutcome, QueueItem } from '../types';
 
 log.initialize();
+
+process.setMaxListeners(20);
 
 process.on('uncaughtException', (error) => {
   log.error('Uncaught exception:', error);
@@ -245,8 +247,6 @@ function createWindow() {
     height: 900,
     minWidth: 900,
     minHeight: 700,
-    maxWidth: 1800,
-    maxHeight: 1400,
     icon: path.join(__dirname, '..', '..', 'src', 'renderer', 'app.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -804,15 +804,14 @@ async function processQueue() {
       };
 
       let settled = false;
-      const completeListener = (statusMessage: string) => {
+      const completeListener = (statusMessage: string, outcome?: DownloadOutcome) => {
         if (settled) return;
         settled = true;
 
-        const msg = String(statusMessage || '').toLowerCase();
-        if (msg.includes('cancel')) {
+        if (outcome === 'cancelled') {
           nextItem.status = 'cancelled';
           nextItem.error = undefined;
-        } else if (msg.includes('\u2705') || msg.includes('complete') || msg.includes('done')) {
+        } else if (outcome === 'success') {
           nextItem.status = 'completed';
           nextItem.error = undefined;
         } else {

@@ -4,16 +4,10 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self';"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self';"
     />
     <title>Rosi</title>
     <link rel="stylesheet" href="main.css" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
   </head>
   <body>
     <a href="#main-content" class="skip-link">Skip to main content</a>
@@ -212,6 +206,10 @@
                   <option value="Brave">Brave</option>
                 </select>
               </label>
+              <div id="browserWindowsHint" class="settings-hint hidden">
+                On Windows, Chromium browsers (Chrome, Edge, Brave) encrypt their cookies in a way
+                yt-dlp cannot read, so ROSI uses Firefox cookies here.
+              </div>
             </div>
           </div>
         </section>
