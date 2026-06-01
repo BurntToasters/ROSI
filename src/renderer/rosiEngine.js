@@ -456,38 +456,43 @@ async function fetchFormats() {
       if (audioSelect) audioSelect.innerHTML = '<option value="">Select Audio Format</option>';
       let videoFormatsFound = 0,
         audioFormatsFound = 0;
+      const FORMAT_ID = /^([A-Za-z0-9][A-Za-z0-9._-]{0,63})\s+\S/;
       lines.forEach((line) => {
-        if (/^\s*\d+\s+[a-zA-Z0-9]+/.test(line.trim())) {
-          const parts = line.trim().split(/\s+/);
-          const formatId = parts[0];
-          const option = document.createElement('option');
-          option.value = formatId;
-          let labelText = line.trim();
-          const resolutionMatch = labelText.match(/(\d{3,4}x\d{3,4}|\d{3,4}p)/);
-          const fpsMatch = labelText.match(/@\s*(\d+fps)/);
-          const sizeMatch = labelText.match(/(\d+(\.\d+)?(MiB|GiB|KiB))/);
-          const codecMatch = line.match(/(avc1|vp9|av01|h264|h265|opus|mp4a|aac|vorbis)/i);
-          let cleanLabel = `ID: ${formatId}`;
-          if (resolutionMatch) cleanLabel += ` ${resolutionMatch[0]}`;
-          if (fpsMatch) cleanLabel += ` ${fpsMatch[1]}`;
-          if (codecMatch) cleanLabel += ` (${codecMatch[0]})`;
-          if (sizeMatch) cleanLabel += ` ~${sizeMatch[0]}`;
-          option.text = cleanLabel;
-          option.title = line.trim();
-          const isVideo = /video/.test(line.toLowerCase()) && !/audio only/i.test(line);
-          const isAudio = /audio/.test(line.toLowerCase()) && !/video only/i.test(line);
-          const isVideoOnly = /video only/i.test(line);
-          const isAudioOnly = /audio only/i.test(line);
-          if (isVideoOnly || (isVideo && !isAudio)) {
-            if (videoSelect) videoSelect.appendChild(option);
-            videoFormatsFound++;
-          } else if (isAudioOnly || (isAudio && !isVideo)) {
-            if (audioSelect) audioSelect.appendChild(option);
-            audioFormatsFound++;
-          } else if (isVideo && isAudio) {
-            if (videoSelect) videoSelect.appendChild(option);
-            videoFormatsFound++;
-          }
+        const trimmed = line.trim();
+        const idMatch = trimmed.match(FORMAT_ID);
+        if (!idMatch) return;
+        const formatId = idMatch[1];
+        if (formatId.toLowerCase() === 'id') return;
+        if (/storyboard|images? only|mhtml/i.test(line)) return;
+        const option = document.createElement('option');
+        option.value = formatId;
+        const labelText = trimmed;
+        const resolutionMatch = labelText.match(/(\d{3,4}x\d{3,4}|\d{3,4}p)/);
+        const fpsMatch = labelText.match(/@?\s*(\d+)\s*fps/i);
+        const sizeMatch = labelText.match(/(\d+(\.\d+)?(MiB|GiB|KiB))/);
+        const codecMatch = line.match(
+          /(avc1|vp9|vp09|av01|h264|h265|hevc|opus|mp4a|aac|vorbis|flac)/i
+        );
+        let cleanLabel = `ID: ${formatId}`;
+        if (resolutionMatch) cleanLabel += ` ${resolutionMatch[0]}`;
+        if (fpsMatch) cleanLabel += ` ${fpsMatch[1]}fps`;
+        if (codecMatch) cleanLabel += ` (${codecMatch[0]})`;
+        if (sizeMatch) cleanLabel += ` ~${sizeMatch[0]}`;
+        option.text = cleanLabel;
+        option.title = trimmed;
+        const isVideoOnly = /video only/i.test(line);
+        const isAudioOnly = /audio only/i.test(line);
+        const isVideo = /video/.test(line.toLowerCase()) && !isAudioOnly;
+        const isAudio = /audio/.test(line.toLowerCase()) && !isVideoOnly;
+        if (isVideoOnly || (isVideo && !isAudio)) {
+          if (videoSelect) videoSelect.appendChild(option);
+          videoFormatsFound++;
+        } else if (isAudioOnly || (isAudio && !isVideo)) {
+          if (audioSelect) audioSelect.appendChild(option);
+          audioFormatsFound++;
+        } else if (isVideo && isAudio) {
+          if (videoSelect) videoSelect.appendChild(option);
+          videoFormatsFound++;
         }
       });
       if (videoFormatsFound === 0 && videoSelect)
@@ -1504,6 +1509,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       settings.browserChoice = 'Firefox';
       void persistSettings();
     }
+    const browserWindowsHint = document.getElementById('browserWindowsHint');
+    if (browserWindowsHint) browserWindowsHint.classList.remove('hidden');
   }
 
   // update UI from settings
@@ -1662,7 +1669,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     logError('Failed to update UI from settings', e);
   }
 
-  if (!settings.hideSupportModal && !settings.firstLaunch) {
+  function maybeShowSupportModal() {
+    if (settings.hideSupportModal || settings.firstLaunch) return;
+    if (isModalActive || modalQueue.length > 0) {
+      setTimeout(maybeShowSupportModal, 1500);
+      return;
+    }
     showModal({
       title: 'Support This Project?',
       message:
@@ -2843,9 +2855,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       checkUpdatesOnStartup();
     });
   } else {
-    // check Deno
     checkDenoInstallation(settings);
     checkUpdatesOnStartup();
+    setTimeout(maybeShowSupportModal, 1500);
   }
 
   const closeBtn = document.getElementById('close-licenses');

@@ -52,13 +52,15 @@ export interface DownloadLifecycleState {
   completed: boolean;
 }
 
+export type DownloadOutcome = 'success' | 'failed' | 'cancelled';
+
 export interface DownloadSession {
   id: number;
   sender: Electron.WebContents;
   lifecycle: DownloadLifecycleState;
   ytdlpProcess: import('child_process').ChildProcess | null;
   ffmpegProcess: import('child_process').ChildProcess | null;
-  onComplete?: (statusMessage: string) => void;
+  onComplete?: (statusMessage: string, outcome: DownloadOutcome) => void;
 }
 
 export interface DownloadRequestOptions {

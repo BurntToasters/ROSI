@@ -8,6 +8,8 @@ export const FFMPEG_CONVERT_TIMEOUT_MS = 600_000;
 export const MAX_OUTPUT_BUFFER = 500_000;
 export const MAX_ERROR_BUFFER = 100_000;
 
+export const FORMAT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
 export const ALLOWED_AUDIO_FORMATS = new Set(['mp3', 'flac', 'ogg', 'wav', 'm4a', 'opus']);
 export const ALLOWED_CONVERT_FORMATS = new Set(['mp4', 'mov', 'mp3', 'm4a']);
 export const MAX_QUEUE_SIZE = 500;
