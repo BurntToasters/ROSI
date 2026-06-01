@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self';"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self';"
     />
     <title>Rosi</title>
     <link rel="stylesheet" href="main.css" />
@@ -153,6 +153,82 @@
             <div class="settings-hint">
               FFmpeg is bundled with ROSI. Only set this if you want to use a different FFmpeg
               installation.
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div
+            id="settingsSectionHeaderEnhancements"
+            class="settings-section-header"
+            role="button"
+            tabindex="0"
+            aria-expanded="true"
+            aria-controls="settingsSectionBodyEnhancements"
+          >
+            <h3 class="settings-section-title">Enhancements</h3>
+            <svg
+              class="settings-chevron"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+          <div
+            id="settingsSectionBodyEnhancements"
+            class="settings-section-body"
+            role="region"
+            aria-labelledby="settingsSectionHeaderEnhancements"
+          >
+            <label class="toggle-switch">
+              <input type="checkbox" id="embedMetadataToggle" />
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">Embed metadata (title, artist, date)</span>
+            </label>
+
+            <label class="toggle-switch">
+              <input type="checkbox" id="embedThumbnailToggle" />
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">Embed thumbnail / cover art</span>
+            </label>
+
+            <label class="toggle-switch">
+              <input type="checkbox" id="sponsorblockToggle" />
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">
+                SponsorBlock
+                <a href="#" id="sponsorblockHelp" class="help-icon" title="Learn more">?</a>
+              </span>
+            </label>
+
+            <label class="toggle-switch">
+              <input type="checkbox" id="writeSubtitlesToggle" />
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">Download &amp; embed subtitles</span>
+            </label>
+
+            <div id="subtitleLangsContainer" class="sub-option">
+              <label class="select-label">
+                <span>Subtitle languages</span>
+                <input
+                  id="subtitleLangsInput"
+                  type="text"
+                  placeholder="en,es (comma-separated)"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+              </label>
+              <div class="settings-hint">
+                Comma-separated language codes (for example <code>en,es</code>). Use
+                <code>all</code> for every available language.
+              </div>
             </div>
           </div>
         </section>
@@ -611,6 +687,70 @@
                 role="status"
                 aria-live="polite"
               ></p>
+
+              <div class="preview-actions">
+                <button
+                  id="previewBtn"
+                  class="preview-btn"
+                  type="button"
+                  data-default-text="Preview"
+                  disabled
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                  Preview
+                </button>
+              </div>
+
+              <div
+                id="preview-card"
+                class="preview-card"
+                role="region"
+                aria-label="Video preview"
+                aria-live="polite"
+              >
+                <button
+                  id="previewClose"
+                  class="preview-close"
+                  type="button"
+                  title="Hide preview"
+                  aria-label="Hide preview"
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
+                </button>
+                <div class="preview-thumb-wrap">
+                  <img id="preview-thumb" class="preview-thumb" alt="" />
+                  <span id="preview-duration" class="preview-duration"></span>
+                  <span id="preview-playlist-badge" class="preview-playlist-badge">Playlist</span>
+                </div>
+                <div class="preview-meta">
+                  <p id="preview-title" class="preview-title"></p>
+                  <p id="preview-sub" class="preview-sub"></p>
+                </div>
+              </div>
 
               <div id="progress-container" class="progress-container">
                 <div id="progress-phases" class="progress-phases">

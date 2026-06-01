@@ -24,6 +24,11 @@ export interface Settings {
   hideSupportModal: boolean;
   checkUpdatesOnStartup: boolean;
   updateChannel: UpdateChannel;
+  writeSubtitles: boolean;
+  subtitleLangs: string;
+  embedThumbnail: boolean;
+  embedMetadata: boolean;
+  sponsorblockRemove: boolean;
 }
 
 export type UpdateChannel = 'auto' | 'stable' | 'beta';
@@ -84,6 +89,18 @@ export interface FormatsProcess {
   cancelled: boolean;
 }
 
+export interface VideoInfo {
+  title: string;
+  uploader: string | null;
+  durationSeconds: number | null;
+  thumbnail: string | null;
+  ext: string | null;
+  viewCount: number | null;
+  isPlaylist: boolean;
+  playlistCount: number | null;
+  webpageUrl: string | null;
+}
+
 export interface NotificationRequest {
   title?: string;
   body?: string;
@@ -142,6 +159,8 @@ export interface RendererApi {
   restartApp: () => Promise<void>;
   getChannel: () => DistributionChannel;
   getFormats: (url: string) => Promise<IpcResult<string>>;
+  getVideoInfo: (url: string) => Promise<IpcResult<VideoInfo>>;
+  cancelVideoInfo: () => void;
   selectDownloadLocation: () => Promise<string | null>;
   getSettings: () => Promise<Settings>;
   saveSettings: (settings: Partial<Settings>) => Promise<IpcResult<Settings>>;

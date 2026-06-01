@@ -28,6 +28,7 @@ import {
   fetchFormats,
   cancelFormats,
 } from './downloader';
+import { fetchVideoInfo, cancelVideoInfo } from './download/videoInfo';
 import { isSafeExternalUrl, isSafeHttpUrl, isAllowedNavigationUrl } from '../utils/validation';
 import {
   errorResult,
@@ -416,6 +417,11 @@ app.on('before-quit', () => {
   } catch (error) {
     log.error('Error cancelling formats on quit:', error);
   }
+  try {
+    cancelVideoInfo();
+  } catch (error) {
+    log.error('Error cancelling video info on quit:', error);
+  }
 });
 
 if (!process.windowsStore) {
@@ -550,6 +556,35 @@ ipcMain.on('cancel-formats', (event) => {
     return;
   }
   cancelFormats();
+});
+
+ipcMain.handle('get-video-info', async (_, url) => {
+  if (typeof url !== 'string' || !isSafeHttpUrl(url)) {
+    return errorResult('INVALID_URL', 'Invalid URL provided.');
+  }
+
+  try {
+    const info = await fetchVideoInfo(ytdlpPath, url);
+    return okResult(info);
+  } catch (error) {
+    const message =
+      typeof error === 'string'
+        ? error
+        : error instanceof Error
+          ? error.message
+          : 'Failed to fetch video info.';
+    if (message.toLowerCase().includes('cancel')) {
+      return errorResult('NOT_AVAILABLE', message);
+    }
+    return errorResult('INTERNAL_ERROR', message);
+  }
+});
+
+ipcMain.on('cancel-video-info', (event) => {
+  if (mainWindow && !mainWindow.isDestroyed() && event.sender?.id !== mainWindow.webContents.id) {
+    return;
+  }
+  cancelVideoInfo();
 });
 
 ipcMain.handle('download-video', (event, options) => {
