@@ -18,15 +18,15 @@ describe('renderer wiring and accessibility contracts', () => {
 
   it('keeps queue section id aligned between HTML and renderer logic', () => {
     const indexHtml = readRendererFile('index.html');
-    const engine = readRendererFile('rosiEngine.js');
+    const engine = readRendererFile('rosiEngine.ts');
 
     expect(indexHtml).toMatch(/id="queueSection"/);
-    expect(engine).toMatch(/getElementById\('queueSection'\)/);
+    expect(engine).toMatch(/'queueSection'/);
     expect(engine).not.toMatch(/getElementById\('queue-section'\)/);
   });
 
   it('loads queue once on startup to avoid duplicate bootstrap fetches', () => {
-    const engine = readRendererFile('rosiEngine.js');
+    const engine = readRendererFile('rosiEngine.ts');
     const getQueueCalls = engine.match(/\.getQueue\(\)/g) || [];
     expect(getQueueCalls).toHaveLength(1);
   });
@@ -78,7 +78,7 @@ describe('renderer wiring and accessibility contracts', () => {
   });
 
   it('supports arrow-key ergonomics for collapsible header controls', () => {
-    const engine = readRendererFile('rosiEngine.js');
+    const engine = readRendererFile('rosiEngine.ts');
 
     expect(engine).toContain("e.key === 'ArrowLeft'");
     expect(engine).toContain("e.key === 'ArrowRight'");

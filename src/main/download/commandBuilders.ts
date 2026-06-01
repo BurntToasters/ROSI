@@ -2,7 +2,12 @@ import log from 'electron-log/main.js';
 import type { DownloadRequestOptions, GpuDetectionResult, Settings } from '../../types';
 import { detectGpu } from '../gpu';
 import { spawnWithEnv } from '../platform';
-import { ALLOWED_AUDIO_FORMATS, FORMAT_ID_PATTERN, MAX_ERROR_BUFFER } from '../constants';
+import {
+  ALLOWED_AUDIO_FORMATS,
+  FORMAT_ID_PATTERN,
+  MAX_ERROR_BUFFER,
+  SUBTITLE_LANGS_PATTERN,
+} from '../constants';
 
 const VALID_FORMAT_ID = FORMAT_ID_PATTERN;
 const CODEC_PROBE_TIMEOUT_MS = 30_000;
@@ -213,6 +218,29 @@ export function buildYtdlpArgs({
     if (ALLOWED_BROWSERS.has(normalized)) {
       args.splice(-1, 0, '--cookies-from-browser', normalized);
     }
+  }
+
+  if (settings.writeSubtitles) {
+    const langs = SUBTITLE_LANGS_PATTERN.test(settings.subtitleLangs)
+      ? settings.subtitleLangs
+      : 'en';
+    args.splice(-1, 0, '--write-subs', '--embed-subs', '--sub-langs', langs);
+    statusMessages.push(`💬 Subtitles enabled (${langs})`);
+  }
+
+  if (settings.embedThumbnail) {
+    args.splice(-1, 0, '--embed-thumbnail');
+    statusMessages.push('🖼️ Embedding thumbnail');
+  }
+
+  if (settings.embedMetadata) {
+    args.splice(-1, 0, '--embed-metadata');
+    statusMessages.push('🏷️ Embedding metadata');
+  }
+
+  if (settings.sponsorblockRemove) {
+    args.splice(-1, 0, '--sponsorblock-remove', 'default');
+    statusMessages.push('⏭️ SponsorBlock: removing segments');
   }
 
   return { args, statusMessages };

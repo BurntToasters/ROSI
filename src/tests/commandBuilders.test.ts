@@ -46,6 +46,11 @@ function createSettings(overrides: Partial<Settings> = {}): Settings {
     checkUpdatesOnStartup: true,
     updateChannel: 'auto',
     audioFormat: 'mp3',
+    writeSubtitles: false,
+    subtitleLangs: 'en',
+    embedThumbnail: false,
+    embedMetadata: false,
+    sponsorblockRemove: false,
     ...overrides,
   };
 }
@@ -259,6 +264,61 @@ describe('command builders', () => {
     });
 
     expect(result.args).toContain('hls-1080+233-drc');
+  });
+
+  it('adds enhancement flags when enabled', () => {
+    const result = buildYtdlpArgs({
+      normalizedDownloadDir: '/tmp/downloads',
+      url: 'https://example.com/video',
+      settings: createSettings({
+        writeSubtitles: true,
+        subtitleLangs: 'en,es',
+        embedThumbnail: true,
+        embedMetadata: true,
+        sponsorblockRemove: true,
+      }),
+      options: { url: 'https://example.com/video', outputPath: '/tmp/downloads' },
+      ffmpegLocation: null,
+    });
+
+    expect(result.args).toContain('--write-subs');
+    expect(result.args).toContain('--embed-subs');
+    expect(result.args).toContain('--sub-langs');
+    expect(result.args).toContain('en,es');
+    expect(result.args).toContain('--embed-thumbnail');
+    expect(result.args).toContain('--embed-metadata');
+    expect(result.args).toContain('--sponsorblock-remove');
+    expect(result.args).toContain('default');
+    expect(result.args[result.args.length - 1]).toBe('https://example.com/video');
+  });
+
+  it('omits enhancement flags when disabled', () => {
+    const result = buildYtdlpArgs({
+      normalizedDownloadDir: '/tmp/downloads',
+      url: 'https://example.com/video',
+      settings: createSettings(),
+      options: { url: 'https://example.com/video', outputPath: '/tmp/downloads' },
+      ffmpegLocation: null,
+    });
+
+    expect(result.args).not.toContain('--write-subs');
+    expect(result.args).not.toContain('--embed-thumbnail');
+    expect(result.args).not.toContain('--embed-metadata');
+    expect(result.args).not.toContain('--sponsorblock-remove');
+  });
+
+  it('falls back to en for malformed subtitle languages', () => {
+    const result = buildYtdlpArgs({
+      normalizedDownloadDir: '/tmp/downloads',
+      url: 'https://example.com/video',
+      settings: createSettings({ writeSubtitles: true, subtitleLangs: 'en; rm -rf /' }),
+      options: { url: 'https://example.com/video', outputPath: '/tmp/downloads' },
+      ffmpegLocation: null,
+    });
+
+    const idx = result.args.indexOf('--sub-langs');
+    expect(idx).toBeGreaterThan(-1);
+    expect(result.args[idx + 1]).toBe('en');
   });
 
   it('accepts valid numeric format IDs', () => {
