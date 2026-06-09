@@ -1,2 +1,5 @@
-Place the platform-specific ffmpeg binary in this directory.
-See resources/ffmpeg/README.md for details.
+Place Windows x64 FFmpeg binaries here:
+- ffmpeg.exe
+- ffprobe.exe
+
+Build from: https://github.com/BurntToasters/ffmpeg-static-builds
