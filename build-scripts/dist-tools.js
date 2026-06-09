@@ -3,6 +3,8 @@ const path = require('path');
 
 const FLATPAK_BUILD_DIR_PREFIX = 'build-dir';
 const RENDERER_MODULES_DIR = path.join('src', 'renderer', 'modules');
+const RENDERER_DIR = path.join('src', 'renderer');
+const RENDERER_ROOT_TS = ['rosiEngine.ts'];
 
 function listFlatpakBuildDirs() {
   try {
@@ -31,6 +33,7 @@ function cleanBuildArtifacts() {
   }
 
   cleanRendererModuleArtifacts();
+  cleanRendererRootArtifacts();
 }
 
 function cleanReleaseArtifacts() {
@@ -60,6 +63,20 @@ function cleanRendererModuleArtifacts() {
 
     for (const target of targets) {
       const artifactPath = path.join(RENDERER_MODULES_DIR, target);
+      try {
+        fs.rmSync(artifactPath, { force: true, maxRetries: 8, retryDelay: 100 });
+      } catch (error) {
+        if (error && error.code === 'ENOENT') continue;
+      }
+    }
+  }
+}
+
+function cleanRendererRootArtifacts() {
+  for (const tsName of RENDERER_ROOT_TS) {
+    const stem = tsName.slice(0, -3);
+    for (const target of [`${stem}.js`, `${stem}.js.map`]) {
+      const artifactPath = path.join(RENDERER_DIR, target);
       try {
         fs.rmSync(artifactPath, { force: true, maxRetries: 8, retryDelay: 100 });
       } catch (error) {

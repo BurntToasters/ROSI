@@ -1,9 +1,40 @@
-function logError(context, error) {
+function logError(context: string, error?: unknown) {
   const msg = error instanceof Error ? error.message : String(error || '');
   const text = msg ? `${context}: ${msg}` : context;
   if (window.api && typeof window.api.logError === 'function') {
     window.api.logError(text);
   }
+}
+
+interface RosiSettings {
+  settingsVersion: number;
+  theme: 'system' | 'light' | 'dark' | 'purple';
+  showConsoleOutput: boolean;
+  consoleCollapsed: boolean;
+  advancedOptions: boolean;
+  audioOnly: boolean;
+  audioFormat: string;
+  convertEnabled: boolean;
+  convertFormat: string;
+  keepOriginalAfterConvert: boolean;
+  firstLaunch: boolean;
+  hookBrowser: boolean;
+  browserChoice: string;
+  animateBackground: boolean;
+  notifications: boolean;
+  denoReminderDismissed: boolean;
+  gpuAcceleration: boolean;
+  gpuType: 'auto' | 'nvidia' | 'amd' | 'intel';
+  bestQuality: boolean;
+  ffmpegPath: string;
+  hideSupportModal: boolean;
+  checkUpdatesOnStartup: boolean;
+  updateChannel: 'auto' | 'stable' | 'beta';
+  writeSubtitles: boolean;
+  subtitleLangs: string;
+  embedThumbnail: boolean;
+  embedMetadata: boolean;
+  sponsorblockRemove: boolean;
 }
 
 const rosiModules = window.rosiModules || {};
@@ -34,7 +65,7 @@ function getModifierKeyName() {
   return isMac() ? 'Cmd' : 'Ctrl';
 }
 
-function isValidUrl(string) {
+function isValidUrl(string: string) {
   if (uiModule && typeof uiModule.isValidUrl === 'function') {
     return uiModule.isValidUrl(string);
   }
@@ -46,12 +77,14 @@ function isValidUrl(string) {
   }
 }
 
-let systemThemeMediaQuery = null;
-let systemThemeMediaQueryHandler = null;
-let appliedTheme = 'dark';
-let themePreference = 'system';
+type ThemeName = 'system' | 'light' | 'dark' | 'purple';
 
-function resolveAppliedTheme(preference) {
+let systemThemeMediaQuery: MediaQueryList | null = null;
+let systemThemeMediaQueryHandler: (() => void) | null = null;
+let appliedTheme: ThemeName = 'dark';
+let themePreference: ThemeName = 'system';
+
+function resolveAppliedTheme(preference: ThemeName): ThemeName {
   if (preference === 'light' || preference === 'dark' || preference === 'purple') {
     return preference;
   }
@@ -63,9 +96,9 @@ function resolveAppliedTheme(preference) {
   return query && query.matches ? 'dark' : 'light';
 }
 
-function syncLicensesTheme(theme) {
+function syncLicensesTheme(theme: ThemeName) {
   try {
-    const frame = document.getElementById('licenses-frame');
+    const frame = document.getElementById('licenses-frame') as HTMLIFrameElement | null;
     const root = frame?.contentDocument?.documentElement;
     if (root) {
       root.dataset.theme = theme;
@@ -113,10 +146,10 @@ function ensureSystemThemeListener() {
   }
 }
 
-function applyTheme(preference) {
+function applyTheme(preference: string) {
   themePreference =
     preference === 'light' || preference === 'dark' || preference === 'purple'
-      ? preference
+      ? (preference as ThemeName)
       : 'system';
   ensureSystemThemeListener();
   appliedTheme = resolveAppliedTheme(themePreference);
@@ -125,7 +158,7 @@ function applyTheme(preference) {
   return appliedTheme;
 }
 
-function updateConsoleVisibility(show) {
+function updateConsoleVisibility(show: boolean) {
   if (uiModule && typeof uiModule.updateConsoleVisibility === 'function') {
     uiModule.updateConsoleVisibility(show);
     return;
@@ -137,19 +170,24 @@ function updateConsoleVisibility(show) {
   document.body.classList.toggle('console-visible', !!show);
 }
 
-function showToast(message, { type = 'info', duration = 4000 } = {}) {
+type ToastType = 'warning' | 'error' | 'success' | 'info';
+
+function showToast(
+  message: unknown,
+  { type = 'info', duration = 4000 }: { type?: ToastType; duration?: number } = {}
+) {
   if (uiModule && typeof uiModule.showToast === 'function') {
     uiModule.showToast(message, { type, duration });
   }
 }
 
-function appendConsoleOutput(outputEl, text) {
+function appendConsoleOutput(outputEl: HTMLElement | null, text: string) {
   if (uiModule && typeof uiModule.appendConsoleOutput === 'function') {
     uiModule.appendConsoleOutput(outputEl, text);
   }
 }
 
-function setConsoleCollapsed(collapsed) {
+function setConsoleCollapsed(collapsed: boolean) {
   const consoleSection = document.getElementById('console-section');
   const consoleHeader = document.getElementById('consoleHeader');
   const output = document.getElementById('output');
@@ -162,7 +200,7 @@ function setConsoleCollapsed(collapsed) {
 }
 
 // Toggle console collapsed state
-function toggleConsoleCollapse(forceCollapsed) {
+function toggleConsoleCollapse(forceCollapsed?: boolean) {
   const consoleSection = document.getElementById('console-section');
   if (!consoleSection) return false;
   if (typeof forceCollapsed === 'boolean') {
@@ -171,7 +209,11 @@ function toggleConsoleCollapse(forceCollapsed) {
   return setConsoleCollapsed(!consoleSection.classList.contains('collapsed'));
 }
 
-function setButtonLoading(button, isLoading, onCancel) {
+function setButtonLoading(
+  button: HTMLButtonElement | null,
+  isLoading: boolean,
+  onCancel?: (() => void) | null
+) {
   if (uiModule && typeof uiModule.setButtonLoading === 'function') {
     uiModule.setButtonLoading(button, isLoading, onCancel);
   }
@@ -188,25 +230,37 @@ function closeSidebar() {
     uiModule.closeSidebar();
   }
 }
-function toggleAdvancedUI(show) {
+function toggleAdvancedUI(show: boolean) {
   if (uiModule && typeof uiModule.toggleAdvancedUI === 'function') {
     uiModule.toggleAdvancedUI(show);
   }
 }
 
 // Modal queue system
-const modalQueue = [];
-let isModalActive = false;
-let currentModalData = null;
-let previousFocus = null;
-let modalTrapHandler = null;
-let modalFocusinHandler = null;
-let licensesFocusinHandler = null;
+interface ModalButton {
+  label: string;
+  action?: () => void;
+}
+interface ModalData {
+  title: string;
+  message: unknown;
+  buttons?: ModalButton[];
+  priority?: boolean;
+  extra?: (() => Node | null) | Node | null;
+}
 
-function getFocusableElements(container) {
+const modalQueue: ModalData[] = [];
+let isModalActive = false;
+let currentModalData: ModalData | null = null;
+let previousFocus: Element | null = null;
+let modalTrapHandler: ((e: KeyboardEvent) => void) | null = null;
+let modalFocusinHandler: ((e: FocusEvent) => void) | null = null;
+let licensesFocusinHandler: ((e: FocusEvent) => void) | null = null;
+
+function getFocusableElements(container: unknown): HTMLElement[] {
   if (!(container instanceof HTMLElement)) return [];
   return Array.from(
-    container.querySelectorAll(
+    container.querySelectorAll<HTMLElement>(
       'button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])'
     )
   ).filter(
@@ -218,7 +272,7 @@ function getFocusableElements(container) {
   );
 }
 
-function focusFirstElement(container) {
+function focusFirstElement(container: unknown) {
   const focusable = getFocusableElements(container);
   const first = focusable[0];
   if (first && typeof first.focus === 'function') {
@@ -228,8 +282,8 @@ function focusFirstElement(container) {
   return false;
 }
 
-function showModal({ title, message, buttons = [], priority = false, extra = null }) {
-  const modalData = { title, message, buttons, priority, extra };
+function showModal({ title, message, buttons = [], priority = false, extra = null }: ModalData) {
+  const modalData: ModalData = { title, message, buttons, priority, extra };
   if (priority && isModalActive) {
     const modal = document.getElementById('app-modal');
     if (modal) {
@@ -256,8 +310,12 @@ function displayNextModal() {
   }
 
   isModalActive = true;
-  currentModalData = modalQueue.shift();
-  const { title, message, buttons, extra } = currentModalData;
+  currentModalData = modalQueue.shift() ?? null;
+  if (!currentModalData) {
+    isModalActive = false;
+    return;
+  }
+  const { title, message, buttons = [], extra } = currentModalData;
 
   const modal = document.getElementById('app-modal');
   const titleEl = document.getElementById('modal-title');
@@ -278,7 +336,7 @@ function displayNextModal() {
     if (extra) {
       const extraNode = typeof extra === 'function' ? extra() : extra;
       if (extraNode && extraNode.nodeType) {
-        extraEl.appendChild(extraNode);
+        extraEl.appendChild(extraNode as Node);
       }
     }
   }
@@ -310,7 +368,7 @@ function displayNextModal() {
   if (modalFocusinHandler) {
     document.removeEventListener('focusin', modalFocusinHandler, true);
   }
-  modalTrapHandler = (e) => {
+  modalTrapHandler = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
@@ -326,17 +384,17 @@ function displayNextModal() {
     if (e.shiftKey) {
       if (!active || active === first) {
         e.preventDefault();
-        last.focus();
+        last?.focus();
       }
     } else {
       if (!active || active === last) {
         e.preventDefault();
-        first.focus();
+        first?.focus();
       }
     }
   };
   modal.addEventListener('keydown', modalTrapHandler);
-  modalFocusinHandler = (e) => {
+  modalFocusinHandler = (e: FocusEvent) => {
     if (!isModalActive || !modal.classList.contains('active')) return;
     const target = e.target;
     if (target instanceof Node && modal.contains(target)) return;
@@ -353,7 +411,7 @@ function displayNextModal() {
   });
 }
 
-function hideModal(modal, action) {
+function hideModal(modal: HTMLElement, action: (() => void) | null | undefined) {
   modal.classList.add('hiding');
   currentModalData = null;
   if (modalTrapHandler) {
@@ -371,7 +429,7 @@ function hideModal(modal, action) {
     if (!isModalActive) {
       displayNextModal();
     }
-    if (!isModalActive && previousFocus && typeof previousFocus.focus === 'function') {
+    if (!isModalActive && previousFocus instanceof HTMLElement) {
       previousFocus.focus();
       previousFocus = null;
     }
@@ -388,10 +446,10 @@ function showKeyboardShortcuts() {
 }
 
 let isFetchingFormats = false;
-let fetchFormatsAbort = null;
+let fetchFormatsAbort: (() => void) | null = null;
 async function fetchFormats() {
-  const btn = document.getElementById('fetchFormatsBtn');
-  const urlInput = document.getElementById('url');
+  const btn = document.getElementById('fetchFormatsBtn') as HTMLButtonElement | null;
+  const urlInput = document.getElementById('url') as HTMLInputElement | null;
   const videoUrl = urlInput ? urlInput.value : null;
 
   try {
@@ -426,10 +484,10 @@ async function fetchFormats() {
       if (window.api.cancelFormats) {
         window.api.cancelFormats();
       }
-      fetchFormatsAbort();
+      fetchFormatsAbort?.();
     });
-    const videoSelect = document.getElementById('videoFormat');
-    const audioSelect = document.getElementById('audioFormat');
+    const videoSelect = document.getElementById('videoFormat') as HTMLSelectElement | null;
+    const audioSelect = document.getElementById('audioFormat') as HTMLSelectElement | null;
     if (videoSelect) videoSelect.innerHTML = '<option value="">Loading...</option>';
     if (audioSelect) audioSelect.innerHTML = '<option value="">Loading...</option>';
     try {
@@ -456,38 +514,43 @@ async function fetchFormats() {
       if (audioSelect) audioSelect.innerHTML = '<option value="">Select Audio Format</option>';
       let videoFormatsFound = 0,
         audioFormatsFound = 0;
+      const FORMAT_ID = /^([A-Za-z0-9][A-Za-z0-9._-]{0,63})\s+\S/;
       lines.forEach((line) => {
-        if (/^\s*\d+\s+[a-zA-Z0-9]+/.test(line.trim())) {
-          const parts = line.trim().split(/\s+/);
-          const formatId = parts[0];
-          const option = document.createElement('option');
-          option.value = formatId;
-          let labelText = line.trim();
-          const resolutionMatch = labelText.match(/(\d{3,4}x\d{3,4}|\d{3,4}p)/);
-          const fpsMatch = labelText.match(/@\s*(\d+fps)/);
-          const sizeMatch = labelText.match(/(\d+(\.\d+)?(MiB|GiB|KiB))/);
-          const codecMatch = line.match(/(avc1|vp9|av01|h264|h265|opus|mp4a|aac|vorbis)/i);
-          let cleanLabel = `ID: ${formatId}`;
-          if (resolutionMatch) cleanLabel += ` ${resolutionMatch[0]}`;
-          if (fpsMatch) cleanLabel += ` ${fpsMatch[1]}`;
-          if (codecMatch) cleanLabel += ` (${codecMatch[0]})`;
-          if (sizeMatch) cleanLabel += ` ~${sizeMatch[0]}`;
-          option.text = cleanLabel;
-          option.title = line.trim();
-          const isVideo = /video/.test(line.toLowerCase()) && !/audio only/i.test(line);
-          const isAudio = /audio/.test(line.toLowerCase()) && !/video only/i.test(line);
-          const isVideoOnly = /video only/i.test(line);
-          const isAudioOnly = /audio only/i.test(line);
-          if (isVideoOnly || (isVideo && !isAudio)) {
-            if (videoSelect) videoSelect.appendChild(option);
-            videoFormatsFound++;
-          } else if (isAudioOnly || (isAudio && !isVideo)) {
-            if (audioSelect) audioSelect.appendChild(option);
-            audioFormatsFound++;
-          } else if (isVideo && isAudio) {
-            if (videoSelect) videoSelect.appendChild(option);
-            videoFormatsFound++;
-          }
+        const trimmed = line.trim();
+        const idMatch = trimmed.match(FORMAT_ID);
+        if (!idMatch) return;
+        const formatId = idMatch[1];
+        if (!formatId || formatId.toLowerCase() === 'id') return;
+        if (/storyboard|images? only|mhtml/i.test(line)) return;
+        const option = document.createElement('option');
+        option.value = formatId;
+        const labelText = trimmed;
+        const resolutionMatch = labelText.match(/(\d{3,4}x\d{3,4}|\d{3,4}p)/);
+        const fpsMatch = labelText.match(/@?\s*(\d+)\s*fps/i);
+        const sizeMatch = labelText.match(/(\d+(\.\d+)?(MiB|GiB|KiB))/);
+        const codecMatch = line.match(
+          /(avc1|vp9|vp09|av01|h264|h265|hevc|opus|mp4a|aac|vorbis|flac)/i
+        );
+        let cleanLabel = `ID: ${formatId}`;
+        if (resolutionMatch) cleanLabel += ` ${resolutionMatch[0]}`;
+        if (fpsMatch) cleanLabel += ` ${fpsMatch[1]}fps`;
+        if (codecMatch) cleanLabel += ` (${codecMatch[0]})`;
+        if (sizeMatch) cleanLabel += ` ~${sizeMatch[0]}`;
+        option.text = cleanLabel;
+        option.title = trimmed;
+        const isVideoOnly = /video only/i.test(line);
+        const isAudioOnly = /audio only/i.test(line);
+        const isVideo = /video/.test(line.toLowerCase()) && !isAudioOnly;
+        const isAudio = /audio/.test(line.toLowerCase()) && !isVideoOnly;
+        if (isVideoOnly || (isVideo && !isAudio)) {
+          if (videoSelect) videoSelect.appendChild(option);
+          videoFormatsFound++;
+        } else if (isAudioOnly || (isAudio && !isVideo)) {
+          if (audioSelect) audioSelect.appendChild(option);
+          audioFormatsFound++;
+        } else if (isVideo && isAudio) {
+          if (videoSelect) videoSelect.appendChild(option);
+          videoFormatsFound++;
         }
       });
       if (videoFormatsFound === 0 && videoSelect)
@@ -495,7 +558,7 @@ async function fetchFormats() {
       if (audioFormatsFound === 0 && audioSelect)
         audioSelect.innerHTML = '<option value="">No audio formats found</option>';
     } catch (e) {
-      const errorMessage = typeof e === 'string' ? e : e.message || 'Unknown error';
+      const errorMessage = typeof e === 'string' ? e : (e as Error)?.message || 'Unknown error';
       if (videoSelect) videoSelect.innerHTML = '<option value="">Error loading formats</option>';
       if (audioSelect) audioSelect.innerHTML = '<option value="">Error loading formats</option>';
       showModal({
@@ -521,18 +584,105 @@ async function fetchFormats() {
   }
 }
 
+function formatDuration(totalSeconds: number | null | undefined) {
+  if (typeof totalSeconds !== 'number' || !Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+    return '';
+  }
+  const seconds = Math.floor(totalSeconds % 60);
+  const minutes = Math.floor((totalSeconds / 60) % 60);
+  const hours = Math.floor(totalSeconds / 3600);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`;
+}
+
+function formatViewCount(count: number | null | undefined) {
+  if (typeof count !== 'number' || !Number.isFinite(count) || count < 0) return '';
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M views`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K views`;
+  return `${count} views`;
+}
+
+interface RosiVideoInfo {
+  title: string;
+  uploader: string | null;
+  durationSeconds: number | null;
+  thumbnail: string | null;
+  ext: string | null;
+  viewCount: number | null;
+  isPlaylist: boolean;
+  playlistCount: number | null;
+  webpageUrl: string | null;
+}
+
+let isFetchingPreview = false;
+let previewAbort: (() => void) | null = null;
+
+function hideVideoPreview() {
+  const card = document.getElementById('preview-card');
+  const thumb = document.getElementById('preview-thumb') as HTMLImageElement | null;
+  if (card) card.classList.remove('visible', 'loading', 'is-playlist');
+  if (thumb) {
+    thumb.removeAttribute('src');
+    thumb.alt = '';
+  }
+}
+
+function renderVideoPreview(info: RosiVideoInfo) {
+  const card = document.getElementById('preview-card');
+  const thumb = document.getElementById('preview-thumb') as HTMLImageElement | null;
+  const titleEl = document.getElementById('preview-title');
+  const subEl = document.getElementById('preview-sub');
+  const durationEl = document.getElementById('preview-duration');
+  if (!card || !titleEl || !subEl) return;
+
+  card.classList.remove('loading');
+  card.classList.add('visible');
+  card.classList.toggle('is-playlist', !!info.isPlaylist);
+
+  titleEl.textContent = info.title || 'Untitled';
+
+  const subParts: string[] = [];
+  if (info.uploader) subParts.push(info.uploader);
+  if (info.isPlaylist && info.playlistCount) {
+    subParts.push(`${info.playlistCount} items`);
+  } else {
+    const views = formatViewCount(info.viewCount);
+    if (views) subParts.push(views);
+  }
+  subEl.textContent = subParts.join(' • ');
+
+  if (durationEl) {
+    const duration = formatDuration(info.durationSeconds);
+    durationEl.textContent = duration;
+    durationEl.style.display = duration ? 'inline-block' : 'none';
+  }
+
+  if (thumb) {
+    const wrap = thumb.parentElement as HTMLElement | null;
+    if (info.thumbnail) {
+      thumb.src = info.thumbnail;
+      thumb.alt = info.title || 'Video thumbnail';
+      if (wrap) wrap.style.display = '';
+    } else {
+      thumb.removeAttribute('src');
+      thumb.alt = '';
+      if (wrap) wrap.style.display = 'none';
+    }
+  }
+}
+
 // handles download button logic
 let isDownloading = false;
-let downloadAbort = null;
-let lastDownloadedFilePath = null;
+let downloadAbort: (() => void) | null = null;
+let lastDownloadedFilePath: string | null = null;
 
-function setProgressPhase(phase) {
-  const phases = document.querySelectorAll('.progress-phase');
+function setProgressPhase(phase: string) {
+  const phases = document.querySelectorAll<HTMLElement>('.progress-phase');
   const phaseOrder = ['download', 'merge', 'convert'];
   const phaseIndex = phaseOrder.indexOf(phase);
 
   phases.forEach((el) => {
-    const elPhase = el.dataset.phase;
+    const elPhase = el.dataset.phase ?? '';
     const elIndex = phaseOrder.indexOf(elPhase);
     el.classList.remove('active', 'completed');
     if (elIndex < phaseIndex) {
@@ -543,10 +693,10 @@ function setProgressPhase(phase) {
   });
 }
 
-function configureProgressPhases(showMerge, showConvert) {
-  const mergePhase = document.querySelector('.progress-phase[data-phase="merge"]');
-  const convertPhase = document.querySelector('.progress-phase[data-phase="convert"]');
-  const connectors = document.querySelectorAll('.progress-phase-connector');
+function configureProgressPhases(showMerge: boolean, showConvert: boolean) {
+  const mergePhase = document.querySelector<HTMLElement>('.progress-phase[data-phase="merge"]');
+  const convertPhase = document.querySelector<HTMLElement>('.progress-phase[data-phase="convert"]');
+  const connectors = document.querySelectorAll<HTMLElement>('.progress-phase-connector');
 
   if (mergePhase) mergePhase.style.display = showMerge ? 'flex' : 'none';
   if (convertPhase) convertPhase.style.display = showConvert ? 'flex' : 'none';
@@ -571,7 +721,7 @@ function showProgressBar(status = 'Downloading...') {
   const container = document.getElementById('progress-container');
   const statusEl = document.getElementById('progress-status');
   const percentEl = document.getElementById('progress-percent');
-  const bar = document.getElementById('progress-bar');
+  const bar = document.getElementById('progress-bar') as HTMLElement | null;
   const details = document.getElementById('progress-details');
 
   if (container) {
@@ -589,10 +739,14 @@ function showProgressBar(status = 'Downloading...') {
   setProgressPhase('download');
 }
 
-function updateProgressBar(percent, statusText = null, detailsText = null) {
+function updateProgressBar(
+  percent: number,
+  statusText: string | null = null,
+  detailsText: string | null = null
+) {
   const statusEl = document.getElementById('progress-status');
   const percentEl = document.getElementById('progress-percent');
-  const bar = document.getElementById('progress-bar');
+  const bar = document.getElementById('progress-bar') as HTMLElement | null;
   const details = document.getElementById('progress-details');
 
   const clamped = Math.max(0, Math.min(100, percent));
@@ -627,14 +781,14 @@ function hideProgressBar() {
   hideProgressComplete();
 }
 
-function parseYtdlpProgress(message) {
+function parseYtdlpProgress(message: string) {
   if (downloadsModule && typeof downloadsModule.parseYtdlpProgress === 'function') {
     return downloadsModule.parseYtdlpProgress(message);
   }
   return null;
 }
 
-function formatBytes(bytes) {
+function formatBytes(bytes: number) {
   if (downloadsModule && typeof downloadsModule.formatBytes === 'function') {
     return downloadsModule.formatBytes(bytes);
   }
@@ -644,7 +798,14 @@ function formatBytes(bytes) {
 const HISTORY_KEY = 'rosi-download-history';
 const HISTORY_MAX = 20;
 
-function loadHistory() {
+interface HistoryEntry {
+  filename: string;
+  path: string | null;
+  timestamp: number;
+  status: 'success' | 'failed' | 'cancelled';
+}
+
+function loadHistory(): HistoryEntry[] {
   try {
     const data = localStorage.getItem(HISTORY_KEY);
     return data ? JSON.parse(data) : [];
@@ -653,11 +814,14 @@ function loadHistory() {
   }
 }
 
-function saveHistory(history) {
+function saveHistory(history: HistoryEntry[]) {
   try {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
   } catch (e) {
-    if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.code === 22)) {
+    if (
+      e instanceof DOMException &&
+      (e.name === 'QuotaExceededError' || (e as DOMException).code === 22)
+    ) {
       history.length = Math.max(1, Math.floor(history.length / 2));
       try {
         localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
@@ -668,7 +832,11 @@ function saveHistory(history) {
   }
 }
 
-function addHistoryEntry(entry) {
+function addHistoryEntry(entry: {
+  filename: string;
+  path: string | null;
+  status: HistoryEntry['status'];
+}) {
   const history = loadHistory();
   history.unshift({
     filename: entry.filename,
@@ -681,7 +849,7 @@ function addHistoryEntry(entry) {
   renderHistory();
 }
 
-function formatRelativeTime(timestamp) {
+function formatRelativeTime(timestamp: number) {
   const diff = Date.now() - timestamp;
   const seconds = Math.floor(diff / 1000);
   if (seconds < 60) return 'Just now';
@@ -694,7 +862,7 @@ function formatRelativeTime(timestamp) {
   return new Date(timestamp).toLocaleDateString();
 }
 
-function escapeHtml(str) {
+function escapeHtml(str: string) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
@@ -746,7 +914,7 @@ function renderHistory() {
       if (openBtn) {
         openBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          window.api.openFileLocation(entry.path);
+          if (entry.path) void window.api.openFileLocation(entry.path);
         });
       }
     }
@@ -833,11 +1001,11 @@ async function checkForUpdates() {
   }
 }
 
-let updaterCleanupFunctions = [];
+let updaterCleanupFunctions: Array<() => void> = [];
 
 function showUpdateBanner() {
   const banner = document.getElementById('update-banner');
-  const bar = document.getElementById('update-banner-bar');
+  const bar = document.getElementById('update-banner-bar') as HTMLElement | null;
   const info = document.getElementById('update-banner-info');
   const text = document.getElementById('update-banner-text');
   if (bar) bar.style.width = '0%';
@@ -874,14 +1042,15 @@ function setupAutoUpdater() {
           break;
 
         case 'available': {
-          updateVersion = data.version;
+          const version = data.version ?? '';
+          updateVersion = version;
           const wasManualCheck = isManualUpdateCheck;
           isManualUpdateCheck = false;
           const isBetaUpdate =
             data.isBeta ||
             (updatesModule && typeof updatesModule.isPrereleaseVersion === 'function'
-              ? updatesModule.isPrereleaseVersion(data.version)
-              : /-(beta|alpha|rc)/i.test(data.version));
+              ? updatesModule.isPrereleaseVersion(version)
+              : /-(beta|alpha|rc)/i.test(version));
           showModal({
             title: isBetaUpdate ? 'Beta Update Available!' : 'Update Available!',
             message: isBetaUpdate
@@ -958,7 +1127,7 @@ function setupAutoUpdater() {
 
   updaterCleanupFunctions.push(
     window.api.onUpdaterProgress((data) => {
-      const progressBar = document.getElementById('update-banner-bar');
+      const progressBar = document.getElementById('update-banner-bar') as HTMLElement | null;
       const progressInfo = document.getElementById('update-banner-info');
 
       if (progressBar) {
@@ -992,8 +1161,8 @@ function cleanupUpdaterListeners() {
   updaterCleanupFunctions = [];
 }
 
-let licensesPreviousFocus = null;
-let licensesTrapHandler = null;
+let licensesPreviousFocus: Element | null = null;
+let licensesTrapHandler: ((e: KeyboardEvent) => void) | null = null;
 
 function showLicenses() {
   const licensesOverlay = document.getElementById('licenses-overlay');
@@ -1004,7 +1173,7 @@ function showLicenses() {
     document.body.classList.add('licenses-open');
     document.body.style.overflow = 'hidden';
 
-    const closeBtn = licensesOverlay.querySelector('#close-licenses');
+    const closeBtn = licensesOverlay.querySelector<HTMLElement>('#close-licenses');
     licensesOverlay.setAttribute('tabindex', '-1');
     requestAnimationFrame(() => {
       if (closeBtn) {
@@ -1016,7 +1185,7 @@ function showLicenses() {
       }
     });
 
-    licensesTrapHandler = (e) => {
+    licensesTrapHandler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
@@ -1032,18 +1201,18 @@ function showLicenses() {
       if (e.shiftKey) {
         if (!active || active === first) {
           e.preventDefault();
-          last.focus();
+          last?.focus();
         }
       } else if (!active || active === last) {
         e.preventDefault();
-        first.focus();
+        first?.focus();
       }
     };
     licensesOverlay.addEventListener('keydown', licensesTrapHandler);
     if (licensesFocusinHandler) {
       document.removeEventListener('focusin', licensesFocusinHandler, true);
     }
-    licensesFocusinHandler = (e) => {
+    licensesFocusinHandler = (e: FocusEvent) => {
       if (!licensesOverlay.classList.contains('active')) return;
       const target = e.target;
       if (target instanceof Node && licensesOverlay.contains(target)) return;
@@ -1071,14 +1240,14 @@ function hideLicenses() {
       document.body.style.overflow = '';
       document.body.classList.remove('licenses-open');
     }, 300);
-    if (licensesPreviousFocus) {
+    if (licensesPreviousFocus instanceof HTMLElement) {
       licensesPreviousFocus.focus();
       licensesPreviousFocus = null;
     }
   }
 }
 
-function updateBackgroundAnimation(animate) {
+function updateBackgroundAnimation(animate: boolean) {
   const body = document.body;
   if (animate) {
     body.classList.add('animate-bg');
@@ -1088,7 +1257,7 @@ function updateBackgroundAnimation(animate) {
 }
 
 // check for Deno
-async function checkDenoInstallation(settings) {
+async function checkDenoInstallation(settings: RosiSettings, persist: () => void) {
   if (settings.denoReminderDismissed) {
     return;
   }
@@ -1134,9 +1303,12 @@ async function checkDenoInstallation(settings) {
                   priority: true,
                 });
               } catch (error) {
+                const errMsg =
+                  (error as { error?: string })?.error ||
+                  (error instanceof Error ? error.message : 'Unknown error');
                 showModal({
                   title: 'Installation Failed',
-                  message: `Failed to install Deno automatically.\n\nPlease install manually:\nMac/Linux: curl -fsSL https://deno.land/install.sh | sh\nWindows: irm https://deno.land/install.ps1 | iex\n\nError: ${error.error || 'Unknown error'}`,
+                  message: `Failed to install Deno automatically.\n\nPlease install manually:\nMac/Linux: curl -fsSL https://deno.land/install.sh | sh\nWindows: irm https://deno.land/install.ps1 | iex\n\nError: ${errMsg}`,
                   buttons: [
                     {
                       label: 'Open Deno Website',
@@ -1154,7 +1326,7 @@ async function checkDenoInstallation(settings) {
             label: "No, don't remind me",
             action: () => {
               settings.denoReminderDismissed = true;
-              void persistSettings();
+              persist();
             },
           },
         ],
@@ -1165,16 +1337,23 @@ async function checkDenoInstallation(settings) {
   }
 }
 
-function launchSetupWizard(settings, applyThemeFn, persistSettingsFn, onComplete) {
+function launchSetupWizard(
+  settings: RosiSettings,
+  applyThemeFn: (preference: string) => void,
+  persistSettingsFn: (silent?: boolean, immediate?: boolean) => Promise<boolean> | void,
+  onComplete: () => void
+) {
   const TOTAL_STEPS = 4;
   let currentStep = 0;
 
   const overlay = document.getElementById('setup-wizard');
-  const progressBar = document.getElementById('wizard-progress-bar');
+  const progressBar = document.getElementById('wizard-progress-bar') as HTMLElement | null;
   const backBtn = document.getElementById('wizard-back');
   const nextBtn = document.getElementById('wizard-next');
   const dotsContainer = document.getElementById('wizard-dots');
-  const steps = overlay ? overlay.querySelectorAll('.wizard-step') : [];
+  const steps = overlay
+    ? overlay.querySelectorAll<HTMLElement>('.wizard-step')
+    : ([] as unknown as NodeListOf<HTMLElement>);
 
   if (!overlay || !progressBar || !backBtn || !nextBtn || !dotsContainer || steps.length === 0) {
     settings.firstLaunch = false;
@@ -1183,16 +1362,22 @@ function launchSetupWizard(settings, applyThemeFn, persistSettingsFn, onComplete
     return;
   }
 
+  const overlayEl = overlay;
+  const progressBarEl = progressBar;
+  const backBtnEl = backBtn;
+  const nextBtnEl = nextBtn;
+  const dotsContainerEl = dotsContainer;
+
   // Build dots
-  dotsContainer.innerHTML = '';
+  dotsContainerEl.innerHTML = '';
   for (let i = 0; i < TOTAL_STEPS; i++) {
     const dot = document.createElement('span');
     dot.className = 'wizard-dot' + (i === 0 ? ' active' : '');
-    dotsContainer.appendChild(dot);
+    dotsContainerEl.appendChild(dot);
   }
 
   // Live theme preview
-  const themeRadios = overlay.querySelectorAll('input[name="wizard-theme"]');
+  const themeRadios = overlayEl.querySelectorAll<HTMLInputElement>('input[name="wizard-theme"]');
   themeRadios.forEach((radio) => {
     radio.addEventListener('change', () => {
       applyThemeFn(radio.value);
@@ -1206,40 +1391,44 @@ function launchSetupWizard(settings, applyThemeFn, persistSettingsFn, onComplete
     });
 
     // Progress bar
-    progressBar.style.width = ((currentStep + 1) / TOTAL_STEPS) * 100 + '%';
+    progressBarEl.style.width = ((currentStep + 1) / TOTAL_STEPS) * 100 + '%';
 
     // Dots
-    const dots = dotsContainer.querySelectorAll('.wizard-dot');
+    const dots = dotsContainerEl.querySelectorAll('.wizard-dot');
     dots.forEach((dot, i) => {
       dot.classList.toggle('active', i === currentStep);
     });
 
     // Back button
-    backBtn.classList.toggle('hidden', currentStep === 0);
+    backBtnEl.classList.toggle('hidden', currentStep === 0);
 
     // Next button text
     if (currentStep === 0) {
-      nextBtn.textContent = 'Get Started';
+      nextBtnEl.textContent = 'Get Started';
     } else if (currentStep === TOTAL_STEPS - 1) {
-      nextBtn.textContent = 'Finish';
+      nextBtnEl.textContent = 'Finish';
     } else {
-      nextBtn.textContent = 'Next';
+      nextBtnEl.textContent = 'Next';
     }
   }
 
   function gatherSettings() {
     // Theme
-    const selectedTheme = overlay.querySelector('input[name="wizard-theme"]:checked');
+    const selectedTheme = overlayEl.querySelector<HTMLInputElement>(
+      'input[name="wizard-theme"]:checked'
+    );
     if (selectedTheme) {
-      settings.theme = selectedTheme.value;
+      settings.theme = selectedTheme.value as RosiSettings['theme'];
       applyThemeFn(settings.theme);
     }
 
     // Download prefs
-    const bestQuality = document.getElementById('wizard-best-quality');
-    const audioOnly = document.getElementById('wizard-audio-only');
-    const notifications = document.getElementById('wizard-notifications');
-    const autoUpdates = document.getElementById('wizard-auto-updates');
+    const bestQuality = document.getElementById('wizard-best-quality') as HTMLInputElement | null;
+    const audioOnly = document.getElementById('wizard-audio-only') as HTMLInputElement | null;
+    const notifications = document.getElementById(
+      'wizard-notifications'
+    ) as HTMLInputElement | null;
+    const autoUpdates = document.getElementById('wizard-auto-updates') as HTMLInputElement | null;
 
     if (bestQuality) settings.bestQuality = bestQuality.checked;
     if (audioOnly) settings.audioOnly = audioOnly.checked;
@@ -1251,18 +1440,24 @@ function launchSetupWizard(settings, applyThemeFn, persistSettingsFn, onComplete
     gatherSettings();
     settings.firstLaunch = false;
     void persistSettingsFn(false, true);
-    overlay.classList.remove('active');
+    overlayEl.classList.remove('active');
 
     // Sync sidebar controls to reflect wizard choices
-    const themeSelect = document.getElementById('themeSelect');
+    const themeSelect = document.getElementById('themeSelect') as HTMLSelectElement | null;
     if (themeSelect) themeSelect.value = settings.theme || 'system';
-    const bestQualityToggle = document.getElementById('bestQualityToggle');
+    const bestQualityToggle = document.getElementById(
+      'bestQualityToggle'
+    ) as HTMLInputElement | null;
     if (bestQualityToggle) bestQualityToggle.checked = settings.bestQuality;
-    const audioOnlyToggle = document.getElementById('audioOnlyToggle');
+    const audioOnlyToggle = document.getElementById('audioOnlyToggle') as HTMLInputElement | null;
     if (audioOnlyToggle) audioOnlyToggle.checked = settings.audioOnly;
-    const notificationsToggle = document.getElementById('notificationsToggle');
+    const notificationsToggle = document.getElementById(
+      'notificationsToggle'
+    ) as HTMLInputElement | null;
     if (notificationsToggle) notificationsToggle.checked = settings.notifications;
-    const checkUpdatesToggle = document.getElementById('checkUpdatesOnStartupToggle');
+    const checkUpdatesToggle = document.getElementById(
+      'checkUpdatesOnStartupToggle'
+    ) as HTMLInputElement | null;
     if (checkUpdatesToggle) checkUpdatesToggle.checked = settings.checkUpdatesOnStartup;
 
     onComplete();
@@ -1277,7 +1472,7 @@ function launchSetupWizard(settings, applyThemeFn, persistSettingsFn, onComplete
     }
   });
 
-  backBtn.addEventListener('click', () => {
+  backBtnEl.addEventListener('click', () => {
     if (currentStep > 0) {
       currentStep--;
       updateUI();
@@ -1286,25 +1481,27 @@ function launchSetupWizard(settings, applyThemeFn, persistSettingsFn, onComplete
 
   // Set initial selected theme radio to match current settings
   const initialTheme = settings.theme || 'system';
-  const matchingRadio = overlay.querySelector(
+  const matchingRadio = overlayEl.querySelector<HTMLInputElement>(
     `input[name="wizard-theme"][value="${initialTheme}"]`
   );
   if (matchingRadio) matchingRadio.checked = true;
 
   updateUI();
-  overlay.classList.add('active');
+  overlayEl.classList.add('active');
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  let settings;
+  let settings: RosiSettings;
   try {
-    settings = await window.api.getSettings();
+    settings = (await window.api.getSettings()) as RosiSettings;
   } catch (error) {
+    logError('Failed to load settings', error);
     settings = {
-      settingsVersion: 2,
+      settingsVersion: 3,
       theme: 'system',
       showConsoleOutput: false,
       advancedOptions: false,
+      audioFormat: 'mp3',
       convertEnabled: false,
       convertFormat: 'mp4',
       keepOriginalAfterConvert: true,
@@ -1316,12 +1513,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       denoReminderDismissed: false,
       gpuAcceleration: false,
       gpuType: 'auto',
+      bestQuality: false,
       ffmpegPath: '',
       hideSupportModal: false,
       checkUpdatesOnStartup: true,
       updateChannel: 'auto',
       audioOnly: false,
       consoleCollapsed: false,
+      writeSubtitles: false,
+      subtitleLangs: 'en',
+      embedThumbnail: false,
+      embedMetadata: false,
+      sponsorblockRemove: false,
     };
     showModal({
       title: 'Settings Error',
@@ -1339,7 +1542,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       versionLink.textContent = `v${version}`;
       versionLink.addEventListener('click', (event) => {
         event.preventDefault();
-        window.api.openExternal(`https://github.com/BurntToasters/ROSI/releases/tag/v${version}`);
+        void window.api.openExternal(
+          `https://github.com/BurntToasters/ROSI/releases/tag/v${version}`
+        );
       });
       const isBeta =
         updatesModule && typeof updatesModule.isPrereleaseVersion === 'function'
@@ -1363,7 +1568,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   let settingsSaveErrorShownAt = 0;
 
-  function showSettingsSaveError(message) {
+  function showSettingsSaveError(message: string) {
     const now = Date.now();
     if (now - settingsSaveErrorShownAt < 5000) {
       return;
@@ -1377,13 +1582,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  let persistDebounceTimer = null;
+  let persistDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-  async function persistSettings(silent = false, immediate = false) {
+  async function persistSettings(silent = false, immediate = false): Promise<boolean> {
     if (persistDebounceTimer) clearTimeout(persistDebounceTimer);
-    const executeSave = async (resolve) => {
+    const executeSave = async (resolve: (value: boolean) => void) => {
       try {
-        const result = await window.api.saveSettings(settings);
+        const result = await window.api.saveSettings(
+          settings as unknown as Parameters<typeof window.api.saveSettings>[0]
+        );
         if (!result || result.ok !== true) {
           if (!silent) {
             const message = result?.error?.message || 'Could not save settings.';
@@ -1392,7 +1599,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           resolve(false);
           return;
         }
-        settings = result.data;
+        settings = result.data as RosiSettings;
         resolve(true);
       } catch (_error) {
         if (!silent) {
@@ -1401,7 +1608,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         resolve(false);
       }
     };
-    return new Promise((resolve) => {
+    return new Promise<boolean>((resolve) => {
       if (immediate) {
         persistDebounceTimer = null;
         void executeSave(resolve);
@@ -1414,74 +1621,86 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  const consoleToggle = document.getElementById('consoleToggle');
-  const advancedToggle = document.getElementById('advancedToggle');
-  const keepOriginalToggle = document.getElementById('keepOriginalToggle');
-  const hookBrowserToggle = document.getElementById('hookBrowserToggle');
-  const browserChoiceContainer = document.getElementById('browserChoiceContainer');
-  const browserChoiceSelect = document.getElementById('browserChoice');
-  const convertToggle = document.getElementById('convertToggle');
-  const convertFormatContainer = document.getElementById('convertFormatContainer');
-  const convertFormatSelect = document.getElementById('convertFormat');
-  const keepOriginalLabel = document.getElementById('keepOriginalLabel');
-  const gpuAccelerationToggle = document.getElementById('gpuAccelerationToggle');
-  const gpuAccelerationLabel = document.getElementById('gpuAccelerationLabel');
-  const gpuTypeContainer = document.getElementById('gpuTypeContainer');
-  const gpuTypeSelect = document.getElementById('gpuType');
-  const ffmpegPathInput = document.getElementById('ffmpegPathInput');
-  const outputEl = document.getElementById('output');
-  const resetSettingsBtn = document.getElementById('resetSettings');
-  const fetchFormatsBtn = document.getElementById('fetchFormatsBtn');
-  const downloadBtn = document.getElementById('downloadBtn');
-  const checkUpdateBtn = document.getElementById('checkUpdateBtn');
-  const animateBackgroundToggle = document.getElementById('animateBackgroundToggle');
-  const themeSelect = document.getElementById('themeSelect');
-  const bestQualityToggle = document.getElementById('bestQualityToggle');
-  const audioOnlyToggle = document.getElementById('audioOnlyToggle');
-  const audioFormatContainer = document.getElementById('audioFormatContainer');
-  const audioFormatSelect = document.getElementById('audioFormatSelect');
-  const notificationsToggle = document.getElementById('notificationsToggle');
-  const checkUpdatesOnStartupToggle = document.getElementById('checkUpdatesOnStartupToggle');
-  const checkUpdatesOnStartupLabel = document.getElementById('checkUpdatesOnStartupLabel');
-  const updateChannelSelect = document.getElementById('updateChannelSelect');
-  const updateChannelContainer = document.getElementById('updateChannelContainer');
-  const showUpdateChannelBtn = document.getElementById('showUpdateChannelBtn');
+  const byId = <T extends HTMLElement = HTMLElement>(id: string) =>
+    document.getElementById(id) as T | null;
 
-  const settingsBtn = document.getElementById('settingsBtn');
-  const closeSidebarBtn = document.getElementById('closeSidebar');
-  const sidebarOverlay = document.getElementById('sidebar-overlay');
-  const shortcutsBtn = document.getElementById('shortcutsBtn');
-  const clearUrlBtn = document.getElementById('clearUrl');
-  const pasteUrlBtn = document.getElementById('pasteUrl');
-  const clearConsoleBtn = document.getElementById('clearConsole');
-  const urlInput = document.getElementById('url');
-  const urlValidationMessage = document.getElementById('urlValidationMessage');
-  const urlInputContainer = document.querySelector('.url-input-container');
-  const downloadCard = document.querySelector('.download-card');
-  const historyHeader = document.getElementById('historyHeader');
-  const clearHistoryBtn = document.getElementById('clearHistory');
-  const browserCookiesHelp = document.getElementById('browserCookiesHelp');
-  const helpLink = document.getElementById('helpLink');
-  const supportLink = document.getElementById('supportLink');
-  const websiteLink = document.getElementById('websiteLink');
-  const supportProjectLink = document.getElementById('supportProjectLink');
-  const licensesLink = document.getElementById('licensesLink');
-  const licensesFrame = document.getElementById('licenses-frame');
-  const exportSettingsBtn = document.getElementById('exportSettingsBtn');
-  const importSettingsBtn = document.getElementById('importSettingsBtn');
-  const viewStatsBtn = document.getElementById('viewStatsBtn');
-  const queueUrlInput = document.getElementById('queueUrlInput');
-  const addToQueueBtn = document.getElementById('addToQueueBtn');
-  const startQueueBtn = document.getElementById('startQueueBtn');
-  const clearQueueBtn = document.getElementById('clearQueueBtn');
-  const cancelQueueBtn = document.getElementById('cancelQueueBtn');
-  const queueStatusMessage = document.getElementById('queueStatusMessage');
-  const queueList = document.getElementById('queueList');
-  const queueCount = document.getElementById('queueCount');
+  const consoleToggle = byId<HTMLInputElement>('consoleToggle');
+  const advancedToggle = byId<HTMLInputElement>('advancedToggle');
+  const keepOriginalToggle = byId<HTMLInputElement>('keepOriginalToggle');
+  const hookBrowserToggle = byId<HTMLInputElement>('hookBrowserToggle');
+  const browserChoiceContainer = byId('browserChoiceContainer');
+  const browserChoiceSelect = byId<HTMLSelectElement>('browserChoice');
+  const convertToggle = byId<HTMLInputElement>('convertToggle');
+  const convertFormatContainer = byId('convertFormatContainer');
+  const convertFormatSelect = byId<HTMLSelectElement>('convertFormat');
+  const keepOriginalLabel = byId('keepOriginalLabel');
+  const gpuAccelerationToggle = byId<HTMLInputElement>('gpuAccelerationToggle');
+  const gpuAccelerationLabel = byId('gpuAccelerationLabel');
+  const gpuTypeContainer = byId('gpuTypeContainer');
+  const gpuTypeSelect = byId<HTMLSelectElement>('gpuType');
+  const ffmpegPathInput = byId<HTMLInputElement>('ffmpegPathInput');
+  const outputEl = byId('output');
+  const resetSettingsBtn = byId<HTMLButtonElement>('resetSettings');
+  const fetchFormatsBtn = byId<HTMLButtonElement>('fetchFormatsBtn');
+  const downloadBtn = byId<HTMLButtonElement>('downloadBtn');
+  const checkUpdateBtn = byId<HTMLButtonElement>('checkUpdateBtn');
+  const animateBackgroundToggle = byId<HTMLInputElement>('animateBackgroundToggle');
+  const themeSelect = byId<HTMLSelectElement>('themeSelect');
+  const bestQualityToggle = byId<HTMLInputElement>('bestQualityToggle');
+  const audioOnlyToggle = byId<HTMLInputElement>('audioOnlyToggle');
+  const audioFormatContainer = byId('audioFormatContainer');
+  const audioFormatSelect = byId<HTMLSelectElement>('audioFormatSelect');
+  const notificationsToggle = byId<HTMLInputElement>('notificationsToggle');
+  const checkUpdatesOnStartupToggle = byId<HTMLInputElement>('checkUpdatesOnStartupToggle');
+  const checkUpdatesOnStartupLabel = byId('checkUpdatesOnStartupLabel');
+  const updateChannelSelect = byId<HTMLSelectElement>('updateChannelSelect');
+  const updateChannelContainer = byId('updateChannelContainer');
+  const showUpdateChannelBtn = byId<HTMLButtonElement>('showUpdateChannelBtn');
+
+  const settingsBtn = byId('settingsBtn');
+  const closeSidebarBtn = byId('closeSidebar');
+  const sidebarOverlay = byId('sidebar-overlay');
+  const shortcutsBtn = byId('shortcutsBtn');
+  const clearUrlBtn = byId<HTMLButtonElement>('clearUrl');
+  const pasteUrlBtn = byId<HTMLButtonElement>('pasteUrl');
+  const clearConsoleBtn = byId<HTMLButtonElement>('clearConsole');
+  const urlInput = byId<HTMLInputElement>('url');
+  const urlValidationMessage = byId('urlValidationMessage');
+  const urlInputContainer = document.querySelector<HTMLElement>('.url-input-container');
+  const downloadCard = document.querySelector<HTMLElement>('.download-card');
+  const previewBtn = byId<HTMLButtonElement>('previewBtn');
+  const previewCloseBtn = byId<HTMLButtonElement>('previewClose');
+  const historyHeader = byId('historyHeader');
+  const clearHistoryBtn = byId<HTMLButtonElement>('clearHistory');
+  const browserCookiesHelp = byId('browserCookiesHelp');
+  const helpLink = byId('helpLink');
+  const supportLink = byId('supportLink');
+  const websiteLink = byId('websiteLink');
+  const supportProjectLink = byId('supportProjectLink');
+  const licensesLink = byId('licensesLink');
+  const licensesFrame = byId('licenses-frame');
+  const exportSettingsBtn = byId<HTMLButtonElement>('exportSettingsBtn');
+  const importSettingsBtn = byId<HTMLButtonElement>('importSettingsBtn');
+  const viewStatsBtn = byId<HTMLButtonElement>('viewStatsBtn');
+  const embedMetadataToggle = byId<HTMLInputElement>('embedMetadataToggle');
+  const embedThumbnailToggle = byId<HTMLInputElement>('embedThumbnailToggle');
+  const sponsorblockToggle = byId<HTMLInputElement>('sponsorblockToggle');
+  const sponsorblockHelp = byId('sponsorblockHelp');
+  const writeSubtitlesToggle = byId<HTMLInputElement>('writeSubtitlesToggle');
+  const subtitleLangsContainer = byId('subtitleLangsContainer');
+  const subtitleLangsInput = byId<HTMLInputElement>('subtitleLangsInput');
+  const queueUrlInput = byId<HTMLTextAreaElement>('queueUrlInput');
+  const addToQueueBtn = byId<HTMLButtonElement>('addToQueueBtn');
+  const startQueueBtn = byId<HTMLButtonElement>('startQueueBtn');
+  const clearQueueBtn = byId<HTMLButtonElement>('clearQueueBtn');
+  const cancelQueueBtn = byId<HTMLButtonElement>('cancelQueueBtn');
+  const queueStatusMessage = byId('queueStatusMessage');
+  const queueList = byId('queueList');
+  const queueCount = byId('queueCount');
   const queueSection =
     (queueModule && typeof queueModule.resolveQueueSectionElement === 'function'
       ? queueModule.resolveQueueSectionElement(document)
-      : null) || document.getElementById('queueSection');
+      : null) || byId('queueSection');
 
   if (queueStatusMessage) {
     queueStatusMessage.setAttribute('role', 'status');
@@ -1504,6 +1723,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       settings.browserChoice = 'Firefox';
       void persistSettings();
     }
+    const browserWindowsHint = document.getElementById('browserWindowsHint');
+    if (browserWindowsHint) browserWindowsHint.classList.remove('hidden');
   }
 
   // update UI from settings
@@ -1594,24 +1815,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         (settings.advancedOptions ?? false) || (settings.audioOnly ?? false);
       bestQualityToggle.disabled = bestQualityDisabled;
       if (bestQualityDisabled) {
-        bestQualityToggle.parentElement.classList.add('disabled');
-        bestQualityToggle.parentElement.title = settings.audioOnly
+        bestQualityToggle.parentElement!.classList.add('disabled');
+        bestQualityToggle.parentElement!.title = settings.audioOnly
           ? 'Disabled when Audio-only mode is enabled'
           : 'Disabled when Advanced format selection is enabled';
       } else {
-        bestQualityToggle.parentElement.classList.remove('disabled');
-        bestQualityToggle.parentElement.title = '';
+        bestQualityToggle.parentElement!.classList.remove('disabled');
+        bestQualityToggle.parentElement!.title = '';
       }
     }
     if (audioOnlyToggle) {
       audioOnlyToggle.checked = settings.audioOnly ?? false;
       audioOnlyToggle.disabled = settings.advancedOptions ?? false;
       if (audioOnlyToggle.disabled) {
-        audioOnlyToggle.parentElement.classList.add('disabled');
-        audioOnlyToggle.parentElement.title = 'Disabled when Advanced format selection is enabled';
+        audioOnlyToggle.parentElement!.classList.add('disabled');
+        audioOnlyToggle.parentElement!.title = 'Disabled when Advanced format selection is enabled';
       } else {
-        audioOnlyToggle.parentElement.classList.remove('disabled');
-        audioOnlyToggle.parentElement.title = '';
+        audioOnlyToggle.parentElement!.classList.remove('disabled');
+        audioOnlyToggle.parentElement!.title = '';
       }
     }
     if (audioFormatSelect) {
@@ -1628,15 +1849,34 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (convertToggle) {
       convertToggle.disabled = settings.audioOnly ?? false;
       if (settings.audioOnly) {
-        convertToggle.parentElement.classList.add('disabled');
-        convertToggle.parentElement.title = 'Disabled when Audio-only mode is enabled';
+        convertToggle.parentElement!.classList.add('disabled');
+        convertToggle.parentElement!.title = 'Disabled when Audio-only mode is enabled';
       } else {
-        convertToggle.parentElement.classList.remove('disabled');
-        convertToggle.parentElement.title = '';
+        convertToggle.parentElement!.classList.remove('disabled');
+        convertToggle.parentElement!.title = '';
       }
     }
     if (notificationsToggle) {
       notificationsToggle.checked = settings.notifications ?? true;
+    }
+
+    if (embedMetadataToggle) {
+      embedMetadataToggle.checked = settings.embedMetadata ?? false;
+    }
+    if (embedThumbnailToggle) {
+      embedThumbnailToggle.checked = settings.embedThumbnail ?? false;
+    }
+    if (sponsorblockToggle) {
+      sponsorblockToggle.checked = settings.sponsorblockRemove ?? false;
+    }
+    if (writeSubtitlesToggle) {
+      writeSubtitlesToggle.checked = settings.writeSubtitles ?? false;
+    }
+    if (subtitleLangsInput) {
+      subtitleLangsInput.value = settings.subtitleLangs ?? 'en';
+    }
+    if (subtitleLangsContainer) {
+      subtitleLangsContainer.classList.toggle('visible', !!settings.writeSubtitles);
     }
 
     const channel = window.api.getChannel();
@@ -1662,7 +1902,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     logError('Failed to update UI from settings', e);
   }
 
-  if (!settings.hideSupportModal && !settings.firstLaunch) {
+  function maybeShowSupportModal() {
+    if (settings.hideSupportModal || settings.firstLaunch) return;
+    if (isModalActive || modalQueue.length > 0) {
+      setTimeout(maybeShowSupportModal, 1500);
+      return;
+    }
     showModal({
       title: 'Support This Project?',
       message:
@@ -1671,7 +1916,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         {
           label: '❤️ Yes Support!',
           action: () => {
-            window.api.openExternal('https://rosie.run/support');
+            void window.api.openExternal('https://rosie.run/support');
             settings.hideSupportModal = true;
             void persistSettings();
           },
@@ -1693,7 +1938,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (sidebarOverlay) sidebarOverlay.addEventListener('click', closeSidebar);
   if (shortcutsBtn) shortcutsBtn.addEventListener('click', showKeyboardShortcuts);
 
-  const bindExternalLink = (element, url) => {
+  const bindExternalLink = (element: HTMLElement | null, url: string) => {
     if (settingsModule && typeof settingsModule.bindExternalLink === 'function') {
       settingsModule.bindExternalLink(element, url, window.api.openExternal);
       return;
@@ -1701,7 +1946,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (element) {
       element.addEventListener('click', (event) => {
         event.preventDefault();
-        window.api.openExternal(url);
+        void window.api.openExternal(url);
       });
     }
   };
@@ -1725,10 +1970,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   let hasUrlValidationIntent = false;
+  let lastPreviewUrl: string | null = null;
   function syncPrimaryActionState() {
     const hasInput = !!urlInput;
     const hasPrimaryButton = !!downloadBtn;
-    if (!hasInput || !hasPrimaryButton) return;
+    if (!hasInput || !hasPrimaryButton || !urlInput || !downloadBtn) return;
     const raw = urlInput.value || '';
     const trimmed = raw.trim();
     const hasValue = trimmed.length > 0;
@@ -1760,10 +2006,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       downloadBtn.disabled = !validUrl;
       downloadBtn.classList.toggle('is-disabled', !validUrl);
     }
+
+    if (previewBtn && !previewBtn.classList.contains('loading')) {
+      previewBtn.disabled = !validUrl;
+    }
+    if (trimmed !== lastPreviewUrl) {
+      hideVideoPreview();
+      lastPreviewUrl = null;
+    }
   }
 
   function updateUrlButtons() {
-    const hasValue = urlInput && urlInput.value.length > 0;
+    const hasValue = !!(urlInput && urlInput.value.length > 0);
     if (clearUrlBtn) clearUrlBtn.classList.toggle('hidden', !hasValue);
     if (pasteUrlBtn) pasteUrlBtn.classList.toggle('hidden', hasValue);
     syncPrimaryActionState();
@@ -1815,10 +2069,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       downloadCard.classList.remove('drag-over');
     });
     downloadCard.addEventListener('drop', (e) => {
-      e.preventDefault();
+      const dragEvent = e as DragEvent;
+      dragEvent.preventDefault();
       downloadCard.classList.remove('drag-over');
-      const text = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
-      if (text && isValidUrl(text.trim())) {
+      const dt = dragEvent.dataTransfer;
+      const text = dt ? dt.getData('text/uri-list') || dt.getData('text/plain') : '';
+      if (text && isValidUrl(text.trim()) && urlInput) {
         urlInput.value = text.trim();
         urlInput.dispatchEvent(new Event('input'));
         hasUrlValidationIntent = true;
@@ -1829,12 +2085,75 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  async function runVideoPreview() {
+    if (!urlInput || !previewBtn) return;
+    const url = urlInput.value.trim();
+    if (!url || !isValidUrl(url)) {
+      showToast('Enter a valid URL first.', { type: 'warning' });
+      return;
+    }
+    if (isFetchingPreview) return;
+    isFetchingPreview = true;
+
+    const card = document.getElementById('preview-card');
+    if (card) card.classList.add('visible', 'loading');
+
+    let wasCancelled = false;
+    previewAbort = () => {
+      wasCancelled = true;
+      isFetchingPreview = false;
+      setButtonLoading(previewBtn, false);
+    };
+    setButtonLoading(previewBtn, true, () => {
+      if (window.api.cancelVideoInfo) window.api.cancelVideoInfo();
+      previewAbort?.();
+      hideVideoPreview();
+    });
+
+    try {
+      const result = await window.api.getVideoInfo(url);
+      if (wasCancelled) return;
+      if (!result || result.ok !== true) {
+        const message = result?.error?.message || 'Could not load preview.';
+        if (typeof message === 'string' && message.toLowerCase().includes('cancel')) return;
+        hideVideoPreview();
+        showToast(`Could not load preview. ${message}`, { type: 'error' });
+        return;
+      }
+      lastPreviewUrl = url;
+      renderVideoPreview(result.data as RosiVideoInfo);
+    } catch (e) {
+      if (!wasCancelled) {
+        hideVideoPreview();
+        showToast('Could not load preview.', { type: 'error' });
+        logError('Video preview failed', e);
+      }
+    } finally {
+      if (!wasCancelled) {
+        isFetchingPreview = false;
+        setButtonLoading(previewBtn, false);
+      }
+    }
+  }
+
+  if (previewBtn) {
+    previewBtn._originalClick = runVideoPreview;
+    previewBtn.onclick = runVideoPreview;
+  }
+  if (previewCloseBtn) {
+    previewCloseBtn.addEventListener('click', () => {
+      if (window.api.cancelVideoInfo) window.api.cancelVideoInfo();
+      hideVideoPreview();
+      lastPreviewUrl = null;
+    });
+  }
+
   renderHistory();
 
   if (historyHeader) {
     const historySection = document.getElementById('download-history');
     const historyList = document.getElementById('history-list');
-    const setHistoryCollapsed = (collapsed) => {
+    const setHistoryCollapsed = (collapsed: boolean) => {
       if (!historySection) return false;
       historySection.classList.toggle('collapsed', !!collapsed);
       const isCollapsed = historySection.classList.contains('collapsed');
@@ -1851,11 +2170,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     historyHeader.addEventListener('click', (e) => {
-      if (e.target.closest('.history-clear-btn')) return;
+      if ((e.target as HTMLElement).closest('.history-clear-btn')) return;
       toggleHistoryCollapsed();
     });
     historyHeader.addEventListener('keydown', (e) => {
-      if (e.target.closest('.history-clear-btn')) return;
+      if ((e.target as HTMLElement).closest('.history-clear-btn')) return;
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         toggleHistoryCollapsed();
@@ -1895,10 +2214,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  const settingsHeaders = Array.from(document.querySelectorAll('.settings-section-header')).filter(
-    (header) => header instanceof HTMLElement
-  );
-  const setSettingsSectionCollapsed = (header, collapsed) => {
+  const settingsHeaders = Array.from(
+    document.querySelectorAll<HTMLElement>('.settings-section-header')
+  ).filter((header) => header instanceof HTMLElement);
+  const setSettingsSectionCollapsed = (header: HTMLElement, collapsed: boolean) => {
     if (!(header instanceof HTMLElement)) return false;
     const section = header.closest('.settings-section');
     if (!(section instanceof HTMLElement)) return false;
@@ -1971,24 +2290,24 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         const nextIndex = (currentIndex + 1) % settingsHeaders.length;
-        settingsHeaders[nextIndex].focus();
+        settingsHeaders[nextIndex]?.focus();
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         const nextIndex = (currentIndex - 1 + settingsHeaders.length) % settingsHeaders.length;
-        settingsHeaders[nextIndex].focus();
+        settingsHeaders[nextIndex]?.focus();
       } else if (e.key === 'Home') {
         e.preventDefault();
-        settingsHeaders[0].focus();
+        settingsHeaders[0]?.focus();
       } else if (e.key === 'End') {
         e.preventDefault();
-        settingsHeaders[settingsHeaders.length - 1].focus();
+        settingsHeaders[settingsHeaders.length - 1]?.focus();
       }
     });
   });
 
   if (consoleToggle)
     consoleToggle.addEventListener('change', (e) => {
-      settings.showConsoleOutput = e.target.checked;
+      settings.showConsoleOutput = (e.target as HTMLInputElement).checked;
       void persistSettings();
       updateConsoleVisibility(settings.showConsoleOutput);
     });
@@ -1997,7 +2316,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const consoleHeader = document.getElementById('consoleHeader');
   if (consoleHeader) {
     consoleHeader.addEventListener('click', (e) => {
-      if (e.target.closest('#clearConsole')) return;
+      if ((e.target as HTMLElement).closest('#clearConsole')) return;
       const isCollapsed = toggleConsoleCollapse();
       settings.consoleCollapsed = isCollapsed;
       void persistSettings();
@@ -2005,7 +2324,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     consoleHeader.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        if (e.target.closest('#clearConsole')) return;
+        if ((e.target as HTMLElement).closest('#clearConsole')) return;
         const isCollapsed = toggleConsoleCollapse();
         settings.consoleCollapsed = isCollapsed;
         void persistSettings();
@@ -2023,40 +2342,40 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (advancedToggle)
     advancedToggle.addEventListener('change', (e) => {
-      settings.advancedOptions = e.target.checked;
-      toggleAdvancedUI(e.target.checked);
+      settings.advancedOptions = (e.target as HTMLInputElement).checked;
+      toggleAdvancedUI((e.target as HTMLInputElement).checked);
 
       if (bestQualityToggle) {
-        bestQualityToggle.disabled = e.target.checked;
-        if (e.target.checked) {
+        bestQualityToggle.disabled = (e.target as HTMLInputElement).checked;
+        if ((e.target as HTMLInputElement).checked) {
           bestQualityToggle.checked = false;
           settings.bestQuality = false;
-          bestQualityToggle.parentElement.classList.add('disabled');
-          bestQualityToggle.parentElement.title =
+          bestQualityToggle.parentElement!.classList.add('disabled');
+          bestQualityToggle.parentElement!.title =
             'Disabled when Advanced format selection is enabled';
         } else {
-          bestQualityToggle.parentElement.classList.remove('disabled');
-          bestQualityToggle.parentElement.title = '';
+          bestQualityToggle.parentElement!.classList.remove('disabled');
+          bestQualityToggle.parentElement!.title = '';
         }
       }
 
       if (audioOnlyToggle) {
-        audioOnlyToggle.disabled = e.target.checked;
-        if (e.target.checked) {
+        audioOnlyToggle.disabled = (e.target as HTMLInputElement).checked;
+        if ((e.target as HTMLInputElement).checked) {
           audioOnlyToggle.checked = false;
           settings.audioOnly = false;
-          audioOnlyToggle.parentElement.classList.add('disabled');
-          audioOnlyToggle.parentElement.title =
+          audioOnlyToggle.parentElement!.classList.add('disabled');
+          audioOnlyToggle.parentElement!.title =
             'Disabled when Advanced format selection is enabled';
 
           if (convertToggle) {
             convertToggle.disabled = false;
-            convertToggle.parentElement.classList.remove('disabled');
-            convertToggle.parentElement.title = '';
+            convertToggle.parentElement!.classList.remove('disabled');
+            convertToggle.parentElement!.title = '';
           }
         } else {
-          audioOnlyToggle.parentElement.classList.remove('disabled');
-          audioOnlyToggle.parentElement.title = '';
+          audioOnlyToggle.parentElement!.classList.remove('disabled');
+          audioOnlyToggle.parentElement!.title = '';
         }
       }
 
@@ -2064,8 +2383,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   if (keepOriginalToggle)
     keepOriginalToggle.addEventListener('change', (e) => {
-      if (!e.target.disabled) {
-        settings.keepOriginalAfterConvert = e.target.checked;
+      if (!(e.target as HTMLInputElement).disabled) {
+        settings.keepOriginalAfterConvert = (e.target as HTMLInputElement).checked;
         void persistSettings();
       } else {
         e.preventDefault();
@@ -2073,9 +2392,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   if (hookBrowserToggle)
     hookBrowserToggle.addEventListener('change', (e) => {
-      settings.hookBrowser = e.target.checked;
+      settings.hookBrowser = (e.target as HTMLInputElement).checked;
       if (browserChoiceContainer) {
-        if (e.target.checked) {
+        if ((e.target as HTMLInputElement).checked) {
           browserChoiceContainer.classList.add('visible');
         } else {
           browserChoiceContainer.classList.remove('visible');
@@ -2085,23 +2404,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   if (browserChoiceSelect)
     browserChoiceSelect.addEventListener('change', (e) => {
-      settings.browserChoice = e.target.value;
+      settings.browserChoice = (e.target as HTMLInputElement | HTMLSelectElement).value;
       void persistSettings();
     });
   if (convertToggle)
     convertToggle.addEventListener('change', (e) => {
-      settings.convertEnabled = e.target.checked;
-      if (e.target.checked) {
-        convertFormatContainer.classList.add('visible');
-        keepOriginalLabel.classList.add('visible');
+      settings.convertEnabled = (e.target as HTMLInputElement).checked;
+      if ((e.target as HTMLInputElement).checked) {
+        convertFormatContainer?.classList.add('visible');
+        keepOriginalLabel?.classList.add('visible');
         if (gpuAccelerationLabel) gpuAccelerationLabel.classList.add('visible');
       } else {
-        convertFormatContainer.classList.remove('visible');
-        keepOriginalLabel.classList.remove('visible');
+        convertFormatContainer?.classList.remove('visible');
+        keepOriginalLabel?.classList.remove('visible');
         if (gpuAccelerationLabel) gpuAccelerationLabel.classList.remove('visible');
         if (gpuTypeContainer) gpuTypeContainer.classList.remove('visible');
       }
-      if (!e.target.checked) {
+      if (!(e.target as HTMLInputElement).checked) {
         settings.keepOriginalAfterConvert = true;
         if (keepOriginalToggle) keepOriginalToggle.checked = true;
       }
@@ -2109,24 +2428,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   if (convertFormatSelect)
     convertFormatSelect.addEventListener('change', (e) => {
-      settings.convertFormat = e.target.value;
+      settings.convertFormat = (e.target as HTMLInputElement | HTMLSelectElement).value;
       void persistSettings();
     });
   if (ffmpegPathInput) {
     ffmpegPathInput.addEventListener('input', (e) => {
-      settings.ffmpegPath = e.target.value;
+      settings.ffmpegPath = (e.target as HTMLInputElement | HTMLSelectElement).value;
     });
     ffmpegPathInput.addEventListener('change', (e) => {
-      settings.ffmpegPath = e.target.value;
+      settings.ffmpegPath = (e.target as HTMLInputElement | HTMLSelectElement).value;
       void persistSettings();
     });
   }
   // GPU acceleration toggle
   if (gpuAccelerationToggle) {
     gpuAccelerationToggle.addEventListener('change', (e) => {
-      settings.gpuAcceleration = e.target.checked;
+      settings.gpuAcceleration = (e.target as HTMLInputElement).checked;
       if (gpuTypeContainer) {
-        if (e.target.checked) {
+        if ((e.target as HTMLInputElement).checked) {
           gpuTypeContainer.classList.add('visible');
         } else {
           gpuTypeContainer.classList.remove('visible');
@@ -2137,21 +2456,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   if (gpuTypeSelect) {
     gpuTypeSelect.addEventListener('change', (e) => {
-      settings.gpuType = e.target.value;
+      settings.gpuType = (e.target as HTMLSelectElement).value as RosiSettings['gpuType'];
       void persistSettings();
     });
   }
   // Animate Background toggle
   if (animateBackgroundToggle) {
     animateBackgroundToggle.addEventListener('change', (e) => {
-      settings.animateBackground = e.target.checked;
-      updateBackgroundAnimation(e.target.checked);
+      settings.animateBackground = (e.target as HTMLInputElement).checked;
+      updateBackgroundAnimation((e.target as HTMLInputElement).checked);
       void persistSettings();
     });
   }
   if (themeSelect) {
     themeSelect.addEventListener('change', (e) => {
-      settings.theme = e.target.value;
+      settings.theme = (e.target as HTMLSelectElement).value as RosiSettings['theme'];
       applyTheme(settings.theme);
       void persistSettings();
     });
@@ -2159,7 +2478,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (bestQualityToggle) {
     bestQualityToggle.addEventListener('change', (e) => {
-      settings.bestQuality = e.target.checked;
+      settings.bestQuality = (e.target as HTMLInputElement).checked;
       void persistSettings();
     });
   }
@@ -2167,10 +2486,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Audio-only toggle
   if (audioOnlyToggle) {
     audioOnlyToggle.addEventListener('change', (e) => {
-      settings.audioOnly = e.target.checked;
+      settings.audioOnly = (e.target as HTMLInputElement).checked;
 
       if (audioFormatContainer) {
-        if (e.target.checked) {
+        if ((e.target as HTMLInputElement).checked) {
           audioFormatContainer.classList.add('visible');
         } else {
           audioFormatContainer.classList.remove('visible');
@@ -2178,30 +2497,30 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       if (bestQualityToggle) {
-        bestQualityToggle.disabled = e.target.checked;
-        if (e.target.checked) {
+        bestQualityToggle.disabled = (e.target as HTMLInputElement).checked;
+        if ((e.target as HTMLInputElement).checked) {
           bestQualityToggle.checked = false;
           settings.bestQuality = false;
-          bestQualityToggle.parentElement.classList.add('disabled');
-          bestQualityToggle.parentElement.title = 'Disabled when Audio-only mode is enabled';
+          bestQualityToggle.parentElement!.classList.add('disabled');
+          bestQualityToggle.parentElement!.title = 'Disabled when Audio-only mode is enabled';
         } else {
-          bestQualityToggle.parentElement.classList.remove('disabled');
-          bestQualityToggle.parentElement.title = '';
+          bestQualityToggle.parentElement!.classList.remove('disabled');
+          bestQualityToggle.parentElement!.title = '';
         }
       }
 
       if (convertToggle) {
-        convertToggle.disabled = e.target.checked;
-        if (e.target.checked) {
+        convertToggle.disabled = (e.target as HTMLInputElement).checked;
+        if ((e.target as HTMLInputElement).checked) {
           convertToggle.checked = false;
           settings.convertEnabled = false;
-          convertToggle.parentElement.classList.add('disabled');
-          convertToggle.parentElement.title = 'Disabled when Audio-only mode is enabled';
+          convertToggle.parentElement!.classList.add('disabled');
+          convertToggle.parentElement!.title = 'Disabled when Audio-only mode is enabled';
           if (convertFormatContainer) convertFormatContainer.classList.remove('visible');
           if (keepOriginalLabel) keepOriginalLabel.classList.remove('visible');
         } else {
-          convertToggle.parentElement.classList.remove('disabled');
-          convertToggle.parentElement.title = '';
+          convertToggle.parentElement!.classList.remove('disabled');
+          convertToggle.parentElement!.title = '';
         }
       }
 
@@ -2211,7 +2530,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (audioFormatSelect) {
     audioFormatSelect.addEventListener('change', (e) => {
-      settings.audioFormat = e.target.value;
+      settings.audioFormat = (e.target as HTMLInputElement | HTMLSelectElement).value;
       void persistSettings();
     });
   }
@@ -2219,15 +2538,64 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Notifications toggle
   if (notificationsToggle) {
     notificationsToggle.addEventListener('change', (e) => {
-      settings.notifications = e.target.checked;
+      settings.notifications = (e.target as HTMLInputElement).checked;
       void persistSettings();
     });
+  }
+
+  if (embedMetadataToggle) {
+    embedMetadataToggle.addEventListener('change', (e) => {
+      settings.embedMetadata = (e.target as HTMLInputElement).checked;
+      void persistSettings();
+    });
+  }
+
+  if (embedThumbnailToggle) {
+    embedThumbnailToggle.addEventListener('change', (e) => {
+      settings.embedThumbnail = (e.target as HTMLInputElement).checked;
+      void persistSettings();
+    });
+  }
+
+  if (sponsorblockToggle) {
+    sponsorblockToggle.addEventListener('change', (e) => {
+      settings.sponsorblockRemove = (e.target as HTMLInputElement).checked;
+      void persistSettings();
+    });
+  }
+
+  bindExternalLink(sponsorblockHelp, 'https://sponsor.ajay.app/');
+
+  const SUBTITLE_LANGS_RE = /^[A-Za-z0-9.*-]+(,[A-Za-z0-9.*-]+)*$/;
+  if (writeSubtitlesToggle) {
+    writeSubtitlesToggle.addEventListener('change', (e) => {
+      settings.writeSubtitles = (e.target as HTMLInputElement).checked;
+      if (subtitleLangsContainer) {
+        subtitleLangsContainer.classList.toggle('visible', (e.target as HTMLInputElement).checked);
+      }
+      void persistSettings();
+    });
+  }
+
+  if (subtitleLangsInput) {
+    const commitSubtitleLangs = () => {
+      const raw = subtitleLangsInput.value.trim();
+      if (!raw || !SUBTITLE_LANGS_RE.test(raw) || raw.length > 256) {
+        settings.subtitleLangs = 'en';
+        subtitleLangsInput.value = 'en';
+      } else {
+        settings.subtitleLangs = raw;
+      }
+      void persistSettings();
+    };
+    subtitleLangsInput.addEventListener('change', commitSubtitleLangs);
+    subtitleLangsInput.addEventListener('blur', commitSubtitleLangs);
   }
 
   // Check updates on startup
   if (checkUpdatesOnStartupToggle) {
     checkUpdatesOnStartupToggle.addEventListener('change', (e) => {
-      settings.checkUpdatesOnStartup = e.target.checked;
+      settings.checkUpdatesOnStartup = (e.target as HTMLInputElement).checked;
       void persistSettings();
     });
   }
@@ -2249,7 +2617,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (updateChannelSelect) {
     updateChannelSelect.addEventListener('change', (e) => {
-      settings.updateChannel = e.target.value;
+      settings.updateChannel = (e.target as HTMLSelectElement)
+        .value as RosiSettings['updateChannel'];
       void persistSettings();
     });
   }
@@ -2353,14 +2722,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  function renderQueue(queue) {
+  function renderQueue(queue: RosiQueueItem[]) {
     if (queueModule && typeof queueModule.renderQueue === 'function') {
       queueModule.renderQueue(
         queue,
         { queueList, queueSection, queueCount },
         {
           escapeHtml,
-          removeFromQueue: async (id) => {
+          removeFromQueue: async (id: string) => {
             const endQueueAction = beginQueueAction();
             try {
               const result = await window.api.removeFromQueue(id);
@@ -2386,9 +2755,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  let queueStatusTimer = null;
-  function setQueueStatusMessage(message) {
-    if (!queueStatusMessage) return;
+  let queueStatusTimer: ReturnType<typeof setTimeout> | null = null;
+  function setQueueStatusMessage(message: unknown) {
+    const statusEl = queueStatusMessage;
+    if (!statusEl) return;
     if (queueStatusTimer) {
       clearTimeout(queueStatusTimer);
       queueStatusTimer = null;
@@ -2396,21 +2766,21 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const nextMessage =
       typeof message === 'string' ? message.trim() : message == null ? '' : String(message).trim();
-    queueStatusMessage.textContent = '';
+    statusEl.textContent = '';
 
     if (!nextMessage) return;
 
     queueStatusTimer = setTimeout(() => {
-      queueStatusMessage.textContent = nextMessage;
+      statusEl.textContent = nextMessage;
       queueStatusTimer = null;
     }, 0);
   }
 
-  function queueMessageForCount(count, singular, plural) {
+  function queueMessageForCount(count: number, singular: string, plural: string) {
     return count === 1 ? singular : plural.replace('{count}', String(count));
   }
 
-  function announceQueueAction(message, toastType = 'info') {
+  function announceQueueAction(message: string, toastType: ToastType = 'info') {
     setQueueStatusMessage(message);
     showToast(message, { type: toastType });
   }
@@ -2565,7 +2935,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         hasUrlValidationIntent = true;
         syncPrimaryActionState();
 
-        const urlInput = document.getElementById('url');
+        const urlInput = document.getElementById('url') as HTMLInputElement | null;
         const url = urlInput ? urlInput.value : null;
         if (!url || url.trim() === '') {
           isDownloading = false;
@@ -2584,8 +2954,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
-        const videoSelect = document.getElementById('videoFormat');
-        const audioSelect = document.getElementById('audioFormat');
+        const videoSelect = document.getElementById('videoFormat') as HTMLSelectElement | null;
+        const audioSelect = document.getElementById('audioFormat') as HTMLSelectElement | null;
         if (
           settings.advancedOptions &&
           (!videoSelect || !audioSelect || !videoSelect.value || !audioSelect.value)
@@ -2598,7 +2968,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
-        let savePath;
+        let savePath: string | null = null;
         try {
           savePath = await window.api.selectDownloadLocation();
         } catch (dialogError) {
@@ -2625,18 +2995,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         };
         setButtonLoading(downloadBtn, true, () => {
           window.api.cancelDownload();
-          downloadAbort();
+          downloadAbort?.();
           hideProgressBar();
         });
 
-        const videoFormat = settings.advancedOptions ? videoSelect.value : undefined;
-        const audioFormat = settings.advancedOptions ? audioSelect.value : undefined;
-        const convertFormat = settings.convertEnabled ? convertFormatSelect.value : undefined;
+        const videoFormat = settings.advancedOptions ? videoSelect?.value : undefined;
+        const audioFormat = settings.advancedOptions ? audioSelect?.value : undefined;
+        const convertFormat = settings.convertEnabled ? convertFormatSelect?.value : undefined;
         const needsMerge = settings.bestQuality || (videoFormat && audioFormat);
         const needsConvert = settings.convertEnabled && convertFormat;
         configureProgressPhases(!!needsMerge, !!needsConvert);
         showProgressBar('Starting download...');
-        const keepOriginal = settings.convertEnabled ? keepOriginalToggle.checked : undefined;
+        const keepOriginal = settings.convertEnabled ? keepOriginalToggle?.checked : undefined;
         const startResult = await window.api.downloadVideo({
           url,
           videoFormat,
@@ -2673,7 +3043,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (checkUpdateBtn) {
     checkUpdateBtn.onclick = checkForUpdates;
   }
-  const ipcCleanupFunctions = [];
+  const ipcCleanupFunctions: Array<() => void> = [];
 
   ipcCleanupFunctions.push(
     window.api.onProgress((message) => {
@@ -2727,12 +3097,12 @@ document.addEventListener('DOMContentLoaded', async () => {
           showProgressComplete();
 
           if (settings.notifications) {
-            window.api.showNotification({
+            void window.api.showNotification({
               title: 'Download Complete!',
               body: lastDownloadedFilePath
                 ? `Saved: ${lastDownloadedFilePath.split(/[/\\]/).pop()}`
                 : 'Your download has finished.',
-              filePath: lastDownloadedFilePath,
+              filePath: lastDownloadedFilePath ?? undefined,
             });
           }
         }
@@ -2742,7 +3112,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }, 2000);
 
         const filename = lastDownloadedFilePath
-          ? lastDownloadedFilePath.split(/[/\\]/).pop()
+          ? (lastDownloadedFilePath.split(/[/\\]/).pop() ?? 'Unknown file')
           : 'Unknown file';
         addHistoryEntry({
           filename,
@@ -2760,7 +3130,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           downloadBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg><span>Open File Location</span>`;
           downloadBtn.disabled = false;
           downloadBtn.onclick = () => {
-            window.api.openFileLocation(filePath);
+            void window.api.openFileLocation(filePath);
           };
           setTimeout(() => {
             restoreDefaultDownloadButton();
@@ -2839,13 +3209,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (settings.firstLaunch) {
     launchSetupWizard(settings, applyTheme, persistSettings, () => {
-      checkDenoInstallation(settings);
-      checkUpdatesOnStartup();
+      void checkDenoInstallation(settings, () => void persistSettings());
+      void checkUpdatesOnStartup();
     });
   } else {
-    // check Deno
-    checkDenoInstallation(settings);
-    checkUpdatesOnStartup();
+    void checkDenoInstallation(settings, () => void persistSettings());
+    void checkUpdatesOnStartup();
+    setTimeout(maybeShowSupportModal, 1500);
   }
 
   const closeBtn = document.getElementById('close-licenses');
@@ -2888,7 +3258,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (modifierPressed && event.key === 'f') {
       event.preventDefault();
-      const urlInput = document.getElementById('url');
+      const urlInput = document.getElementById('url') as HTMLInputElement | null;
       if (urlInput) {
         urlInput.focus();
         urlInput.select();

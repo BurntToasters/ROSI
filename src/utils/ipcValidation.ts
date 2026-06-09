@@ -11,6 +11,8 @@ import {
   ALLOWED_AUDIO_FORMATS,
   ALLOWED_CONVERT_FORMATS,
   CURRENT_SETTINGS_VERSION,
+  FORMAT_ID_PATTERN,
+  SUBTITLE_LANGS_PATTERN,
 } from '../main/constants';
 
 const ALLOWED_GPU_TYPES = new Set(['auto', 'nvidia', 'amd', 'intel']);
@@ -122,10 +124,10 @@ export function validateDownloadRequestPayload(
       error: buildError('VALIDATION_ERROR', 'videoFormat must be a string when provided.'),
     };
   }
-  if (videoFormat !== undefined && !/^\d{1,8}$/.test(videoFormat.trim())) {
+  if (videoFormat !== undefined && !FORMAT_ID_PATTERN.test(videoFormat.trim())) {
     return {
       ok: false,
-      error: buildError('VALIDATION_ERROR', 'videoFormat must be a numeric format ID.'),
+      error: buildError('VALIDATION_ERROR', 'videoFormat must be a valid yt-dlp format ID.'),
     };
   }
   if (!isOptionalString(audioFormat)) {
@@ -134,10 +136,10 @@ export function validateDownloadRequestPayload(
       error: buildError('VALIDATION_ERROR', 'audioFormat must be a string when provided.'),
     };
   }
-  if (audioFormat !== undefined && !/^\d{1,8}$/.test(audioFormat.trim())) {
+  if (audioFormat !== undefined && !FORMAT_ID_PATTERN.test(audioFormat.trim())) {
     return {
       ok: false,
-      error: buildError('VALIDATION_ERROR', 'audioFormat must be a numeric format ID.'),
+      error: buildError('VALIDATION_ERROR', 'audioFormat must be a valid yt-dlp format ID.'),
     };
   }
 
@@ -179,7 +181,12 @@ function isValidSettingsKey(key: string): key is keyof Settings {
     key === 'ffmpegPath' ||
     key === 'hideSupportModal' ||
     key === 'checkUpdatesOnStartup' ||
-    key === 'updateChannel'
+    key === 'updateChannel' ||
+    key === 'writeSubtitles' ||
+    key === 'subtitleLangs' ||
+    key === 'embedThumbnail' ||
+    key === 'embedMetadata' ||
+    key === 'sponsorblockRemove'
   );
 }
 
@@ -229,7 +236,11 @@ export function validateSettingsPatchPayload(value: unknown): ValidationResult<P
       rawKey === 'gpuAcceleration' ||
       rawKey === 'bestQuality' ||
       rawKey === 'hideSupportModal' ||
-      rawKey === 'checkUpdatesOnStartup'
+      rawKey === 'checkUpdatesOnStartup' ||
+      rawKey === 'writeSubtitles' ||
+      rawKey === 'embedThumbnail' ||
+      rawKey === 'embedMetadata' ||
+      rawKey === 'sponsorblockRemove'
     ) {
       if (!isBoolean(rawValue)) {
         return {
@@ -305,6 +316,20 @@ export function validateSettingsPatchPayload(value: unknown): ValidationResult<P
         };
       }
       patch.updateChannel = rawValue as Settings['updateChannel'];
+      continue;
+    }
+
+    if (rawKey === 'subtitleLangs') {
+      if (!isString(rawValue) || rawValue.length > 256 || !SUBTITLE_LANGS_PATTERN.test(rawValue)) {
+        return {
+          ok: false,
+          error: buildError(
+            'VALIDATION_ERROR',
+            'subtitleLangs must be a comma-separated list of language codes (e.g. en,es).'
+          ),
+        };
+      }
+      patch.subtitleLangs = rawValue;
       continue;
     }
 

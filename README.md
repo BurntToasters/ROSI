@@ -45,7 +45,7 @@ Download ROSI source code from source (main)
 
 There is an LTS version of the previous stable full release of ROSI (which is now `v3.x.x`) which can be found at <b>[➡️ROSI-LTS's Repo](https://github.com/BurntToasters/ROSI-LTS)</b>
 
-This is mainly for people who perfered the previous look of ROSI, or has a current issue with a newly released major version.
+This is mainly for people who prefer the previous look of ROSI, or has an issue with a newly released major version.
 
 The LTS version only provides yt-dlp updates and minor bug fixes. No feature additions will happen with LTS versions. Whatever features were added to that version before it became LTS are the last features it will receive.
 

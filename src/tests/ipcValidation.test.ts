@@ -145,6 +145,25 @@ describe('ipc validation helpers', () => {
     expect(validateSettingsPatchPayload({ audioFormat: 42 }).ok).toBe(false);
   });
 
+  it('validates enhancement settings in patch payload', () => {
+    const valid = validateSettingsPatchPayload({
+      writeSubtitles: true,
+      subtitleLangs: 'en,es,fr',
+      embedThumbnail: true,
+      embedMetadata: true,
+      sponsorblockRemove: true,
+    });
+    expect(valid.ok).toBe(true);
+    if (valid.ok) {
+      expect(valid.data.subtitleLangs).toBe('en,es,fr');
+      expect(valid.data.embedThumbnail).toBe(true);
+    }
+
+    expect(validateSettingsPatchPayload({ subtitleLangs: 'en; rm -rf /' }).ok).toBe(false);
+    expect(validateSettingsPatchPayload({ subtitleLangs: 42 }).ok).toBe(false);
+    expect(validateSettingsPatchPayload({ embedThumbnail: 'yes' }).ok).toBe(false);
+  });
+
   it('validates external URL and file path payloads', () => {
     expect(validateExternalUrlPayload('  https://example.com  ').ok).toBe(true);
     expect(validateExternalUrlPayload(42).ok).toBe(false);

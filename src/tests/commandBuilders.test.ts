@@ -6,6 +6,14 @@ vi.mock('../main/gpu', () => ({
   detectGpu: detectGpuMock,
 }));
 
+vi.mock('../main/platform', () => ({
+  spawnWithEnv: vi.fn(),
+}));
+
+vi.mock('electron-log/main.js', () => ({
+  default: { warn: vi.fn(), error: vi.fn() },
+}));
+
 import {
   buildFfmpegArgs,
   buildYtdlpArgs,
@@ -38,6 +46,11 @@ function createSettings(overrides: Partial<Settings> = {}): Settings {
     checkUpdatesOnStartup: true,
     updateChannel: 'auto',
     audioFormat: 'mp3',
+    writeSubtitles: false,
+    subtitleLangs: 'en',
+    embedThumbnail: false,
+    embedMetadata: false,
+    sponsorblockRemove: false,
     ...overrides,
   };
 }
@@ -110,6 +123,54 @@ describe('command builders', () => {
     ]);
   });
 
+  it('copies a container-compatible video stream instead of re-encoding', () => {
+    const args = buildFfmpegArgs('input.mkv', 'output.mp4', 'mp4', 'h264_nvenc', {
+      video: 'h264',
+      audio: 'aac',
+    });
+    expect(args).toEqual([
+      '-i',
+      'input.mkv',
+      '-c:v',
+      'copy',
+      '-c:a',
+      'copy',
+      '-movflags',
+      '+faststart',
+      '-y',
+      'output.mp4',
+    ]);
+  });
+
+  it('re-encodes an incompatible video stream with the chosen encoder', () => {
+    const args = buildFfmpegArgs('input.webm', 'output.mp4', 'mp4', 'h264_nvenc', {
+      video: 'vp9',
+      audio: 'opus',
+    });
+    expect(args).toEqual([
+      '-i',
+      'input.webm',
+      '-c:v',
+      'h264_nvenc',
+      '-c:a',
+      'aac',
+      '-movflags',
+      '+faststart',
+      '-y',
+      'output.mp4',
+    ]);
+  });
+
+  it('copies already-aac audio when extracting to m4a', () => {
+    const args = buildFfmpegArgs('input.mp4', 'output.m4a', 'm4a', 'copy', { audio: 'aac' });
+    expect(args).toEqual(['-i', 'input.mp4', '-vn', '-c:a', 'copy', '-y', 'output.m4a']);
+  });
+
+  it('re-encodes non-aac audio when extracting to m4a', () => {
+    const args = buildFfmpegArgs('input.webm', 'output.m4a', 'm4a', 'copy', { audio: 'opus' });
+    expect(args).toEqual(['-i', 'input.webm', '-vn', '-c:a', 'aac', '-y', 'output.m4a']);
+  });
+
   it('builds yt-dlp args for selected audio/video formats', () => {
     const result = buildYtdlpArgs({
       normalizedDownloadDir: '/tmp/downloads',
@@ -168,7 +229,7 @@ describe('command builders', () => {
     expect(result.statusMessages).toContain('🎵 Audio-only mode enabled (FLAC)');
   });
 
-  it('rejects non-numeric format IDs and uses default format', () => {
+  it('rejects unsafe format IDs and uses default format', () => {
     const result = buildYtdlpArgs({
       normalizedDownloadDir: '/tmp/downloads',
       url: 'https://example.com/video',
@@ -177,15 +238,87 @@ describe('command builders', () => {
         url: 'https://example.com/video',
         outputPath: '/tmp/downloads',
         videoFormat: '137; rm -rf /',
-        audioFormat: 'abc',
+        audioFormat: 'best audio',
       },
       ffmpegLocation: null,
     });
 
     expect(result.args).not.toContain('137; rm -rf /');
-    expect(result.args).not.toContain('abc');
+    expect(result.args).not.toContain('best audio');
     const fIdx = result.args.indexOf('-f');
     expect(result.args[fIdx + 1]).toContain('best');
+  });
+
+  it('accepts non-numeric yt-dlp format IDs', () => {
+    const result = buildYtdlpArgs({
+      normalizedDownloadDir: '/tmp/downloads',
+      url: 'https://example.com/video',
+      settings: createSettings(),
+      options: {
+        url: 'https://example.com/video',
+        outputPath: '/tmp/downloads',
+        videoFormat: 'hls-1080',
+        audioFormat: '233-drc',
+      },
+      ffmpegLocation: null,
+    });
+
+    expect(result.args).toContain('hls-1080+233-drc');
+  });
+
+  it('adds enhancement flags when enabled', () => {
+    const result = buildYtdlpArgs({
+      normalizedDownloadDir: '/tmp/downloads',
+      url: 'https://example.com/video',
+      settings: createSettings({
+        writeSubtitles: true,
+        subtitleLangs: 'en,es',
+        embedThumbnail: true,
+        embedMetadata: true,
+        sponsorblockRemove: true,
+      }),
+      options: { url: 'https://example.com/video', outputPath: '/tmp/downloads' },
+      ffmpegLocation: null,
+    });
+
+    expect(result.args).toContain('--write-subs');
+    expect(result.args).toContain('--embed-subs');
+    expect(result.args).toContain('--sub-langs');
+    expect(result.args).toContain('en,es');
+    expect(result.args).toContain('--embed-thumbnail');
+    expect(result.args).toContain('--embed-metadata');
+    expect(result.args).toContain('--sponsorblock-remove');
+    expect(result.args).toContain('default');
+    expect(result.args[result.args.length - 1]).toBe('https://example.com/video');
+  });
+
+  it('omits enhancement flags when disabled', () => {
+    const result = buildYtdlpArgs({
+      normalizedDownloadDir: '/tmp/downloads',
+      url: 'https://example.com/video',
+      settings: createSettings(),
+      options: { url: 'https://example.com/video', outputPath: '/tmp/downloads' },
+      ffmpegLocation: null,
+    });
+
+    expect(result.args).not.toContain('--write-subs');
+    expect(result.args).not.toContain('--embed-thumbnail');
+    expect(result.args).not.toContain('--embed-metadata');
+    expect(result.args).not.toContain('--sponsorblock-remove');
+  });
+
+  it('falls back to en for malformed subtitle languages', () => {
+    const result = buildYtdlpArgs({
+      normalizedDownloadDir: '/tmp/downloads',
+      url: 'https://example.com/video',
+      settings: createSettings({ writeSubtitles: true, subtitleLangs: 'en; rm -rf /' }),
+      options: { url: 'https://example.com/video', outputPath: '/tmp/downloads' },
+      ffmpegLocation: null,
+    });
+
+    const idx = result.args.indexOf('--sub-langs');
+    expect(idx).toBeGreaterThan(-1);
+    expect(result.args[idx + 1]).toBe('en');
   });
 
   it('accepts valid numeric format IDs', () => {

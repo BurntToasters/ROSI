@@ -9,6 +9,7 @@ import {
   MAX_FORMAT_COUNTS,
   MAX_SETTINGS_IMPORT_BYTES,
   CURRENT_SETTINGS_VERSION,
+  SUBTITLE_LANGS_PATTERN,
 } from './constants';
 
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
@@ -39,6 +40,11 @@ const defaultSettings: Settings = {
   hideSupportModal: false,
   checkUpdatesOnStartup: true,
   updateChannel: 'auto',
+  writeSubtitles: false,
+  subtitleLangs: 'en',
+  embedThumbnail: false,
+  embedMetadata: false,
+  sponsorblockRemove: false,
 };
 
 export function getDefaultSettings(): Settings {
@@ -67,6 +73,15 @@ function readConvertFormat(value: unknown): string {
   return typeof value === 'string' && ALLOWED_CONVERT_FORMATS.has(value)
     ? value
     : defaultSettings.convertFormat;
+}
+
+function readSubtitleLangs(value: unknown): string {
+  if (typeof value !== 'string') return defaultSettings.subtitleLangs;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 256 || !SUBTITLE_LANGS_PATTERN.test(trimmed)) {
+    return defaultSettings.subtitleLangs;
+  }
+  return trimmed;
 }
 
 function readUpdateChannel(value: unknown): Settings['updateChannel'] {
@@ -143,6 +158,14 @@ export function migrateSettings(rawSettings: unknown): Settings {
       defaultSettings.checkUpdatesOnStartup
     ),
     updateChannel: readUpdateChannel(rawSettings.updateChannel),
+    writeSubtitles: readBoolean(rawSettings.writeSubtitles, defaultSettings.writeSubtitles),
+    subtitleLangs: readSubtitleLangs(rawSettings.subtitleLangs),
+    embedThumbnail: readBoolean(rawSettings.embedThumbnail, defaultSettings.embedThumbnail),
+    embedMetadata: readBoolean(rawSettings.embedMetadata, defaultSettings.embedMetadata),
+    sponsorblockRemove: readBoolean(
+      rawSettings.sponsorblockRemove,
+      defaultSettings.sponsorblockRemove
+    ),
   };
 }
 

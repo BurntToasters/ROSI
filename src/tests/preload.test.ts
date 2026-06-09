@@ -83,6 +83,7 @@ describe('preload api contract', () => {
         'cancelFormats',
         'cancelQueue',
         'cancelUpdateDownload',
+        'cancelVideoInfo',
         'checkDenoInstalled',
         'checkForUpdates',
         'clearQueue',
@@ -96,6 +97,7 @@ describe('preload api contract', () => {
         'getQueue',
         'getSettings',
         'getStats',
+        'getVideoInfo',
         'importSettings',
         'installDeno',
         'installUpdate',
@@ -131,6 +133,7 @@ describe('preload api contract', () => {
 
     await expectInvokeCall(api, 'restartApp', 'restart-app');
     await expectInvokeCall(api, 'getFormats', 'getFormats', ['https://example.com']);
+    await expectInvokeCall(api, 'getVideoInfo', 'get-video-info', ['https://example.com']);
     await expectInvokeCall(api, 'selectDownloadLocation', 'select-download-location');
     await expectInvokeCall(api, 'getSettings', 'get-settings');
     await expectInvokeCall(api, 'saveSettings', 'save-settings', [settingsPatch]);
@@ -163,6 +166,7 @@ describe('preload api contract', () => {
     expectSendCall(api, 'resetSettings', 'reset-settings');
     expectSendCall(api, 'cancelDownload', 'cancel-download');
     expectSendCall(api, 'cancelFormats', 'cancel-formats');
+    expectSendCall(api, 'cancelVideoInfo', 'cancel-video-info');
     expectSendCall(api, 'cancelUpdateDownload', 'cancel-update-download');
     expectSendCall(api, 'installUpdate', 'install-update');
     expectSendCall(api, 'notifySettingsFlushed', 'settings-flush-complete');

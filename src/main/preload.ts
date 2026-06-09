@@ -16,6 +16,8 @@ const api: RendererApi = {
   getChannel: () =>
     process.env.CHANNEL === 'msstore' || process.windowsStore ? 'msstore' : 'github',
   getFormats: (url: string) => ipcRenderer.invoke('getFormats', url),
+  getVideoInfo: (url: string) => ipcRenderer.invoke('get-video-info', url),
+  cancelVideoInfo: () => ipcRenderer.send('cancel-video-info'),
   selectDownloadLocation: () => ipcRenderer.invoke('select-download-location'),
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings: Partial<Settings>) => ipcRenderer.invoke('save-settings', settings),

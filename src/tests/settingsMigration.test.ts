@@ -69,4 +69,28 @@ describe('settings migration', () => {
     expect(migrated.audioFormat).toBe('mp3');
     expect(migrated.settingsVersion).toBe(1);
   });
+
+  it('adds enhancement settings with defaults during migration', () => {
+    const migrated = migrateSettings({ settingsVersion: 2 });
+
+    expect(migrated.writeSubtitles).toBe(false);
+    expect(migrated.subtitleLangs).toBe('en');
+    expect(migrated.embedThumbnail).toBe(false);
+    expect(migrated.embedMetadata).toBe(false);
+    expect(migrated.sponsorblockRemove).toBe(false);
+  });
+
+  it('preserves valid enhancement settings and rejects malformed subtitle langs', () => {
+    const migrated = migrateSettings({
+      writeSubtitles: true,
+      subtitleLangs: 'en,es',
+      embedThumbnail: true,
+    });
+    expect(migrated.writeSubtitles).toBe(true);
+    expect(migrated.subtitleLangs).toBe('en,es');
+    expect(migrated.embedThumbnail).toBe(true);
+
+    const bad = migrateSettings({ subtitleLangs: 'en; rm -rf /' });
+    expect(bad.subtitleLangs).toBe('en');
+  });
 });
