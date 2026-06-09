@@ -148,10 +148,10 @@ const {
         _sender: unknown,
         _options: unknown,
         _mainWindow: unknown,
-        onComplete?: (status: string) => void
+        onComplete?: (status: string, outcome: string) => void
       ) => {
         if (typeof onComplete === 'function') {
-          onComplete('✅ Done');
+          onComplete('✅ Done', 'success');
         }
       }
     ),
@@ -492,10 +492,10 @@ describe('main process IPC wiring and queue behavior', () => {
         _sender: unknown,
         _options: unknown,
         _mainWindow: unknown,
-        onComplete?: (status: string) => void
+        onComplete?: (status: string, outcome: string) => void
       ) => {
-        onComplete?.('✅ Done');
-        onComplete?.('❌ Too late');
+        onComplete?.('✅ Done', 'success');
+        onComplete?.('❌ Too late', 'failed');
       }
     );
 

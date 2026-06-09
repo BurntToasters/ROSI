@@ -26,10 +26,11 @@
    License: GPL‑2.0‑or‑later <br>
    Link: https://www.gnu.org/licenses/old-licenses/gpl-2.0.html <br>
    Source: https://github.com/BurntToasters/ffmpeg-static-builds <br>
-   ROSI bundles static GPL builds of FFmpeg 8.0 for all platforms. FFmpeg is invoked as an
-   external process and is not linked into ROSI. The complete corresponding source code,
-   build scripts, and configuration are available at the source URL above. A written source
-   offer is included with the distributed binaries at `ffmpeg/SOURCE_OFFER.txt`. <br>
+   ROSI bundles static GPL builds of FFmpeg 8.1 for Windows, Linux, and macOS arm64;
+   macOS x64 remains on FFmpeg 8.0.1. FFmpeg is invoked as an external process and is
+   not linked into ROSI. The complete corresponding source code, build scripts, and
+   configuration are available at the source URL above. A written source offer is
+   included with the distributed binaries at `ffmpeg/SOURCE_OFFER.txt`. <br>
 
 # Python intepreter full license
 
@@ -557,7 +558,7 @@ Jean-Philippe Aumasson (https://131002.net/siphash/siphash24.c)
 
 The file Python/dtoa.c, which supplies C functions dtoa and strtod for conversion of C doubles to and from strings, is derived from the file of the same name by David M. Gay, currently available from https://web.archive.org/web/20220517033456/http://www.netlib.org/fp/dtoa.c. The original file, as retrieved on March 16, 2009, contains the following copyright and licensing notice:
 
-/******************************\*\*\*\*******************************
+/**************\*\***************\*\*\*\***************\*\***************
 
 -
 - The author of this software is David M. Gay.
@@ -574,7 +575,7 @@ The file Python/dtoa.c, which supplies C functions dtoa and strtod for conversio
 - WARRANTY. IN PARTICULAR, NEITHER THE AUTHOR NOR LUCENT MAKES ANY
 - REPRESENTATION OR WARRANTY OF ANY KIND CONCERNING THE MERCHANTABILITY
 - OF THIS SOFTWARE OR ITS FITNESS FOR ANY PARTICULAR PURPOSE.
-- ******************************\*\*\*******************************/
+- **************\*\***************\*\*\***************\*\***************/
 
 ---
 

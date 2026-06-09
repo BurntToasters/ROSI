@@ -24,6 +24,11 @@ export interface Settings {
   hideSupportModal: boolean;
   checkUpdatesOnStartup: boolean;
   updateChannel: UpdateChannel;
+  writeSubtitles: boolean;
+  subtitleLangs: string;
+  embedThumbnail: boolean;
+  embedMetadata: boolean;
+  sponsorblockRemove: boolean;
 }
 
 export type UpdateChannel = 'auto' | 'stable' | 'beta';
@@ -52,13 +57,15 @@ export interface DownloadLifecycleState {
   completed: boolean;
 }
 
+export type DownloadOutcome = 'success' | 'failed' | 'cancelled';
+
 export interface DownloadSession {
   id: number;
   sender: Electron.WebContents;
   lifecycle: DownloadLifecycleState;
   ytdlpProcess: import('child_process').ChildProcess | null;
   ffmpegProcess: import('child_process').ChildProcess | null;
-  onComplete?: (statusMessage: string) => void;
+  onComplete?: (statusMessage: string, outcome: DownloadOutcome) => void;
 }
 
 export interface DownloadRequestOptions {
@@ -80,6 +87,18 @@ export interface GpuDetectionResult {
 export interface FormatsProcess {
   proc: import('child_process').ChildProcess;
   cancelled: boolean;
+}
+
+export interface VideoInfo {
+  title: string;
+  uploader: string | null;
+  durationSeconds: number | null;
+  thumbnail: string | null;
+  ext: string | null;
+  viewCount: number | null;
+  isPlaylist: boolean;
+  playlistCount: number | null;
+  webpageUrl: string | null;
 }
 
 export interface NotificationRequest {
@@ -140,6 +159,8 @@ export interface RendererApi {
   restartApp: () => Promise<void>;
   getChannel: () => DistributionChannel;
   getFormats: (url: string) => Promise<IpcResult<string>>;
+  getVideoInfo: (url: string) => Promise<IpcResult<VideoInfo>>;
+  cancelVideoInfo: () => void;
   selectDownloadLocation: () => Promise<string | null>;
   getSettings: () => Promise<Settings>;
   saveSettings: (settings: Partial<Settings>) => Promise<IpcResult<Settings>>;
