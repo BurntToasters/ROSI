@@ -134,6 +134,18 @@
   border-color: var(--accent-hover);
 }
 
+.queue-empty-message {
+  margin: 0;
+  padding: var(--spacing-sm) var(--spacing-md) var(--spacing-md);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+.queue-section:not(.has-items) .queue-empty-message {
+  display: block;
+}
+
 .queue-list {
   max-height: 250px;
   overflow-y: auto;
@@ -185,8 +197,10 @@
 
 .queue-item-remove {
   flex-shrink: 0;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -202,6 +216,12 @@
 .queue-item-remove:hover {
   background: var(--danger-subtle);
   color: var(--danger);
+}
+
+.queue-item-remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--accent-subtle);
 }
 
 .queue-downloading {

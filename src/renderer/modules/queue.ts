@@ -16,6 +16,7 @@
   interface QueueDeps {
     escapeHtml: (value: string) => string;
     removeFromQueue: (id: string) => Promise<unknown> | unknown;
+    focusQueueItemId?: string | null;
   }
 
   interface QueueModule {
@@ -29,20 +30,45 @@
 
   type RosiWindow = Window & typeof globalThis & { rosiModules?: QueueModules };
 
+  const STATUS_LABELS: Record<QueueStatus, string> = {
+    pending: 'Pending',
+    downloading: 'Downloading',
+    completed: 'Completed',
+    failed: 'Failed',
+    cancelled: 'Cancelled',
+  };
+
+  const STATUS_ICONS: Record<QueueStatus, string> = {
+    pending: '⏸️',
+    downloading: '⏳',
+    completed: '✅',
+    failed: '❌',
+    cancelled: '⏹️',
+  };
+
   function resolveQueueSectionElement(root?: Document) {
     const doc = root ?? document;
     return doc.getElementById('queueSection') || doc.getElementById('queue-section');
   }
 
+  function getHostname(url: string) {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return url.slice(0, 40);
+    }
+  }
+
   function renderQueue(queue: QueueItem[], elements: QueueElements, deps: QueueDeps) {
     const { queueList, queueSection, queueCount } = elements;
-    const { escapeHtml, removeFromQueue } = deps;
+    const { escapeHtml, removeFromQueue, focusQueueItemId = null } = deps;
 
     if (!queueList || !queueSection) return;
     if (queueCount) queueCount.textContent = String(queue.length);
     if (queue.length === 0) {
       queueSection.classList.remove('has-items');
-      queueList.innerHTML = '';
+      queueList.innerHTML =
+        '<p class="queue-empty-message">No items in queue. Add URLs above to get started.</p>';
       return;
     }
     queueSection.classList.add('has-items');
@@ -51,16 +77,10 @@
     queue.forEach((item) => {
       const el = document.createElement('div');
       el.className = `queue-item queue-${item.status}`;
-      const statusIcon =
-        item.status === 'completed'
-          ? '✅'
-          : item.status === 'failed'
-            ? '❌'
-            : item.status === 'cancelled'
-              ? '⏹️'
-              : item.status === 'downloading'
-                ? '⏳'
-                : '⏸️';
+      el.setAttribute('role', 'listitem');
+      el.dataset.queueId = item.id;
+      const statusLabel = STATUS_LABELS[item.status];
+      const statusIcon = STATUS_ICONS[item.status];
 
       let urlDisplay: string;
       try {
@@ -70,10 +90,12 @@
         urlDisplay = item.url.slice(0, 40);
       }
 
+      const hostname = getHostname(item.url);
       el.innerHTML = `
-        <span class="queue-item-status">${statusIcon}</span>
+        <span class="queue-item-status" aria-hidden="true">${statusIcon}</span>
+        <span class="sr-only">${escapeHtml(statusLabel)}</span>
         <span class="queue-item-url" title="${escapeHtml(item.url)}">${escapeHtml(urlDisplay)}</span>
-        ${item.status === 'pending' ? '<button class="queue-item-remove" aria-label="Remove">✕</button>' : ''}
+        ${item.status === 'pending' ? `<button type="button" class="queue-item-remove" data-queue-id="${escapeHtml(item.id)}" aria-label="Remove ${escapeHtml(hostname)} from queue">✕</button>` : ''}
       `;
       const removeBtn = el.querySelector<HTMLButtonElement>('.queue-item-remove');
       if (removeBtn) {
@@ -87,6 +109,21 @@
       fragment.appendChild(el);
     });
     queueList.appendChild(fragment);
+
+    if (focusQueueItemId) {
+      const focusTarget = queueList.querySelector<HTMLButtonElement>(
+        `.queue-item-remove[data-queue-id="${CSS.escape(focusQueueItemId)}"]`
+      );
+      if (focusTarget) {
+        focusTarget.focus();
+        return;
+      }
+      const pendingRemoves = queueList.querySelectorAll<HTMLButtonElement>('.queue-item-remove');
+      const lastPending = pendingRemoves[pendingRemoves.length - 1];
+      if (lastPending) {
+        lastPending.focus();
+      }
+    }
   }
 
   const windowRef = global as RosiWindow;

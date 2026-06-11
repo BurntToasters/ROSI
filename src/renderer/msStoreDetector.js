@@ -7,6 +7,10 @@
         if (btn) {
           btn.style.display = 'none';
         }
+        var label = document.getElementById('checkUpdatesOnStartupLabel');
+        if (label) {
+          label.style.display = 'none';
+        }
       }
     }
   } catch (e) {}

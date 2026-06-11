@@ -79,13 +79,27 @@
     document.body.classList.toggle('console-visible', !!show);
   }
 
+  function getToastContainer(type: ToastType) {
+    if (type === 'error' || type === 'warning') {
+      return (
+        document.getElementById('toast-container-assertive') ||
+        document.getElementById('toast-container')
+      );
+    }
+    return document.getElementById('toast-container');
+  }
+
   function showToast(message: unknown, options: ToastOptions = {}) {
     const { type = 'info', duration = 4000 } = options;
-    const container = document.getElementById('toast-container');
+    const container = getToastContainer(type);
     if (!container) return;
 
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
+    if (type === 'error' || type === 'warning') {
+      toast.setAttribute('role', 'alert');
+      toast.setAttribute('aria-live', 'assertive');
+    }
 
     const icon = document.createElement('span');
     icon.className = 'toast-icon';
@@ -165,12 +179,18 @@
       button.innerHTML = '<img src="loader.svg" class="loader-icon" alt="Loading...">';
       button.disabled = false;
       button.setAttribute('aria-busy', 'true');
+      if (typeof onCancel === 'function') {
+        button.setAttribute('aria-label', 'Cancel download');
+      } else {
+        button.removeAttribute('aria-label');
+      }
       button.onclick = typeof onCancel === 'function' ? onCancel : null;
     } else {
       button.classList.remove('loading');
       button.innerHTML = button.dataset.defaultHtml || button.dataset.defaultText || 'Action';
       button.disabled = false;
       button.removeAttribute('aria-busy');
+      button.removeAttribute('aria-label');
       button.onclick = button._originalClick ?? null;
     }
   }

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   handleHandlers,
@@ -10,7 +10,11 @@ const {
   startDownloadMock,
   cancelActiveSessionMock,
   loadSettingsMock,
+  ytdlpFixturePath,
 } = vi.hoisted(() => {
+  const nodeOs = require('os') as typeof import('os');
+  const nodePath = require('path') as typeof import('path');
+  const { randomBytes } = require('crypto') as typeof import('crypto');
   const handleMap: Record<string, (...args: unknown[]) => unknown> = {};
   const send = vi.fn();
   const windows: Array<{
@@ -81,8 +85,12 @@ const {
     }
   }
 
-  const userDataDir = `${process.cwd()}/.tmp-queue-test`;
-  const downloadsDir = `${userDataDir}/downloads`;
+  const userDataDir = nodePath.join(
+    nodeOs.tmpdir(),
+    `rosi-queue-test-${randomBytes(8).toString('hex')}`
+  );
+  const downloadsDir = nodePath.join(userDataDir, 'downloads');
+  const ytdlpFixturePath = nodePath.join(userDataDir, 'yt-dlp.exe');
 
   const app = {
     whenReady: vi.fn(() => Promise.resolve()),
@@ -95,6 +103,7 @@ const {
       return userDataDir;
     }),
     getVersion: vi.fn(() => '4.0.0'),
+    getAppPath: vi.fn(() => process.cwd()),
   };
 
   return {
@@ -122,6 +131,7 @@ const {
       keepOriginalAfterConvert: true,
       ffmpegPath: '',
     })),
+    ytdlpFixturePath,
   };
 });
 
@@ -155,7 +165,7 @@ vi.mock('electron', () => ({
 
 vi.mock('../main/platform', () => ({
   isPackaged: true,
-  resolveYtdlpPath: vi.fn(() => 'C:/tools/yt-dlp.exe'),
+  resolveYtdlpPath: vi.fn(() => ytdlpFixturePath),
   verifyBundledFfmpeg: vi.fn(),
 }));
 
@@ -192,6 +202,7 @@ vi.mock('../main/downloader', () => ({
   killAllProcesses: vi.fn(),
   fetchFormats: vi.fn(async () => 'ok'),
   cancelFormats: vi.fn(),
+  canStartDownload: vi.fn(() => true),
 }));
 
 vi.mock('../main/constants', () => ({
@@ -222,14 +233,22 @@ async function initializeMainModule() {
   sendMock.mockClear();
   startDownloadMock.mockClear();
   cancelActiveSessionMock.mockClear();
+  fs.mkdirSync(path.dirname(ytdlpFixturePath), { recursive: true });
+  fs.writeFileSync(ytdlpFixturePath, '');
   vi.resetModules();
   await import('../main/main');
   await new Promise((resolve) => setTimeout(resolve, 10));
 }
 
+const queueEvent = { sender: { id: 1 } };
+
 describe('queue edge cases and error handling', () => {
   beforeEach(async () => {
     await initializeMainModule();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('rejects adding non-array urls', async () => {
@@ -266,7 +285,7 @@ describe('queue edge cases and error handling', () => {
 
   it('rejects start-queue when no pending items', async () => {
     const startQueue = handleHandlers['start-queue']!;
-    const result = await startQueue();
+    const result = await startQueue(queueEvent);
     expect(result).toEqual(
       expect.objectContaining({
         ok: false,
@@ -282,10 +301,10 @@ describe('queue edge cases and error handling', () => {
     startDownloadMock.mockImplementationOnce(() => {});
 
     await addToQueue({ sender: { id: 1 } }, ['https://example.com/a']);
-    await startQueue();
+    await startQueue(queueEvent);
 
     await addToQueue({ sender: { id: 1 } }, ['https://example.com/b']);
-    const result = await startQueue();
+    const result = await startQueue(queueEvent);
     expect(result).toEqual(
       expect.objectContaining({
         ok: false,
@@ -324,12 +343,12 @@ describe('queue edge cases and error handling', () => {
     startDownloadMock.mockImplementationOnce(() => {});
 
     await addToQueue({ sender: { id: 1 } }, ['https://example.com/a']);
-    await startQueue();
+    await startQueue(queueEvent);
 
-    const result = await clearQueue();
+    const result = await clearQueue(queueEvent);
     expect(result).toEqual({ ok: true, data: undefined });
 
-    const queue = await handleHandlers['get-queue']!();
+    const queue = await handleHandlers['get-queue']!(queueEvent);
     expect(queue).toEqual([]);
   });
 
@@ -344,10 +363,10 @@ describe('queue edge cases and error handling', () => {
       'https://example.com/3',
     ]);
 
-    await startQueue();
+    await startQueue(queueEvent);
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    const queue = (await getQueue()) as Array<{ status: string }>;
+    const queue = (await getQueue(queueEvent)) as Array<{ status: string }>;
     const completed = queue.filter((item) => item.status === 'completed');
     expect(completed.length).toBe(3);
     expect(startDownloadMock).toHaveBeenCalledTimes(3);
@@ -364,10 +383,10 @@ describe('queue edge cases and error handling', () => {
 
     await addToQueue({ sender: { id: 1 } }, ['https://example.com/will-fail']);
 
-    await startQueue();
+    await startQueue(queueEvent);
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    const queue = (await getQueue()) as Array<{ status: string; error?: string }>;
+    const queue = (await getQueue(queueEvent)) as Array<{ status: string; error?: string }>;
     expect(queue[0]!.status).toBe('failed');
     expect(queue[0]!.error).toContain('spawn error');
   });
@@ -390,10 +409,10 @@ describe('queue edge cases and error handling', () => {
     );
 
     await addToQueue({ sender: { id: 1 } }, ['https://example.com/fail']);
-    await startQueue();
+    await startQueue(queueEvent);
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    const queue = (await getQueue()) as Array<{ status: string; error?: string }>;
+    const queue = (await getQueue(queueEvent)) as Array<{ status: string; error?: string }>;
     expect(queue[0]!.status).toBe('failed');
     expect(queue[0]!.error).toContain('failed');
   });
@@ -416,10 +435,10 @@ describe('queue edge cases and error handling', () => {
     );
 
     await addToQueue({ sender: { id: 1 } }, ['https://example.com/cancel']);
-    await startQueue();
+    await startQueue(queueEvent);
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    const queue = (await getQueue()) as Array<{ status: string }>;
+    const queue = (await getQueue(queueEvent)) as Array<{ status: string }>;
     expect(queue[0]!.status).toBe('cancelled');
   });
 
@@ -432,12 +451,12 @@ describe('queue edge cases and error handling', () => {
     startDownloadMock.mockImplementation(() => {});
 
     await addToQueue({ sender: { id: 1 } }, ['https://example.com/a', 'https://example.com/b']);
-    await startQueue();
+    await startQueue(queueEvent);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    await cancelQueue();
+    await cancelQueue(queueEvent);
 
-    const queue = (await getQueue()) as Array<{ status: string }>;
+    const queue = (await getQueue(queueEvent)) as Array<{ status: string }>;
     const allCancelledOrDownloading = queue.every(
       (item) => item.status === 'cancelled' || item.status === 'downloading'
     );
@@ -446,10 +465,13 @@ describe('queue edge cases and error handling', () => {
   });
 
   it('persists queue to disk and restores on re-init', async () => {
+    vi.useFakeTimers();
     const addToQueue = handleHandlers['add-to-queue']!;
     await addToQueue({ sender: { id: 1 } }, ['https://example.com/persisted']);
+    await vi.advanceTimersByTimeAsync(300);
+    vi.useRealTimers();
 
-    const queue1 = (await handleHandlers['get-queue']!()) as Array<{ url: string }>;
+    const queue1 = (await handleHandlers['get-queue']!(queueEvent)) as Array<{ url: string }>;
     expect(queue1).toHaveLength(1);
     expect(queue1[0]!.url).toBe('https://example.com/persisted');
 
@@ -458,29 +480,38 @@ describe('queue edge cases and error handling', () => {
 
     clearHandlerMaps();
     sendMock.mockClear();
+    fs.mkdirSync(path.dirname(ytdlpFixturePath), { recursive: true });
+    fs.writeFileSync(ytdlpFixturePath, '');
     vi.resetModules();
     await import('../main/main');
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    const queue2 = (await handleHandlers['get-queue']!()) as Array<{ url: string }>;
+    const queue2 = (await handleHandlers['get-queue']!(queueEvent)) as Array<{ url: string }>;
     expect(queue2).toHaveLength(1);
     expect(queue2[0]!.url).toBe('https://example.com/persisted');
   });
 
   it('restores queue from backup when primary is corrupted', async () => {
+    vi.useFakeTimers();
+    await handleHandlers['clear-queue']!({ sender: { id: 1 } });
+    await vi.advanceTimersByTimeAsync(300);
     const addToQueue = handleHandlers['add-to-queue']!;
     await addToQueue({ sender: { id: 1 } }, ['https://example.com/backup-test']);
+    await vi.advanceTimersByTimeAsync(300);
+    vi.useRealTimers();
 
     const queuePath = path.join(appMock.getPath('userData'), 'download-queue.json');
     fs.writeFileSync(queuePath, '{invalid json}');
 
     clearHandlerMaps();
     sendMock.mockClear();
+    fs.mkdirSync(path.dirname(ytdlpFixturePath), { recursive: true });
+    fs.writeFileSync(ytdlpFixturePath, '');
     vi.resetModules();
     await import('../main/main');
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    const queue = (await handleHandlers['get-queue']!()) as Array<{ url: string }>;
+    const queue = (await handleHandlers['get-queue']!(queueEvent)) as Array<{ url: string }>;
     expect(queue).toHaveLength(1);
     expect(queue[0]!.url).toBe('https://example.com/backup-test');
   });
@@ -499,7 +530,7 @@ describe('queue edge cases and error handling', () => {
     await import('../main/main');
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    const queue = await handleHandlers['get-queue']!();
+    const queue = await handleHandlers['get-queue']!(queueEvent);
     expect(queue).toEqual([]);
   });
 
@@ -518,7 +549,7 @@ describe('queue edge cases and error handling', () => {
     await import('../main/main');
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    const queue = (await handleHandlers['get-queue']!()) as Array<{ status: string }>;
+    const queue = (await handleHandlers['get-queue']!(queueEvent)) as Array<{ status: string }>;
     expect(queue[0]!.status).toBe('pending');
   });
 });

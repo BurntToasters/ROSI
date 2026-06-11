@@ -6,19 +6,21 @@
 
 </p> -->
 
- <!-- >[!NOTE]
-> 🅱️ This is a beta build.
--->
+> [!NOTE]
+> 🅱️ This is a Beta build.
 
 # ⬇️ Downloads
 
-[<img src="https://get.microsoft.com/images/en-us%20dark.svg" width="175"/>](https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct)
+| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                  | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS     | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                                                                                  |
+| :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **EXE:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-Windows-arm64.exe) | **[Universal DMG](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-MacOS-universal.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-Linux-arm64.AppImage) |
+| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div>                    | **[Universal ZIP](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-MacOS-universal.zip)** | **DEB:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-Linux-arm64.deb)                 |
+|                                                                                                                                                                                                                    |                                                                                                                     | **RPM:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-Linux-aarch64.rpm)              |
 
-| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                    | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS     | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                                                                                  |
-| :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[Universal EXE](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.1/ROSI-Windows.exe)** <br>_(Both x64 and arm64)_                                                                               | **[Universal DMG](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.1/ROSI-MacOS-universal.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.1/ROSI-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.1/ROSI-Linux-arm64.AppImage) |
-| **Other:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.1/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.1/ROSI-Windows-arm64.exe) |                                                                                                                     | **DEB:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.1/ROSI-linux_amd64.deb) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.1/ROSI-linux_arm64.deb)                 |
-|                                                                                                                                                                                                                      |                                                                                                                     | **RPM:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.1/ROSI-linux.x86_64.rpm) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.1/ROSI-linux.aarch64.rpm)              |
+> [!IMPORTANT]
+> The `.sig` files in this repo are NOT normal GPG signatures — they are for ROSI's built-in updater to verify the integrity of updates before downloading and installing.
+>
+> The `.asc` files are my normal GPG signatures which you can verify using my GPG Public Key: https://tuxedo.rosie.run/GPG/BurntToasters_0xF2FBC20F_public.asc
 
 <!-- REMOVED <details>
   <summary>🛠️ Build Status & OS App Store Publishing Status (for NERDS)</summary>
@@ -35,6 +37,19 @@
 
 ---
 
+## Changes in `v4.1.0-beta.2:`
+
+- **Updater:** Fixed macOS in-app updates where **Restart Now** did nothing after an update finished downloading.
+- **Updater:** Fixed the `Auto` update channel so beta installs actually receive beta updates when that setting is selected.
+- **Downloads:** Manual downloads and the queue no longer stomp each other — ROSI blocks conflicting starts instead of silently killing one mid-run.
+- **Downloads:** Queue downloads now use your chosen download folder instead of always saving to system Downloads.
+- **Settings:** Importing settings refreshes the UI in-place instead of forcing a full app restart.
+- **macOS:** Closing the window now stops active downloads instead of leaving `yt-dlp` running headless in the background.
+- **Security:** Tightened download URL validation, output path checks, `ffmpeg` path handling on import, and subprocess environment hardening.
+- **UI:** Accessibility and polish pass — setup wizard focus trapping, clearer modal buttons, progress bar screen-reader support, queue confirm dialogs, theme flash fix on launch, and assorted UX cleanup.
+- **Testing:** Expanded automated coverage for the updater, downloader, preview pipeline, IPC validation, and renderer modules.
+- **PKG:** Updated packages.
+
 ## Changes in `v4.1.0-beta.1:`
 
 - **NEW - Preview:** Added video preview before downloading so ROSI can show the title, uploader, duration, thumbnail, playlist info, and other basic metadata before saving.
@@ -45,21 +60,6 @@
 - **UI:** Split the renderer CSS into focused files, bundled local Manrope / IBM Plex Mono fonts, tightened CSP by removing remote Google Fonts, and added the preview/enhancement UI.
 - **FFMPEG:** Updated FFmpeg compliance docs, notices, source offer, and binary placeholders for FFmpeg `8.1` builds on Windows, Linux, and macOS arm64. macOS x64 stays on FFmpeg `8.0.1`.
 - **Testing:** Added jsdom DOM coverage for the renderer plus tests for video info parsing, codec-aware FFmpeg args, GPU probing, settings migration, IPC validation, and queue wiring.
-- **PKG:** Updated packages.
-
-## Changes in `v4.0.13:`
-
-- **Electron:** Updated electron to `42.2.0`
-- **PKG:** Updated packages.
-
-## Changes in `v4.0.12:`
-
-- **Electron:** Updated electron to `42.0.0`.
-- **PKG:** Updated packages.
-
-## Changes in `v4.0.9:`
-
-- **Electron:** Updated electron to `41.5.0`.
 - **PKG:** Updated packages.
 
 ## Changes in `v4.0.0:`
@@ -87,6 +87,9 @@ Nothing.. yet!
 ---
 
 </details>
+
+> [!IMPORTANT]
+> **Note:** MSI builds are NOT provided for beta releases. Use the EXE installer.
 
 # ℹ️ Installation & Notes
 

@@ -323,6 +323,16 @@ select option {
   padding-left: var(--spacing-xs);
 }
 
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.toggle-row .toggle-switch {
+  flex: 1;
+}
+
 .help-icon {
   display: inline-flex;
   align-items: center;
@@ -341,6 +351,12 @@ select option {
 .help-icon:hover {
   background: var(--accent);
   color: var(--text-primary);
+}
+
+.help-icon:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--accent-subtle);
 }
 
 .settings-link-btn {

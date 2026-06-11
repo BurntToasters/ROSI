@@ -18,16 +18,30 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--spacing-sm) var(--spacing-md);
+  padding: 0 var(--spacing-md);
   background: var(--console-header-bg);
   border-bottom: 1px solid var(--border-subtle);
+}
+
+.history-collapse-btn,
+.console-collapse-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: var(--spacing-sm) 0;
+  background: transparent;
+  border: none;
+  color: inherit;
   cursor: pointer;
   user-select: none;
+  text-align: left;
   transition: var(--transition-fast);
 }
 
-.history-header:hover {
-  background: var(--console-header-hover-bg);
+.history-collapse-btn:hover,
+.console-collapse-btn:hover {
+  color: var(--text-primary);
 }
 
 .history-header-left {
@@ -229,16 +243,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--spacing-sm) var(--spacing-md);
+  padding: 0 var(--spacing-md);
   background: var(--console-header-bg);
   border-bottom: 1px solid var(--border-subtle);
-  cursor: pointer;
-  user-select: none;
-  transition: var(--transition-fast);
-}
-
-.console-header:hover {
-  background: var(--console-header-hover-bg);
 }
 
 .console-header-left {
