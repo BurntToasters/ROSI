@@ -1,3 +1,5 @@
+import * as path from 'path';
+import { pathToFileURL } from 'url';
 import { describe, it, expect } from 'vitest';
 import * as validation from '../utils/validation';
 
@@ -77,21 +79,20 @@ describe('validation helpers', () => {
 
   describe('isAllowedNavigationUrl', () => {
     it('only allows file URLs', () => {
+      const sampleFile = pathToFileURL(path.resolve(path.join('app', 'index.html'))).href;
+      expect(validation.isAllowedNavigationUrl(sampleFile)).toBe(true);
       expect(validation.isAllowedNavigationUrl('file:///C:/app/index.html')).toBe(true);
-      expect(validation.isAllowedNavigationUrl('file:///Users/test/app/index.html')).toBe(true);
       expect(validation.isAllowedNavigationUrl('https://example.com')).toBe(false);
       expect(validation.isAllowedNavigationUrl('javascript:alert(1)')).toBe(false);
       expect(validation.isAllowedNavigationUrl('')).toBe(false);
     });
 
     it('restricts file URLs to an allowed base when provided', () => {
-      const base = '/Users/test/app';
-      expect(validation.isAllowedNavigationUrl('file:///Users/test/app/index.html', base)).toBe(
-        true
-      );
-      expect(validation.isAllowedNavigationUrl('file:///Users/test/other/index.html', base)).toBe(
-        false
-      );
+      const base = path.resolve(path.join('rosi-nav-test', 'app'));
+      const insideFile = path.join(base, 'index.html');
+      const outsideFile = path.resolve(base, '..', 'other', 'index.html');
+      expect(validation.isAllowedNavigationUrl(pathToFileURL(insideFile).href, base)).toBe(true);
+      expect(validation.isAllowedNavigationUrl(pathToFileURL(outsideFile).href, base)).toBe(false);
     });
   });
 });
