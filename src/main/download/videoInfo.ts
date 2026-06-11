@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import log from 'electron-log/main.js';
 import { spawnWithEnv } from '../platform';
+import { killChildProcess } from '../processKill';
 import { isSafeHttpUrl } from '../../utils/validation';
 import { MAX_OUTPUT_BUFFER, MAX_ERROR_BUFFER, FORMAT_FETCH_TIMEOUT_MS } from '../constants';
 import type { FormatsProcess, VideoInfo } from '../../types';
@@ -65,11 +66,7 @@ export function parseVideoInfo(jsonString: string): VideoInfo | null {
 export function cancelVideoInfo(): void {
   if (infoProcess?.proc && !infoProcess.proc.killed) {
     infoProcess.cancelled = true;
-    try {
-      infoProcess.proc.kill();
-    } catch (error) {
-      log.warn('Error killing video info process:', error);
-    }
+    killChildProcess(infoProcess.proc, 'video-info');
   }
 }
 
@@ -84,7 +81,7 @@ export function fetchVideoInfo(ytdlpPath: string, url: string): Promise<VideoInf
     if (infoProcess?.proc && !infoProcess.proc.killed) {
       try {
         infoProcess.cancelled = true;
-        infoProcess.proc.kill();
+        killChildProcess(infoProcess.proc, 'video-info');
       } catch (error) {
         log.warn('Error killing previous video info process:', error);
       }
@@ -105,7 +102,7 @@ export function fetchVideoInfo(ytdlpPath: string, url: string): Promise<VideoInf
     const timeout = setTimeout(() => {
       try {
         infoProcess!.cancelled = true;
-        proc.kill();
+        killChildProcess(proc, 'video-info-timeout');
       } catch (error) {
         log.warn('Error killing video info process on timeout:', error);
       }

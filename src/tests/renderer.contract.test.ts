@@ -42,11 +42,15 @@ describe('renderer wiring and accessibility contracts', () => {
 
   it('keeps queue controls and status messaging accessible', () => {
     const indexHtml = readRendererFile('index.html');
+    const queueModule = readRendererFile('modules/queue.ts');
 
     expect(indexHtml).toMatch(/id="queueSection"/);
     expect(indexHtml).toMatch(/id="queueStatusMessage"[\s\S]*role="status"/);
     expect(indexHtml).toMatch(/id="queueStatusMessage"[\s\S]*aria-live="polite"/);
     expect(indexHtml).toMatch(/id="queueStatusMessage"[\s\S]*aria-atomic="true"/);
+    expect(indexHtml).toMatch(/id="queueList"[^>]*role="list"/);
+    expect(indexHtml).not.toMatch(/id="queueList"[^>]*aria-live/);
+    expect(queueModule).toMatch(/setAttribute\('role', 'listitem'\)/);
 
     expect(indexHtml).toMatch(/id="addToQueueBtn"/);
     expect(indexHtml).toMatch(/title="Add to queue"/);
@@ -92,5 +96,35 @@ describe('renderer wiring and accessibility contracts', () => {
     expect(engine).toContain("e.key === 'ArrowUp'");
     expect(engine).toContain("e.key === 'Home'");
     expect(engine).toContain("e.key === 'End'");
+  });
+
+  it('keeps overlay, wizard, and progress accessibility contracts', () => {
+    const indexHtml = readRendererFile('index.html');
+    const engine = readRendererFile('rosiEngine.ts');
+    const uiModule = readRendererFile('modules/ui.ts');
+
+    expect(indexHtml).toMatch(/id="licenses-overlay"[\s\S]*aria-hidden="true"/);
+    expect(indexHtml).toMatch(/id="licenses-frame"[\s\S]*title="ROSI licenses"/);
+    expect(engine).toMatch(/licensesOverlayEl\.addEventListener\('click'/);
+    expect(engine).not.toMatch(/licensesOverlay\.addEventListener\('click'/);
+
+    expect(indexHtml).toMatch(/class="wizard-progress"[\s\S]*role="progressbar"/);
+    expect(indexHtml).toMatch(/id="wizard-step-announce"[\s\S]*aria-live="polite"/);
+    expect(engine).toMatch(/backBtnEl\.setAttribute\('hidden'/);
+
+    expect(indexHtml).toMatch(
+      /id="subtitleLangsInput"[\s\S]*aria-describedby="subtitleLangsHint subtitleLangsError"/
+    );
+    expect(indexHtml).toMatch(/id="progress-details"[\s\S]*aria-live="polite"/);
+    expect(indexHtml).toMatch(/id="versionLink"[\s\S]*opens externally/);
+    expect(engine).toMatch(/barWrapper\.setAttribute\('aria-valuenow', '0'\)/);
+    expect(engine).toMatch(/aria-current', 'step'/);
+    expect(engine).toMatch(/busy: true/);
+    expect(engine).toMatch(
+      /primary: true,\s*\n\s*action: \(\) => \{\s*\n\s*void window\.api\.openExternal\('https:\/\/rosie\.run\/support'\)/
+    );
+
+    expect(readRendererFile('licenses-iframe.html')).toMatch(/<html lang="en">/);
+    expect(uiModule).toMatch(/setAttribute\('aria-label', 'Cancel download'\)/);
   });
 });

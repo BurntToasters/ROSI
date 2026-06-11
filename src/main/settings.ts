@@ -12,6 +12,7 @@ import {
   CURRENT_SETTINGS_VERSION,
   SUBTITLE_LANGS_PATTERN,
 } from './constants';
+import { validateDownloadPath, validateFfmpegPathValue } from '../utils/ipcValidation';
 import { clearGpuCache } from './gpu';
 
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
@@ -117,12 +118,25 @@ function readBrowserChoice(value: unknown): string {
 
 function readFfmpegPath(value: unknown): string {
   const raw = readString(value, defaultSettings.ffmpegPath);
-  return raw.length > 1024 ? raw.slice(0, 1024) : raw;
+  const capped = raw.length > 1024 ? raw.slice(0, 1024) : raw;
+  const validation = validateFfmpegPathValue(capped.trim() || undefined);
+  if (!validation.ok) {
+    return defaultSettings.ffmpegPath;
+  }
+  return validation.data || '';
 }
 
 function readDownloadFolder(value: unknown): string {
   const raw = readString(value, defaultSettings.downloadFolder);
-  return raw.length > 4096 ? raw.slice(0, 4096) : raw;
+  const capped = raw.length > 4096 ? raw.slice(0, 4096) : raw;
+  if (!capped.trim()) {
+    return defaultSettings.downloadFolder;
+  }
+  const validation = validateDownloadPath(capped);
+  if (!validation.ok) {
+    return defaultSettings.downloadFolder;
+  }
+  return validation.data;
 }
 
 function readSettingsVersion(value: unknown): number {

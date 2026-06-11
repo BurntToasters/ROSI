@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   handleHandlers,
@@ -247,6 +247,10 @@ describe('queue edge cases and error handling', () => {
     await initializeMainModule();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('rejects adding non-array urls', async () => {
     const addToQueue = handleHandlers['add-to-queue']!;
     const result = await addToQueue({ sender: { id: 1 } }, 'not-an-array');
@@ -461,9 +465,11 @@ describe('queue edge cases and error handling', () => {
   });
 
   it('persists queue to disk and restores on re-init', async () => {
+    vi.useFakeTimers();
     const addToQueue = handleHandlers['add-to-queue']!;
     await addToQueue({ sender: { id: 1 } }, ['https://example.com/persisted']);
-    await new Promise((resolve) => setTimeout(resolve, 350));
+    await vi.advanceTimersByTimeAsync(300);
+    vi.useRealTimers();
 
     const queue1 = (await handleHandlers['get-queue']!(queueEvent)) as Array<{ url: string }>;
     expect(queue1).toHaveLength(1);
@@ -486,9 +492,13 @@ describe('queue edge cases and error handling', () => {
   });
 
   it('restores queue from backup when primary is corrupted', async () => {
+    vi.useFakeTimers();
+    await handleHandlers['clear-queue']!({ sender: { id: 1 } });
+    await vi.advanceTimersByTimeAsync(300);
     const addToQueue = handleHandlers['add-to-queue']!;
     await addToQueue({ sender: { id: 1 } }, ['https://example.com/backup-test']);
-    await new Promise((resolve) => setTimeout(resolve, 350));
+    await vi.advanceTimersByTimeAsync(300);
+    vi.useRealTimers();
 
     const queuePath = path.join(appMock.getPath('userData'), 'download-queue.json');
     fs.writeFileSync(queuePath, '{invalid json}');

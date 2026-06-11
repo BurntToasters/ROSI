@@ -56,6 +56,56 @@ function isPathWithinBase(resolvedPath: string, basePath: string): boolean {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
+function isAllowedDownloadBase(resolvedPath: string): boolean {
+  const homeDir = os.homedir();
+  if (homeDir && isPathWithinBase(resolvedPath, homeDir)) {
+    return true;
+  }
+  if (process.platform === 'darwin') {
+    const volumesRoot = path.resolve('/Volumes');
+    if (resolvedPath === volumesRoot || isPathWithinBase(resolvedPath, volumesRoot)) {
+      return true;
+    }
+  }
+  if (process.platform === 'win32' && isAbsolutePath(resolvedPath)) {
+    const normalized = resolvedPath.replace(/\//g, '\\').toLowerCase();
+    const blocked = [
+      '\\windows\\',
+      '\\program files\\',
+      '\\program files (x86)\\',
+      '\\programdata\\',
+    ];
+    if (!blocked.some((prefix) => normalized.includes(prefix))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function validateDownloadPath(value: string): ValidationResult<string> {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { ok: true, data: '' };
+  }
+  if (!isAbsolutePath(trimmed)) {
+    return {
+      ok: false,
+      error: buildError('INVALID_PATH', 'Download path must be an absolute path.'),
+    };
+  }
+  const resolved = path.resolve(trimmed);
+  if (!isAllowedDownloadBase(resolved)) {
+    return {
+      ok: false,
+      error: buildError(
+        'INVALID_PATH',
+        'Download path must be within your home directory or an allowed external volume.'
+      ),
+    };
+  }
+  return { ok: true, data: resolved };
+}
+
 function validateOutputPath(value: string): ValidationResult<string> {
   const trimmed = value.trim();
   if (!isAbsolutePath(trimmed)) {
@@ -64,21 +114,12 @@ function validateOutputPath(value: string): ValidationResult<string> {
       error: buildError('INVALID_PATH', 'Download outputPath must be an absolute path.'),
     };
   }
-  const resolved = path.resolve(trimmed);
-  const homeDir = os.homedir();
-  if (!homeDir || !isPathWithinBase(resolved, homeDir)) {
-    return {
-      ok: false,
-      error: buildError(
-        'INVALID_PATH',
-        'Download outputPath must be within the user home directory.'
-      ),
-    };
-  }
-  return { ok: true, data: resolved };
+  return validateDownloadPath(trimmed);
 }
 
-function validateFfmpegPathValue(value: string | undefined): ValidationResult<string | undefined> {
+export function validateFfmpegPathValue(
+  value: string | undefined
+): ValidationResult<string | undefined> {
   if (value === undefined) {
     return { ok: true, data: undefined };
   }
@@ -456,19 +497,26 @@ export function validateSettingsPatchPayload(value: unknown): ValidationResult<P
       continue;
     }
 
-    if (!isString(rawValue)) {
-      return {
-        ok: false,
-        error: buildError('VALIDATION_ERROR', `${rawKey} must be a string.`),
-      };
+    if (rawKey === 'downloadFolder') {
+      if (!isString(rawValue)) {
+        return {
+          ok: false,
+          error: buildError('VALIDATION_ERROR', 'downloadFolder must be a string.'),
+        };
+      }
+      if (rawValue.length > 4096) {
+        return {
+          ok: false,
+          error: buildError('VALIDATION_ERROR', 'downloadFolder exceeds maximum length of 4096.'),
+        };
+      }
+      const folderValidation = validateDownloadPath(rawValue);
+      if (!folderValidation.ok) {
+        return folderValidation;
+      }
+      patch.downloadFolder = folderValidation.data;
+      continue;
     }
-    if (rawValue.length > 1024) {
-      return {
-        ok: false,
-        error: buildError('VALIDATION_ERROR', `${rawKey} exceeds maximum length of 1024.`),
-      };
-    }
-    patch[rawKey] = rawValue;
   }
 
   return { ok: true, data: patch };
@@ -494,7 +542,14 @@ export function validateFileLocationPayload(value: unknown): ValidationResult<st
       error: buildError('INVALID_PATH', 'File path must be absolute.'),
     };
   }
-  return { ok: true, data: path.normalize(trimmed) };
+  const resolved = path.resolve(trimmed);
+  if (!isAllowedDownloadBase(resolved)) {
+    return {
+      ok: false,
+      error: buildError('INVALID_PATH', 'File path is outside allowed locations.'),
+    };
+  }
+  return { ok: true, data: path.normalize(resolved) };
 }
 
 export function validateNotificationPayload(value: unknown): ValidationResult<NotificationRequest> {

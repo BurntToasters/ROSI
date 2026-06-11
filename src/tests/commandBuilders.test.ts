@@ -127,6 +127,25 @@ describe('command builders', () => {
     await expect(probeMediaCodecs('ffmpeg', '/tmp/input.mp4')).resolves.toEqual({});
   });
 
+  it('probeMediaCodecs kills hung probe and returns partial codecs on timeout', async () => {
+    vi.useFakeTimers();
+    const proc = new EventEmitter() as EventEmitter & {
+      stderr: EventEmitter;
+      kill: (signal?: string) => void;
+    };
+    proc.stderr = new EventEmitter();
+    proc.kill = vi.fn();
+    spawnWithEnvMock.mockReturnValue(proc);
+
+    const pending = probeMediaCodecs('ffmpeg', '/tmp/input.mkv');
+    proc.stderr.emit('data', '  Stream #0:0: Video: h264 (High), yuv420p\n');
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await expect(pending).resolves.toEqual({ video: 'h264' });
+    expect(proc.kill).toHaveBeenCalledWith('SIGKILL');
+    vi.useRealTimers();
+  });
+
   it('resolves GPU encoder based on settings', async () => {
     expect(await resolveVideoEncoder(createSettings({ gpuAcceleration: false }))).toBe('copy');
     expect(

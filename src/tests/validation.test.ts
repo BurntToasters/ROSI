@@ -25,6 +25,17 @@ describe('validation helpers', () => {
       expect(validation.isSafeHttpUrl('http://192.168.1.1/video')).toBe(false);
       expect(validation.isSafeHttpUrl('http://169.254.169.254/latest/meta-data')).toBe(false);
     });
+
+    it('rejects decimal IPv4 host literals', () => {
+      expect(validation.isSafeHttpUrl('http://2130706433/video')).toBe(false);
+    });
+
+    it('rejects DNS rebinding hostnames', () => {
+      expect(validation.isSafeHttpUrl('http://127.0.0.1.nip.io/video')).toBe(false);
+      expect(validation.isSafeHttpUrl('http://app.localtest.me/video')).toBe(false);
+      expect(validation.isPrivateOrLocalHost('evil.nip.io')).toBe(true);
+      expect(validation.isPrivateOrLocalHost('tenant.sslip.io')).toBe(true);
+    });
   });
 
   describe('isPrivateOrLocalHost', () => {
@@ -50,10 +61,14 @@ describe('validation helpers', () => {
       );
     });
 
+    it('accepts mailto links', () => {
+      expect(validation.isSafeExternalUrl('mailto:support@example.com')).toBe(true);
+      expect(validation.isSafeExternalUrl('  mailto:help@rosie.run  ')).toBe(true);
+    });
+
     it('rejects other schemes and invalid input', () => {
       expect(validation.isSafeExternalUrl('file:///tmp/test')).toBe(false);
       expect(validation.isSafeExternalUrl('javascript:alert(1)')).toBe(false);
-      expect(validation.isSafeExternalUrl('mailto:support@example.com')).toBe(true);
       expect(validation.isSafeExternalUrl('not a url')).toBe(false);
       expect(validation.isSafeExternalUrl('')).toBe(false);
       expect(validation.isSafeExternalUrl(undefined)).toBe(false);

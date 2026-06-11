@@ -353,6 +353,12 @@ select option {
   color: var(--text-primary);
 }
 
+.help-icon:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--accent-subtle);
+}
+
 .settings-link-btn {
   background: var(--surface-1);
   border: 1px solid var(--border-subtle);

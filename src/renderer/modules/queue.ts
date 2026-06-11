@@ -77,6 +77,7 @@
     queue.forEach((item) => {
       const el = document.createElement('div');
       el.className = `queue-item queue-${item.status}`;
+      el.setAttribute('role', 'listitem');
       el.dataset.queueId = item.id;
       const statusLabel = STATUS_LABELS[item.status];
       const statusIcon = STATUS_ICONS[item.status];

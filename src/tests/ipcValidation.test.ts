@@ -57,7 +57,7 @@ describe('ipc validation helpers', () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error.message).toContain('within the user home directory');
+      expect(result.error.message).toContain('within your home directory');
     }
   });
 
@@ -231,24 +231,45 @@ describe('ipc validation helpers', () => {
     expect(validateExternalUrlPayload(42).ok).toBe(false);
     expect(validateExternalUrlPayload('file:///tmp').ok).toBe(false);
 
-    const filePath = validateFileLocationPayload('  /tmp/file.mp4  ');
+    const allowedFile = path.join(os.homedir(), 'file.mp4');
+    const filePath = validateFileLocationPayload(`  ${allowedFile}  `);
     expect(filePath.ok).toBe(true);
-    if (filePath.ok) expect(filePath.data).toBe('/tmp/file.mp4');
+    if (filePath.ok) expect(filePath.data).toBe(path.resolve(allowedFile));
     expect(validateFileLocationPayload('').ok).toBe(false);
   });
 
+  it('validates downloadFolder in settings patch payload', () => {
+    const homeFolder = path.join(os.homedir(), 'Downloads', 'rosi');
+    const valid = validateSettingsPatchPayload({ downloadFolder: `  ${homeFolder}  ` });
+    expect(valid.ok).toBe(true);
+    if (valid.ok) {
+      expect(valid.data.downloadFolder).toBe(path.resolve(homeFolder));
+    }
+
+    const empty = validateSettingsPatchPayload({ downloadFolder: '   ' });
+    expect(empty.ok).toBe(true);
+    if (empty.ok) expect(empty.data.downloadFolder).toBe('');
+
+    expect(validateSettingsPatchPayload({ downloadFolder: null }).ok).toBe(false);
+    expect(validateSettingsPatchPayload({ downloadFolder: 42 }).ok).toBe(false);
+    expect(validateSettingsPatchPayload({ downloadFolder: 'relative/path' }).ok).toBe(false);
+    expect(validateSettingsPatchPayload({ downloadFolder: '/tmp/outside-home' }).ok).toBe(false);
+    expect(validateSettingsPatchPayload({ downloadFolder: 'x'.repeat(4097) }).ok).toBe(false);
+  });
+
   it('validates notification payload shape', () => {
+    const notificationFile = path.join(os.homedir(), 'out.mp4');
     const valid = validateNotificationPayload({
       title: ' Done ',
       body: ' Finished ',
-      filePath: ' /tmp/out.mp4 ',
+      filePath: ` ${notificationFile} `,
     });
     expect(valid.ok).toBe(true);
     if (valid.ok) {
       expect(valid.data).toEqual({
         title: 'Done',
         body: 'Finished',
-        filePath: '/tmp/out.mp4',
+        filePath: path.resolve(notificationFile),
       });
     }
 

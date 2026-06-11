@@ -112,7 +112,7 @@ describe('ipc validation null and edge-case handling', () => {
       expect(validateDownloadRequestPayload({ ...validBase, keepOriginal: [] }).ok).toBe(false);
     });
 
-    it('rejects empty string convertFormat after trim', () => {
+    it('accepts whitespace-only convertFormat as undefined', () => {
       const result = validateDownloadRequestPayload({
         ...validBase,
         convertFormat: '   ',
@@ -276,7 +276,7 @@ describe('ipc validation null and edge-case handling', () => {
     });
 
     it('accepts Unix absolute paths', () => {
-      const result = validateFileLocationPayload('/home/user/file.mp4');
+      const result = validateFileLocationPayload(path.join(os.homedir(), 'file.mp4'));
       expect(result.ok).toBe(true);
     });
   });

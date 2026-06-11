@@ -217,8 +217,8 @@
   color: var(--text-primary);
 }
 
-.wizard-btn-secondary.hidden {
-  visibility: hidden;
+.wizard-btn-secondary[hidden] {
+  display: none;
 }
 
 @media (max-width: 480px) {

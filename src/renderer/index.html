@@ -247,9 +247,10 @@
                   placeholder="en,es (comma-separated)"
                   autocomplete="off"
                   spellcheck="false"
+                  aria-describedby="subtitleLangsHint subtitleLangsError"
                 />
               </label>
-              <div class="settings-hint">
+              <div id="subtitleLangsHint" class="settings-hint">
                 Comma-separated language codes (for example <code>en,es</code>). Use
                 <code>all</code> for every available language.
               </div>
@@ -431,7 +432,7 @@
             >
               ▸ Update channel settings
             </button>
-            <div id="updateChannelContainer" class="sub-option">
+            <div id="updateChannelContainer" class="sub-option" aria-hidden="true">
               <label class="select-label">
                 <span>Update Channel:</span>
                 <select id="updateChannelSelect">
@@ -556,7 +557,9 @@
           Reset All Settings
         </button>
         <div class="version-info">
-          <a id="versionLink" href="#">Loading...</a>
+          <a id="versionLink" href="#" aria-label="View release notes (opens externally)"
+            >Loading...</a
+          >
           <span id="betaBadge" class="beta-badge hidden">BETA</span>
         </div>
       </div>
@@ -797,17 +800,17 @@
 
               <div id="progress-container" class="progress-container">
                 <div id="progress-phases" class="progress-phases">
-                  <div class="progress-phase active" data-phase="download">
+                  <div class="progress-phase active" data-phase="download" aria-current="step">
                     <span class="phase-dot"></span>
                     <span class="phase-label">Download</span>
                   </div>
-                  <div class="progress-phase-connector"></div>
-                  <div class="progress-phase" data-phase="merge">
+                  <div class="progress-phase-connector" aria-hidden="true"></div>
+                  <div class="progress-phase" data-phase="merge" aria-hidden="true">
                     <span class="phase-dot"></span>
                     <span class="phase-label">Merge</span>
                   </div>
-                  <div class="progress-phase-connector"></div>
-                  <div class="progress-phase" data-phase="convert">
+                  <div class="progress-phase-connector" aria-hidden="true"></div>
+                  <div class="progress-phase" data-phase="convert" aria-hidden="true">
                     <span class="phase-dot"></span>
                     <span class="phase-label">Convert</span>
                   </div>
@@ -827,7 +830,7 @@
                 >
                   <div id="progress-bar" class="progress-bar"></div>
                 </div>
-                <div id="progress-details" class="progress-details"></div>
+                <div id="progress-details" class="progress-details" aria-live="polite"></div>
                 <div id="progress-complete-icon" class="progress-complete-icon">
                   <svg
                     width="32"
@@ -1009,7 +1012,7 @@
             >
               Queue status updates will appear here.
             </p>
-            <div id="queueList" class="queue-list" aria-live="polite"></div>
+            <div id="queueList" class="queue-list" role="list"></div>
           </section>
 
           <section id="download-history" class="download-history">
@@ -1077,7 +1080,7 @@
                 </svg>
               </button>
             </div>
-            <div id="history-list" class="history-list"></div>
+            <div id="history-list" class="history-list" role="list"></div>
           </section>
 
           <section id="console-section" class="console-section">
@@ -1213,6 +1216,7 @@
       role="dialog"
       aria-modal="true"
       aria-label="Open Source Licenses"
+      aria-hidden="true"
     >
       <div class="licenses-container">
         <div class="licenses-header">
@@ -1233,7 +1237,7 @@
             </svg>
           </button>
         </div>
-        <iframe id="licenses-frame" src="licenses-iframe.html"></iframe>
+        <iframe id="licenses-frame" src="licenses-iframe.html" title="ROSI licenses"></iframe>
       </div>
     </div>
 
@@ -1254,7 +1258,15 @@
       aria-hidden="true"
     >
       <div class="wizard-card">
-        <div class="wizard-progress">
+        <div id="wizard-step-announce" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+        <div
+          class="wizard-progress"
+          role="progressbar"
+          aria-valuemin="1"
+          aria-valuemax="4"
+          aria-valuenow="1"
+          aria-label="Setup progress"
+        >
           <div class="wizard-progress-bar" id="wizard-progress-bar"></div>
         </div>
 
