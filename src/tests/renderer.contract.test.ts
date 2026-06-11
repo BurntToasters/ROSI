@@ -73,8 +73,14 @@ describe('renderer wiring and accessibility contracts', () => {
     expect(indexHtml).toMatch(
       /id="settingsSectionHeaderApplication"[\s\S]*aria-controls="settingsSectionBodyApplication"/
     );
-    expect(indexHtml).toMatch(/id="historyHeader"[\s\S]*aria-controls="history-list"/);
-    expect(indexHtml).toMatch(/id="consoleHeader"[\s\S]*aria-controls="output"/);
+    expect(indexHtml).toMatch(/id="historyToggle"[\s\S]*aria-controls="history-list"/);
+    expect(indexHtml).toMatch(/id="consoleToggleBtn"[\s\S]*aria-controls="output"/);
+    expect(indexHtml).toMatch(/id="progress-bar-wrapper"[\s\S]*role="progressbar"/);
+    expect(indexHtml).toMatch(/id="settingsBtn"[\s\S]*aria-expanded="false"/);
+    expect(indexHtml).toMatch(/<title>ROSI<\/title>/);
+    expect(indexHtml).toMatch(/aria-label="Learn more about SponsorBlock"/);
+    expect(readRendererFile('rosiEngine.ts')).toMatch(/onSettingsImported/);
+    expect(readRendererFile('modules/settings.ts')).toMatch(/stopPropagation/);
   });
 
   it('supports arrow-key ergonomics for collapsible header controls', () => {

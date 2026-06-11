@@ -38,6 +38,7 @@ vi.mock('electron-log/main.js', () => ({
   },
 }));
 
+import { app } from 'electron';
 import {
   applyChannel,
   comparePrerelease,
@@ -78,7 +79,12 @@ describe('updater versioning helpers', () => {
   it('resolves update channel behavior', () => {
     expect(resolveUseBeta('beta')).toBe(true);
     expect(resolveUseBeta('stable')).toBe(false);
-    expect(resolveUseBeta('auto')).toBe(false);
+
+    mockAppGetVersion.mockReturnValue('3.4.3');
+    expect(resolveUseBeta('auto', app.getVersion())).toBe(isBetaVersion(app.getVersion()));
+
+    mockAppGetVersion.mockReturnValue('3.4.3-beta.1');
+    expect(resolveUseBeta('auto', app.getVersion())).toBe(isBetaVersion(app.getVersion()));
   });
 
   it('applies updater channel settings', () => {

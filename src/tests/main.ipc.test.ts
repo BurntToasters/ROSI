@@ -1,4 +1,5 @@
 import fs from 'fs';
+import * as os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -24,6 +25,7 @@ const {
   notificationIsSupportedMock,
   notificationShowMock,
   notificationOnMock,
+  notificationOnceMock,
   checkForUpdatesMock,
   downloadUpdateMock,
   cancelUpdateDownloadMock,
@@ -33,7 +35,11 @@ const {
   detectGpuMock,
   fetchFormatsMock,
   cancelFormatsMock,
+  ytdlpFixturePath,
 } = vi.hoisted(() => {
+  const nodeOs = require('os') as typeof import('os');
+  const nodePath = require('path') as typeof import('path');
+  const { randomBytes } = require('crypto') as typeof import('crypto');
   const handleMap: Record<string, any> = {};
   const onMap: Record<string, any> = {};
   const appOnMap: Record<string, any> = {};
@@ -115,8 +121,12 @@ const {
     }
   }
 
-  const userDataDir = `${process.cwd()}/.tmp-main-ipc-test`;
-  const downloadsDir = `${userDataDir}/downloads`;
+  const userDataDir = nodePath.join(
+    nodeOs.tmpdir(),
+    `rosi-main-ipc-test-${randomBytes(8).toString('hex')}`
+  );
+  const downloadsDir = nodePath.join(userDataDir, 'downloads');
+  const ytdlpFixturePath = nodePath.join(userDataDir, 'yt-dlp.exe');
 
   const app = {
     whenReady: vi.fn(() => Promise.resolve()),
@@ -132,6 +142,7 @@ const {
       return userDataDir;
     }),
     getVersion: vi.fn(() => '4.0.0-beta.2'),
+    getAppPath: vi.fn(() => process.cwd()),
     isReady: vi.fn(() => true),
   };
 
@@ -166,7 +177,10 @@ const {
     saveSettingsMock: vi.fn(() => true),
     resetStatsMock: vi.fn(() => true),
     exportSettingsToFileMock: vi.fn(async () => true),
-    importSettingsFromFileMock: vi.fn(async () => true),
+    importSettingsFromFileMock: vi.fn(async () => ({
+      convertEnabled: false,
+      convertFormat: 'mp4',
+    })),
     showOpenDialogMock: vi.fn(
       async (): Promise<{ canceled: boolean; filePaths: string[] }> => ({
         canceled: true,
@@ -179,6 +193,7 @@ const {
     notificationIsSupportedMock: vi.fn(() => true),
     notificationShowMock: vi.fn(),
     notificationOnMock: vi.fn(),
+    notificationOnceMock: vi.fn(),
     checkForUpdatesMock: vi.fn(async () => ({ ok: true })),
     downloadUpdateMock: vi.fn(async () => ({ success: true })),
     cancelUpdateDownloadMock: vi.fn(),
@@ -188,6 +203,7 @@ const {
     detectGpuMock: vi.fn(async () => ({ nvidia: false, amd: false, intel: false })),
     fetchFormatsMock: vi.fn(async () => 'ok'),
     cancelFormatsMock: vi.fn(),
+    ytdlpFixturePath,
   };
 });
 
@@ -217,13 +233,14 @@ vi.mock('electron', () => ({
       return notificationIsSupportedMock();
     }
     on = notificationOnMock;
+    once = notificationOnceMock;
     show = notificationShowMock;
   },
 }));
 
 vi.mock('../main/platform', () => ({
   isPackaged: true,
-  resolveYtdlpPath: vi.fn(() => 'C:/tools/yt-dlp.exe'),
+  resolveYtdlpPath: vi.fn(() => ytdlpFixturePath),
   verifyBundledFfmpeg: vi.fn(),
 }));
 
@@ -260,6 +277,7 @@ vi.mock('../main/downloader', () => ({
   killAllProcesses: killAllProcessesMock,
   fetchFormats: fetchFormatsMock,
   cancelFormats: cancelFormatsMock,
+  canStartDownload: vi.fn(() => true),
 }));
 
 vi.mock('../main/constants', () => ({
@@ -305,7 +323,10 @@ async function initializeMainModule(options?: { beforeImport?: (userDataDir: str
   exportSettingsToFileMock.mockClear();
   exportSettingsToFileMock.mockResolvedValue(true);
   importSettingsFromFileMock.mockClear();
-  importSettingsFromFileMock.mockResolvedValue(true);
+  importSettingsFromFileMock.mockResolvedValue({
+    convertEnabled: false,
+    convertFormat: 'mp4',
+  });
   showOpenDialogMock.mockClear();
   showOpenDialogMock.mockResolvedValue({ canceled: true, filePaths: [] });
   openExternalMock.mockClear();
@@ -317,6 +338,7 @@ async function initializeMainModule(options?: { beforeImport?: (userDataDir: str
   notificationIsSupportedMock.mockReturnValue(true);
   notificationShowMock.mockClear();
   notificationOnMock.mockClear();
+  notificationOnceMock.mockClear();
   checkForUpdatesMock.mockClear();
   checkForUpdatesMock.mockResolvedValue({ ok: true });
   downloadUpdateMock.mockClear();
@@ -342,6 +364,8 @@ async function initializeMainModule(options?: { beforeImport?: (userDataDir: str
   appMock.requestSingleInstanceLock.mockReset();
   appMock.requestSingleInstanceLock.mockReturnValue(true);
   options?.beforeImport?.(userDataDir);
+  fs.mkdirSync(path.dirname(ytdlpFixturePath), { recursive: true });
+  fs.writeFileSync(ytdlpFixturePath, '');
   vi.resetModules();
   await import('../main/main');
   await new Promise((resolve) => setTimeout(resolve, 10));
@@ -444,7 +468,7 @@ describe('main process IPC wiring and queue behavior', () => {
 
     const startResult = await startQueue();
     expect(startResult).toEqual({ ok: true, data: { started: true } });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(startDownloadMock).toHaveBeenCalled();
 
     queue = await getQueue();
@@ -609,7 +633,7 @@ describe('main process IPC wiring and queue behavior', () => {
 
     const valid = await downloadVideo(
       {},
-      { url: 'https://example.com/video', outputPath: 'C:/tmp' }
+      { url: 'https://example.com/video', outputPath: path.join(os.homedir(), 'Downloads') }
     );
     expect(valid).toEqual({ ok: true, data: { started: true } });
     expect(startDownloadMock).toHaveBeenCalled();
@@ -618,7 +642,7 @@ describe('main process IPC wiring and queue behavior', () => {
     mainWindow.webContents.id = 3;
     const unauthorized = await downloadVideo(
       { sender: { id: 4 } },
-      { url: 'https://example.com/video', outputPath: 'C:/tmp' }
+      { url: 'https://example.com/video', outputPath: path.join(os.homedir(), 'Downloads') }
     );
     expect(unauthorized).toEqual(
       expect.objectContaining({
@@ -635,7 +659,7 @@ describe('main process IPC wiring and queue behavior', () => {
 
     const result = await handleHandlers['download-video']!(
       {},
-      { url: 'https://example.com/video', outputPath: 'C:/tmp' }
+      { url: 'https://example.com/video', outputPath: path.join(os.homedir(), 'Downloads') }
     );
 
     expect(result).toEqual(
@@ -763,6 +787,19 @@ describe('main process IPC wiring and queue behavior', () => {
     openExternalMock.mockRejectedValueOnce(new Error('navigate blocked'));
     willNavigateHandler({ preventDefault: vi.fn() }, 'https://example.com/fail');
     await Promise.resolve();
+  });
+
+  it('allows immediate close when installing an update', () => {
+    const mainWindow = getPrimaryWindow();
+    const closeHandler = getWindowHandler(mainWindow, 'close');
+    const preventDefault = vi.fn();
+
+    onHandlers['install-update']!({});
+    closeHandler({ preventDefault });
+
+    expect(installUpdateMock).toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(sendMock).not.toHaveBeenCalledWith('prepare-for-close');
   });
 
   it('waits for renderer settings flush before closing main window', () => {
@@ -973,9 +1010,9 @@ describe('main process IPC wiring and queue behavior', () => {
     expect(result).toEqual({ ok: true, data: { shown: true } });
     expect(notificationShowMock).toHaveBeenCalled();
 
-    const clickHandler = notificationOnMock.mock.calls.find((call) => call[0] === 'click')?.[1] as
-      | (() => void)
-      | undefined;
+    const clickHandler = notificationOnceMock.mock.calls.find(
+      (call) => call[0] === 'click'
+    )?.[1] as (() => void) | undefined;
     expect(clickHandler).toBeTypeOf('function');
     mainWindow.minimized = true;
     clickHandler?.();
@@ -992,7 +1029,7 @@ describe('main process IPC wiring and queue behavior', () => {
       throw new Error('click failed');
     });
     await handleHandlers['show-notification']!({}, { title: 'Click', filePath: 'C:/tmp/fail.mp4' });
-    const lastClickHandler = notificationOnMock.mock.calls
+    const lastClickHandler = notificationOnceMock.mock.calls
       .filter((call) => call[0] === 'click')
       .at(-1)?.[1] as (() => void) | undefined;
     expect(() => lastClickHandler?.()).not.toThrow();
@@ -1031,9 +1068,14 @@ describe('main process IPC wiring and queue behavior', () => {
       ok: true,
       data: { exported: true },
     });
-    expect(await handleHandlers['import-settings']!()).toEqual({
+    const importResult = await handleHandlers['import-settings']!();
+    expect(importResult).toEqual({
       ok: true,
       data: { imported: true },
+    });
+    expect(sendMock).toHaveBeenCalledWith('settings-imported', {
+      convertEnabled: false,
+      convertFormat: 'mp4',
     });
 
     exportSettingsToFileMock.mockResolvedValueOnce(false);
@@ -1069,6 +1111,8 @@ describe('main process IPC wiring and queue behavior', () => {
     );
 
     await handleHandlers['restart-app']!();
+    expect(cancelActiveSessionMock).toHaveBeenCalledWith(false);
+    expect(killAllProcessesMock).toHaveBeenCalled();
     expect(appMock.relaunch).toHaveBeenCalled();
     expect(appMock.exit).toHaveBeenCalledWith(0);
 
@@ -1173,6 +1217,7 @@ describe('main process IPC wiring and queue behavior', () => {
     fs.rmSync(userDataDir, { recursive: true, force: true });
 
     await handleHandlers['add-to-queue']!({}, ['https://example.com/recreate-dir']);
+    await new Promise((resolve) => setTimeout(resolve, 350));
 
     expect(fs.existsSync(path.join(userDataDir, 'download-queue.json'))).toBe(true);
   });
@@ -1186,6 +1231,7 @@ describe('main process IPC wiring and queue behavior', () => {
 
     try {
       await handleHandlers['add-to-queue']!({}, ['https://example.com/persist-fail']);
+      await new Promise((resolve) => setTimeout(resolve, 350));
       expect(fs.existsSync(tempQueuePath)).toBe(false);
     } finally {
       renameSpy.mockRestore();

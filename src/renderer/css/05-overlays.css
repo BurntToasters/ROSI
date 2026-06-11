@@ -94,14 +94,26 @@
   color: var(--text-primary);
 }
 
-.modal-buttons button:first-child {
+.modal-buttons .modal-btn-primary {
   background: var(--accent);
   border-color: transparent;
   color: var(--text-primary);
 }
 
-.modal-buttons button:first-child:hover {
+.modal-buttons .modal-btn-primary:hover {
   background: var(--accent-hover);
+}
+
+.modal-buttons .modal-btn-danger {
+  background: var(--danger-subtle);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.modal-buttons .modal-btn-danger:hover {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--text-primary);
 }
 
 .licenses-container {
@@ -267,6 +279,10 @@
   pointer-events: none;
 }
 
+.toast-container-assertive {
+  bottom: calc(var(--spacing-xl) + 80px);
+}
+
 .toast {
   pointer-events: auto;
   display: flex;
@@ -394,7 +410,15 @@
 .modal-close-btn:focus-visible,
 .sidebar-close:focus-visible,
 .console-clear-btn:focus-visible,
-.clear-btn:focus-visible {
+.clear-btn:focus-visible,
+.preview-btn:focus-visible,
+.paste-btn:focus-visible,
+.queue-action-btn:focus-visible,
+.history-open-btn:focus-visible,
+.history-collapse-btn:focus-visible,
+.console-collapse-btn:focus-visible,
+.wizard-btn:focus-visible,
+.history-clear-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   box-shadow: 0 0 0 4px var(--accent-subtle);

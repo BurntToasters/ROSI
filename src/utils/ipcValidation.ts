@@ -1,3 +1,6 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import type {
   DownloadRequestOptions,
   IpcErrorCode,
@@ -9,6 +12,7 @@ import type {
 import { isSafeExternalUrl, isSafeHttpUrl } from './validation';
 import {
   ALLOWED_AUDIO_FORMATS,
+  ALLOWED_BROWSERS,
   ALLOWED_CONVERT_FORMATS,
   CURRENT_SETTINGS_VERSION,
   FORMAT_ID_PATTERN,
@@ -39,6 +43,76 @@ function isString(value: unknown): value is string {
 
 function buildError(code: IpcErrorCode, message: string, details?: string): IpcErrorPayload {
   return { code, message, details };
+}
+
+function isAbsolutePath(value: string): boolean {
+  return path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value);
+}
+
+function isPathWithinBase(resolvedPath: string, basePath: string): boolean {
+  const base = path.resolve(basePath);
+  const resolved = path.resolve(resolvedPath);
+  const relative = path.relative(base, resolved);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function validateOutputPath(value: string): ValidationResult<string> {
+  const trimmed = value.trim();
+  if (!isAbsolutePath(trimmed)) {
+    return {
+      ok: false,
+      error: buildError('INVALID_PATH', 'Download outputPath must be an absolute path.'),
+    };
+  }
+  const resolved = path.resolve(trimmed);
+  const homeDir = os.homedir();
+  if (!homeDir || !isPathWithinBase(resolved, homeDir)) {
+    return {
+      ok: false,
+      error: buildError(
+        'INVALID_PATH',
+        'Download outputPath must be within the user home directory.'
+      ),
+    };
+  }
+  return { ok: true, data: resolved };
+}
+
+function validateFfmpegPathValue(value: string | undefined): ValidationResult<string | undefined> {
+  if (value === undefined) {
+    return { ok: true, data: undefined };
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { ok: true, data: undefined };
+  }
+  if (trimmed === 'ffmpeg') {
+    return { ok: true, data: 'ffmpeg' };
+  }
+  if (!isAbsolutePath(trimmed)) {
+    return {
+      ok: false,
+      error: buildError(
+        'VALIDATION_ERROR',
+        'ffmpegPath must be an absolute path, empty string, or "ffmpeg".'
+      ),
+    };
+  }
+  const resolved = path.resolve(trimmed);
+  const baseName = path.basename(resolved).toLowerCase();
+  if (baseName !== 'ffmpeg' && baseName !== 'ffmpeg.exe') {
+    return {
+      ok: false,
+      error: buildError('VALIDATION_ERROR', 'ffmpegPath must point to ffmpeg or ffmpeg.exe.'),
+    };
+  }
+  if (!fs.existsSync(resolved)) {
+    return {
+      ok: false,
+      error: buildError('VALIDATION_ERROR', 'ffmpegPath does not exist.'),
+    };
+  }
+  return { ok: true, data: resolved };
 }
 
 export function okResult<T>(data: T): IpcResult<T> {
@@ -90,11 +164,20 @@ export function validateDownloadRequestPayload(
     };
   }
 
+  const outputPathValidation = validateOutputPath(outputPath);
+  if (!outputPathValidation.ok) {
+    return outputPathValidation;
+  }
+
   if (!isOptionalString(ffmpegPath)) {
     return {
       ok: false,
       error: buildError('VALIDATION_ERROR', 'ffmpegPath must be a string when provided.'),
     };
+  }
+  const ffmpegPathValidation = validateFfmpegPathValue(ffmpegPath?.trim() || undefined);
+  if (!ffmpegPathValidation.ok) {
+    return ffmpegPathValidation;
   }
   if (!isOptionalString(convertFormat)) {
     return {
@@ -147,8 +230,8 @@ export function validateDownloadRequestPayload(
     ok: true,
     data: {
       url: url.trim(),
-      outputPath: outputPath.trim(),
-      ffmpegPath: ffmpegPath?.trim() || undefined,
+      outputPath: outputPathValidation.data,
+      ffmpegPath: ffmpegPathValidation.data,
       convertFormat: normalizedConvertFormat,
       keepOriginal,
       videoFormat: videoFormat?.trim() || undefined,
@@ -179,6 +262,7 @@ function isValidSettingsKey(key: string): key is keyof Settings {
     key === 'gpuType' ||
     key === 'bestQuality' ||
     key === 'ffmpegPath' ||
+    key === 'downloadFolder' ||
     key === 'hideSupportModal' ||
     key === 'checkUpdatesOnStartup' ||
     key === 'updateChannel' ||
@@ -333,6 +417,45 @@ export function validateSettingsPatchPayload(value: unknown): ValidationResult<P
       continue;
     }
 
+    if (rawKey === 'browserChoice') {
+      if (!isString(rawValue)) {
+        return {
+          ok: false,
+          error: buildError('VALIDATION_ERROR', 'browserChoice must be a string.'),
+        };
+      }
+      const normalized = rawValue.trim().toLowerCase();
+      if (!ALLOWED_BROWSERS.has(normalized)) {
+        return {
+          ok: false,
+          error: buildError('VALIDATION_ERROR', 'browserChoice is not an allowed browser.'),
+        };
+      }
+      patch.browserChoice = normalized;
+      continue;
+    }
+
+    if (rawKey === 'ffmpegPath') {
+      if (!isString(rawValue)) {
+        return {
+          ok: false,
+          error: buildError('VALIDATION_ERROR', 'ffmpegPath must be a string.'),
+        };
+      }
+      if (rawValue.length > 1024) {
+        return {
+          ok: false,
+          error: buildError('VALIDATION_ERROR', 'ffmpegPath exceeds maximum length of 1024.'),
+        };
+      }
+      const ffmpegValidation = validateFfmpegPathValue(rawValue.trim() || undefined);
+      if (!ffmpegValidation.ok) {
+        return ffmpegValidation;
+      }
+      patch.ffmpegPath = ffmpegValidation.data || '';
+      continue;
+    }
+
     if (!isString(rawValue)) {
       return {
         ok: false,
@@ -365,13 +488,13 @@ export function validateFileLocationPayload(value: unknown): ValidationResult<st
       error: buildError('INVALID_PATH', 'File path exceeds maximum length.'),
     };
   }
-  if (!/^(\/|[A-Za-z]:\\)/.test(trimmed)) {
+  if (!isAbsolutePath(trimmed)) {
     return {
       ok: false,
       error: buildError('INVALID_PATH', 'File path must be absolute.'),
     };
   }
-  return { ok: true, data: trimmed };
+  return { ok: true, data: path.normalize(trimmed) };
 }
 
 export function validateNotificationPayload(value: unknown): ValidationResult<NotificationRequest> {
@@ -407,12 +530,21 @@ export function validateNotificationPayload(value: unknown): ValidationResult<No
     };
   }
 
+  let validatedFilePath: string | undefined;
+  if (filePath && filePath.trim() !== '') {
+    const filePathValidation = validateFileLocationPayload(filePath);
+    if (!filePathValidation.ok) {
+      return filePathValidation;
+    }
+    validatedFilePath = filePathValidation.data;
+  }
+
   return {
     ok: true,
     data: {
       title: title?.trim(),
       body: body?.trim(),
-      filePath: filePath?.trim(),
+      filePath: validatedFilePath,
     },
   };
 }

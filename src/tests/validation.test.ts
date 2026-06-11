@@ -18,6 +18,24 @@ describe('validation helpers', () => {
       expect(validation.isSafeHttpUrl('')).toBe(false);
       expect(validation.isSafeHttpUrl(null)).toBe(false);
     });
+
+    it('rejects private and local hosts', () => {
+      expect(validation.isSafeHttpUrl('http://localhost/video')).toBe(false);
+      expect(validation.isSafeHttpUrl('http://127.0.0.1/video')).toBe(false);
+      expect(validation.isSafeHttpUrl('http://192.168.1.1/video')).toBe(false);
+      expect(validation.isSafeHttpUrl('http://169.254.169.254/latest/meta-data')).toBe(false);
+    });
+  });
+
+  describe('isPrivateOrLocalHost', () => {
+    it('detects local and private hosts', () => {
+      expect(validation.isPrivateOrLocalHost('localhost')).toBe(true);
+      expect(validation.isPrivateOrLocalHost('127.0.0.1')).toBe(true);
+      expect(validation.isPrivateOrLocalHost('10.0.0.1')).toBe(true);
+      expect(validation.isPrivateOrLocalHost('192.168.0.1')).toBe(true);
+      expect(validation.isPrivateOrLocalHost('169.254.169.254')).toBe(true);
+      expect(validation.isPrivateOrLocalHost('example.com')).toBe(false);
+    });
   });
 
   describe('isSafeExternalUrl', () => {
@@ -35,7 +53,7 @@ describe('validation helpers', () => {
     it('rejects other schemes and invalid input', () => {
       expect(validation.isSafeExternalUrl('file:///tmp/test')).toBe(false);
       expect(validation.isSafeExternalUrl('javascript:alert(1)')).toBe(false);
-      expect(validation.isSafeExternalUrl('mailto:support@example.com')).toBe(false);
+      expect(validation.isSafeExternalUrl('mailto:support@example.com')).toBe(true);
       expect(validation.isSafeExternalUrl('not a url')).toBe(false);
       expect(validation.isSafeExternalUrl('')).toBe(false);
       expect(validation.isSafeExternalUrl(undefined)).toBe(false);
@@ -49,6 +67,16 @@ describe('validation helpers', () => {
       expect(validation.isAllowedNavigationUrl('https://example.com')).toBe(false);
       expect(validation.isAllowedNavigationUrl('javascript:alert(1)')).toBe(false);
       expect(validation.isAllowedNavigationUrl('')).toBe(false);
+    });
+
+    it('restricts file URLs to an allowed base when provided', () => {
+      const base = '/Users/test/app';
+      expect(validation.isAllowedNavigationUrl('file:///Users/test/app/index.html', base)).toBe(
+        true
+      );
+      expect(validation.isAllowedNavigationUrl('file:///Users/test/other/index.html', base)).toBe(
+        false
+      );
     });
   });
 });

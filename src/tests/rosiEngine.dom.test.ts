@@ -118,7 +118,7 @@ function buildMockApi(overrides: Partial<MockApi> = {}): MockApi {
     onPrepareForClose: noop,
     onUpdaterStatus: noop,
     onUpdaterProgress: noop,
-    onDownloadProgress: noop,
+    onSettingsImported: noop,
     ...overrides,
   };
   return api;

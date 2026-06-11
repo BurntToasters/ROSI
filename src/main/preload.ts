@@ -45,12 +45,6 @@ const api: RendererApi = {
     ipcRenderer.on('updater-progress', listener);
     return () => ipcRenderer.removeListener('updater-progress', listener);
   },
-  onDownloadProgress: (callback: (data: Record<string, unknown>) => void) => {
-    const listener = (_: Electron.IpcRendererEvent, data: Record<string, unknown>) =>
-      callback(data);
-    ipcRenderer.on('download-progress', listener);
-    return () => ipcRenderer.removeListener('download-progress', listener);
-  },
   onProgress: (callback: (message: string) => void) => {
     const listener = (_: Electron.IpcRendererEvent, message: string) => callback(message);
     ipcRenderer.on('progress', listener);
@@ -87,6 +81,11 @@ const api: RendererApi = {
     const listener = (_: Electron.IpcRendererEvent, queue: QueueItem[]) => callback(queue);
     ipcRenderer.on('queue-update', listener);
     return () => ipcRenderer.removeListener('queue-update', listener);
+  },
+  onSettingsImported: (callback: (settings: Settings) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, data: Settings) => callback(data);
+    ipcRenderer.on('settings-imported', listener);
+    return () => ipcRenderer.removeListener('settings-imported', listener);
   },
 };
 

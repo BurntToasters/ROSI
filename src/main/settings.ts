@@ -5,12 +5,14 @@ import log from 'electron-log/main.js';
 import type { AudioFormat, DownloadStats, Settings } from '../types';
 import {
   ALLOWED_AUDIO_FORMATS,
+  ALLOWED_BROWSERS,
   ALLOWED_CONVERT_FORMATS,
   MAX_FORMAT_COUNTS,
   MAX_SETTINGS_IMPORT_BYTES,
   CURRENT_SETTINGS_VERSION,
   SUBTITLE_LANGS_PATTERN,
 } from './constants';
+import { clearGpuCache } from './gpu';
 
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 const statsPath = path.join(app.getPath('userData'), 'download-stats.json');
@@ -29,7 +31,7 @@ const defaultSettings: Settings = {
   keepOriginalAfterConvert: true,
   firstLaunch: true,
   hookBrowser: false,
-  browserChoice: 'Chrome',
+  browserChoice: 'chrome',
   animateBackground: true,
   notifications: true,
   denoReminderDismissed: false,
@@ -37,6 +39,7 @@ const defaultSettings: Settings = {
   gpuType: 'auto',
   bestQuality: false,
   ffmpegPath: '',
+  downloadFolder: '',
   hideSupportModal: false,
   checkUpdatesOnStartup: true,
   updateChannel: 'auto',
@@ -102,6 +105,26 @@ function readGpuType(value: unknown): Settings['gpuType'] {
     : defaultSettings.gpuType;
 }
 
+function readBrowserChoice(value: unknown): string {
+  const raw = readString(value, defaultSettings.browserChoice);
+  const capped = raw.length > 64 ? raw.slice(0, 64) : raw;
+  const normalized = capped.trim().toLowerCase();
+  if (ALLOWED_BROWSERS.has(normalized)) {
+    return normalized;
+  }
+  return defaultSettings.browserChoice;
+}
+
+function readFfmpegPath(value: unknown): string {
+  const raw = readString(value, defaultSettings.ffmpegPath);
+  return raw.length > 1024 ? raw.slice(0, 1024) : raw;
+}
+
+function readDownloadFolder(value: unknown): string {
+  const raw = readString(value, defaultSettings.downloadFolder);
+  return raw.length > 4096 ? raw.slice(0, 4096) : raw;
+}
+
 function readSettingsVersion(value: unknown): number {
   if (
     typeof value === 'number' &&
@@ -138,7 +161,7 @@ export function migrateSettings(rawSettings: unknown): Settings {
     ),
     firstLaunch: readBoolean(rawSettings.firstLaunch, defaultSettings.firstLaunch),
     hookBrowser: readBoolean(rawSettings.hookBrowser, defaultSettings.hookBrowser),
-    browserChoice: readString(rawSettings.browserChoice, defaultSettings.browserChoice),
+    browserChoice: readBrowserChoice(rawSettings.browserChoice),
     animateBackground: readBoolean(
       rawSettings.animateBackground,
       defaultSettings.animateBackground
@@ -151,7 +174,8 @@ export function migrateSettings(rawSettings: unknown): Settings {
     gpuAcceleration: readBoolean(rawSettings.gpuAcceleration, defaultSettings.gpuAcceleration),
     gpuType: readGpuType(rawSettings.gpuType),
     bestQuality: readBoolean(rawSettings.bestQuality, defaultSettings.bestQuality),
-    ffmpegPath: readString(rawSettings.ffmpegPath, defaultSettings.ffmpegPath),
+    ffmpegPath: readFfmpegPath(rawSettings.ffmpegPath),
+    downloadFolder: readDownloadFolder(rawSettings.downloadFolder),
     hideSupportModal: readBoolean(rawSettings.hideSupportModal, defaultSettings.hideSupportModal),
     checkUpdatesOnStartup: readBoolean(
       rawSettings.checkUpdatesOnStartup,
@@ -201,6 +225,13 @@ export function saveSettings(
     const completeSettings = normalizeSettingsVersion(
       migrateSettings({ ...existing, ...newSettings })
     );
+    if (
+      (newSettings.ffmpegPath !== undefined && newSettings.ffmpegPath !== existing.ffmpegPath) ||
+      (newSettings.gpuAcceleration !== undefined &&
+        newSettings.gpuAcceleration !== existing.gpuAcceleration)
+    ) {
+      clearGpuCache();
+    }
     const tmpPath = `${settingsPath}.tmp`;
     fs.writeFileSync(tmpPath, JSON.stringify(completeSettings, null, 2), { mode: 0o600 });
     fs.renameSync(tmpPath, settingsPath);
@@ -319,7 +350,7 @@ export async function exportSettingsToFile(
   if (canceled || !filePath) return false;
   try {
     const settings = loadSettings();
-    fs.writeFileSync(filePath, JSON.stringify(settings, null, 2));
+    fs.writeFileSync(filePath, JSON.stringify(settings, null, 2), { mode: 0o600 });
     return true;
   } catch (error) {
     log.error('Failed to export settings:', error);
@@ -329,7 +360,7 @@ export async function exportSettingsToFile(
 
 export async function importSettingsFromFile(
   parentWindow: Electron.BrowserWindow | null
-): Promise<boolean> {
+): Promise<Settings | false> {
   if (!parentWindow || parentWindow.isDestroyed()) return false;
   const { canceled, filePaths } = await dialog.showOpenDialog(parentWindow, {
     title: 'Import Settings',
@@ -357,7 +388,7 @@ export async function importSettingsFromFile(
     const tmpPath = `${settingsPath}.tmp`;
     fs.writeFileSync(tmpPath, JSON.stringify(migrated, null, 2), { mode: 0o600 });
     fs.renameSync(tmpPath, settingsPath);
-    return true;
+    return migrated;
   } catch (error) {
     log.error('Failed to import settings:', error);
     return false;

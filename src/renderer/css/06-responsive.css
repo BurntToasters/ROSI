@@ -21,6 +21,10 @@
 }
 
 @media (max-width: 560px) {
+  .format-grid {
+    grid-template-columns: 1fr;
+  }
+
   .url-input-wrapper {
     flex-direction: column;
   }

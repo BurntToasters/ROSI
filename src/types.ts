@@ -21,6 +21,7 @@ export interface Settings {
   gpuType: 'auto' | 'nvidia' | 'amd' | 'intel';
   bestQuality: boolean;
   ffmpegPath: string;
+  downloadFolder: string;
   hideSupportModal: boolean;
   checkUpdatesOnStartup: boolean;
   updateChannel: UpdateChannel;
@@ -59,9 +60,12 @@ export interface DownloadLifecycleState {
 
 export type DownloadOutcome = 'success' | 'failed' | 'cancelled';
 
+export type DownloadSessionOwner = 'manual' | 'queue';
+
 export interface DownloadSession {
   id: number;
   sender: Electron.WebContents;
+  owner: DownloadSessionOwner;
   lifecycle: DownloadLifecycleState;
   ytdlpProcess: import('child_process').ChildProcess | null;
   ffmpegProcess: import('child_process').ChildProcess | null;
@@ -185,7 +189,6 @@ export interface RendererApi {
   installUpdate: () => void;
   onUpdaterStatus: (callback: (data: UpdaterStatusEvent) => void) => () => void;
   onUpdaterProgress: (callback: (data: UpdaterProgressEvent) => void) => () => void;
-  onDownloadProgress: (callback: (data: Record<string, unknown>) => void) => () => void;
   onProgress: (callback: (message: string) => void) => () => void;
   onComplete: (callback: (message: string) => void) => () => void;
   openFileLocation: (filePath: string) => Promise<IpcResult<{ opened: boolean }>>;
@@ -204,4 +207,5 @@ export interface RendererApi {
   cancelQueue: () => Promise<IpcResult<void>>;
   onPrepareForClose: (callback: () => void | Promise<void>) => () => void;
   onQueueUpdate: (callback: (queue: QueueItem[]) => void) => () => void;
+  onSettingsImported: (callback: (settings: Settings) => void) => () => void;
 }

@@ -382,7 +382,8 @@ describe('download error paths', () => {
       null,
       () => {
         throw new Error('cancel callback failed');
-      }
+      },
+      'queue'
     );
 
     cancelActiveSession(false);

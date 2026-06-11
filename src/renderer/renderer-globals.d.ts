@@ -65,7 +65,6 @@ interface RosiRendererApi {
   installUpdate: () => void;
   onUpdaterStatus: (callback: (data: RosiUpdaterStatusEvent) => void) => () => void;
   onUpdaterProgress: (callback: (data: RosiUpdaterProgressEvent) => void) => () => void;
-  onDownloadProgress: (callback: (data: Record<string, unknown>) => void) => () => void;
   onProgress: (callback: (message: string) => void) => () => void;
   onComplete: (callback: (message: string) => void) => () => void;
   openFileLocation: (filePath: string) => Promise<RosiIpcResult<{ opened: boolean }>>;
@@ -88,6 +87,7 @@ interface RosiRendererApi {
   cancelQueue: () => Promise<RosiIpcResult<void>>;
   onPrepareForClose: (callback: () => void | Promise<void>) => () => void;
   onQueueUpdate: (callback: (queue: RosiQueueItem[]) => void) => () => void;
+  onSettingsImported: (callback: (settings: RosiSettings) => void) => () => void;
 }
 
 interface RosiUiModule {
@@ -140,6 +140,7 @@ interface RosiQueueModule {
     deps: {
       escapeHtml: (value: string) => string;
       removeFromQueue: (id: string) => Promise<unknown> | unknown;
+      focusQueueItemId?: string | null;
     }
   ) => void;
   resolveQueueSectionElement: (root?: Document) => HTMLElement | null;

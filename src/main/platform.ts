@@ -339,29 +339,21 @@ export function resolveYtdlpPath(): string {
             fs.chmodSync(tmpBin, 0o755);
             resolved = tmpBin;
           } catch (copyErr) {
-            dialog.showErrorBox(
-              'Permission Error',
-              `Failed to prepare yt-dlp for execution at ${resolved}.\nError: ${(copyErr as Error).message}`
+            log.error(
+              `Failed to prepare yt-dlp for execution at ${resolved}: ${(copyErr as Error).message}`
             );
-            app.quit();
           }
         }
       } else {
-        dialog.showErrorBox(
-          'Permission Error',
-          `Failed to set executable permissions on yt-dlp binary at ${resolved}.\nError: ${(err as Error).message}`
+        log.error(
+          `Failed to set executable permissions on yt-dlp binary at ${resolved}: ${(err as Error).message}`
         );
-        app.quit();
       }
     }
   }
 
   if (!fs.existsSync(resolved)) {
-    dialog.showErrorBox(
-      'Missing Dependency',
-      `yt-dlp binary not found at ${resolved}.\nPlease ensure ${ytdlpBinary} is in the application's directory.`
-    );
-    app.quit();
+    log.error(`yt-dlp binary not found at ${resolved}`);
   }
 
   return resolved;
