@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
+import { exec } from 'child_process';
 import sanitize from 'sanitize-filename';
 import { dialog } from 'electron';
 import log from 'electron-log/main.js';
@@ -29,6 +30,7 @@ import {
 import type { ChildProcess } from 'child_process';
 import type {
   DownloadSession,
+  DownloadSessionOwner,
   DownloadRequestOptions,
   DownloadOutcome,
   FormatsProcess,
@@ -36,8 +38,22 @@ import type {
 } from '../types';
 
 let activeDownloadSession: DownloadSession | null = null;
+let downloadSessionOwner: DownloadSessionOwner | null = null;
 let downloadSessionCounter = 0;
 let formatsProcess: FormatsProcess | null = null;
+
+export function getDownloadSessionOwner(): DownloadSessionOwner | null {
+  return downloadSessionOwner;
+}
+
+export function isDownloadBusy(): boolean {
+  return activeDownloadSession !== null;
+}
+
+export function canStartDownload(owner: DownloadSessionOwner): boolean {
+  if (!activeDownloadSession) return true;
+  return downloadSessionOwner === owner;
+}
 
 function isActiveSession(session: DownloadSession | null) {
   return Boolean(session && activeDownloadSession && activeDownloadSession.id === session.id);
@@ -102,6 +118,7 @@ function completeSession(
   }
 
   activeDownloadSession = null;
+  downloadSessionOwner = null;
 }
 
 function killProcess(proc: ChildProcess | null, label: string) {
@@ -110,7 +127,12 @@ function killProcess(proc: ChildProcess | null, label: string) {
     proc.kill('SIGTERM');
     const forceKillTimer = setTimeout(() => {
       try {
-        if (!proc.killed) proc.kill('SIGKILL');
+        if (!proc.killed) {
+          proc.kill('SIGKILL');
+          if (isWindows && proc.pid) {
+            exec(`taskkill /PID ${proc.pid} /T /F`, () => {});
+          }
+        }
       } catch {}
     }, 5000);
     proc.once('exit', () => clearTimeout(forceKillTimer));
@@ -130,7 +152,7 @@ export function cancelActiveSession(notify = true) {
 
   if (!isActiveSession(session)) return;
 
-  if (notify) {
+  if (notify || session.owner === 'manual') {
     completeSession(session, '⏹️ Cancelled.', 'cancelled', {
       progressMessage: '⏹️ Download/Conversion cancelled by user.',
     });
@@ -148,16 +170,30 @@ export function cancelActiveSession(notify = true) {
   recordDownload('cancelled');
   session.lifecycle = markTerminalEventEmitted(session.lifecycle);
   activeDownloadSession = null;
+  downloadSessionOwner = null;
 }
 
 export function killAllProcesses() {
-  if (activeDownloadSession) {
-    killProcess(activeDownloadSession.ytdlpProcess, 'yt-dlp');
-    killProcess(activeDownloadSession.ffmpegProcess, 'ffmpeg');
-    activeDownloadSession.ytdlpProcess = null;
-    activeDownloadSession.ffmpegProcess = null;
-    activeDownloadSession = null;
+  if (!activeDownloadSession) return;
+  const session = activeDownloadSession;
+  session.lifecycle = markDownloadCancelled(session.lifecycle);
+  killProcess(session.ytdlpProcess, 'yt-dlp');
+  killProcess(session.ffmpegProcess, 'ffmpeg');
+  session.ytdlpProcess = null;
+  session.ffmpegProcess = null;
+
+  if (typeof session.onComplete === 'function') {
+    try {
+      session.onComplete('⏹️ Cancelled.', 'cancelled');
+    } catch (error) {
+      log.error('Error in download cancellation callback:', error);
+    }
   }
+
+  recordDownload('cancelled');
+  session.lifecycle = markTerminalEventEmitted(session.lifecycle);
+  activeDownloadSession = null;
+  downloadSessionOwner = null;
 }
 
 export function fetchFormats(ytdlpPath: string, url: string): Promise<string> {
@@ -176,7 +212,7 @@ export function fetchFormats(ytdlpPath: string, url: string): Promise<string> {
         log.warn('Error killing previous formats process:', error);
       }
     }
-    const proc = spawnWithEnv(ytdlpPath, ['-F', url]);
+    const proc = spawnWithEnv(ytdlpPath, ['-F', '--', url]);
     formatsProcess = { proc, cancelled: false };
     let outputData = '';
     let errorData = '';
@@ -317,6 +353,7 @@ async function runConversion(
       if (!isActiveSession(session) || !ffProc || ffProc.killed) return;
       sendProgress(session, '❌ Conversion timed out after 10 minutes.');
       killProcess(ffProc, 'ffmpeg-timeout');
+      completeSession(session, '❌ Conversion failed (timeout).', 'failed');
     }, FFMPEG_CONVERT_TIMEOUT_MS);
 
     ffProc.stdout?.on('data', (data) => {
@@ -424,8 +461,12 @@ export function startDownload(
   sender: Electron.WebContents,
   options: DownloadRequestOptions,
   mainWindow: Electron.BrowserWindow | null,
-  onComplete?: (statusMessage: string) => void
+  onComplete?: (statusMessage: string, outcome?: DownloadOutcome) => void,
+  owner: DownloadSessionOwner = 'manual'
 ) {
+  if (activeDownloadSession && downloadSessionOwner !== owner) {
+    throw new Error('Download session already active with a different owner.');
+  }
   if (activeDownloadSession) {
     cancelActiveSession(false);
   }
@@ -434,12 +475,14 @@ export function startDownload(
   const session: DownloadSession = {
     id: downloadSessionCounter,
     sender,
+    owner,
     lifecycle: createDownloadLifecycleState(),
     ytdlpProcess: null,
     ffmpegProcess: null,
     onComplete,
   };
   activeDownloadSession = session;
+  downloadSessionOwner = owner;
 
   const settings = loadSettings();
   const effectiveSettings: Settings = { ...settings };
@@ -514,7 +557,7 @@ export function startDownload(
     sendProgress(session, `🚀 Starting download: ${url}`);
     sendProgress(session, `   Command: ${ytdlpBinary} ${ytdlpArgs.join(' ')}`);
     const ytProc = spawnWithEnv(ytdlpPath, ytdlpArgs, {
-      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      env: { PYTHONUNBUFFERED: '1' },
     });
     session.ytdlpProcess = ytProc;
 

@@ -105,10 +105,10 @@ describe('preload api contract', () => {
         'logError',
         'notifySettingsFlushed',
         'onComplete',
-        'onDownloadProgress',
         'onPrepareForClose',
         'onProgress',
         'onQueueUpdate',
+        'onSettingsImported',
         'onUpdaterProgress',
         'onUpdaterStatus',
         'openExternal',
@@ -202,7 +202,7 @@ describe('preload api contract', () => {
 
     validateSubscription('onUpdaterStatus', 'updater-status', { status: 'checking' });
     validateSubscription('onUpdaterProgress', 'updater-progress', { percent: 50 });
-    validateSubscription('onDownloadProgress', 'download-progress', { percent: 10 });
+    validateSubscription('onSettingsImported', 'settings-imported', { imported: true });
     validateSubscription('onProgress', 'progress', 'line');
     validateSubscription('onComplete', 'complete', 'done');
     validateSubscription('onQueueUpdate', 'queue-update', [{ id: 'q_1' }]);

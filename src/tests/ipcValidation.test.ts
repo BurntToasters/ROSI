@@ -1,3 +1,5 @@
+import * as os from 'os';
+import * as path from 'path';
 import { describe, it, expect } from 'vitest';
 import {
   errorResult,
@@ -27,10 +29,11 @@ describe('ipc validation helpers', () => {
   });
 
   it('accepts valid download requests', () => {
+    const outputPath = path.join(os.homedir(), 'Downloads');
     const result = validateDownloadRequestPayload({
       url: '  https://example.com/video  ',
-      outputPath: '  /tmp  ',
-      ffmpegPath: '  /usr/bin/ffmpeg  ',
+      outputPath: `  ${outputPath}  `,
+      ffmpegPath: 'ffmpeg',
       convertFormat: '  mp4  ',
       keepOriginal: true,
       videoFormat: '  137  ',
@@ -40,11 +43,65 @@ describe('ipc validation helpers', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data.url).toBe('https://example.com/video');
-    expect(result.data.outputPath).toBe('/tmp');
-    expect(result.data.ffmpegPath).toBe('/usr/bin/ffmpeg');
+    expect(result.data.outputPath).toBe(outputPath);
+    expect(result.data.ffmpegPath).toBe('ffmpeg');
     expect(result.data.convertFormat).toBe('mp4');
     expect(result.data.videoFormat).toBe('137');
     expect(result.data.audioFormat).toBe('140');
+  });
+
+  it('rejects outputPath outside the user home directory', () => {
+    const result = validateDownloadRequestPayload({
+      url: 'https://example.com',
+      outputPath: '/tmp/downloads',
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain('within the user home directory');
+    }
+  });
+
+  it('rejects invalid ffmpegPath values in download requests', () => {
+    expect(
+      validateDownloadRequestPayload({
+        url: 'https://example.com',
+        outputPath: path.join(os.homedir(), 'Downloads'),
+        ffmpegPath: 'relative/ffmpeg',
+      }).ok
+    ).toBe(false);
+    expect(
+      validateDownloadRequestPayload({
+        url: 'https://example.com',
+        outputPath: path.join(os.homedir(), 'Downloads'),
+        ffmpegPath: path.join(os.homedir(), 'bin', 'ffprobe'),
+      }).ok
+    ).toBe(false);
+    expect(
+      validateDownloadRequestPayload({
+        url: 'https://example.com',
+        outputPath: path.join(os.homedir(), 'Downloads'),
+        ffmpegPath: path.join(os.homedir(), 'missing-ffmpeg-dir', 'ffmpeg'),
+      }).ok
+    ).toBe(false);
+  });
+
+  it('accepts ffmpeg sentinel and empty ffmpegPath in download requests', () => {
+    const homeDownloads = path.join(os.homedir(), 'Downloads');
+    const sentinel = validateDownloadRequestPayload({
+      url: 'https://example.com',
+      outputPath: homeDownloads,
+      ffmpegPath: 'ffmpeg',
+    });
+    expect(sentinel.ok).toBe(true);
+    if (sentinel.ok) expect(sentinel.data.ffmpegPath).toBe('ffmpeg');
+
+    const empty = validateDownloadRequestPayload({
+      url: 'https://example.com',
+      outputPath: homeDownloads,
+      ffmpegPath: '   ',
+    });
+    expect(empty.ok).toBe(true);
+    if (empty.ok) expect(empty.data.ffmpegPath).toBeUndefined();
   });
 
   it('rejects malformed download request payloads by field', () => {
@@ -112,7 +169,7 @@ describe('ipc validation helpers', () => {
       settingsVersion: 1,
       theme: 'system',
       showConsoleOutput: true,
-      browserChoice: 'Firefox',
+      browserChoice: 'firefox',
       updateChannel: 'stable',
       gpuType: 'intel',
       unknownField: 'ignored',
@@ -121,14 +178,19 @@ describe('ipc validation helpers', () => {
     if (!valid.ok) return;
     expect(valid.data.settingsVersion).toBe(1);
     expect(valid.data.theme).toBe('system');
-    expect(valid.data.browserChoice).toBe('Firefox');
+    expect(valid.data.browserChoice).toBe('firefox');
     expect(Object.keys(valid.data)).not.toContain('unknownField');
 
     expect(validateSettingsPatchPayload({ settingsVersion: 0 }).ok).toBe(false);
     expect(validateSettingsPatchPayload({ theme: 'night' }).ok).toBe(false);
     expect(validateSettingsPatchPayload({ audioOnly: 'true' }).ok).toBe(false);
     expect(validateSettingsPatchPayload({ browserChoice: 123 }).ok).toBe(false);
+    expect(validateSettingsPatchPayload({ browserChoice: 'curl' }).ok).toBe(false);
     expect(validateSettingsPatchPayload({ convertFormat: '../../bad' }).ok).toBe(false);
+
+    const normalizedBrowser = validateSettingsPatchPayload({ browserChoice: 'Firefox' });
+    expect(normalizedBrowser.ok).toBe(true);
+    if (normalizedBrowser.ok) expect(normalizedBrowser.data.browserChoice).toBe('firefox');
 
     const invalid = validateSettingsPatchPayload({
       updateChannel: 'nightly',

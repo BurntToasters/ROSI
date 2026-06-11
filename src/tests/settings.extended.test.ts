@@ -362,7 +362,9 @@ describe('settings extended coverage', () => {
       writeFileSyncMock.mockImplementation(() => {});
       const result = await exportSettingsToFile({ isDestroyed: () => false } as any);
       expect(result).toBe(true);
-      expect(writeFileSyncMock).toHaveBeenCalledWith('/tmp/export.json', expect.any(String));
+      expect(writeFileSyncMock).toHaveBeenCalledWith('/tmp/export.json', expect.any(String), {
+        mode: 0o600,
+      });
     });
 
     it('returns false on write error', async () => {
@@ -417,7 +419,12 @@ describe('settings extended coverage', () => {
       statSyncMock.mockReturnValue({ size: 500 });
       readFileSyncMock.mockReturnValue(JSON.stringify({ theme: 'dark', audioOnly: true }));
       const result = await importSettingsFromFile({ isDestroyed: () => false } as any);
-      expect(result).toBe(true);
+      expect(result).toEqual(
+        expect.objectContaining({
+          theme: 'dark',
+          audioOnly: true,
+        })
+      );
       expect(writeFileSyncMock).toHaveBeenCalled();
       expect(renameSyncMock).toHaveBeenCalled();
     });

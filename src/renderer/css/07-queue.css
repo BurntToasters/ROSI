@@ -134,6 +134,18 @@
   border-color: var(--accent-hover);
 }
 
+.queue-empty-message {
+  margin: 0;
+  padding: var(--spacing-sm) var(--spacing-md) var(--spacing-md);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+.queue-section:not(.has-items) .queue-empty-message {
+  display: block;
+}
+
 .queue-list {
   max-height: 250px;
   overflow-y: auto;

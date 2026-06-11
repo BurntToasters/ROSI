@@ -69,10 +69,10 @@ export function compareVersions(a: string, b: string): number {
   return comparePrerelease(vA.prerelease, vB.prerelease);
 }
 
-export function resolveUseBeta(channel: Settings['updateChannel']): boolean {
+export function resolveUseBeta(channel: Settings['updateChannel'], appVersion?: string): boolean {
   if (channel === 'beta') return true;
   if (channel === 'stable') return false;
-  return false;
+  return isBetaVersion(appVersion || '0.0.0');
 }
 
 export function applyChannel(useBeta: boolean) {
@@ -93,7 +93,7 @@ export function setupAutoUpdater(
   autoUpdater.autoInstallOnAppQuit = true;
 
   const settings = loadSettings();
-  const useBeta = resolveUseBeta(settings.updateChannel);
+  const useBeta = resolveUseBeta(settings.updateChannel, app.getVersion());
   applyChannel(useBeta);
 
   const sendToWindow = (channel: 'updater-status' | 'updater-progress', data: unknown) => {
@@ -116,7 +116,7 @@ export function setupAutoUpdater(
   });
 
   autoUpdater.on('update-available', (info) => {
-    const currentUseBeta = resolveUseBeta(loadSettings().updateChannel);
+    const currentUseBeta = resolveUseBeta(loadSettings().updateChannel, app.getVersion());
     const updateIsBeta = isBetaVersion(info.version);
 
     if (currentUseBeta && !updateIsBeta) {
@@ -196,7 +196,7 @@ export async function checkForUpdates(isPackaged: boolean, loadSettings: () => S
   }
   try {
     const settings = loadSettings();
-    const useBeta = resolveUseBeta(settings.updateChannel);
+    const useBeta = resolveUseBeta(settings.updateChannel, app.getVersion());
     applyChannel(useBeta);
     return await autoUpdater.checkForUpdates();
   } catch (error) {

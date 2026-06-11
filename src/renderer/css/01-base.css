@@ -300,7 +300,14 @@ body {
 }
 
 body.animate-bg {
-  background: var(--bg-gradient-mid);
+  background: linear-gradient(
+    135deg,
+    var(--bg-gradient-start),
+    var(--bg-gradient-mid),
+    var(--bg-gradient-end)
+  );
+  background-size: 200% 200%;
+  animation: gradientShift 18s ease infinite;
 }
 
 .skip-link {
@@ -328,6 +335,6 @@ body.animate-bg {
     background-position: 0% 50%;
   }
   50% {
-    background-position: 0% 50%;
+    background-position: 100% 50%;
   }
 }
