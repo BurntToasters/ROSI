@@ -34,6 +34,17 @@ type RosiModules = {
   };
   ui?: {
     isValidUrl: (value: string) => boolean;
+    showToast: (message: unknown, options?: { type?: string; duration?: number }) => void;
+    setButtonLoading: (
+      button: HTMLButtonElement | null,
+      isLoading: boolean,
+      onCancel?: (() => void) | null
+    ) => void;
+    appendConsoleOutput: (outputEl: HTMLElement | null, text: string) => void;
+    updateConsoleVisibility: (show: boolean) => void;
+    toggleAdvancedUI: (show: boolean) => void;
+    getModifierKey: () => 'metaKey' | 'ctrlKey';
+    getModifierKeyName: () => 'Cmd' | 'Ctrl';
   };
   updates?: {
     isPrereleaseVersion: (version: string) => boolean;
@@ -58,8 +69,10 @@ type RosiModules = {
       deps: {
         escapeHtml: (value: string) => string;
         removeFromQueue: (id: string) => unknown;
+        focusQueueItemId?: string | null;
       }
     ) => void;
+    resolveQueueSectionElement: (root?: Document) => HTMLElement | null;
   };
   settings?: {
     bindExternalLink: (
@@ -117,7 +130,11 @@ describe('renderer modules', () => {
   });
 
   describe('ui module', () => {
-    beforeEach(() => loadModule('ui'));
+    beforeEach(() => {
+      document.body.innerHTML =
+        '<div id="toast-container"></div><section id="console-section"></section><div id="advanced-options" hidden></div>';
+      loadModule('ui');
+    });
 
     it('isValidUrl accepts http and https URLs', () => {
       expect(modules().ui!.isValidUrl('https://example.com/video')).toBe(true);
@@ -129,13 +146,89 @@ describe('renderer modules', () => {
       expect(modules().ui!.isValidUrl('ftp://example.com')).toBe(false);
       expect(modules().ui!.isValidUrl('javascript:alert(1)')).toBe(false);
     });
+
+    it('showToast renders a dismissible toast message', () => {
+      modules().ui!.showToast('Saved settings', { type: 'success', duration: 0 });
+      const toast = document.querySelector('.toast-success');
+      expect(toast).not.toBeNull();
+      expect(toast?.textContent).toContain('Saved settings');
+      expect(toast?.getAttribute('role')).toBeNull();
+    });
+
+    it('setButtonLoading toggles loading state and aria-busy', () => {
+      const button = document.createElement('button');
+      button.textContent = 'Download';
+      document.body.appendChild(button);
+
+      modules().ui!.setButtonLoading(button, true);
+      expect(button.classList.contains('loading')).toBe(true);
+      expect(button.getAttribute('aria-busy')).toBe('true');
+
+      modules().ui!.setButtonLoading(button, false);
+      expect(button.classList.contains('loading')).toBe(false);
+      expect(button.getAttribute('aria-busy')).toBeNull();
+    });
+
+    it('appendConsoleOutput appends text and toggles console visibility', () => {
+      const output = document.createElement('pre');
+      modules().ui!.appendConsoleOutput(output, 'line one');
+      expect(output.textContent).toContain('line one');
+
+      modules().ui!.updateConsoleVisibility(true);
+      expect(document.getElementById('console-section')?.classList.contains('visible')).toBe(true);
+      expect(document.body.classList.contains('console-visible')).toBe(true);
+    });
+
+    it('reports platform modifier keys', () => {
+      vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+      expect(modules().ui!.getModifierKey()).toBe('metaKey');
+      expect(modules().ui!.getModifierKeyName()).toBe('Cmd');
+    });
+
+    it('toggleAdvancedUI shows and hides the format options section', () => {
+      const formatSection = document.createElement('section');
+      formatSection.id = 'formatOptions';
+      document.body.appendChild(formatSection);
+
+      modules().ui!.toggleAdvancedUI(true);
+      expect(formatSection.classList.contains('visible')).toBe(true);
+
+      modules().ui!.toggleAdvancedUI(false);
+      expect(formatSection.classList.contains('visible')).toBe(false);
+    });
   });
 
   describe('queue module', () => {
     beforeEach(() => {
       document.body.innerHTML =
-        '<section id="queue-section"><div id="queue-list"></div><span id="queue-count"></span></section>';
+        '<section id="queueSection"><div id="queue-list"></div><span id="queue-count"></span></section>';
       loadModule('queue');
+    });
+
+    it('resolveQueueSectionElement finds queueSection and legacy queue-section ids', () => {
+      expect(modules().queue!.resolveQueueSectionElement()?.id).toBe('queueSection');
+      const legacy = document.createElement('section');
+      legacy.id = 'queue-section';
+      document.body.appendChild(legacy);
+      expect(modules().queue!.resolveQueueSectionElement()?.id).toBe('queueSection');
+    });
+
+    it('renderQueue shows an empty-state message', () => {
+      const queueSection = document.getElementById('queueSection')!;
+      modules().queue!.renderQueue(
+        [],
+        {
+          queueList: document.getElementById('queue-list'),
+          queueSection,
+          queueCount: document.getElementById('queue-count'),
+        },
+        { escapeHtml: (value) => value, removeFromQueue: vi.fn() }
+      );
+
+      expect(queueSection.classList.contains('has-items')).toBe(false);
+      expect(document.querySelector('.queue-empty-message')?.textContent).toContain(
+        'No items in queue'
+      );
     });
 
     it('escapes malicious URL content in renderQueue output', () => {
@@ -150,7 +243,7 @@ describe('renderer modules', () => {
         [{ id: 'q_xss', status: 'pending', url: maliciousUrl }],
         {
           queueList: document.getElementById('queue-list'),
-          queueSection: document.getElementById('queue-section'),
+          queueSection: document.getElementById('queueSection'),
           queueCount: document.getElementById('queue-count'),
         },
         { escapeHtml, removeFromQueue: vi.fn() }
@@ -160,6 +253,24 @@ describe('renderer modules', () => {
       expect(queueList.querySelector('img')).toBeNull();
       expect(queueList.querySelector('.queue-item-url')!.textContent).toContain('example.com');
       expect(queueList.innerHTML).toContain('&quot;');
+    });
+
+    it('removes pending queue items through the remove button', async () => {
+      const removeFromQueue = vi.fn().mockResolvedValue(undefined);
+      modules().queue!.renderQueue(
+        [{ id: 'q1', status: 'pending', url: 'https://example.com/video' }],
+        {
+          queueList: document.getElementById('queue-list'),
+          queueSection: document.getElementById('queueSection'),
+          queueCount: document.getElementById('queue-count'),
+        },
+        { escapeHtml: (value) => value, removeFromQueue }
+      );
+
+      const removeBtn = document.querySelector<HTMLButtonElement>('.queue-item-remove');
+      expect(removeBtn).not.toBeNull();
+      removeBtn!.click();
+      expect(removeFromQueue).toHaveBeenCalledWith('q1');
     });
   });
 
@@ -195,7 +306,9 @@ describe('renderer modules', () => {
       expect(modules().updates!.isPrereleaseVersion('4.0.0-beta.1')).toBe(true);
       expect(modules().updates!.isPrereleaseVersion('4.0.0-alpha.2')).toBe(true);
       expect(modules().updates!.isPrereleaseVersion('4.0.0-rc.1')).toBe(true);
+      expect(modules().updates!.isPrereleaseVersion('4.0.0-RC.2')).toBe(true);
       expect(modules().updates!.isPrereleaseVersion('4.0.0')).toBe(false);
+      expect(modules().updates!.isPrereleaseVersion('4.0.0-dev')).toBe(false);
     });
 
     it('formatUpdateProgressInfo formats progress with byte helper', () => {

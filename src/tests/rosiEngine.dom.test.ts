@@ -302,6 +302,20 @@ describe('rosiEngine DOM wiring', () => {
     expect(container.classList.contains('visible')).toBe(true);
   });
 
+  it('hides the setup wizard back button on the first step', async () => {
+    const api = buildMockApi({
+      getSettings: vi.fn(() =>
+        Promise.resolve({
+          ...defaultSettings(),
+          firstLaunch: true,
+        })
+      ),
+    });
+    await loadEngine(api);
+    const backBtn = document.getElementById('wizard-back') as HTMLButtonElement;
+    expect(backBtn.hasAttribute('hidden')).toBe(true);
+  });
+
   it('records download history in localStorage on completion', async () => {
     let completeCb: ((msg: string) => void) | null = null;
     const api = buildMockApi({
