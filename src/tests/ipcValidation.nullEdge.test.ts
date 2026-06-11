@@ -1,3 +1,5 @@
+import * as os from 'os';
+import * as path from 'path';
 import { describe, it, expect } from 'vitest';
 import {
   validateDownloadRequestPayload,
@@ -10,7 +12,7 @@ import {
 describe('ipc validation null and edge-case handling', () => {
   const validBase = {
     url: 'https://example.com/video',
-    outputPath: '/tmp/downloads',
+    outputPath: path.join(os.homedir(), 'Downloads'),
   };
 
   describe('validateDownloadRequestPayload null inputs', () => {
@@ -110,7 +112,7 @@ describe('ipc validation null and edge-case handling', () => {
       expect(validateDownloadRequestPayload({ ...validBase, keepOriginal: [] }).ok).toBe(false);
     });
 
-    it('rejects empty string convertFormat after trim', () => {
+    it('accepts whitespace-only convertFormat as undefined', () => {
       const result = validateDownloadRequestPayload({
         ...validBase,
         convertFormat: '   ',
@@ -274,7 +276,7 @@ describe('ipc validation null and edge-case handling', () => {
     });
 
     it('accepts Unix absolute paths', () => {
-      const result = validateFileLocationPayload('/home/user/file.mp4');
+      const result = validateFileLocationPayload(path.join(os.homedir(), 'file.mp4'));
       expect(result.ok).toBe(true);
     });
   });

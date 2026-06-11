@@ -100,6 +100,12 @@
   transform: scale(0.97);
 }
 
+.top-bar-links a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--accent-subtle);
+}
+
 .download-section {
   flex: 1;
   display: flex;

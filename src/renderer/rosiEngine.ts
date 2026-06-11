@@ -27,6 +27,7 @@ interface RosiSettings {
   gpuType: 'auto' | 'nvidia' | 'amd' | 'intel';
   bestQuality: boolean;
   ffmpegPath: string;
+  downloadFolder: string;
   hideSupportModal: boolean;
   checkUpdatesOnStartup: boolean;
   updateChannel: 'auto' | 'stable' | 'beta';
@@ -146,6 +147,20 @@ function ensureSystemThemeListener() {
   }
 }
 
+function setMainContentInert(isInert: boolean) {
+  const mainContent =
+    document.getElementById('main-content') || document.querySelector('.main-content');
+  if (!(mainContent instanceof HTMLElement)) return;
+  if ('inert' in mainContent) {
+    (mainContent as HTMLElement & { inert: boolean }).inert = isInert;
+  }
+  if (isInert) {
+    mainContent.setAttribute('aria-hidden', 'true');
+  } else {
+    mainContent.removeAttribute('aria-hidden');
+  }
+}
+
 function applyTheme(preference: string) {
   themePreference =
     preference === 'light' || preference === 'dark' || preference === 'purple'
@@ -155,6 +170,11 @@ function applyTheme(preference: string) {
   appliedTheme = resolveAppliedTheme(themePreference);
   document.documentElement.dataset.theme = appliedTheme;
   syncLicensesTheme(appliedTheme);
+  try {
+    localStorage.setItem('rosi-theme', themePreference);
+  } catch (_) {
+    /* ignore */
+  }
   return appliedTheme;
 }
 
@@ -189,12 +209,12 @@ function appendConsoleOutput(outputEl: HTMLElement | null, text: string) {
 
 function setConsoleCollapsed(collapsed: boolean) {
   const consoleSection = document.getElementById('console-section');
-  const consoleHeader = document.getElementById('consoleHeader');
+  const consoleToggleBtn = document.getElementById('consoleToggleBtn');
   const output = document.getElementById('output');
   if (!consoleSection) return false;
   consoleSection.classList.toggle('collapsed', !!collapsed);
   const isCollapsed = consoleSection.classList.contains('collapsed');
-  if (consoleHeader) consoleHeader.setAttribute('aria-expanded', String(!isCollapsed));
+  if (consoleToggleBtn) consoleToggleBtn.setAttribute('aria-expanded', String(!isCollapsed));
   if (output) output.setAttribute('aria-hidden', String(isCollapsed));
   return isCollapsed;
 }
@@ -240,12 +260,16 @@ function toggleAdvancedUI(show: boolean) {
 interface ModalButton {
   label: string;
   action?: () => void;
+  primary?: boolean;
+  danger?: boolean;
+  disabled?: boolean;
 }
 interface ModalData {
   title: string;
   message: unknown;
   buttons?: ModalButton[];
   priority?: boolean;
+  busy?: boolean;
   extra?: (() => Node | null) | Node | null;
 }
 
@@ -343,20 +367,36 @@ function displayNextModal() {
   btnContainer.innerHTML = '';
 
   modal.setAttribute('tabindex', '-1');
+  modal.setAttribute('aria-hidden', 'false');
+  if (currentModalData.busy) {
+    modal.setAttribute('aria-busy', 'true');
+  } else {
+    modal.removeAttribute('aria-busy');
+  }
   modal.classList.add('showing');
   modal.classList.add('active');
+  setMainContentInert(true);
 
   void modal.offsetWidth;
   requestAnimationFrame(() => {
     modal.classList.remove('showing');
   });
 
-  buttons.forEach(({ label, action }) => {
+  buttons.forEach(({ label, action, primary, danger, disabled }) => {
     const btn = document.createElement('button');
+    btn.type = 'button';
     btn.textContent = label;
-    btn.onclick = () => {
-      hideModal(modal, action);
-    };
+    if (primary) btn.classList.add('modal-btn-primary');
+    if (danger) btn.classList.add('modal-btn-danger');
+    if (disabled) {
+      btn.disabled = true;
+      btn.setAttribute('aria-disabled', 'true');
+    }
+    if (!disabled) {
+      btn.onclick = () => {
+        hideModal(modal, action);
+      };
+    }
     btnContainer.appendChild(btn);
   });
 
@@ -424,10 +464,15 @@ function hideModal(modal: HTMLElement, action: (() => void) | null | undefined) 
   }
   setTimeout(() => {
     modal.classList.remove('active', 'hiding');
+    modal.setAttribute('aria-hidden', 'true');
+    modal.removeAttribute('aria-busy');
     isModalActive = false;
     if (typeof action === 'function') action();
     if (!isModalActive) {
       displayNextModal();
+    }
+    if (!isModalActive) {
+      setMainContentInert(false);
     }
     if (!isModalActive && previousFocus instanceof HTMLElement) {
       previousFocus.focus();
@@ -441,7 +486,7 @@ function showKeyboardShortcuts() {
   showModal({
     title: 'Keyboard Shortcuts',
     message: `${modKey}+D - Restart application\n${modKey}+F - Focus URL input field\n${modKey}+, - Open settings`,
-    buttons: [{ label: 'OK' }],
+    buttons: [{ label: 'OK', primary: true }],
   });
 }
 
@@ -457,7 +502,7 @@ async function fetchFormats() {
       showModal({
         title: 'Input Error',
         message: 'Please enter a video URL first.',
-        buttons: [{ label: 'OK' }],
+        buttons: [{ label: 'OK', primary: true }],
       });
       return;
     }
@@ -467,7 +512,7 @@ async function fetchFormats() {
       showModal({
         title: 'Invalid URL',
         message: 'Please enter a valid URL starting with http:// or https://',
-        buttons: [{ label: 'OK' }],
+        buttons: [{ label: 'OK', primary: true }],
       });
       return;
     }
@@ -504,7 +549,7 @@ async function fetchFormats() {
         showModal({
           title: 'Format Fetch Failed',
           message: `Could not retrieve formats.\nError: ${errorMessage}`,
-          buttons: [{ label: 'OK' }],
+          buttons: [{ label: 'OK', primary: true }],
         });
         return;
       }
@@ -564,7 +609,7 @@ async function fetchFormats() {
       showModal({
         title: 'Format Fetch Failed',
         message: `Could not retrieve formats.\nError: ${errorMessage}`,
-        buttons: [{ label: 'OK' }],
+        buttons: [{ label: 'OK', primary: true }],
       });
     } finally {
       if (!wasCancelled) {
@@ -579,7 +624,7 @@ async function fetchFormats() {
     showModal({
       title: 'Unexpected Error',
       message: 'An unexpected error occurred while fetching formats. Please try again.',
-      buttons: [{ label: 'OK' }],
+      buttons: [{ label: 'OK', primary: true }],
     });
   }
 }
@@ -685,10 +730,12 @@ function setProgressPhase(phase: string) {
     const elPhase = el.dataset.phase ?? '';
     const elIndex = phaseOrder.indexOf(elPhase);
     el.classList.remove('active', 'completed');
+    el.removeAttribute('aria-current');
     if (elIndex < phaseIndex) {
       el.classList.add('completed');
     } else if (elIndex === phaseIndex) {
       el.classList.add('active');
+      el.setAttribute('aria-current', 'step');
     }
   });
 }
@@ -698,13 +745,24 @@ function configureProgressPhases(showMerge: boolean, showConvert: boolean) {
   const convertPhase = document.querySelector<HTMLElement>('.progress-phase[data-phase="convert"]');
   const connectors = document.querySelectorAll<HTMLElement>('.progress-phase-connector');
 
-  if (mergePhase) mergePhase.style.display = showMerge ? 'flex' : 'none';
-  if (convertPhase) convertPhase.style.display = showConvert ? 'flex' : 'none';
+  const setPhaseVisibility = (phaseEl: HTMLElement | null, visible: boolean) => {
+    if (!phaseEl) return;
+    phaseEl.style.display = visible ? 'flex' : 'none';
+    phaseEl.setAttribute('aria-hidden', String(!visible));
+  };
 
-  if (connectors[0]) connectors[0].style.display = showMerge ? 'block' : 'none';
-  if (connectors[1])
-    connectors[1].style.display =
-      showMerge && showConvert ? 'block' : showConvert ? 'block' : 'none';
+  setPhaseVisibility(mergePhase, showMerge);
+  setPhaseVisibility(convertPhase, showConvert);
+
+  if (connectors[0]) {
+    connectors[0].style.display = showMerge ? 'block' : 'none';
+    connectors[0].setAttribute('aria-hidden', String(!showMerge));
+  }
+  if (connectors[1]) {
+    const connectorVisible = showMerge && showConvert ? true : showConvert;
+    connectors[1].style.display = connectorVisible ? 'block' : 'none';
+    connectors[1].setAttribute('aria-hidden', String(!connectorVisible));
+  }
 }
 
 function showProgressComplete() {
@@ -722,6 +780,7 @@ function showProgressBar(status = 'Downloading...') {
   const statusEl = document.getElementById('progress-status');
   const percentEl = document.getElementById('progress-percent');
   const bar = document.getElementById('progress-bar') as HTMLElement | null;
+  const barWrapper = document.getElementById('progress-bar-wrapper');
   const details = document.getElementById('progress-details');
 
   if (container) {
@@ -733,6 +792,10 @@ function showProgressBar(status = 'Downloading...') {
     bar.style.width = '0%';
     bar.classList.remove('indeterminate');
     bar.classList.add('active-glow');
+  }
+  if (barWrapper) {
+    barWrapper.setAttribute('aria-valuenow', '0');
+    barWrapper.removeAttribute('aria-valuetext');
   }
   if (details) details.textContent = '';
   hideProgressComplete();
@@ -747,13 +810,19 @@ function updateProgressBar(
   const statusEl = document.getElementById('progress-status');
   const percentEl = document.getElementById('progress-percent');
   const bar = document.getElementById('progress-bar') as HTMLElement | null;
+  const barWrapper = document.getElementById('progress-bar-wrapper');
   const details = document.getElementById('progress-details');
 
   const clamped = Math.max(0, Math.min(100, percent));
-  if (percentEl) percentEl.textContent = `${Math.round(clamped)}%`;
+  const rounded = Math.round(clamped);
+  if (percentEl) percentEl.textContent = `${rounded}%`;
   if (bar) {
     bar.style.width = `${clamped}%`;
     bar.classList.remove('indeterminate');
+  }
+  if (barWrapper) {
+    barWrapper.setAttribute('aria-valuenow', String(rounded));
+    barWrapper.removeAttribute('aria-valuetext');
   }
   if (statusText && statusEl) statusEl.textContent = statusText;
   if (detailsText && details) details.textContent = detailsText;
@@ -763,21 +832,30 @@ function setProgressIndeterminate(status = 'Processing...') {
   const statusEl = document.getElementById('progress-status');
   const percentEl = document.getElementById('progress-percent');
   const bar = document.getElementById('progress-bar');
+  const barWrapper = document.getElementById('progress-bar-wrapper');
   const details = document.getElementById('progress-details');
 
   if (statusEl) statusEl.textContent = status;
   if (percentEl) percentEl.textContent = '';
   if (bar) bar.classList.add('indeterminate');
+  if (barWrapper) {
+    barWrapper.removeAttribute('aria-valuenow');
+    barWrapper.setAttribute('aria-valuetext', status);
+  }
   if (details) details.textContent = '';
 }
 
 function hideProgressBar() {
   const container = document.getElementById('progress-container');
   const bar = document.getElementById('progress-bar');
+  const barWrapper = document.getElementById('progress-bar-wrapper');
   if (container) {
     container.classList.remove('visible');
   }
   if (bar) bar.classList.remove('active-glow');
+  if (barWrapper) {
+    barWrapper.setAttribute('aria-valuenow', '0');
+  }
   hideProgressComplete();
 }
 
@@ -890,6 +968,7 @@ function renderHistory() {
   history.forEach((entry) => {
     const item = document.createElement('div');
     item.className = 'history-item';
+    item.setAttribute('role', 'listitem');
 
     const statusLabel =
       entry.status === 'success'
@@ -905,7 +984,7 @@ function renderHistory() {
       </div>
       <div class="history-item-actions">
         <span class="history-status ${entry.status}">${statusLabel}</span>
-        ${entry.status === 'success' && entry.path ? '<button class="history-open-btn">Open</button>' : ''}
+        ${entry.status === 'success' && entry.path ? `<button type="button" class="history-open-btn" aria-label="Open file location for ${escapeHtml(entry.filename)}">Open</button>` : ''}
       </div>
     `;
 
@@ -930,6 +1009,20 @@ function clearHistory() {
 }
 
 let isManualUpdateCheck = false;
+let updateCheckTimeout: ReturnType<typeof setTimeout> | null = null;
+let updateCheckBtnRef: HTMLButtonElement | null = null;
+
+function finishManualUpdateCheck() {
+  isManualUpdateCheck = false;
+  if (updateCheckTimeout) {
+    clearTimeout(updateCheckTimeout);
+    updateCheckTimeout = null;
+  }
+  if (updateCheckBtnRef) {
+    setButtonLoading(updateCheckBtnRef, false);
+    updateCheckBtnRef = null;
+  }
+}
 
 async function checkForUpdates() {
   const channel = window.api.getChannel();
@@ -942,6 +1035,7 @@ async function checkForUpdates() {
       buttons: [
         {
           label: 'Open Store',
+          primary: true,
           action: () => window.api.openExternal('ms-windows-store://pdp/?ProductId=9N0BQSTFL4SV'),
         },
         { label: 'OK' },
@@ -950,54 +1044,58 @@ async function checkForUpdates() {
     return;
   }
 
+  if (isManualUpdateCheck) return;
+
   isManualUpdateCheck = true;
+  const checkBtn = document.getElementById('checkUpdateBtn') as HTMLButtonElement | null;
+  updateCheckBtnRef = checkBtn;
+  if (checkBtn) {
+    setButtonLoading(checkBtn, true);
+  }
+
+  updateCheckTimeout = setTimeout(() => {
+    if (!isManualUpdateCheck) return;
+    finishManualUpdateCheck();
+    showModal({
+      title: 'Update Check Timed Out',
+      message: 'Checking for updates took too long. Please try again later.',
+      buttons: [{ label: 'OK', primary: true }],
+      priority: true,
+    });
+  }, 30000);
 
   try {
-    showModal({
-      title: 'Checking for Updates',
-      message: 'Please wait while we check for updates...',
-      buttons: [
-        {
-          label: 'Cancel',
-          action: () => {
-            isManualUpdateCheck = false;
-          },
-        },
-      ],
-    });
-
     const result = await window.api.checkForUpdates();
 
     if (result && result.error === 'dev-mode') {
+      finishManualUpdateCheck();
       showModal({
         title: 'Development Mode',
         message:
           'Update checking is not available when running in development mode.\n\nBuild and package the app to test auto-updates.',
-        buttons: [{ label: 'OK' }],
-        priority: isManualUpdateCheck,
+        buttons: [{ label: 'OK', primary: true }],
+        priority: true,
       });
-      isManualUpdateCheck = false;
       return;
     }
 
     if (result && result.error && result.error !== 'dev-mode') {
+      finishManualUpdateCheck();
       showModal({
         title: 'Update Check Failed',
         message: `Could not check for updates.\n\nError: ${result.error}`,
-        buttons: [{ label: 'OK' }],
-        priority: isManualUpdateCheck,
+        buttons: [{ label: 'OK', primary: true }],
+        priority: true,
       });
-      isManualUpdateCheck = false;
-      return;
     }
   } catch (e) {
+    finishManualUpdateCheck();
     showModal({
       title: 'Update Check Failed',
       message: 'Could not check for updates. Please try again later.',
-      buttons: [{ label: 'OK' }],
-      priority: isManualUpdateCheck,
+      buttons: [{ label: 'OK', primary: true }],
+      priority: true,
     });
-    isManualUpdateCheck = false;
   }
 }
 
@@ -1006,9 +1104,14 @@ let updaterCleanupFunctions: Array<() => void> = [];
 function showUpdateBanner() {
   const banner = document.getElementById('update-banner');
   const bar = document.getElementById('update-banner-bar') as HTMLElement | null;
+  const progressWrapper = document.getElementById('update-banner-progress');
   const info = document.getElementById('update-banner-info');
   const text = document.getElementById('update-banner-text');
   if (bar) bar.style.width = '0%';
+  if (progressWrapper) {
+    progressWrapper.setAttribute('aria-valuenow', '0');
+    progressWrapper.removeAttribute('aria-valuetext');
+  }
   if (info) info.textContent = '';
   if (text) text.textContent = 'Downloading update…';
   if (banner) {
@@ -1037,6 +1140,11 @@ function setupAutoUpdater() {
 
   updaterCleanupFunctions.push(
     window.api.onUpdaterStatus((data) => {
+      const wasManualCheck = isManualUpdateCheck;
+      if (isManualUpdateCheck && data.status !== 'checking') {
+        finishManualUpdateCheck();
+      }
+
       switch (data.status) {
         case 'checking':
           break;
@@ -1044,8 +1152,6 @@ function setupAutoUpdater() {
         case 'available': {
           const version = data.version ?? '';
           updateVersion = version;
-          const wasManualCheck = isManualUpdateCheck;
-          isManualUpdateCheck = false;
           const isBetaUpdate =
             data.isBeta ||
             (updatesModule && typeof updatesModule.isPrereleaseVersion === 'function'
@@ -1060,6 +1166,7 @@ function setupAutoUpdater() {
             buttons: [
               {
                 label: 'Download & Install',
+                primary: true,
                 action: async () => {
                   showUpdateBanner();
                   await window.api.downloadUpdate();
@@ -1072,28 +1179,26 @@ function setupAutoUpdater() {
         }
 
         case 'not-available':
-          if (isManualUpdateCheck) {
+          if (wasManualCheck) {
             showModal({
               title: 'ROSI is up to date!',
               message: `You are running the latest version (v${data.version}).`,
-              buttons: [{ label: 'OK' }],
+              buttons: [{ label: 'OK', primary: true }],
               priority: true,
             });
           }
-          isManualUpdateCheck = false;
           break;
 
         case 'error':
           hideUpdateBanner();
-          if (isManualUpdateCheck) {
+          if (wasManualCheck) {
             showModal({
               title: 'Update Error',
               message: `An error occurred while checking for updates:\n${data.message}`,
-              buttons: [{ label: 'OK' }],
+              buttons: [{ label: 'OK', primary: true }],
               priority: true,
             });
           }
-          isManualUpdateCheck = false;
           break;
 
         case 'cancelled':
@@ -1101,7 +1206,7 @@ function setupAutoUpdater() {
           showModal({
             title: 'Download Cancelled',
             message: 'The update download was cancelled.',
-            buttons: [{ label: 'OK' }],
+            buttons: [{ label: 'OK', primary: true }],
             priority: true,
           });
           break;
@@ -1114,6 +1219,7 @@ function setupAutoUpdater() {
             buttons: [
               {
                 label: 'Restart Now',
+                primary: true,
                 action: () => window.api.installUpdate(),
               },
               { label: 'Later' },
@@ -1128,10 +1234,14 @@ function setupAutoUpdater() {
   updaterCleanupFunctions.push(
     window.api.onUpdaterProgress((data) => {
       const progressBar = document.getElementById('update-banner-bar') as HTMLElement | null;
+      const progressWrapper = document.getElementById('update-banner-progress');
       const progressInfo = document.getElementById('update-banner-info');
 
       if (progressBar) {
         progressBar.style.width = `${data.percent}%`;
+      }
+      if (progressWrapper) {
+        progressWrapper.setAttribute('aria-valuenow', String(Math.round(data.percent)));
       }
 
       if (progressInfo) {
@@ -1169,6 +1279,8 @@ function showLicenses() {
   if (licensesOverlay) {
     licensesPreviousFocus = document.activeElement;
     licensesOverlay.classList.add('active');
+    licensesOverlay.setAttribute('aria-hidden', 'false');
+    setMainContentInert(true);
     syncLicensesTheme(appliedTheme);
     document.body.classList.add('licenses-open');
     document.body.style.overflow = 'hidden';
@@ -1236,6 +1348,12 @@ function hideLicenses() {
       licensesFocusinHandler = null;
     }
     licensesOverlay.classList.remove('active');
+    licensesOverlay.setAttribute('aria-hidden', 'true');
+    const wizardOverlay = document.getElementById('setup-wizard');
+    const wizardActive = wizardOverlay?.classList.contains('active');
+    if (!isModalActive && !wizardActive) {
+      setMainContentInert(false);
+    }
     setTimeout(() => {
       document.body.style.overflow = '';
       document.body.classList.remove('licenses-open');
@@ -1273,12 +1391,14 @@ async function checkDenoInstallation(settings: RosiSettings, persist: () => void
         buttons: [
           {
             label: 'Install',
+            primary: true,
             action: async () => {
               showModal({
                 title: 'Installing Deno...',
                 message: 'Please wait while Deno is being installed. This may take a moment.',
-                buttons: [],
+                buttons: [{ label: 'Installing...', primary: true, disabled: true }],
                 priority: true,
+                busy: true,
               });
 
               try {
@@ -1287,7 +1407,7 @@ async function checkDenoInstallation(settings: RosiSettings, persist: () => void
                   showModal({
                     title: 'Installation Cancelled',
                     message: 'Deno installation was cancelled.',
-                    buttons: [{ label: 'OK' }],
+                    buttons: [{ label: 'OK', primary: true }],
                     priority: true,
                   });
                   return;
@@ -1297,7 +1417,7 @@ async function checkDenoInstallation(settings: RosiSettings, persist: () => void
                   message:
                     'Deno has been successfully installed!\nRestarting the app can help pick up the updated environment.',
                   buttons: [
-                    { label: 'Restart Now', action: () => window.api.restartApp() },
+                    { label: 'Restart Now', primary: true, action: () => window.api.restartApp() },
                     { label: 'Later' },
                   ],
                   priority: true,
@@ -1312,6 +1432,7 @@ async function checkDenoInstallation(settings: RosiSettings, persist: () => void
                   buttons: [
                     {
                       label: 'Open Deno Website',
+                      primary: true,
                       action: () => window.api.openExternal('https://deno.land'),
                     },
                     { label: 'OK' },
@@ -1348,7 +1469,7 @@ function launchSetupWizard(
 
   const overlay = document.getElementById('setup-wizard');
   const progressBar = document.getElementById('wizard-progress-bar') as HTMLElement | null;
-  const backBtn = document.getElementById('wizard-back');
+  const backBtn = document.getElementById('wizard-back') as HTMLButtonElement | null;
   const nextBtn = document.getElementById('wizard-next');
   const dotsContainer = document.getElementById('wizard-dots');
   const steps = overlay
@@ -1364,6 +1485,8 @@ function launchSetupWizard(
 
   const overlayEl = overlay;
   const progressBarEl = progressBar;
+  const wizardProgress = overlayEl.querySelector<HTMLElement>('.wizard-progress');
+  const stepAnnounce = document.getElementById('wizard-step-announce');
   const backBtnEl = backBtn;
   const nextBtnEl = nextBtn;
   const dotsContainerEl = dotsContainer;
@@ -1390,17 +1513,28 @@ function launchSetupWizard(
       step.classList.toggle('active', i === currentStep);
     });
 
-    // Progress bar
     progressBarEl.style.width = ((currentStep + 1) / TOTAL_STEPS) * 100 + '%';
+    if (wizardProgress) {
+      wizardProgress.setAttribute('aria-valuenow', String(currentStep + 1));
+    }
+    if (stepAnnounce) {
+      stepAnnounce.textContent = `Step ${currentStep + 1} of ${TOTAL_STEPS}`;
+    }
 
-    // Dots
     const dots = dotsContainerEl.querySelectorAll('.wizard-dot');
     dots.forEach((dot, i) => {
       dot.classList.toggle('active', i === currentStep);
     });
 
-    // Back button
-    backBtnEl.classList.toggle('hidden', currentStep === 0);
+    if (currentStep === 0) {
+      backBtnEl.setAttribute('hidden', '');
+      backBtnEl.disabled = true;
+      backBtnEl.setAttribute('tabindex', '-1');
+    } else {
+      backBtnEl.removeAttribute('hidden');
+      backBtnEl.disabled = false;
+      backBtnEl.removeAttribute('tabindex');
+    }
 
     // Next button text
     if (currentStep === 0) {
@@ -1436,13 +1570,11 @@ function launchSetupWizard(
     if (autoUpdates) settings.checkUpdatesOnStartup = autoUpdates.checked;
   }
 
-  function close() {
+  function finalizeWizard() {
     gatherSettings();
     settings.firstLaunch = false;
     void persistSettingsFn(false, true);
-    overlayEl.classList.remove('active');
 
-    // Sync sidebar controls to reflect wizard choices
     const themeSelect = document.getElementById('themeSelect') as HTMLSelectElement | null;
     if (themeSelect) themeSelect.value = settings.theme || 'system';
     const bestQualityToggle = document.getElementById(
@@ -1468,7 +1600,7 @@ function launchSetupWizard(
       currentStep++;
       updateUI();
     } else {
-      close();
+      closeWizard();
     }
   });
 
@@ -1486,8 +1618,75 @@ function launchSetupWizard(
   );
   if (matchingRadio) matchingRadio.checked = true;
 
+  let wizardPreviousFocus: Element | null = null;
+  let wizardTrapHandler: ((e: KeyboardEvent) => void) | null = null;
+  let wizardFocusinHandler: ((e: FocusEvent) => void) | null = null;
+
+  function closeWizard() {
+    if (wizardTrapHandler) {
+      overlayEl.removeEventListener('keydown', wizardTrapHandler);
+      wizardTrapHandler = null;
+    }
+    if (wizardFocusinHandler) {
+      document.removeEventListener('focusin', wizardFocusinHandler, true);
+      wizardFocusinHandler = null;
+    }
+    overlayEl.classList.remove('active');
+    overlayEl.setAttribute('aria-hidden', 'true');
+    setMainContentInert(false);
+    if (wizardPreviousFocus instanceof HTMLElement) {
+      wizardPreviousFocus.focus();
+      wizardPreviousFocus = null;
+    }
+    finalizeWizard();
+  }
+
+  wizardPreviousFocus = document.activeElement;
+  overlayEl.setAttribute('aria-hidden', 'false');
+  setMainContentInert(true);
+
+  wizardTrapHandler = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      closeWizard();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    const focusable = getFocusableElements(overlayEl);
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey) {
+      if (!active || active === first) {
+        e.preventDefault();
+        last?.focus();
+      }
+    } else if (!active || active === last) {
+      e.preventDefault();
+      first?.focus();
+    }
+  };
+  overlayEl.addEventListener('keydown', wizardTrapHandler);
+
+  wizardFocusinHandler = (e: FocusEvent) => {
+    if (!overlayEl.classList.contains('active')) return;
+    const target = e.target;
+    if (target instanceof Node && overlayEl.contains(target)) return;
+    if (!focusFirstElement(overlayEl) && typeof overlayEl.focus === 'function') {
+      overlayEl.focus();
+    }
+  };
+  document.addEventListener('focusin', wizardFocusinHandler, true);
+
   updateUI();
   overlayEl.classList.add('active');
+  requestAnimationFrame(() => {
+    if (!focusFirstElement(overlayEl)) {
+      nextBtnEl.focus();
+    }
+  });
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -1515,6 +1714,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       gpuType: 'auto',
       bestQuality: false,
       ffmpegPath: '',
+      downloadFolder: '',
       hideSupportModal: false,
       checkUpdatesOnStartup: true,
       updateChannel: 'auto',
@@ -1529,7 +1729,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     showModal({
       title: 'Settings Error',
       message: 'Could not load settings. Using defaults.',
-      buttons: [{ label: 'OK' }],
+      buttons: [{ label: 'OK', primary: true }],
     });
   }
   applyTheme(settings.theme ?? 'system');
@@ -1540,6 +1740,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const betaBadge = document.getElementById('betaBadge');
     if (versionLink && version) {
       versionLink.textContent = `v${version}`;
+      versionLink.setAttribute(
+        'aria-label',
+        `View release notes for v${version} (opens externally)`
+      );
       versionLink.addEventListener('click', (event) => {
         event.preventDefault();
         void window.api.openExternal(
@@ -1557,6 +1761,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   } catch (e) {
     logError('Could not get app version', e);
+    const versionLink = document.getElementById('versionLink');
+    if (versionLink) {
+      versionLink.textContent = 'Version unknown';
+      versionLink.setAttribute('aria-label', 'View release notes (opens externally)');
+    }
   }
 
   if (window.api.getChannel() !== 'msstore') {
@@ -1577,7 +1786,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     showModal({
       title: 'Settings Save Failed',
       message,
-      buttons: [{ label: 'OK' }],
+      buttons: [{ label: 'OK', primary: true }],
       priority: true,
     });
   }
@@ -1670,7 +1879,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const downloadCard = document.querySelector<HTMLElement>('.download-card');
   const previewBtn = byId<HTMLButtonElement>('previewBtn');
   const previewCloseBtn = byId<HTMLButtonElement>('previewClose');
-  const historyHeader = byId('historyHeader');
+  const historyToggle = byId<HTMLButtonElement>('historyToggle');
   const clearHistoryBtn = byId<HTMLButtonElement>('clearHistory');
   const browserCookiesHelp = byId('browserCookiesHelp');
   const helpLink = byId('helpLink');
@@ -1915,6 +2124,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       buttons: [
         {
           label: '❤️ Yes Support!',
+          primary: true,
           action: () => {
             void window.api.openExternal('https://rosie.run/support');
             settings.hideSupportModal = true;
@@ -1946,6 +2156,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (element) {
       element.addEventListener('click', (event) => {
         event.preventDefault();
+        event.stopPropagation();
         void window.api.openExternal(url);
       });
     }
@@ -2037,6 +2248,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     urlInput.addEventListener('blur', () => {
       hasUrlValidationIntent = true;
       syncPrimaryActionState();
+    });
+    urlInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const trimmed = urlInput.value.trim();
+      if (trimmed && isValidUrl(trimmed) && downloadBtn && !downloadBtn.disabled) {
+        downloadBtn.click();
+      } else {
+        hasUrlValidationIntent = true;
+        syncPrimaryActionState();
+      }
     });
     updateUrlButtons();
   }
@@ -2150,14 +2372,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   renderHistory();
 
-  if (historyHeader) {
+  if (historyToggle) {
     const historySection = document.getElementById('download-history');
     const historyList = document.getElementById('history-list');
     const setHistoryCollapsed = (collapsed: boolean) => {
       if (!historySection) return false;
       historySection.classList.toggle('collapsed', !!collapsed);
       const isCollapsed = historySection.classList.contains('collapsed');
-      historyHeader.setAttribute('aria-expanded', String(!isCollapsed));
+      historyToggle.setAttribute('aria-expanded', String(!isCollapsed));
       if (historyList) historyList.setAttribute('aria-hidden', String(isCollapsed));
       return isCollapsed;
     };
@@ -2169,12 +2391,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       setHistoryCollapsed(historySection.classList.contains('collapsed'));
     }
 
-    historyHeader.addEventListener('click', (e) => {
-      if ((e.target as HTMLElement).closest('.history-clear-btn')) return;
+    historyToggle.addEventListener('click', () => {
       toggleHistoryCollapsed();
     });
-    historyHeader.addEventListener('keydown', (e) => {
-      if ((e.target as HTMLElement).closest('.history-clear-btn')) return;
+    historyToggle.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         toggleHistoryCollapsed();
@@ -2198,6 +2418,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           { label: 'Cancel' },
           {
             label: 'Clear',
+            danger: true,
             action: () => {
               clearHistory();
               showToast('Download history cleared.', { type: 'info' });
@@ -2312,19 +2533,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       updateConsoleVisibility(settings.showConsoleOutput);
     });
 
-  // Console collapse toggle
-  const consoleHeader = document.getElementById('consoleHeader');
-  if (consoleHeader) {
-    consoleHeader.addEventListener('click', (e) => {
-      if ((e.target as HTMLElement).closest('#clearConsole')) return;
+  const consoleToggleBtn = document.getElementById('consoleToggleBtn');
+  if (consoleToggleBtn) {
+    consoleToggleBtn.addEventListener('click', () => {
       const isCollapsed = toggleConsoleCollapse();
       settings.consoleCollapsed = isCollapsed;
       void persistSettings();
     });
-    consoleHeader.addEventListener('keydown', (e) => {
+    consoleToggleBtn.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        if ((e.target as HTMLElement).closest('#clearConsole')) return;
         const isCollapsed = toggleConsoleCollapse();
         settings.consoleCollapsed = isCollapsed;
         void persistSettings();
@@ -2577,19 +2795,39 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  const subtitleLangsError = document.getElementById('subtitleLangsError');
   if (subtitleLangsInput) {
+    const showSubtitleLangsError = (message: string) => {
+      subtitleLangsInput.setAttribute('aria-invalid', 'true');
+      if (subtitleLangsError) {
+        subtitleLangsError.textContent = message;
+      } else {
+        showToast(message, { type: 'warning' });
+      }
+    };
+    const clearSubtitleLangsError = () => {
+      subtitleLangsInput.removeAttribute('aria-invalid');
+      if (subtitleLangsError) subtitleLangsError.textContent = '';
+    };
     const commitSubtitleLangs = () => {
       const raw = subtitleLangsInput.value.trim();
       if (!raw || !SUBTITLE_LANGS_RE.test(raw) || raw.length > 256) {
-        settings.subtitleLangs = 'en';
-        subtitleLangsInput.value = 'en';
-      } else {
-        settings.subtitleLangs = raw;
+        showSubtitleLangsError(
+          'Enter comma-separated language codes (for example en,es) or use all.'
+        );
+        return;
       }
+      clearSubtitleLangsError();
+      settings.subtitleLangs = raw;
       void persistSettings();
     };
     subtitleLangsInput.addEventListener('change', commitSubtitleLangs);
     subtitleLangsInput.addEventListener('blur', commitSubtitleLangs);
+    subtitleLangsInput.addEventListener('input', () => {
+      if (subtitleLangsInput.hasAttribute('aria-invalid')) {
+        clearSubtitleLangsError();
+      }
+    });
   }
 
   // Check updates on startup
@@ -2601,14 +2839,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (showUpdateChannelBtn && updateChannelContainer) {
-    showUpdateChannelBtn.setAttribute(
-      'aria-expanded',
-      String(updateChannelContainer.classList.contains('visible'))
-    );
+    const syncUpdateChannelAria = () => {
+      const isVisible = updateChannelContainer.classList.contains('visible');
+      updateChannelContainer.setAttribute('aria-hidden', String(!isVisible));
+      showUpdateChannelBtn.setAttribute('aria-expanded', String(isVisible));
+    };
+    syncUpdateChannelAria();
     showUpdateChannelBtn.addEventListener('click', () => {
       const isVisible = updateChannelContainer.classList.contains('visible');
       updateChannelContainer.classList.toggle('visible', !isVisible);
-      showUpdateChannelBtn.setAttribute('aria-expanded', String(!isVisible));
+      syncUpdateChannelAria();
       showUpdateChannelBtn.textContent = isVisible
         ? '▸ Update channel settings'
         : '▾ Hide update channel';
@@ -2630,7 +2870,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         message: 'Are you sure you want to reset all settings to default? Rosi will restart.',
         buttons: [
           { label: 'Cancel' },
-          { label: '⟳ Reset & Restart', action: () => window.api.resetSettings() },
+          {
+            label: '⟳ Reset & Restart',
+            danger: true,
+            action: () => window.api.resetSettings(),
+          },
         ],
       });
     });
@@ -2654,18 +2898,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     importSettingsBtn.addEventListener('click', async () => {
       showModal({
         title: 'Import Settings',
-        message:
-          'Importing settings will overwrite your current settings and restart ROSI. Continue?',
+        message: 'Importing settings will overwrite your current settings. Continue?',
         buttons: [
           { label: 'Cancel' },
           {
             label: 'Import',
+            primary: true,
             action: async () => {
               try {
                 const result = await window.api.importSettings();
                 if (result && result.ok) {
-                  showToast('Settings imported. Restarting...', { type: 'success' });
-                  setTimeout(() => window.api.restartApp(), 1000);
+                  showToast('Settings imported successfully.', { type: 'success' });
                 } else {
                   showToast(result?.error?.message || 'Import failed or was cancelled.', {
                     type: 'error',
@@ -2713,7 +2956,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 showToast('Statistics reset.', { type: 'info' });
               },
             },
-            { label: 'Close' },
+            { label: 'Close', primary: true },
           ],
         });
       } catch (e) {
@@ -2722,27 +2965,56 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  let focusQueueItemId: string | null = null;
+  let currentQueue: RosiQueueItem[] = [];
+
+  function updateQueueButtonStates(queue: RosiQueueItem[]) {
+    const hasPending = queue.some((item) => item.status === 'pending');
+    const isRunning = queue.some((item) => item.status === 'downloading');
+    if (startQueueBtn) {
+      startQueueBtn.disabled = queueActionLocks > 0 || !hasPending;
+    }
+    if (cancelQueueBtn) {
+      cancelQueueBtn.disabled = queueActionLocks > 0 || !isRunning;
+    }
+  }
+
   function renderQueue(queue: RosiQueueItem[]) {
+    currentQueue = queue;
+    updateQueueButtonStates(queue);
     if (queueModule && typeof queueModule.renderQueue === 'function') {
       queueModule.renderQueue(
         queue,
         { queueList, queueSection, queueCount },
         {
           escapeHtml,
+          focusQueueItemId,
           removeFromQueue: async (id: string) => {
+            const removeIndex = currentQueue.findIndex((item) => item.id === id);
+            const nextFocusId =
+              removeIndex >= 0
+                ? currentQueue.slice(removeIndex + 1).find((item) => item.status === 'pending')
+                    ?.id ||
+                  currentQueue
+                    .slice(0, removeIndex)
+                    .reverse()
+                    .find((item) => item.status === 'pending')?.id ||
+                  null
+                : null;
+            focusQueueItemId = nextFocusId;
             const endQueueAction = beginQueueAction();
             try {
               const result = await window.api.removeFromQueue(id);
               if (!result || !result.ok) {
+                focusQueueItemId = null;
                 const message = result?.error?.message || 'Could not remove the queue item.';
                 setQueueStatusMessage(message);
-                showToast(message, {
-                  type: 'error',
-                });
+                showToast(message, { type: 'error' });
               } else {
-                announceQueueAction('Removed item from the queue.');
+                setQueueStatusMessage('Removed item from the queue.');
               }
             } catch {
+              focusQueueItemId = null;
               const message = 'Could not remove the queue item.';
               setQueueStatusMessage(message);
               showToast(message, { type: 'error' });
@@ -2752,6 +3024,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           },
         }
       );
+      focusQueueItemId = null;
     }
   }
 
@@ -2780,9 +3053,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     return count === 1 ? singular : plural.replace('{count}', String(count));
   }
 
-  function announceQueueAction(message: string, toastType: ToastType = 'info') {
+  function announceQueueAction(message: string, toastType?: ToastType) {
     setQueueStatusMessage(message);
-    showToast(message, { type: toastType });
+    if (toastType === 'error' || toastType === 'warning') {
+      showToast(message, { type: toastType });
+    }
   }
 
   const queueActionButtons = [addToQueueBtn, startQueueBtn, clearQueueBtn, cancelQueueBtn].filter(
@@ -2792,9 +3067,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   function syncQueueActionBusyState() {
     const isBusy = queueActionLocks > 0;
     queueActionButtons.forEach((button) => {
-      button.disabled = isBusy;
       button.setAttribute('aria-busy', String(isBusy));
     });
+    if (addToQueueBtn) addToQueueBtn.disabled = isBusy;
+    if (clearQueueBtn) clearQueueBtn.disabled = isBusy;
+    updateQueueButtonStates(currentQueue);
     if (queueUrlInput) {
       queueUrlInput.disabled = isBusy;
     }
@@ -2836,7 +3113,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             'Added 1 URL to the queue.',
             'Added {count} URLs to the queue.'
           );
-          announceQueueAction(message, 'success');
+          announceQueueAction(message);
         } else {
           const message = result?.error?.message || 'Could not add URLs to the queue.';
           setQueueStatusMessage(message);
@@ -2876,48 +3153,74 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (clearQueueBtn) {
-    clearQueueBtn.addEventListener('click', async () => {
+    clearQueueBtn.addEventListener('click', () => {
       if (queueActionLocks > 0) return;
-      const endQueueAction = beginQueueAction();
-      try {
-        const result = await window.api.clearQueue();
-        if (result && result.ok) {
-          announceQueueAction('Queue cleared.');
-        } else {
-          const message = result?.error?.message || 'Could not clear the queue.';
-          setQueueStatusMessage(message);
-          showToast(message, { type: 'error' });
-        }
-      } catch {
-        const message = 'Could not clear the queue.';
-        setQueueStatusMessage(message);
-        showToast(message, { type: 'error' });
-      } finally {
-        endQueueAction();
-      }
+      showModal({
+        title: 'Clear Queue',
+        message: 'Remove all queued and completed items?',
+        buttons: [
+          { label: 'Cancel' },
+          {
+            label: 'Clear',
+            danger: true,
+            action: async () => {
+              const endQueueAction = beginQueueAction();
+              try {
+                const result = await window.api.clearQueue();
+                if (result && result.ok) {
+                  announceQueueAction('Queue cleared.');
+                } else {
+                  const message = result?.error?.message || 'Could not clear the queue.';
+                  setQueueStatusMessage(message);
+                  showToast(message, { type: 'error' });
+                }
+              } catch {
+                const message = 'Could not clear the queue.';
+                setQueueStatusMessage(message);
+                showToast(message, { type: 'error' });
+              } finally {
+                endQueueAction();
+              }
+            },
+          },
+        ],
+      });
     });
   }
 
   if (cancelQueueBtn) {
-    cancelQueueBtn.addEventListener('click', async () => {
+    cancelQueueBtn.addEventListener('click', () => {
       if (queueActionLocks > 0) return;
-      const endQueueAction = beginQueueAction();
-      try {
-        const result = await window.api.cancelQueue();
-        if (result && result.ok) {
-          announceQueueAction('Queue cancelled.');
-        } else {
-          const message = result?.error?.message || 'Could not cancel the queue.';
-          setQueueStatusMessage(message);
-          showToast(message, { type: 'error' });
-        }
-      } catch {
-        const message = 'Could not cancel the queue.';
-        setQueueStatusMessage(message);
-        showToast(message, { type: 'error' });
-      } finally {
-        endQueueAction();
-      }
+      showModal({
+        title: 'Cancel Queue',
+        message: 'Stop processing the active download queue?',
+        buttons: [
+          { label: 'Keep Running' },
+          {
+            label: 'Cancel Queue',
+            danger: true,
+            action: async () => {
+              const endQueueAction = beginQueueAction();
+              try {
+                const result = await window.api.cancelQueue();
+                if (result && result.ok) {
+                  announceQueueAction('Queue cancelled.');
+                } else {
+                  const message = result?.error?.message || 'Could not cancel the queue.';
+                  setQueueStatusMessage(message);
+                  showToast(message, { type: 'error' });
+                }
+              } catch {
+                const message = 'Could not cancel the queue.';
+                setQueueStatusMessage(message);
+                showToast(message, { type: 'error' });
+              } finally {
+                endQueueAction();
+              }
+            },
+          },
+        ],
+      });
     });
   }
 
@@ -2987,6 +3290,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (outputEl) outputEl.textContent = '⚠️ Download cancelled: No save location selected.';
           return;
         }
+        settings.downloadFolder = savePath;
+        void persistSettings(true);
         if (outputEl) outputEl.textContent = '';
         downloadAbort = () => {
           isDownloading = false;
@@ -3160,6 +3465,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     })
   );
 
+  ipcCleanupFunctions.push(
+    window.api.onSettingsImported((importedSettings) => {
+      settings = importedSettings;
+      try {
+        updateUIFromSettings();
+        applyTheme(settings.theme ?? 'system');
+      } catch (e) {
+        logError('Failed to refresh UI after settings import', e);
+      }
+    })
+  );
+
   let closePreparationInProgress = false;
   ipcCleanupFunctions.push(
     window.api.onPrepareForClose(async () => {
@@ -3218,6 +3535,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     setTimeout(maybeShowSupportModal, 1500);
   }
 
+  const licensesOverlayEl = document.getElementById('licenses-overlay');
+  if (licensesOverlayEl) {
+    licensesOverlayEl.addEventListener('click', (event) => {
+      if (event.target === licensesOverlayEl) {
+        hideLicenses();
+      }
+    });
+  }
+
   const closeBtn = document.getElementById('close-licenses');
   if (closeBtn) {
     closeBtn.addEventListener('click', hideLicenses);
@@ -3225,11 +3551,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.addEventListener('keydown', (event) => {
     const modifierPressed = isMac() ? event.metaKey : event.ctrlKey;
+    const wizardOverlay = document.getElementById('setup-wizard');
+    const wizardActive = wizardOverlay?.classList.contains('active');
+    const licensesOverlay = document.getElementById('licenses-overlay');
+    const licensesActive = licensesOverlay?.classList.contains('active');
 
-    // esc
     if (event.key === 'Escape') {
-      const licensesOverlay = document.getElementById('licenses-overlay');
-      if (licensesOverlay && licensesOverlay.classList.contains('active')) {
+      if (licensesActive) {
         hideLicenses();
         return;
       }
@@ -3247,12 +3575,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
 
+    if (wizardActive || isModalActive || licensesActive) {
+      return;
+    }
+
     if (modifierPressed && event.key === 'd') {
       event.preventDefault();
       showModal({
         title: 'Restart Application',
         message: 'Are you sure you want to restart ROSI?',
-        buttons: [{ label: 'Cancel' }, { label: 'Restart', action: () => window.api.restartApp() }],
+        buttons: [
+          { label: 'Cancel' },
+          { label: 'Restart', primary: true, action: () => window.api.restartApp() },
+        ],
       });
     }
 

@@ -425,7 +425,7 @@ describe('platform env and ffmpeg verification', () => {
     expect(mocks.copyFileSyncMock).toHaveBeenCalled();
   });
 
-  it('shows permission error when yt-dlp temp copy fails', async () => {
+  it('logs permission error when yt-dlp temp copy fails', async () => {
     const { mod, mocks } = await loadPlatform(
       (m) => {
         m.existsSyncMock.mockImplementation((target: string) =>
@@ -449,14 +449,12 @@ describe('platform env and ffmpeg verification', () => {
 
     mod.resolveYtdlpPath();
 
-    expect(mocks.showErrorBoxMock).toHaveBeenCalledWith(
-      'Permission Error',
-      expect.stringContaining('copy failed')
-    );
-    expect(mocks.appQuitMock).toHaveBeenCalled();
+    expect(mocks.logErrorMock).toHaveBeenCalledWith(expect.stringContaining('copy failed'));
+    expect(mocks.showErrorBoxMock).not.toHaveBeenCalled();
+    expect(mocks.appQuitMock).not.toHaveBeenCalled();
   });
 
-  it('shows permission error when yt-dlp chmod fails unexpectedly', async () => {
+  it('logs permission error when yt-dlp chmod fails unexpectedly', async () => {
     const { mod, mocks } = await loadPlatform(
       (m) => {
         m.existsSyncMock.mockImplementation((target: string) =>
@@ -474,11 +472,9 @@ describe('platform env and ffmpeg verification', () => {
 
     mod.resolveYtdlpPath();
 
-    expect(mocks.showErrorBoxMock).toHaveBeenCalledWith(
-      'Permission Error',
-      expect.stringContaining('permission denied')
-    );
-    expect(mocks.appQuitMock).toHaveBeenCalled();
+    expect(mocks.logErrorMock).toHaveBeenCalledWith(expect.stringContaining('permission denied'));
+    expect(mocks.showErrorBoxMock).not.toHaveBeenCalled();
+    expect(mocks.appQuitMock).not.toHaveBeenCalled();
   });
 
   it('selects platform-specific yt-dlp binary names', async () => {

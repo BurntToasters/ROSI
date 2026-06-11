@@ -13,7 +13,6 @@ const {
   getEffectiveFfmpegPathMock,
   resolveVideoEncoderMock,
   probeMediaCodecsMock,
-  buildFfmpegArgsMock,
   buildYtdlpArgsMock,
   showMessageBoxMock,
   logErrorMock,
@@ -32,7 +31,6 @@ const {
     getEffectiveFfmpegPathMock: vi.fn(() => 'ffmpeg'),
     resolveVideoEncoderMock: vi.fn(async () => 'copy'),
     probeMediaCodecsMock: vi.fn(async () => ({})),
-    buildFfmpegArgsMock: vi.fn(() => ['-i', 'in.mp4', '-c:v', 'copy', '-y', 'out.mp4']),
     buildYtdlpArgsMock: vi.fn(({ url }: { url: string }) => ({
       args: ['--print', 'after_move:filepath', '-o', '%(title)s.%(ext)s', url],
       statusMessages: [],
@@ -65,12 +63,15 @@ vi.mock('../main/settings', () => ({
   recordDownload: recordDownloadMock,
 }));
 
-vi.mock('../main/download/commandBuilders', () => ({
-  resolveVideoEncoder: resolveVideoEncoderMock,
-  buildFfmpegArgs: buildFfmpegArgsMock,
-  buildYtdlpArgs: buildYtdlpArgsMock,
-  probeMediaCodecs: probeMediaCodecsMock,
-}));
+vi.mock('../main/download/commandBuilders', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../main/download/commandBuilders')>();
+  return {
+    ...actual,
+    resolveVideoEncoder: resolveVideoEncoderMock,
+    buildYtdlpArgs: buildYtdlpArgsMock,
+    probeMediaCodecs: probeMediaCodecsMock,
+  };
+});
 
 vi.mock('electron', () => ({
   dialog: { showMessageBox: showMessageBoxMock },
@@ -382,7 +383,8 @@ describe('download error paths', () => {
       null,
       () => {
         throw new Error('cancel callback failed');
-      }
+      },
+      'queue'
     );
 
     cancelActiveSession(false);
@@ -552,6 +554,38 @@ describe('download error paths', () => {
     );
 
     expect(sender.send).toHaveBeenCalledWith('complete', '❌ Failed (Invalid Folder).');
+  });
+
+  it('uses stream copy in ffmpeg argv when probed codecs are container-compatible', async () => {
+    const ytProc = createProc();
+    const ffProc = createProc();
+    spawnWithEnvMock.mockReturnValueOnce(ytProc).mockReturnValueOnce(ffProc);
+    probeMediaCodecsMock.mockResolvedValueOnce({ video: 'h264', audio: 'aac' });
+    resolveVideoEncoderMock.mockResolvedValueOnce('h264_nvenc');
+    const sender = createSender();
+
+    loadSettingsMock.mockReturnValue({
+      ...loadSettingsMock(),
+      convertEnabled: true,
+      convertFormat: 'mp4',
+    });
+
+    startDownload(
+      '/tmp/ytdlp',
+      sender,
+      {
+        url: 'https://example.com/video',
+        outputPath: '/tmp/downloads',
+      },
+      null
+    );
+
+    ytProc.stdout.emit('data', '/tmp/downloads/video.webm\n');
+    ytProc.emit('close', 0);
+    await flush();
+
+    const ffmpegArgs = spawnWithEnvMock.mock.calls[1]?.[1] as string[] | undefined;
+    expect(ffmpegArgs).toEqual(expect.arrayContaining(['-c:v', 'copy', '-c:a', 'copy']));
   });
 
   it('handles conversion enabled with valid format', () => {
@@ -1081,16 +1115,6 @@ describe('download error paths', () => {
     const ffProc = createProc();
     spawnWithEnvMock.mockReturnValueOnce(ytProc).mockReturnValueOnce(ffProc);
     resolveVideoEncoderMock.mockResolvedValueOnce('h264_nvenc');
-    buildFfmpegArgsMock.mockReturnValueOnce([
-      '-i',
-      'in.webm',
-      '-c:v',
-      'h264_nvenc',
-      '-c:a',
-      'aac',
-      '-y',
-      'out.mp4',
-    ]);
     const sender = createSender();
 
     loadSettingsMock.mockReturnValue({

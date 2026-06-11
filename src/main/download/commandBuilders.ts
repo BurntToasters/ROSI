@@ -4,6 +4,7 @@ import { detectGpu } from '../gpu';
 import { spawnWithEnv } from '../platform';
 import {
   ALLOWED_AUDIO_FORMATS,
+  ALLOWED_BROWSERS,
   FORMAT_ID_PATTERN,
   MAX_ERROR_BUFFER,
   SUBTITLE_LANGS_PATTERN,
@@ -11,17 +12,7 @@ import {
 
 const VALID_FORMAT_ID = FORMAT_ID_PATTERN;
 const CODEC_PROBE_TIMEOUT_MS = 30_000;
-const ALLOWED_BROWSERS = new Set([
-  'brave',
-  'chrome',
-  'chromium',
-  'edge',
-  'firefox',
-  'opera',
-  'safari',
-  'vivaldi',
-  'whale',
-]);
+export { ALLOWED_BROWSERS };
 
 export interface SourceCodecs {
   video?: string;

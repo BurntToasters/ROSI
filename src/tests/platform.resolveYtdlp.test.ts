@@ -89,18 +89,18 @@ describe('platform resolveYtdlpPath', () => {
     expect(mocks.logInfoMock).toHaveBeenCalled();
   });
 
-  it('shows missing dependency error and quits when yt-dlp is absent', async () => {
+  it('logs missing dependency when yt-dlp is absent without quitting', async () => {
     const { mod, mocks } = await loadPlatformModule(true, (m) => {
       m.existsSyncMock.mockReturnValue(false);
     });
 
     const resolved = mod.resolveYtdlpPath();
     expect(resolved).toContain(mod.ytdlpBinary);
-    expect(mocks.showErrorBoxMock).toHaveBeenCalledWith(
-      'Missing Dependency',
+    expect(mocks.logErrorMock).toHaveBeenCalledWith(
       expect.stringContaining('yt-dlp binary not found')
     );
-    expect(mocks.appQuitMock).toHaveBeenCalled();
+    expect(mocks.showErrorBoxMock).not.toHaveBeenCalled();
+    expect(mocks.appQuitMock).not.toHaveBeenCalled();
   });
 
   it('shows permission error and quits for non-recoverable chmod failures', async () => {
@@ -118,10 +118,10 @@ describe('platform resolveYtdlpPath', () => {
     });
 
     mod.resolveYtdlpPath();
-    expect(mocks.showErrorBoxMock).toHaveBeenCalledWith(
-      'Permission Error',
+    expect(mocks.logErrorMock).toHaveBeenCalledWith(
       expect.stringContaining('Failed to set executable permissions')
     );
-    expect(mocks.appQuitMock).toHaveBeenCalled();
+    expect(mocks.showErrorBoxMock).not.toHaveBeenCalled();
+    expect(mocks.appQuitMock).not.toHaveBeenCalled();
   });
 });

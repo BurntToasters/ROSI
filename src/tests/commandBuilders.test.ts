@@ -1,13 +1,17 @@
+import { EventEmitter } from 'events';
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 
-const detectGpuMock = vi.hoisted(() => vi.fn());
+const { detectGpuMock, spawnWithEnvMock } = vi.hoisted(() => ({
+  detectGpuMock: vi.fn(),
+  spawnWithEnvMock: vi.fn(),
+}));
 
 vi.mock('../main/gpu', () => ({
   detectGpu: detectGpuMock,
 }));
 
 vi.mock('../main/platform', () => ({
-  spawnWithEnv: vi.fn(),
+  spawnWithEnv: spawnWithEnvMock,
 }));
 
 vi.mock('electron-log/main.js', () => ({
@@ -17,6 +21,7 @@ vi.mock('electron-log/main.js', () => ({
 import {
   buildFfmpegArgs,
   buildYtdlpArgs,
+  probeMediaCodecs,
   resolveVideoEncoder,
 } from '../main/download/commandBuilders';
 import type { Settings } from '../types';
@@ -55,9 +60,90 @@ function createSettings(overrides: Partial<Settings> = {}): Settings {
   };
 }
 
+function createProbeProc(stderrLines: string[]) {
+  const proc = new EventEmitter() as EventEmitter & {
+    stderr: EventEmitter;
+    kill: (signal?: string) => void;
+  };
+  proc.stderr = new EventEmitter();
+  proc.kill = vi.fn();
+  spawnWithEnvMock.mockReturnValue(proc);
+  setImmediate(() => {
+    for (const line of stderrLines) {
+      proc.stderr.emit('data', line);
+    }
+    proc.emit('close', 1);
+  });
+  return proc;
+}
+
 describe('command builders', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('probeMediaCodecs parses video and audio codecs from ffmpeg stderr', async () => {
+    createProbeProc([
+      'Input #0, matroska, from input.mkv:\n',
+      '  Stream #0:0: Video: h264 (High), yuv420p, 1920x1080\n',
+      '  Stream #0:1: Audio: aac (LC), 48000 Hz, stereo\n',
+    ]);
+
+    await expect(probeMediaCodecs('ffmpeg', '/tmp/input.mkv')).resolves.toEqual({
+      video: 'h264',
+      audio: 'aac',
+    });
+    expect(spawnWithEnvMock).toHaveBeenCalledWith(
+      'ffmpeg',
+      ['-hide_banner', '-i', '/tmp/input.mkv'],
+      { shell: false }
+    );
+  });
+
+  it('probeMediaCodecs returns partial codecs when only one stream is present', async () => {
+    createProbeProc(['  Stream #0:0: Video: vp9, yuv420p, 1280x720\n']);
+
+    await expect(probeMediaCodecs('ffmpeg', '/tmp/input.webm')).resolves.toEqual({
+      video: 'vp9',
+    });
+  });
+
+  it('probeMediaCodecs returns empty object when stderr has no stream info', async () => {
+    createProbeProc(['ffmpeg version 6.0\n']);
+
+    await expect(probeMediaCodecs('ffmpeg', '/tmp/input.mp4')).resolves.toEqual({});
+  });
+
+  it('probeMediaCodecs returns empty object when spawn errors', async () => {
+    const proc = new EventEmitter() as EventEmitter & {
+      stderr: EventEmitter;
+      kill: (signal?: string) => void;
+    };
+    proc.stderr = new EventEmitter();
+    proc.kill = vi.fn();
+    spawnWithEnvMock.mockReturnValue(proc);
+    setImmediate(() => proc.emit('error', new Error('spawn failed')));
+
+    await expect(probeMediaCodecs('ffmpeg', '/tmp/input.mp4')).resolves.toEqual({});
+  });
+
+  it('probeMediaCodecs kills hung probe and returns partial codecs on timeout', async () => {
+    vi.useFakeTimers();
+    const proc = new EventEmitter() as EventEmitter & {
+      stderr: EventEmitter;
+      kill: (signal?: string) => void;
+    };
+    proc.stderr = new EventEmitter();
+    proc.kill = vi.fn();
+    spawnWithEnvMock.mockReturnValue(proc);
+
+    const pending = probeMediaCodecs('ffmpeg', '/tmp/input.mkv');
+    proc.stderr.emit('data', '  Stream #0:0: Video: h264 (High), yuv420p\n');
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await expect(pending).resolves.toEqual({ video: 'h264' });
+    expect(proc.kill).toHaveBeenCalledWith('SIGKILL');
+    vi.useRealTimers();
   });
 
   it('resolves GPU encoder based on settings', async () => {
