@@ -1,10 +1,10 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { exec } from 'child_process';
 import sanitize from 'sanitize-filename';
 import { dialog } from 'electron';
 import log from 'electron-log/main.js';
 import { spawnWithEnv, getEffectiveFfmpegPath, ytdlpBinary, isWindows } from './platform';
+import { killChildProcess } from './processKill';
 import { loadSettings, recordDownload } from './settings';
 import {
   buildFfmpegArgs,
@@ -122,23 +122,7 @@ function completeSession(
 }
 
 function killProcess(proc: ChildProcess | null, label: string) {
-  if (!proc) return;
-  try {
-    proc.kill('SIGTERM');
-    const forceKillTimer = setTimeout(() => {
-      try {
-        if (!proc.killed) {
-          proc.kill('SIGKILL');
-          if (isWindows && proc.pid) {
-            exec(`taskkill /PID ${proc.pid} /T /F`, () => {});
-          }
-        }
-      } catch {}
-    }, 5000);
-    proc.once('exit', () => clearTimeout(forceKillTimer));
-  } catch (error) {
-    log.error(`Error killing ${label} process:`, error);
-  }
+  killChildProcess(proc, label);
 }
 
 export function cancelActiveSession(notify = true) {
@@ -207,7 +191,7 @@ export function fetchFormats(ytdlpPath: string, url: string): Promise<string> {
     if (formatsProcess?.proc && !formatsProcess.proc.killed) {
       try {
         formatsProcess.cancelled = true;
-        formatsProcess.proc.kill();
+        killChildProcess(formatsProcess.proc, 'formats');
       } catch (error) {
         log.warn('Error killing previous formats process:', error);
       }
@@ -220,7 +204,7 @@ export function fetchFormats(ytdlpPath: string, url: string): Promise<string> {
     const timeout = setTimeout(() => {
       try {
         formatsProcess!.cancelled = true;
-        proc.kill();
+        killChildProcess(proc, 'formats-timeout');
       } catch (error) {
         log.warn('Error killing formats process on timeout:', error);
       }

@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'events';
 
-const { existsSyncMock, spawnWithEnvMock, logWarnMock } = vi.hoisted(() => {
+const { existsSyncMock, spawnWithEnvMock, logWarnMock, logErrorMock } = vi.hoisted(() => {
   return {
     existsSyncMock: vi.fn(),
     spawnWithEnvMock: vi.fn(),
     logWarnMock: vi.fn(),
+    logErrorMock: vi.fn(),
   };
 });
 
@@ -15,11 +16,13 @@ vi.mock('fs', () => ({
 
 vi.mock('../main/platform', () => ({
   spawnWithEnv: spawnWithEnvMock,
+  isWindows: false,
 }));
 
 vi.mock('electron-log/main.js', () => ({
   default: {
     warn: logWarnMock,
+    error: logErrorMock,
   },
 }));
 
@@ -133,7 +136,7 @@ describe('fetchVideoInfo', () => {
     await expect(secondPending).resolves.toMatchObject({ title: 'Test Video' });
   });
 
-  it('logs warning when previous info process cannot be killed', async () => {
+  it('logs error when previous info process cannot be killed', async () => {
     const firstProc = createProc();
     const secondProc = createProc();
     firstProc.kill = vi.fn(() => {
@@ -150,8 +153,8 @@ describe('fetchVideoInfo', () => {
 
     await expect(firstPending).rejects.toContain('yt-dlp exited with code 1');
     await expect(secondPending).resolves.toMatchObject({ title: 'Test Video' });
-    expect(logWarnMock).toHaveBeenCalledWith(
-      'Error killing previous video info process:',
+    expect(logErrorMock).toHaveBeenCalledWith(
+      'Error killing video-info process:',
       expect.any(Error)
     );
   });
@@ -188,13 +191,13 @@ describe('fetchVideoInfo', () => {
     const rejection = expect(pending).rejects.toContain('timed out');
     await vi.advanceTimersByTimeAsync(60_000);
     await rejection;
-    expect(logWarnMock).toHaveBeenCalledWith(
-      'Error killing video info process on timeout:',
+    expect(logErrorMock).toHaveBeenCalledWith(
+      'Error killing video-info-timeout process:',
       expect.any(Error)
     );
   });
 
-  it('logs warning when cancelVideoInfo kill throws', async () => {
+  it('logs error when cancelVideoInfo kill throws', async () => {
     const proc = createProc();
     proc.kill = vi.fn(() => {
       throw new Error('cancel kill denied');
@@ -206,8 +209,8 @@ describe('fetchVideoInfo', () => {
     proc.emit('close', 1);
 
     await expect(pending).rejects.toContain('cancelled');
-    expect(logWarnMock).toHaveBeenCalledWith(
-      'Error killing video info process:',
+    expect(logErrorMock).toHaveBeenCalledWith(
+      'Error killing video-info process:',
       expect.any(Error)
     );
   });

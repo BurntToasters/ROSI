@@ -85,6 +85,10 @@ export function applyChannel(useBeta: boolean) {
   }
 }
 
+export function applyChannelFromSettings(settings: Settings) {
+  applyChannel(resolveUseBeta(settings.updateChannel, app.getVersion()));
+}
+
 export function setupAutoUpdater(
   getMainWindow: () => BrowserWindow | null,
   loadSettings: () => Settings

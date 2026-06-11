@@ -232,15 +232,22 @@ export function resolveBundledFfmpegPath(): string | null {
 export function getEffectiveFfmpegPath(customPath?: string | null): string {
   const resolved = resolveFfmpegPath(customPath);
   if (resolved) {
-    const pathLike =
-      path.isAbsolute(resolved) ||
-      resolved.includes(path.sep) ||
-      resolved.includes('/') ||
-      resolved.includes('\\');
-    if (!pathLike || fs.existsSync(resolved)) {
-      return resolved;
+    const baseName = path.basename(resolved).toLowerCase();
+    const validBasename =
+      resolved === 'ffmpeg' || baseName === 'ffmpeg' || baseName === 'ffmpeg.exe';
+    if (!validBasename) {
+      log.warn(`Custom ffmpeg path has invalid basename, falling back: ${resolved}`);
+    } else {
+      const pathLike =
+        path.isAbsolute(resolved) ||
+        resolved.includes(path.sep) ||
+        resolved.includes('/') ||
+        resolved.includes('\\');
+      if (!pathLike || fs.existsSync(resolved)) {
+        return resolved;
+      }
+      log.warn(`Custom ffmpeg path does not exist, falling back: ${resolved}`);
     }
-    log.warn(`Custom ffmpeg path does not exist, falling back: ${resolved}`);
   }
 
   const bundled = resolveBundledFfmpegPath();

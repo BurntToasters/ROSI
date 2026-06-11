@@ -35,6 +35,8 @@ const {
   detectGpuMock,
   fetchFormatsMock,
   cancelFormatsMock,
+  fetchVideoInfoMock,
+  cancelVideoInfoMock,
   ytdlpFixturePath,
 } = vi.hoisted(() => {
   const nodeOs = require('os') as typeof import('os');
@@ -79,6 +81,7 @@ const {
       setWindowOpenHandler: vi.fn(),
       on: vi.fn(),
       isDestroyed: vi.fn(() => false),
+      id: 1,
     };
 
     constructor() {
@@ -203,6 +206,12 @@ const {
     detectGpuMock: vi.fn(async () => ({ nvidia: false, amd: false, intel: false })),
     fetchFormatsMock: vi.fn(async () => 'ok'),
     cancelFormatsMock: vi.fn(),
+    fetchVideoInfoMock: vi.fn(async () => ({
+      title: 'Example Video',
+      duration: 120,
+      thumbnail: 'https://example.com/thumb.jpg',
+    })),
+    cancelVideoInfoMock: vi.fn(),
     ytdlpFixturePath,
   };
 });
@@ -280,6 +289,11 @@ vi.mock('../main/downloader', () => ({
   canStartDownload: vi.fn(() => true),
 }));
 
+vi.mock('../main/download/videoInfo', () => ({
+  fetchVideoInfo: fetchVideoInfoMock,
+  cancelVideoInfo: cancelVideoInfoMock,
+}));
+
 vi.mock('../main/constants', () => ({
   SPLASH_SHOW_DELAY_MS: 0,
   SPLASH_FADE_DELAY_MS: 0,
@@ -354,6 +368,13 @@ async function initializeMainModule(options?: { beforeImport?: (userDataDir: str
   fetchFormatsMock.mockClear();
   fetchFormatsMock.mockResolvedValue('ok');
   cancelFormatsMock.mockClear();
+  fetchVideoInfoMock.mockClear();
+  fetchVideoInfoMock.mockResolvedValue({
+    title: 'Example Video',
+    duration: 120,
+    thumbnail: 'https://example.com/thumb.jpg',
+  });
+  cancelVideoInfoMock.mockClear();
   killAllProcessesMock.mockClear();
   appMock.on.mockClear();
   appMock.quit.mockClear();
@@ -388,6 +409,8 @@ type MockWindow = {
   reload: MockFn;
   restore: MockFn;
 };
+
+const authorizedEvent = { sender: { id: 1 } };
 
 function getPrimaryWindow(): MockWindow {
   const windows = BrowserWindowMock.getAllWindows() as unknown as MockWindow[];
@@ -453,42 +476,45 @@ describe('main process IPC wiring and queue behavior', () => {
     const clearQueue = handleHandlers['clear-queue'];
     const cancelQueue = handleHandlers['cancel-queue'];
 
-    const addResult = await addToQueue({}, ['https://example.com/a', 'invalid-url']);
+    const addResult = await addToQueue(authorizedEvent, ['https://example.com/a', 'invalid-url']);
     expect(addResult).toEqual({ ok: true, data: { added: 1 } });
 
-    let queue = await getQueue();
+    let queue = await getQueue(authorizedEvent);
     expect(queue).toHaveLength(1);
     expect(queue[0].status).toBe('pending');
 
-    const removeMissingResult = await removeFromQueue({}, 'missing-id');
+    const removeMissingResult = await removeFromQueue(authorizedEvent, 'missing-id');
     expect(removeMissingResult).toEqual({
       ok: false,
       error: { code: 'NOT_AVAILABLE', message: 'Queue item not found.' },
     });
 
-    const startResult = await startQueue();
+    const startResult = await startQueue(authorizedEvent);
     expect(startResult).toEqual({ ok: true, data: { started: true } });
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(startDownloadMock).toHaveBeenCalled();
 
-    queue = await getQueue();
+    queue = await getQueue(authorizedEvent);
     expect(queue[0].status).toBe('completed');
 
-    const secondAdd = await addToQueue({}, ['https://example.com/b', 'https://example.com/c']);
+    const secondAdd = await addToQueue(authorizedEvent, [
+      'https://example.com/b',
+      'https://example.com/c',
+    ]);
     expect(secondAdd).toEqual({ ok: true, data: { added: 2 } });
 
-    const cancelResult = await cancelQueue();
+    const cancelResult = await cancelQueue(authorizedEvent);
     expect(cancelResult).toEqual({ ok: true, data: undefined });
-    queue = await getQueue();
+    queue = await getQueue(authorizedEvent);
     const cancelledItems = queue.filter((item: { status: string }) => item.status === 'cancelled');
     expect(cancelledItems.length).toBeGreaterThanOrEqual(2);
 
-    const clearResult = await clearQueue();
+    const clearResult = await clearQueue(authorizedEvent);
     expect(clearResult).toEqual({ ok: true, data: undefined });
-    queue = await getQueue();
+    queue = await getQueue(authorizedEvent);
     expect(queue).toEqual([]);
 
-    expect(await startQueue()).toEqual(
+    expect(await startQueue(authorizedEvent)).toEqual(
       expect.objectContaining({
         ok: false,
         error: expect.objectContaining({ code: 'NOT_AVAILABLE' }),
@@ -497,13 +523,13 @@ describe('main process IPC wiring and queue behavior', () => {
   });
 
   it('rejects malformed queue input and ignores duplicate completion callbacks', async () => {
-    expect(await handleHandlers['add-to-queue']!({}, 'not-array')).toEqual(
+    expect(await handleHandlers['add-to-queue']!(authorizedEvent, 'not-array')).toEqual(
       expect.objectContaining({
         ok: false,
         error: expect.objectContaining({ code: 'VALIDATION_ERROR' }),
       })
     );
-    expect(await handleHandlers['add-to-queue']!({}, ['bad-url'])).toEqual(
+    expect(await handleHandlers['add-to-queue']!(authorizedEvent, ['bad-url'])).toEqual(
       expect.objectContaining({
         ok: false,
         error: expect.objectContaining({ message: 'No valid URLs provided.' }),
@@ -523,11 +549,16 @@ describe('main process IPC wiring and queue behavior', () => {
       }
     );
 
-    await handleHandlers['add-to-queue']!({}, ['https://example.com/settled']);
-    expect(await handleHandlers['start-queue']!()).toEqual({ ok: true, data: { started: true } });
+    await handleHandlers['add-to-queue']!(authorizedEvent, ['https://example.com/settled']);
+    expect(await handleHandlers['start-queue']!(authorizedEvent)).toEqual({
+      ok: true,
+      data: { started: true },
+    });
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    const queue = (await handleHandlers['get-queue']!()) as Array<{ status: string }>;
+    const queue = (await handleHandlers['get-queue']!(authorizedEvent)) as Array<{
+      status: string;
+    }>;
     expect(queue[0]?.status).toBe('completed');
   });
 
@@ -538,7 +569,7 @@ describe('main process IPC wiring and queue behavior', () => {
     const startQueue = handleHandlers['start-queue'];
 
     const tooMany = Array.from({ length: 501 }, (_, index) => `https://example.com/${index}`);
-    const limitResult = await addToQueue({}, tooMany);
+    const limitResult = await addToQueue(authorizedEvent, tooMany);
     expect(limitResult).toEqual(
       expect.objectContaining({
         ok: false,
@@ -546,20 +577,20 @@ describe('main process IPC wiring and queue behavior', () => {
       })
     );
 
-    await addToQueue({}, ['https://example.com/remove-me']);
-    let queue = (await getQueue()) as Array<{ id: string; status: string }>;
-    const removeResult = await removeFromQueue({}, queue[0]!.id);
+    await addToQueue(authorizedEvent, ['https://example.com/remove-me']);
+    let queue = (await getQueue(authorizedEvent)) as Array<{ id: string; status: string }>;
+    const removeResult = await removeFromQueue(authorizedEvent, queue[0]!.id);
     expect(removeResult).toEqual({ ok: true, data: undefined });
-    expect(await getQueue()).toEqual([]);
+    expect(await getQueue(authorizedEvent)).toEqual([]);
 
     startDownloadMock.mockImplementationOnce(() => {});
-    await addToQueue({}, ['https://example.com/active']);
-    await startQueue();
+    await addToQueue(authorizedEvent, ['https://example.com/active']);
+    await startQueue(authorizedEvent);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    queue = (await getQueue()) as Array<{ id: string; status: string }>;
+    queue = (await getQueue(authorizedEvent)) as Array<{ id: string; status: string }>;
     expect(queue[0]!.status).toBe('downloading');
-    const activeRemove = await removeFromQueue({}, queue[0]!.id);
+    const activeRemove = await removeFromQueue(authorizedEvent, queue[0]!.id);
     expect(activeRemove).toEqual(
       expect.objectContaining({
         ok: false,
@@ -572,8 +603,6 @@ describe('main process IPC wiring and queue behavior', () => {
 
   it('rejects queue mutations from unauthorized sender', async () => {
     const mainWindow = getPrimaryWindow();
-    mainWindow.webContents.id = 1;
-
     const addResult = await handleHandlers['add-to-queue']!({ sender: { id: 2 } }, [
       'https://example.com/a',
     ]);
@@ -603,11 +632,11 @@ describe('main process IPC wiring and queue behavior', () => {
       throw new Error('cancel failed');
     });
 
-    await addToQueue({}, ['https://example.com/cancel-error']);
-    await startQueue();
+    await addToQueue(authorizedEvent, ['https://example.com/cancel-error']);
+    await startQueue(authorizedEvent);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    const result = await cancelQueue();
+    const result = await cancelQueue(authorizedEvent);
     expect(result).toEqual(
       expect.objectContaining({
         ok: false,
@@ -622,7 +651,7 @@ describe('main process IPC wiring and queue behavior', () => {
   it('validates and starts direct download requests through ipc', async () => {
     const downloadVideo = handleHandlers['download-video'];
 
-    const invalid = await downloadVideo({}, { url: 'bad', outputPath: '' });
+    const invalid = await downloadVideo(authorizedEvent, { url: 'bad', outputPath: '' });
     expect(invalid).toEqual({
       ok: false,
       error: {
@@ -631,15 +660,13 @@ describe('main process IPC wiring and queue behavior', () => {
       },
     });
 
-    const valid = await downloadVideo(
-      {},
-      { url: 'https://example.com/video', outputPath: path.join(os.homedir(), 'Downloads') }
-    );
+    const valid = await downloadVideo(authorizedEvent, {
+      url: 'https://example.com/video',
+      outputPath: path.join(os.homedir(), 'Downloads'),
+    });
     expect(valid).toEqual({ ok: true, data: { started: true } });
     expect(startDownloadMock).toHaveBeenCalled();
 
-    const mainWindow = getPrimaryWindow();
-    mainWindow.webContents.id = 3;
     const unauthorized = await downloadVideo(
       { sender: { id: 4 } },
       { url: 'https://example.com/video', outputPath: path.join(os.homedir(), 'Downloads') }
@@ -657,10 +684,10 @@ describe('main process IPC wiring and queue behavior', () => {
       throw new Error('start failed');
     });
 
-    const result = await handleHandlers['download-video']!(
-      {},
-      { url: 'https://example.com/video', outputPath: path.join(os.homedir(), 'Downloads') }
-    );
+    const result = await handleHandlers['download-video']!(authorizedEvent, {
+      url: 'https://example.com/video',
+      outputPath: path.join(os.homedir(), 'Downloads'),
+    });
 
     expect(result).toEqual(
       expect.objectContaining({
@@ -672,7 +699,7 @@ describe('main process IPC wiring and queue behavior', () => {
 
   it('rejects unsafe external links through validation', async () => {
     const openExternal = handleHandlers['open-external'];
-    const invalid = await openExternal({}, 'javascript:alert(1)');
+    const invalid = await openExternal(authorizedEvent, 'javascript:alert(1)');
     expect(invalid).toEqual({
       ok: false,
       error: { code: 'INVALID_URL', message: 'Invalid external URL payload.' },
@@ -682,22 +709,25 @@ describe('main process IPC wiring and queue behavior', () => {
   it('handles settings and utility IPC requests', async () => {
     expect(await handleHandlers['get-app-version']!()).toBe('4.0.0-beta.2');
     expect(await handleHandlers['is-packaged']!()).toBe(true);
-    expect(await handleHandlers['get-settings']!()).toEqual(
+    expect(await handleHandlers['get-settings']!(authorizedEvent)).toEqual(
       expect.objectContaining({ convertFormat: 'mp4' })
     );
-    expect(await handleHandlers['check-deno-installed']!()).toBe(true);
-    expect(await handleHandlers['install-deno']!()).toEqual({ success: true });
-    expect(await handleHandlers['detect-gpu']!()).toEqual({
+    expect(await handleHandlers['check-deno-installed']!(authorizedEvent)).toBe(true);
+    expect(await handleHandlers['install-deno']!(authorizedEvent)).toEqual({ success: true });
+    expect(await handleHandlers['detect-gpu']!(authorizedEvent)).toEqual({
       nvidia: false,
       amd: false,
       intel: false,
     });
     expect(await handleHandlers['get-stats']!()).toEqual({ totalDownloads: 0 });
-    expect(await handleHandlers['reset-stats']!()).toEqual({ ok: true, data: undefined });
+    expect(await handleHandlers['reset-stats']!(authorizedEvent)).toEqual({
+      ok: true,
+      data: undefined,
+    });
     expect(await handleHandlers['check-for-updates']!()).toEqual({ ok: true });
     expect(await handleHandlers['download-update']!()).toEqual({ success: true });
 
-    const saveResult = await handleHandlers['save-settings']!({}, { theme: 'dark' });
+    const saveResult = await handleHandlers['save-settings']!(authorizedEvent, { theme: 'dark' });
     expect(saveResult).toEqual(
       expect.objectContaining({
         ok: true,
@@ -706,7 +736,7 @@ describe('main process IPC wiring and queue behavior', () => {
     expect(saveSettingsMock).toHaveBeenCalledWith({ theme: 'dark' }, expect.anything());
 
     saveSettingsMock.mockReturnValueOnce(false);
-    const saveFailure = await handleHandlers['save-settings']!({}, { theme: 'dark' });
+    const saveFailure = await handleHandlers['save-settings']!(authorizedEvent, { theme: 'dark' });
     expect(saveFailure).toEqual(
       expect.objectContaining({
         ok: false,
@@ -714,7 +744,7 @@ describe('main process IPC wiring and queue behavior', () => {
       })
     );
 
-    const invalidSave = await handleHandlers['save-settings']!({}, { theme: 'neon' });
+    const invalidSave = await handleHandlers['save-settings']!(authorizedEvent, { theme: 'neon' });
     expect(invalidSave).toEqual(
       expect.objectContaining({
         ok: false,
@@ -725,9 +755,9 @@ describe('main process IPC wiring and queue behavior', () => {
 
   it('handles update and cancellation fire-and-forget IPC events', () => {
     onHandlers['cancel-update-download']!({});
-    onHandlers['install-update']!({});
-    onHandlers['cancel-formats']!({ sender: {} });
-    onHandlers['cancel-download']!({ sender: {} });
+    onHandlers['install-update']!(authorizedEvent);
+    onHandlers['cancel-formats']!(authorizedEvent);
+    onHandlers['cancel-download']!(authorizedEvent);
 
     expect(cancelUpdateDownloadMock).toHaveBeenCalled();
     expect(installUpdateMock).toHaveBeenCalled();
@@ -736,9 +766,6 @@ describe('main process IPC wiring and queue behavior', () => {
   });
 
   it('ignores unauthorized cancellation events and catches cancel errors', () => {
-    const mainWindow = getPrimaryWindow();
-    mainWindow.webContents.id = 10;
-
     onHandlers['cancel-formats']!({ sender: { id: 11 } });
     onHandlers['cancel-download']!({ sender: { id: 11 } });
 
@@ -749,7 +776,7 @@ describe('main process IPC wiring and queue behavior', () => {
       throw new Error('cancel failed');
     });
 
-    expect(() => onHandlers['cancel-download']!({ sender: { id: 10 } })).not.toThrow();
+    expect(() => onHandlers['cancel-download']!(authorizedEvent)).not.toThrow();
     expect(cancelActiveSessionMock).toHaveBeenCalledWith(true);
   });
 
@@ -794,7 +821,7 @@ describe('main process IPC wiring and queue behavior', () => {
     const closeHandler = getWindowHandler(mainWindow, 'close');
     const preventDefault = vi.fn();
 
-    onHandlers['install-update']!({});
+    onHandlers['install-update']!(authorizedEvent);
     closeHandler({ preventDefault });
 
     expect(installUpdateMock).toHaveBeenCalled();
@@ -866,12 +893,18 @@ describe('main process IPC wiring and queue behavior', () => {
   });
 
   it('handles external links, folder selection, and formats IPC branches', async () => {
-    const openResult = await handleHandlers['open-external']!({}, 'https://example.com');
+    const openResult = await handleHandlers['open-external']!(
+      authorizedEvent,
+      'https://example.com'
+    );
     expect(openResult).toEqual({ ok: true, data: { opened: true } });
     expect(openExternalMock).toHaveBeenCalledWith('https://example.com');
 
     openExternalMock.mockRejectedValueOnce(new Error('blocked'));
-    const openFailure = await handleHandlers['open-external']!({}, 'https://example.com');
+    const openFailure = await handleHandlers['open-external']!(
+      authorizedEvent,
+      'https://example.com'
+    );
     expect(openFailure).toEqual(
       expect.objectContaining({
         ok: false,
@@ -883,28 +916,25 @@ describe('main process IPC wiring and queue behavior', () => {
       canceled: false,
       filePaths: ['C:/Downloads'],
     });
-    expect(await handleHandlers['select-download-location']!()).toBe('C:/Downloads');
+    expect(await handleHandlers['select-download-location']!(authorizedEvent)).toBe('C:/Downloads');
 
     showOpenDialogMock.mockResolvedValueOnce({
       canceled: true,
       filePaths: [],
     });
-    expect(await handleHandlers['select-download-location']!()).toBeNull();
+    expect(await handleHandlers['select-download-location']!(authorizedEvent)).toBeNull();
 
     showOpenDialogMock.mockRejectedValueOnce(new Error('dialog failed'));
-    expect(await handleHandlers['select-download-location']!()).toBeNull();
+    expect(await handleHandlers['select-download-location']!(authorizedEvent)).toBeNull();
 
-    for (const windowRef of BrowserWindowMock.getAllWindows() as unknown as MockWindow[]) {
-      (windowRef.destroy as unknown as () => void)();
-    }
-    expect(await handleHandlers['select-download-location']!()).toBeNull();
-
-    expect(await handleHandlers['getFormats']!({}, 'https://example.com/video')).toEqual({
+    expect(
+      await handleHandlers['getFormats']!(authorizedEvent, 'https://example.com/video')
+    ).toEqual({
       ok: true,
       data: 'ok',
     });
 
-    const invalidFormats = await handleHandlers['getFormats']!({}, 'not-a-url');
+    const invalidFormats = await handleHandlers['getFormats']!(authorizedEvent, 'not-a-url');
     expect(invalidFormats).toEqual(
       expect.objectContaining({
         ok: false,
@@ -913,7 +943,10 @@ describe('main process IPC wiring and queue behavior', () => {
     );
 
     fetchFormatsMock.mockRejectedValueOnce('Format fetch cancelled.');
-    const cancelledFormats = await handleHandlers['getFormats']!({}, 'https://example.com/video');
+    const cancelledFormats = await handleHandlers['getFormats']!(
+      authorizedEvent,
+      'https://example.com/video'
+    );
     expect(cancelledFormats).toEqual(
       expect.objectContaining({
         ok: false,
@@ -922,7 +955,10 @@ describe('main process IPC wiring and queue behavior', () => {
     );
 
     fetchFormatsMock.mockRejectedValueOnce(new Error('yt-dlp failed'));
-    const failedFormats = await handleHandlers['getFormats']!({}, 'https://example.com/video');
+    const failedFormats = await handleHandlers['getFormats']!(
+      authorizedEvent,
+      'https://example.com/video'
+    );
     expect(failedFormats).toEqual(
       expect.objectContaining({
         ok: false,
@@ -931,7 +967,10 @@ describe('main process IPC wiring and queue behavior', () => {
     );
 
     fetchFormatsMock.mockRejectedValueOnce({});
-    const unknownFailure = await handleHandlers['getFormats']!({}, 'https://example.com/video');
+    const unknownFailure = await handleHandlers['getFormats']!(
+      authorizedEvent,
+      'https://example.com/video'
+    );
     expect(unknownFailure).toEqual(
       expect.objectContaining({
         ok: false,
@@ -941,24 +980,33 @@ describe('main process IPC wiring and queue behavior', () => {
         }),
       })
     );
+
+    for (const windowRef of BrowserWindowMock.getAllWindows() as unknown as MockWindow[]) {
+      (windowRef.destroy as unknown as () => void)();
+    }
+    expect(await handleHandlers['select-download-location']!(authorizedEvent)).toBeNull();
   });
 
   it('handles file location IPC branches', async () => {
-    const userDataDir = appMock.getPath('userData');
-    const filePath = path.join(userDataDir, 'downloads', 'video.mp4');
+    const downloadDir = path.join(os.homedir(), 'Downloads', `rosi-ipc-fileloc-${Date.now()}`);
+    const filePath = path.join(downloadDir, 'rosi-ipc-test-video.mp4');
+    fs.mkdirSync(downloadDir, { recursive: true });
     fs.writeFileSync(filePath, '');
 
-    const fileResult = await handleHandlers['open-file-location']!({}, filePath);
+    const fileResult = await handleHandlers['open-file-location']!(authorizedEvent, filePath);
     expect(fileResult).toEqual({ ok: true, data: { opened: true } });
     expect(showItemInFolderMock).toHaveBeenCalledWith(filePath);
 
-    const missingFilePath = path.join(userDataDir, 'downloads', 'missing.mp4');
-    const dirResult = await handleHandlers['open-file-location']!({}, missingFilePath);
+    const missingFilePath = path.join(downloadDir, 'rosi-ipc-test-missing.mp4');
+    const dirResult = await handleHandlers['open-file-location']!(authorizedEvent, missingFilePath);
     expect(dirResult).toEqual({ ok: true, data: { opened: true } });
     expect(openPathMock).toHaveBeenCalledWith(path.dirname(missingFilePath));
 
     openPathMock.mockResolvedValueOnce('blocked');
-    const dirFailure = await handleHandlers['open-file-location']!({}, missingFilePath);
+    const dirFailure = await handleHandlers['open-file-location']!(
+      authorizedEvent,
+      missingFilePath
+    );
     expect(dirFailure).toEqual(
       expect.objectContaining({
         ok: false,
@@ -966,7 +1014,7 @@ describe('main process IPC wiring and queue behavior', () => {
       })
     );
 
-    const invalid = await handleHandlers['open-file-location']!({}, 'relative/path');
+    const invalid = await handleHandlers['open-file-location']!(authorizedEvent, 'relative/path');
     expect(invalid).toEqual(
       expect.objectContaining({
         ok: false,
@@ -975,8 +1023,8 @@ describe('main process IPC wiring and queue behavior', () => {
     );
 
     const missingDir = await handleHandlers['open-file-location']!(
-      {},
-      path.join(userDataDir, 'absent', 'file.mp4')
+      authorizedEvent,
+      path.join(os.homedir(), 'rosi-nonexistent-dir', 'file.mp4')
     );
     expect(missingDir).toEqual(
       expect.objectContaining({
@@ -988,7 +1036,7 @@ describe('main process IPC wiring and queue behavior', () => {
     showItemInFolderMock.mockImplementationOnce(() => {
       throw new Error('shell failed');
     });
-    const shellFailure = await handleHandlers['open-file-location']!({}, filePath);
+    const shellFailure = await handleHandlers['open-file-location']!(authorizedEvent, filePath);
     expect(shellFailure).toEqual(
       expect.objectContaining({
         ok: false,
@@ -999,14 +1047,16 @@ describe('main process IPC wiring and queue behavior', () => {
 
   it('handles notification IPC branches and click behavior', async () => {
     const mainWindow = getPrimaryWindow();
-    const result = await handleHandlers['show-notification']!(
-      {},
-      {
-        title: 'Done',
-        body: 'Saved',
-        filePath: 'C:/tmp/video.mp4',
-      }
+    const notificationFile = path.join(
+      os.homedir(),
+      '.rosi-ipc-test',
+      'rosi-notification-test.mp4'
     );
+    const result = await handleHandlers['show-notification']!(authorizedEvent, {
+      title: 'Done',
+      body: 'Saved',
+      filePath: notificationFile,
+    });
     expect(result).toEqual({ ok: true, data: { shown: true } });
     expect(notificationShowMock).toHaveBeenCalled();
 
@@ -1018,9 +1068,9 @@ describe('main process IPC wiring and queue behavior', () => {
     clickHandler?.();
     expect(mainWindow.restore).toHaveBeenCalled();
     expect(mainWindow.focus).toHaveBeenCalled();
-    expect(showItemInFolderMock).toHaveBeenCalledWith('C:/tmp/video.mp4');
+    expect(showItemInFolderMock).toHaveBeenCalledWith(path.resolve(notificationFile));
 
-    expect(await handleHandlers['show-notification']!({}, {})).toEqual({
+    expect(await handleHandlers['show-notification']!(authorizedEvent, {})).toEqual({
       ok: true,
       data: { shown: true },
     });
@@ -1028,14 +1078,19 @@ describe('main process IPC wiring and queue behavior', () => {
     showItemInFolderMock.mockImplementationOnce(() => {
       throw new Error('click failed');
     });
-    await handleHandlers['show-notification']!({}, { title: 'Click', filePath: 'C:/tmp/fail.mp4' });
+    await handleHandlers['show-notification']!(authorizedEvent, {
+      title: 'Click',
+      filePath: path.join(os.homedir(), '.rosi-ipc-test', 'rosi-notification-fail.mp4'),
+    });
     const lastClickHandler = notificationOnceMock.mock.calls
       .filter((call) => call[0] === 'click')
       .at(-1)?.[1] as (() => void) | undefined;
     expect(() => lastClickHandler?.()).not.toThrow();
 
     notificationIsSupportedMock.mockReturnValueOnce(false);
-    const unsupported = await handleHandlers['show-notification']!({}, { title: 'Nope' });
+    const unsupported = await handleHandlers['show-notification']!(authorizedEvent, {
+      title: 'Nope',
+    });
     expect(unsupported).toEqual(
       expect.objectContaining({
         ok: false,
@@ -1043,7 +1098,7 @@ describe('main process IPC wiring and queue behavior', () => {
       })
     );
 
-    const invalid = await handleHandlers['show-notification']!({}, { title: 123 });
+    const invalid = await handleHandlers['show-notification']!(authorizedEvent, { title: 123 });
     expect(invalid).toEqual(
       expect.objectContaining({
         ok: false,
@@ -1054,7 +1109,9 @@ describe('main process IPC wiring and queue behavior', () => {
     notificationShowMock.mockImplementationOnce(() => {
       throw new Error('notify failed');
     });
-    const showFailure = await handleHandlers['show-notification']!({}, { title: 'Fail' });
+    const showFailure = await handleHandlers['show-notification']!(authorizedEvent, {
+      title: 'Fail',
+    });
     expect(showFailure).toEqual(
       expect.objectContaining({
         ok: false,
@@ -1064,11 +1121,11 @@ describe('main process IPC wiring and queue behavior', () => {
   });
 
   it('handles settings import/export and restart/reset events', async () => {
-    expect(await handleHandlers['export-settings']!()).toEqual({
+    expect(await handleHandlers['export-settings']!(authorizedEvent)).toEqual({
       ok: true,
       data: { exported: true },
     });
-    const importResult = await handleHandlers['import-settings']!();
+    const importResult = await handleHandlers['import-settings']!(authorizedEvent);
     expect(importResult).toEqual({
       ok: true,
       data: { imported: true },
@@ -1081,13 +1138,13 @@ describe('main process IPC wiring and queue behavior', () => {
     exportSettingsToFileMock.mockResolvedValueOnce(false);
     importSettingsFromFileMock.mockResolvedValueOnce(false);
 
-    expect(await handleHandlers['export-settings']!()).toEqual(
+    expect(await handleHandlers['export-settings']!(authorizedEvent)).toEqual(
       expect.objectContaining({
         ok: false,
         error: expect.objectContaining({ code: 'INTERNAL_ERROR' }),
       })
     );
-    expect(await handleHandlers['import-settings']!()).toEqual(
+    expect(await handleHandlers['import-settings']!(authorizedEvent)).toEqual(
       expect.objectContaining({
         ok: false,
         error: expect.objectContaining({ code: 'INTERNAL_ERROR' }),
@@ -1097,20 +1154,20 @@ describe('main process IPC wiring and queue behavior', () => {
     exportSettingsToFileMock.mockRejectedValueOnce(new Error('export failed'));
     importSettingsFromFileMock.mockRejectedValueOnce(new Error('import failed'));
 
-    expect(await handleHandlers['export-settings']!()).toEqual(
+    expect(await handleHandlers['export-settings']!(authorizedEvent)).toEqual(
       expect.objectContaining({
         ok: false,
         error: expect.objectContaining({ code: 'INTERNAL_ERROR' }),
       })
     );
-    expect(await handleHandlers['import-settings']!()).toEqual(
+    expect(await handleHandlers['import-settings']!(authorizedEvent)).toEqual(
       expect.objectContaining({
         ok: false,
         error: expect.objectContaining({ code: 'INTERNAL_ERROR' }),
       })
     );
 
-    await handleHandlers['restart-app']!();
+    await handleHandlers['restart-app']!(authorizedEvent);
     expect(cancelActiveSessionMock).toHaveBeenCalledWith(false);
     expect(killAllProcessesMock).toHaveBeenCalled();
     expect(appMock.relaunch).toHaveBeenCalled();
@@ -1119,23 +1176,22 @@ describe('main process IPC wiring and queue behavior', () => {
     appMock.relaunch.mockClear();
     appMock.exit.mockClear();
     const mainWindow = getPrimaryWindow();
-    mainWindow.webContents.id = 20;
     onHandlers['reset-settings']!({ sender: { id: 21 } });
     expect(appMock.relaunch).not.toHaveBeenCalled();
 
     saveSettingsMock.mockReturnValueOnce(false);
-    onHandlers['reset-settings']!({ sender: { id: 20 } });
+    onHandlers['reset-settings']!(authorizedEvent);
     expect(appMock.relaunch).toHaveBeenCalled();
     expect(appMock.exit).toHaveBeenCalled();
 
     saveSettingsMock.mockImplementationOnce(() => {
       throw new Error('reset failed');
     });
-    onHandlers['reset-settings']!({ sender: { id: 20 } });
+    onHandlers['reset-settings']!(authorizedEvent);
     expect(appMock.relaunch).toHaveBeenCalledTimes(2);
 
     resetStatsMock.mockReturnValueOnce(false);
-    expect(await handleHandlers['reset-stats']!()).toEqual(
+    expect(await handleHandlers['reset-stats']!(authorizedEvent)).toEqual(
       expect.objectContaining({
         ok: false,
         error: expect.objectContaining({ code: 'INTERNAL_ERROR' }),
@@ -1209,20 +1265,22 @@ describe('main process IPC wiring and queue behavior', () => {
       },
     });
 
-    expect(await handleHandlers['get-queue']!()).toEqual([]);
+    expect(await handleHandlers['get-queue']!(authorizedEvent)).toEqual([]);
   });
 
   it('recreates queue directory when persisting queue', async () => {
+    vi.useFakeTimers();
     const userDataDir = appMock.getPath('userData');
     fs.rmSync(userDataDir, { recursive: true, force: true });
 
-    await handleHandlers['add-to-queue']!({}, ['https://example.com/recreate-dir']);
-    await new Promise((resolve) => setTimeout(resolve, 350));
+    await handleHandlers['add-to-queue']!(authorizedEvent, ['https://example.com/recreate-dir']);
+    await vi.advanceTimersByTimeAsync(300);
 
     expect(fs.existsSync(path.join(userDataDir, 'download-queue.json'))).toBe(true);
   });
 
   it('cleans up temp queue file when queue persist fails', async () => {
+    vi.useFakeTimers();
     const userDataDir = appMock.getPath('userData');
     const tempQueuePath = path.join(userDataDir, 'download-queue.json.tmp');
     const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
@@ -1230,26 +1288,123 @@ describe('main process IPC wiring and queue behavior', () => {
     });
 
     try {
-      await handleHandlers['add-to-queue']!({}, ['https://example.com/persist-fail']);
-      await new Promise((resolve) => setTimeout(resolve, 350));
+      await handleHandlers['add-to-queue']!(authorizedEvent, ['https://example.com/persist-fail']);
+      await vi.advanceTimersByTimeAsync(300);
       expect(fs.existsSync(tempQueuePath)).toBe(false);
     } finally {
       renameSpy.mockRestore();
     }
   });
 
-  it('marks queued item failed when processing without a live window', async () => {
-    await handleHandlers['add-to-queue']!({}, ['https://example.com/window-closed']);
+  it('rejects start-queue when main window is already destroyed', async () => {
+    await handleHandlers['add-to-queue']!(authorizedEvent, ['https://example.com/window-closed']);
     const mainWindow = getPrimaryWindow();
     (mainWindow.destroy as unknown as () => void)();
 
-    expect(await handleHandlers['start-queue']!()).toEqual({ ok: true, data: { started: true } });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(await handleHandlers['start-queue']!(authorizedEvent)).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ message: 'Unauthorized sender.' }),
+      })
+    );
+  });
 
-    const queue = (await handleHandlers['get-queue']!()) as Array<{
-      status: string;
-      error?: string;
-    }>;
-    expect(queue[0]).toEqual(expect.objectContaining({ status: 'failed', error: 'Window closed' }));
+  it('returns video info for authorized get-video-info requests', async () => {
+    const info = {
+      title: 'Example Video',
+      duration: 120,
+      thumbnail: 'https://example.com/thumb.jpg',
+    };
+    fetchVideoInfoMock.mockResolvedValueOnce(info);
+
+    const result = await handleHandlers['get-video-info']!(
+      authorizedEvent,
+      'https://example.com/video'
+    );
+
+    expect(result).toEqual({ ok: true, data: info });
+    expect(fetchVideoInfoMock).toHaveBeenCalledWith(ytdlpFixturePath, 'https://example.com/video');
+  });
+
+  it('rejects invalid URLs for get-video-info', async () => {
+    const result = await handleHandlers['get-video-info']!(authorizedEvent, 'not-a-url');
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'INVALID_URL', message: 'Invalid URL provided.' },
+    });
+    expect(fetchVideoInfoMock).not.toHaveBeenCalled();
+  });
+
+  it('returns NOT_AVAILABLE when get-video-info fetch is cancelled', async () => {
+    fetchVideoInfoMock.mockRejectedValueOnce('Video info fetch cancelled.');
+
+    const result = await handleHandlers['get-video-info']!(
+      authorizedEvent,
+      'https://example.com/video'
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code: 'NOT_AVAILABLE' }),
+      })
+    );
+  });
+
+  it('returns INTERNAL_ERROR when get-video-info fetch fails', async () => {
+    fetchVideoInfoMock.mockRejectedValueOnce(new Error('yt-dlp failed'));
+
+    const result = await handleHandlers['get-video-info']!(
+      authorizedEvent,
+      'https://example.com/video'
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: 'INTERNAL_ERROR',
+          message: 'yt-dlp failed',
+        }),
+      })
+    );
+  });
+
+  it('rejects unauthorized get-video-info sender', async () => {
+    const result = await handleHandlers['get-video-info']!(
+      { sender: { id: 2 } },
+      'https://example.com/video'
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ message: 'Unauthorized sender.' }),
+      })
+    );
+    expect(fetchVideoInfoMock).not.toHaveBeenCalled();
+  });
+
+  it('ignores cancel-video-info from unauthorized sender', () => {
+    onHandlers['cancel-video-info']!({ sender: { id: 2 } });
+    expect(cancelVideoInfoMock).not.toHaveBeenCalled();
+
+    onHandlers['cancel-video-info']!(authorizedEvent);
+    expect(cancelVideoInfoMock).toHaveBeenCalled();
+  });
+
+  it('rejects save-settings from unauthorized sender when main window exists', async () => {
+    const result = await handleHandlers['save-settings']!({ sender: { id: 2 } }, { theme: 'dark' });
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ message: 'Unauthorized sender.' }),
+      })
+    );
+    expect(saveSettingsMock).not.toHaveBeenCalled();
+  });
+
+  it('ignores install-update from unauthorized sender', () => {
+    onHandlers['install-update']!({ sender: { id: 2 } });
+    expect(installUpdateMock).not.toHaveBeenCalled();
   });
 });

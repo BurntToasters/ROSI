@@ -262,12 +262,14 @@ interface ModalButton {
   action?: () => void;
   primary?: boolean;
   danger?: boolean;
+  disabled?: boolean;
 }
 interface ModalData {
   title: string;
   message: unknown;
   buttons?: ModalButton[];
   priority?: boolean;
+  busy?: boolean;
   extra?: (() => Node | null) | Node | null;
 }
 
@@ -366,6 +368,11 @@ function displayNextModal() {
 
   modal.setAttribute('tabindex', '-1');
   modal.setAttribute('aria-hidden', 'false');
+  if (currentModalData.busy) {
+    modal.setAttribute('aria-busy', 'true');
+  } else {
+    modal.removeAttribute('aria-busy');
+  }
   modal.classList.add('showing');
   modal.classList.add('active');
   setMainContentInert(true);
@@ -375,15 +382,21 @@ function displayNextModal() {
     modal.classList.remove('showing');
   });
 
-  buttons.forEach(({ label, action, primary, danger }) => {
+  buttons.forEach(({ label, action, primary, danger, disabled }) => {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = label;
     if (primary) btn.classList.add('modal-btn-primary');
     if (danger) btn.classList.add('modal-btn-danger');
-    btn.onclick = () => {
-      hideModal(modal, action);
-    };
+    if (disabled) {
+      btn.disabled = true;
+      btn.setAttribute('aria-disabled', 'true');
+    }
+    if (!disabled) {
+      btn.onclick = () => {
+        hideModal(modal, action);
+      };
+    }
     btnContainer.appendChild(btn);
   });
 
@@ -452,6 +465,7 @@ function hideModal(modal: HTMLElement, action: (() => void) | null | undefined) 
   setTimeout(() => {
     modal.classList.remove('active', 'hiding');
     modal.setAttribute('aria-hidden', 'true');
+    modal.removeAttribute('aria-busy');
     isModalActive = false;
     if (typeof action === 'function') action();
     if (!isModalActive) {
@@ -716,10 +730,12 @@ function setProgressPhase(phase: string) {
     const elPhase = el.dataset.phase ?? '';
     const elIndex = phaseOrder.indexOf(elPhase);
     el.classList.remove('active', 'completed');
+    el.removeAttribute('aria-current');
     if (elIndex < phaseIndex) {
       el.classList.add('completed');
     } else if (elIndex === phaseIndex) {
       el.classList.add('active');
+      el.setAttribute('aria-current', 'step');
     }
   });
 }
@@ -729,13 +745,24 @@ function configureProgressPhases(showMerge: boolean, showConvert: boolean) {
   const convertPhase = document.querySelector<HTMLElement>('.progress-phase[data-phase="convert"]');
   const connectors = document.querySelectorAll<HTMLElement>('.progress-phase-connector');
 
-  if (mergePhase) mergePhase.style.display = showMerge ? 'flex' : 'none';
-  if (convertPhase) convertPhase.style.display = showConvert ? 'flex' : 'none';
+  const setPhaseVisibility = (phaseEl: HTMLElement | null, visible: boolean) => {
+    if (!phaseEl) return;
+    phaseEl.style.display = visible ? 'flex' : 'none';
+    phaseEl.setAttribute('aria-hidden', String(!visible));
+  };
 
-  if (connectors[0]) connectors[0].style.display = showMerge ? 'block' : 'none';
-  if (connectors[1])
-    connectors[1].style.display =
-      showMerge && showConvert ? 'block' : showConvert ? 'block' : 'none';
+  setPhaseVisibility(mergePhase, showMerge);
+  setPhaseVisibility(convertPhase, showConvert);
+
+  if (connectors[0]) {
+    connectors[0].style.display = showMerge ? 'block' : 'none';
+    connectors[0].setAttribute('aria-hidden', String(!showMerge));
+  }
+  if (connectors[1]) {
+    const connectorVisible = showMerge && showConvert ? true : showConvert;
+    connectors[1].style.display = connectorVisible ? 'block' : 'none';
+    connectors[1].setAttribute('aria-hidden', String(!connectorVisible));
+  }
 }
 
 function showProgressComplete() {
@@ -821,10 +848,14 @@ function setProgressIndeterminate(status = 'Processing...') {
 function hideProgressBar() {
   const container = document.getElementById('progress-container');
   const bar = document.getElementById('progress-bar');
+  const barWrapper = document.getElementById('progress-bar-wrapper');
   if (container) {
     container.classList.remove('visible');
   }
   if (bar) bar.classList.remove('active-glow');
+  if (barWrapper) {
+    barWrapper.setAttribute('aria-valuenow', '0');
+  }
   hideProgressComplete();
 }
 
@@ -937,6 +968,7 @@ function renderHistory() {
   history.forEach((entry) => {
     const item = document.createElement('div');
     item.className = 'history-item';
+    item.setAttribute('role', 'listitem');
 
     const statusLabel =
       entry.status === 'success'
@@ -1247,6 +1279,8 @@ function showLicenses() {
   if (licensesOverlay) {
     licensesPreviousFocus = document.activeElement;
     licensesOverlay.classList.add('active');
+    licensesOverlay.setAttribute('aria-hidden', 'false');
+    setMainContentInert(true);
     syncLicensesTheme(appliedTheme);
     document.body.classList.add('licenses-open');
     document.body.style.overflow = 'hidden';
@@ -1299,12 +1333,6 @@ function showLicenses() {
       }
     };
     document.addEventListener('focusin', licensesFocusinHandler, true);
-
-    licensesOverlay.addEventListener('click', (event) => {
-      if (event.target === licensesOverlay) {
-        hideLicenses();
-      }
-    });
   }
 }
 
@@ -1320,6 +1348,12 @@ function hideLicenses() {
       licensesFocusinHandler = null;
     }
     licensesOverlay.classList.remove('active');
+    licensesOverlay.setAttribute('aria-hidden', 'true');
+    const wizardOverlay = document.getElementById('setup-wizard');
+    const wizardActive = wizardOverlay?.classList.contains('active');
+    if (!isModalActive && !wizardActive) {
+      setMainContentInert(false);
+    }
     setTimeout(() => {
       document.body.style.overflow = '';
       document.body.classList.remove('licenses-open');
@@ -1362,8 +1396,9 @@ async function checkDenoInstallation(settings: RosiSettings, persist: () => void
               showModal({
                 title: 'Installing Deno...',
                 message: 'Please wait while Deno is being installed. This may take a moment.',
-                buttons: [],
+                buttons: [{ label: 'Installing...', primary: true, disabled: true }],
                 priority: true,
+                busy: true,
               });
 
               try {
@@ -1434,7 +1469,7 @@ function launchSetupWizard(
 
   const overlay = document.getElementById('setup-wizard');
   const progressBar = document.getElementById('wizard-progress-bar') as HTMLElement | null;
-  const backBtn = document.getElementById('wizard-back');
+  const backBtn = document.getElementById('wizard-back') as HTMLButtonElement | null;
   const nextBtn = document.getElementById('wizard-next');
   const dotsContainer = document.getElementById('wizard-dots');
   const steps = overlay
@@ -1450,6 +1485,8 @@ function launchSetupWizard(
 
   const overlayEl = overlay;
   const progressBarEl = progressBar;
+  const wizardProgress = overlayEl.querySelector<HTMLElement>('.wizard-progress');
+  const stepAnnounce = document.getElementById('wizard-step-announce');
   const backBtnEl = backBtn;
   const nextBtnEl = nextBtn;
   const dotsContainerEl = dotsContainer;
@@ -1476,17 +1513,28 @@ function launchSetupWizard(
       step.classList.toggle('active', i === currentStep);
     });
 
-    // Progress bar
     progressBarEl.style.width = ((currentStep + 1) / TOTAL_STEPS) * 100 + '%';
+    if (wizardProgress) {
+      wizardProgress.setAttribute('aria-valuenow', String(currentStep + 1));
+    }
+    if (stepAnnounce) {
+      stepAnnounce.textContent = `Step ${currentStep + 1} of ${TOTAL_STEPS}`;
+    }
 
-    // Dots
     const dots = dotsContainerEl.querySelectorAll('.wizard-dot');
     dots.forEach((dot, i) => {
       dot.classList.toggle('active', i === currentStep);
     });
 
-    // Back button
-    backBtnEl.classList.toggle('hidden', currentStep === 0);
+    if (currentStep === 0) {
+      backBtnEl.setAttribute('hidden', '');
+      backBtnEl.disabled = true;
+      backBtnEl.setAttribute('tabindex', '-1');
+    } else {
+      backBtnEl.removeAttribute('hidden');
+      backBtnEl.disabled = false;
+      backBtnEl.removeAttribute('tabindex');
+    }
 
     // Next button text
     if (currentStep === 0) {
@@ -1692,6 +1740,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const betaBadge = document.getElementById('betaBadge');
     if (versionLink && version) {
       versionLink.textContent = `v${version}`;
+      versionLink.setAttribute(
+        'aria-label',
+        `View release notes for v${version} (opens externally)`
+      );
       versionLink.addEventListener('click', (event) => {
         event.preventDefault();
         void window.api.openExternal(
@@ -1712,6 +1764,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const versionLink = document.getElementById('versionLink');
     if (versionLink) {
       versionLink.textContent = 'Version unknown';
+      versionLink.setAttribute('aria-label', 'View release notes (opens externally)');
     }
   }
 
@@ -2071,6 +2124,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       buttons: [
         {
           label: '❤️ Yes Support!',
+          primary: true,
           action: () => {
             void window.api.openExternal('https://rosie.run/support');
             settings.hideSupportModal = true;
@@ -2785,14 +2839,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (showUpdateChannelBtn && updateChannelContainer) {
-    showUpdateChannelBtn.setAttribute(
-      'aria-expanded',
-      String(updateChannelContainer.classList.contains('visible'))
-    );
+    const syncUpdateChannelAria = () => {
+      const isVisible = updateChannelContainer.classList.contains('visible');
+      updateChannelContainer.setAttribute('aria-hidden', String(!isVisible));
+      showUpdateChannelBtn.setAttribute('aria-expanded', String(isVisible));
+    };
+    syncUpdateChannelAria();
     showUpdateChannelBtn.addEventListener('click', () => {
       const isVisible = updateChannelContainer.classList.contains('visible');
       updateChannelContainer.classList.toggle('visible', !isVisible);
-      showUpdateChannelBtn.setAttribute('aria-expanded', String(!isVisible));
+      syncUpdateChannelAria();
       showUpdateChannelBtn.textContent = isVisible
         ? '▸ Update channel settings'
         : '▾ Hide update channel';
@@ -3477,6 +3533,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     void checkDenoInstallation(settings, () => void persistSettings());
     void checkUpdatesOnStartup();
     setTimeout(maybeShowSupportModal, 1500);
+  }
+
+  const licensesOverlayEl = document.getElementById('licenses-overlay');
+  if (licensesOverlayEl) {
+    licensesOverlayEl.addEventListener('click', (event) => {
+      if (event.target === licensesOverlayEl) {
+        hideLicenses();
+      }
+    });
   }
 
   const closeBtn = document.getElementById('close-licenses');

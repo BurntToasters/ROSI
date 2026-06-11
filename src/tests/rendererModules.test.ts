@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from 'typescript';
@@ -46,6 +46,27 @@ type RosiModules = {
       },
       formatBytes: (bytes: number) => string
     ) => string;
+  };
+  queue?: {
+    renderQueue: (
+      queue: Array<{ id: string; status: string; url: string }>,
+      elements: {
+        queueList: HTMLElement | null;
+        queueSection: HTMLElement | null;
+        queueCount: HTMLElement | null;
+      },
+      deps: {
+        escapeHtml: (value: string) => string;
+        removeFromQueue: (id: string) => unknown;
+      }
+    ) => void;
+  };
+  settings?: {
+    bindExternalLink: (
+      element: HTMLElement | null,
+      url: string,
+      openExternal: (url: string) => unknown
+    ) => void;
   };
 };
 
@@ -107,6 +128,63 @@ describe('renderer modules', () => {
       expect(modules().ui!.isValidUrl('not a url')).toBe(false);
       expect(modules().ui!.isValidUrl('ftp://example.com')).toBe(false);
       expect(modules().ui!.isValidUrl('javascript:alert(1)')).toBe(false);
+    });
+  });
+
+  describe('queue module', () => {
+    beforeEach(() => {
+      document.body.innerHTML =
+        '<section id="queue-section"><div id="queue-list"></div><span id="queue-count"></span></section>';
+      loadModule('queue');
+    });
+
+    it('escapes malicious URL content in renderQueue output', () => {
+      const escapeHtml = (value: string) =>
+        value
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      const maliciousUrl = 'https://example.com/"><img src=x onerror=alert(1)>';
+      modules().queue!.renderQueue(
+        [{ id: 'q_xss', status: 'pending', url: maliciousUrl }],
+        {
+          queueList: document.getElementById('queue-list'),
+          queueSection: document.getElementById('queue-section'),
+          queueCount: document.getElementById('queue-count'),
+        },
+        { escapeHtml, removeFromQueue: vi.fn() }
+      );
+
+      const queueList = document.getElementById('queue-list')!;
+      expect(queueList.querySelector('img')).toBeNull();
+      expect(queueList.querySelector('.queue-item-url')!.textContent).toContain('example.com');
+      expect(queueList.innerHTML).toContain('&quot;');
+    });
+  });
+
+  describe('settings module', () => {
+    beforeEach(() => loadModule('settings'));
+
+    it('bindExternalLink stops propagation and opens external URL', () => {
+      const link = document.createElement('a');
+      link.href = '#';
+      document.body.appendChild(link);
+      const openExternal = vi.fn();
+      const parentClick = vi.fn();
+      document.body.addEventListener('click', parentClick);
+
+      modules().settings!.bindExternalLink(link, 'https://example.com/help', openExternal);
+
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+      const stopPropagation = vi.spyOn(event, 'stopPropagation');
+      const preventDefault = vi.spyOn(event, 'preventDefault');
+      link.dispatchEvent(event);
+
+      expect(stopPropagation).toHaveBeenCalled();
+      expect(preventDefault).toHaveBeenCalled();
+      expect(parentClick).not.toHaveBeenCalled();
+      expect(openExternal).toHaveBeenCalledWith('https://example.com/help');
     });
   });
 
