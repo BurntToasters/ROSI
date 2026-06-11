@@ -3,6 +3,7 @@
   "version": "4.1.0-beta.2",
   "private": true,
   "description": "Electron GUI for yt-dlp",
+  "desktopName": "com.burnttoasters.rosi.desktop",
   "keywords": [
     "electron",
     "yt-dlp",

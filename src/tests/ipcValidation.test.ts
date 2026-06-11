@@ -11,6 +11,13 @@ import {
   validateSettingsPatchPayload,
 } from '../utils/ipcValidation';
 
+function pathOutsideAllowedDownloadBases(): string {
+  if (process.platform === 'win32') {
+    return path.join(process.env.SystemRoot ?? 'C:\\Windows', 'Temp', 'rosi-outside-test');
+  }
+  return '/tmp/rosi-outside-test';
+}
+
 describe('ipc validation helpers', () => {
   it('builds typed ok and error result wrappers', () => {
     expect(okResult({ started: true })).toEqual({
@@ -53,7 +60,7 @@ describe('ipc validation helpers', () => {
   it('rejects outputPath outside the user home directory', () => {
     const result = validateDownloadRequestPayload({
       url: 'https://example.com',
-      outputPath: '/tmp/downloads',
+      outputPath: pathOutsideAllowedDownloadBases(),
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -253,7 +260,9 @@ describe('ipc validation helpers', () => {
     expect(validateSettingsPatchPayload({ downloadFolder: null }).ok).toBe(false);
     expect(validateSettingsPatchPayload({ downloadFolder: 42 }).ok).toBe(false);
     expect(validateSettingsPatchPayload({ downloadFolder: 'relative/path' }).ok).toBe(false);
-    expect(validateSettingsPatchPayload({ downloadFolder: '/tmp/outside-home' }).ok).toBe(false);
+    expect(
+      validateSettingsPatchPayload({ downloadFolder: pathOutsideAllowedDownloadBases() }).ok
+    ).toBe(false);
     expect(validateSettingsPatchPayload({ downloadFolder: 'x'.repeat(4097) }).ok).toBe(false);
   });
 

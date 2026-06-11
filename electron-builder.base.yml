@@ -66,6 +66,7 @@ linux:
     - rpm
   icon: build/app-icon.png
   category: Utility
+  syncDesktopName: true
   extraResources:
     - from: assets/
       to: assets/
