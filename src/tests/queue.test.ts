@@ -225,25 +225,99 @@ function clearHandlerMaps() {
   for (const key of Object.keys(handleHandlers)) delete handleHandlers[key];
 }
 
+function destroyAllBrowserWindows() {
+  for (const window of BrowserWindowMock.getAllWindows()) {
+    window.destroy();
+  }
+}
+
+function resetDownloadMocks() {
+  startDownloadMock.mockReset();
+  startDownloadMock.mockImplementation(
+    (
+      _ytdlpPath: string,
+      _sender: unknown,
+      _options: unknown,
+      _mainWindow: unknown,
+      onComplete?: (status: string, outcome: string) => void
+    ) => {
+      if (typeof onComplete === 'function') onComplete('✅ Done', 'success');
+    }
+  );
+  cancelActiveSessionMock.mockReset();
+}
+
+async function waitForAuthorizedHandlers() {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const getQueue = handleHandlers['get-queue'];
+    if (getQueue) {
+      const result = await getQueue(queueEvent);
+      if (Array.isArray(result)) return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('IPC handlers were not ready after module init');
+}
+
 async function initializeMainModule() {
   const userDataDir = appMock.getPath('userData');
   fs.rmSync(userDataDir, { recursive: true, force: true });
   fs.mkdirSync(path.join(userDataDir, 'downloads'), { recursive: true });
+  destroyAllBrowserWindows();
   clearHandlerMaps();
   sendMock.mockClear();
-  startDownloadMock.mockClear();
-  cancelActiveSessionMock.mockClear();
+  resetDownloadMocks();
   fs.mkdirSync(path.dirname(ytdlpFixturePath), { recursive: true });
   fs.writeFileSync(ytdlpFixturePath, '');
   vi.resetModules();
   await import('../main/main');
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await appMock.whenReady.mock.results.at(-1)?.value;
+  await waitForAuthorizedHandlers();
+}
+
+async function reloadMainModulePreservingUserData() {
+  destroyAllBrowserWindows();
+  clearHandlerMaps();
+  sendMock.mockClear();
+  fs.mkdirSync(path.dirname(ytdlpFixturePath), { recursive: true });
+  fs.writeFileSync(ytdlpFixturePath, '');
+  vi.resetModules();
+  await import('../main/main');
+  await appMock.whenReady.mock.results.at(-1)?.value;
+  await waitForAuthorizedHandlers();
+}
+
+async function getAuthorizedQueue(options?: { minLength?: number }) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const result = await handleHandlers['get-queue']!(queueEvent);
+    if (Array.isArray(result)) {
+      if (options?.minLength !== undefined && result.length < options.minLength) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        continue;
+      }
+      return result;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('get-queue never returned an authorized queue array');
+}
+
+async function flushScheduledQueuePersist() {
+  await vi.advanceTimersByTimeAsync(300);
+  await vi.runOnlyPendingTimersAsync();
+}
+
+function readPersistedQueueFile() {
+  const queuePath = path.join(appMock.getPath('userData'), 'download-queue.json');
+  expect(fs.existsSync(queuePath)).toBe(true);
+  return JSON.parse(fs.readFileSync(queuePath, 'utf8')) as Array<{ url: string }>;
 }
 
 const queueEvent = { sender: { id: 1 } };
 
 describe('queue edge cases and error handling', () => {
   beforeEach(async () => {
+    vi.useRealTimers();
     await initializeMainModule();
   });
 
@@ -468,25 +542,22 @@ describe('queue edge cases and error handling', () => {
     vi.useFakeTimers();
     const addToQueue = handleHandlers['add-to-queue']!;
     await addToQueue({ sender: { id: 1 } }, ['https://example.com/persisted']);
-    await vi.advanceTimersByTimeAsync(300);
+    await flushScheduledQueuePersist();
+
+    const persisted = readPersistedQueueFile();
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]!.url).toBe('https://example.com/persisted');
+
+    vi.clearAllTimers();
     vi.useRealTimers();
 
     const queue1 = (await handleHandlers['get-queue']!(queueEvent)) as Array<{ url: string }>;
     expect(queue1).toHaveLength(1);
     expect(queue1[0]!.url).toBe('https://example.com/persisted');
 
-    const queuePath = path.join(appMock.getPath('userData'), 'download-queue.json');
-    expect(fs.existsSync(queuePath)).toBe(true);
+    await reloadMainModulePreservingUserData();
 
-    clearHandlerMaps();
-    sendMock.mockClear();
-    fs.mkdirSync(path.dirname(ytdlpFixturePath), { recursive: true });
-    fs.writeFileSync(ytdlpFixturePath, '');
-    vi.resetModules();
-    await import('../main/main');
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    const queue2 = (await handleHandlers['get-queue']!(queueEvent)) as Array<{ url: string }>;
+    const queue2 = (await getAuthorizedQueue({ minLength: 1 })) as Array<{ url: string }>;
     expect(queue2).toHaveLength(1);
     expect(queue2[0]!.url).toBe('https://example.com/persisted');
   });
@@ -494,24 +565,18 @@ describe('queue edge cases and error handling', () => {
   it('restores queue from backup when primary is corrupted', async () => {
     vi.useFakeTimers();
     await handleHandlers['clear-queue']!({ sender: { id: 1 } });
-    await vi.advanceTimersByTimeAsync(300);
+    await flushScheduledQueuePersist();
     const addToQueue = handleHandlers['add-to-queue']!;
     await addToQueue({ sender: { id: 1 } }, ['https://example.com/backup-test']);
-    await vi.advanceTimersByTimeAsync(300);
+    await flushScheduledQueuePersist();
     vi.useRealTimers();
 
     const queuePath = path.join(appMock.getPath('userData'), 'download-queue.json');
     fs.writeFileSync(queuePath, '{invalid json}');
 
-    clearHandlerMaps();
-    sendMock.mockClear();
-    fs.mkdirSync(path.dirname(ytdlpFixturePath), { recursive: true });
-    fs.writeFileSync(ytdlpFixturePath, '');
-    vi.resetModules();
-    await import('../main/main');
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await reloadMainModulePreservingUserData();
 
-    const queue = (await handleHandlers['get-queue']!(queueEvent)) as Array<{ url: string }>;
+    const queue = (await getAuthorizedQueue({ minLength: 1 })) as Array<{ url: string }>;
     expect(queue).toHaveLength(1);
     expect(queue[0]!.url).toBe('https://example.com/backup-test');
   });
@@ -524,13 +589,9 @@ describe('queue edge cases and error handling', () => {
     fs.writeFileSync(queuePath, '{bad}');
     fs.writeFileSync(backupPath, '{also bad}');
 
-    clearHandlerMaps();
-    sendMock.mockClear();
-    vi.resetModules();
-    await import('../main/main');
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await reloadMainModulePreservingUserData();
 
-    const queue = await handleHandlers['get-queue']!(queueEvent);
+    const queue = await getAuthorizedQueue();
     expect(queue).toEqual([]);
   });
 
@@ -543,13 +604,9 @@ describe('queue edge cases and error handling', () => {
     ];
     fs.writeFileSync(queuePath, JSON.stringify(staleQueue));
 
-    clearHandlerMaps();
-    sendMock.mockClear();
-    vi.resetModules();
-    await import('../main/main');
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await reloadMainModulePreservingUserData();
 
-    const queue = (await handleHandlers['get-queue']!(queueEvent)) as Array<{ status: string }>;
+    const queue = (await getAuthorizedQueue({ minLength: 1 })) as Array<{ status: string }>;
     expect(queue[0]!.status).toBe('pending');
   });
 });

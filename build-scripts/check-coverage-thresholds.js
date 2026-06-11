@@ -13,6 +13,9 @@ const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
 const thresholds = {
   'src/main/main.ts': { lines: 12, statements: 12 },
   'src/main/preload.ts': { lines: 80, statements: 80 },
+  'src/main/processKill.ts': { lines: 80, statements: 80 },
+  'src/utils/validation.ts': { lines: 85, statements: 85 },
+  'src/utils/downloadLifecycle.ts': { lines: 90, statements: 90 },
 };
 
 function findCoverageEntry(suffix) {
@@ -46,4 +49,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('Coverage thresholds passed for main.ts and preload.ts.');
+console.log('Coverage thresholds passed.');

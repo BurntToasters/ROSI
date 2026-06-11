@@ -85,6 +85,12 @@ describe('parseVideoInfo', () => {
     expect(info?.thumbnail).toBe('https://example.com/a.jpg');
   });
 
+  it('uses Playlist as the fallback title for playlist payloads', () => {
+    const info = parseVideoInfo(JSON.stringify({ _type: 'playlist', entries: [{ title: 'a' }] }));
+    expect(info?.title).toBe('Playlist');
+    expect(info?.isPlaylist).toBe(true);
+  });
+
   it('defaults missing optional fields to null', () => {
     const info = parseVideoInfo(JSON.stringify({ title: 'Bare' }));
     expect(info).toEqual({
