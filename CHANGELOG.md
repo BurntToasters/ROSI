@@ -62,21 +62,6 @@
 - **Testing:** Added jsdom DOM coverage for the renderer plus tests for video info parsing, codec-aware FFmpeg args, GPU probing, settings migration, IPC validation, and queue wiring.
 - **PKG:** Updated packages.
 
-## Changes in `v4.0.13:`
-
-- **Electron:** Updated electron to `42.2.0`
-- **PKG:** Updated packages.
-
-## Changes in `v4.0.12:`
-
-- **Electron:** Updated electron to `42.0.0`.
-- **PKG:** Updated packages.
-
-## Changes in `v4.0.9:`
-
-- **Electron:** Updated electron to `41.5.0`.
-- **PKG:** Updated packages.
-
 ## Changes in `v4.0.0:`
 
 ### Welcome to ROSI v4!
