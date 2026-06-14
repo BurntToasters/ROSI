@@ -146,6 +146,15 @@ export interface BuildYtdlpArgsResult {
   statusMessages: string[];
 }
 
+function insertBeforeUrlSeparator(args: string[], ...items: string[]): void {
+  const separatorIndex = args.indexOf('--');
+  if (separatorIndex === -1) {
+    args.splice(args.length - 1, 0, ...items);
+    return;
+  }
+  args.splice(separatorIndex, 0, ...items);
+}
+
 export function buildYtdlpArgs({
   normalizedDownloadDir,
   url,
@@ -172,11 +181,11 @@ export function buildYtdlpArgs({
   const statusMessages: string[] = [];
 
   if (pathOutputFile) {
-    args.splice(args.indexOf('--'), 0, '--print-to-file', 'after_move:filepath', pathOutputFile);
+    insertBeforeUrlSeparator(args, '--print-to-file', 'after_move:filepath', pathOutputFile);
   }
 
   if (ffmpegLocation) {
-    args.splice(args.length - 1, 0, '--ffmpeg-location', ffmpegLocation);
+    insertBeforeUrlSeparator(args, '--ffmpeg-location', ffmpegLocation);
   }
 
   const formatFlagIndex = args.indexOf('-f');
@@ -200,14 +209,14 @@ export function buildYtdlpArgs({
     const audioOutputFmt = ALLOWED_AUDIO_FORMATS.has(settings.audioFormat)
       ? settings.audioFormat
       : 'mp3';
-    args.splice(-1, 0, '-x', '--audio-format', audioOutputFmt, '--audio-quality', '0');
+    insertBeforeUrlSeparator(args, '-x', '--audio-format', audioOutputFmt, '--audio-quality', '0');
     statusMessages.push(`🎵 Audio-only mode enabled (${audioOutputFmt.toUpperCase()})`);
   }
 
   if (settings.hookBrowser && settings.browserChoice) {
     const normalized = settings.browserChoice.toLowerCase();
     if (ALLOWED_BROWSERS.has(normalized)) {
-      args.splice(-1, 0, '--cookies-from-browser', normalized);
+      insertBeforeUrlSeparator(args, '--cookies-from-browser', normalized);
     }
   }
 
@@ -215,22 +224,22 @@ export function buildYtdlpArgs({
     const langs = SUBTITLE_LANGS_PATTERN.test(settings.subtitleLangs)
       ? settings.subtitleLangs
       : 'en';
-    args.splice(-1, 0, '--write-subs', '--embed-subs', '--sub-langs', langs);
+    insertBeforeUrlSeparator(args, '--write-subs', '--embed-subs', '--sub-langs', langs);
     statusMessages.push(`💬 Subtitles enabled (${langs})`);
   }
 
   if (settings.embedThumbnail) {
-    args.splice(-1, 0, '--embed-thumbnail');
+    insertBeforeUrlSeparator(args, '--embed-thumbnail');
     statusMessages.push('🖼️ Embedding thumbnail');
   }
 
   if (settings.embedMetadata) {
-    args.splice(-1, 0, '--embed-metadata');
+    insertBeforeUrlSeparator(args, '--embed-metadata');
     statusMessages.push('🏷️ Embedding metadata');
   }
 
   if (settings.sponsorblockRemove) {
-    args.splice(-1, 0, '--sponsorblock-remove', 'default');
+    insertBeforeUrlSeparator(args, '--sponsorblock-remove', 'default');
     statusMessages.push('⏭️ SponsorBlock: removing segments');
   }
 
