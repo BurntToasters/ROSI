@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { randomUUID } from 'crypto';
 import log from 'electron-log/main.js';
-import { isPackaged, resolveYtdlpPath, verifyBundledFfmpeg } from './platform';
+import { isPackaged, initializeYtdlpPath, verifyBundledFfmpeg } from './platform';
 import {
   loadSettings,
   saveSettings,
@@ -82,7 +82,7 @@ process.on('unhandledRejection', (reason) => {
 let ytdlpPath: string | null = null;
 function getYtdlpPath(): string {
   if (!ytdlpPath) {
-    ytdlpPath = resolveYtdlpPath();
+    throw new Error('yt-dlp path has not been initialized.');
   }
   return ytdlpPath;
 }
@@ -435,13 +435,14 @@ if (isPrimaryInstance && !isSmokeRun) {
   });
 }
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   if (!isPrimaryInstance) {
     app.quit();
     return;
   }
 
-  const resolvedYtdlpPath = getYtdlpPath();
+  ytdlpPath = await initializeYtdlpPath();
+  const resolvedYtdlpPath = ytdlpPath;
   if (!fs.existsSync(resolvedYtdlpPath)) {
     dialog.showErrorBox(
       'Missing Dependency',
