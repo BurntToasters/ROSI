@@ -21,9 +21,15 @@ export interface Settings {
   gpuType: 'auto' | 'nvidia' | 'amd' | 'intel';
   bestQuality: boolean;
   ffmpegPath: string;
+  downloadFolder: string;
   hideSupportModal: boolean;
   checkUpdatesOnStartup: boolean;
   updateChannel: UpdateChannel;
+  writeSubtitles: boolean;
+  subtitleLangs: string;
+  embedThumbnail: boolean;
+  embedMetadata: boolean;
+  sponsorblockRemove: boolean;
 }
 
 export type UpdateChannel = 'auto' | 'stable' | 'beta';
@@ -52,13 +58,18 @@ export interface DownloadLifecycleState {
   completed: boolean;
 }
 
+export type DownloadOutcome = 'success' | 'failed' | 'cancelled';
+
+export type DownloadSessionOwner = 'manual' | 'queue';
+
 export interface DownloadSession {
   id: number;
   sender: Electron.WebContents;
+  owner: DownloadSessionOwner;
   lifecycle: DownloadLifecycleState;
   ytdlpProcess: import('child_process').ChildProcess | null;
   ffmpegProcess: import('child_process').ChildProcess | null;
-  onComplete?: (statusMessage: string) => void;
+  onComplete?: (statusMessage: string, outcome: DownloadOutcome) => void;
 }
 
 export interface DownloadRequestOptions {
@@ -80,6 +91,18 @@ export interface GpuDetectionResult {
 export interface FormatsProcess {
   proc: import('child_process').ChildProcess;
   cancelled: boolean;
+}
+
+export interface VideoInfo {
+  title: string;
+  uploader: string | null;
+  durationSeconds: number | null;
+  thumbnail: string | null;
+  ext: string | null;
+  viewCount: number | null;
+  isPlaylist: boolean;
+  playlistCount: number | null;
+  webpageUrl: string | null;
 }
 
 export interface NotificationRequest {
@@ -140,6 +163,8 @@ export interface RendererApi {
   restartApp: () => Promise<void>;
   getChannel: () => DistributionChannel;
   getFormats: (url: string) => Promise<IpcResult<string>>;
+  getVideoInfo: (url: string) => Promise<IpcResult<VideoInfo>>;
+  cancelVideoInfo: () => void;
   selectDownloadLocation: () => Promise<string | null>;
   getSettings: () => Promise<Settings>;
   saveSettings: (settings: Partial<Settings>) => Promise<IpcResult<Settings>>;
@@ -164,7 +189,6 @@ export interface RendererApi {
   installUpdate: () => void;
   onUpdaterStatus: (callback: (data: UpdaterStatusEvent) => void) => () => void;
   onUpdaterProgress: (callback: (data: UpdaterProgressEvent) => void) => () => void;
-  onDownloadProgress: (callback: (data: Record<string, unknown>) => void) => () => void;
   onProgress: (callback: (message: string) => void) => () => void;
   onComplete: (callback: (message: string) => void) => () => void;
   openFileLocation: (filePath: string) => Promise<IpcResult<{ opened: boolean }>>;
@@ -183,4 +207,5 @@ export interface RendererApi {
   cancelQueue: () => Promise<IpcResult<void>>;
   onPrepareForClose: (callback: () => void | Promise<void>) => () => void;
   onQueueUpdate: (callback: (queue: QueueItem[]) => void) => () => void;
+  onSettingsImported: (callback: (settings: Settings) => void) => () => void;
 }

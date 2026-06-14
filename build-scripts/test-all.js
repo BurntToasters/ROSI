@@ -16,6 +16,7 @@ const colors = {
 
 const results = {
   unit: { status: 'pending', passed: 0, failed: 0 },
+  compile: { status: 'pending' },
   lint: { status: 'pending' },
   format: { status: 'pending' },
   typecheck: { status: 'pending' },
@@ -153,6 +154,10 @@ function runConfigChecks() {
     );
     assertConfig(pkg.main === 'dist/main/main.js', 'package.json: main must be dist/main/main.js');
     assertConfig(
+      pkg.desktopName === 'com.burnttoasters.rosi.desktop',
+      'package.json: desktopName must be com.burnttoasters.rosi.desktop'
+    );
+    assertConfig(
       Boolean(pkg.scripts && pkg.scripts['ffmpeg:check']),
       'package.json: missing scripts.ffmpeg:check'
     );
@@ -187,6 +192,10 @@ function runConfigChecks() {
       'electron-builder.base.yml: linux.extraResources missing for yt-dlp binaries'
     );
     assertConfig(
+      baseConfig.linux?.syncDesktopName === true,
+      'electron-builder.base.yml: linux.syncDesktopName must be true'
+    );
+    assertConfig(
       Boolean(githubConfig.publish),
       'electron-builder.github.yml: missing publish config'
     );
@@ -209,6 +218,7 @@ function runConfigChecks() {
       'build/app-icon.icns',
       'build/app-icon.png',
       'build/appx/appxmanifest.xml',
+      'com.burnttoasters.rosi.desktop',
     ];
     for (const relativePath of requiredFiles) {
       assertConfig(
@@ -234,6 +244,9 @@ function run() {
   const unitResult = runCommand('unit', 'npm test', parseUnitTests);
   results.unit.status = unitResult.ok ? 'passed' : 'failed';
 
+  const compileResult = runCommand('compile', 'npm run compile');
+  results.compile.status = compileResult.ok ? 'passed' : 'failed';
+
   const lintResult = runCommand('lint', 'npm run lint');
   results.lint.status = lintResult.ok ? 'passed' : 'failed';
 
@@ -250,6 +263,7 @@ function run() {
 
   const summaryLines = [
     `${colors.bold}Unit:${colors.reset}      ${results.unit.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset} (${results.unit.passed} passed${results.unit.failed > 0 ? `, ${results.unit.failed} failed` : ''})`,
+    `${colors.bold}Compile:${colors.reset}   ${results.compile.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset}`,
     `${colors.bold}Lint:${colors.reset}      ${results.lint.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset}`,
     `${colors.bold}Format:${colors.reset}    ${results.format.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset}`,
     `${colors.bold}Typecheck:${colors.reset} ${results.typecheck.status === 'passed' ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset}`,
@@ -289,4 +303,11 @@ if (require.main === module) {
   run();
 }
 
-module.exports = { runCommand, runSyntaxChecks, runConfigChecks };
+module.exports = {
+  runCommand,
+  runSyntaxChecks,
+  runConfigChecks,
+  stripAnsi,
+  parseUnitTests,
+  results,
+};

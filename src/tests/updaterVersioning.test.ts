@@ -38,14 +38,17 @@ vi.mock('electron-log/main.js', () => ({
   },
 }));
 
+import { app } from 'electron';
 import {
   applyChannel,
+  applyChannelFromSettings,
   comparePrerelease,
   compareVersions,
   isBetaVersion,
   parseVersion,
   resolveUseBeta,
 } from '../main/updater';
+import type { Settings } from '../types';
 
 describe('updater versioning helpers', () => {
   it('detects prerelease versions', () => {
@@ -78,7 +81,12 @@ describe('updater versioning helpers', () => {
   it('resolves update channel behavior', () => {
     expect(resolveUseBeta('beta')).toBe(true);
     expect(resolveUseBeta('stable')).toBe(false);
-    expect(resolveUseBeta('auto')).toBe(false);
+
+    mockAppGetVersion.mockReturnValue('3.4.3');
+    expect(resolveUseBeta('auto', app.getVersion())).toBe(isBetaVersion(app.getVersion()));
+
+    mockAppGetVersion.mockReturnValue('3.4.3-beta.1');
+    expect(resolveUseBeta('auto', app.getVersion())).toBe(isBetaVersion(app.getVersion()));
   });
 
   it('applies updater channel settings', () => {
@@ -87,6 +95,18 @@ describe('updater versioning helpers', () => {
     expect(mockAutoUpdater.allowPrerelease).toBe(true);
 
     applyChannel(false);
+    expect(mockAutoUpdater.channel).toBe('latest');
+    expect(mockAutoUpdater.allowPrerelease).toBe(false);
+  });
+
+  it('applyChannelFromSettings uses the saved update channel', () => {
+    mockAppGetVersion.mockReturnValue('4.1.0-beta.2');
+    applyChannelFromSettings({ updateChannel: 'beta' } as Settings);
+    expect(mockAutoUpdater.channel).toBe('beta');
+    expect(mockAutoUpdater.allowPrerelease).toBe(true);
+
+    mockAppGetVersion.mockReturnValue('4.1.0');
+    applyChannelFromSettings({ updateChannel: 'stable' } as Settings);
     expect(mockAutoUpdater.channel).toBe('latest');
     expect(mockAutoUpdater.allowPrerelease).toBe(false);
   });

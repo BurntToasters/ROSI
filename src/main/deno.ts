@@ -1,6 +1,5 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { spawn } from 'child_process';
 import { BrowserWindow, dialog } from 'electron';
 import log from 'electron-log/main.js';
 import type { MessageBoxOptions } from 'electron';
@@ -10,7 +9,7 @@ import {
   MAX_OUTPUT_BUFFER,
   MAX_ERROR_BUFFER,
 } from './constants';
-import { buildEnhancedPath, isWindows } from './platform';
+import { spawnWithEnv, isWindows } from './platform';
 
 function getDenoSearchPaths(): string[] {
   if (isWindows) {
@@ -45,9 +44,7 @@ export async function checkDenoInstalled(): Promise<boolean> {
     }
 
     const checkCmd = isWindows ? 'where' : 'which';
-    const proc = spawn(checkCmd, ['deno'], {
-      env: { PATH: buildEnhancedPath() },
-    });
+    const proc = spawnWithEnv(checkCmd, ['deno']);
 
     const timeout = setTimeout(() => {
       try {
@@ -107,9 +104,7 @@ export async function installDeno(
       installArgs = ['-c', 'curl -fsSL https://deno.land/install.sh | sh'];
     }
 
-    const proc = spawn(installCmd, installArgs, {
-      env: { ...process.env, PATH: buildEnhancedPath() },
-    });
+    const proc = spawnWithEnv(installCmd, installArgs);
     let output = '';
     let error = '';
     let settled = false;

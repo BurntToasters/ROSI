@@ -4,16 +4,27 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self';"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self';"
     />
-    <title>Rosi</title>
+    <title>ROSI</title>
+    <script>
+      (function () {
+        try {
+          var pref = localStorage.getItem('rosi-theme');
+          var theme = pref;
+          if (!theme || theme === 'system') {
+            theme =
+              window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light';
+          } else if (theme !== 'light' && theme !== 'dark' && theme !== 'purple') {
+            theme = 'dark';
+          }
+          document.documentElement.dataset.theme = theme;
+        } catch (e) {}
+      })();
+    </script>
     <link rel="stylesheet" href="main.css" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
   </head>
   <body>
     <a href="#main-content" class="skip-link">Skip to main content</a>
@@ -165,6 +176,96 @@
 
         <section class="settings-section">
           <div
+            id="settingsSectionHeaderEnhancements"
+            class="settings-section-header"
+            role="button"
+            tabindex="0"
+            aria-expanded="true"
+            aria-controls="settingsSectionBodyEnhancements"
+          >
+            <h3 class="settings-section-title">Enhancements</h3>
+            <svg
+              class="settings-chevron"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+          <div
+            id="settingsSectionBodyEnhancements"
+            class="settings-section-body"
+            role="region"
+            aria-labelledby="settingsSectionHeaderEnhancements"
+          >
+            <label class="toggle-switch">
+              <input type="checkbox" id="embedMetadataToggle" />
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">Embed metadata (title, artist, date)</span>
+            </label>
+
+            <label class="toggle-switch">
+              <input type="checkbox" id="embedThumbnailToggle" />
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">Embed thumbnail / cover art</span>
+            </label>
+
+            <div class="toggle-row">
+              <label class="toggle-switch">
+                <input type="checkbox" id="sponsorblockToggle" />
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">SponsorBlock</span>
+              </label>
+              <a
+                href="#"
+                id="sponsorblockHelp"
+                class="help-icon"
+                title="Learn more"
+                aria-label="Learn more about SponsorBlock"
+                >?</a
+              >
+            </div>
+
+            <label class="toggle-switch">
+              <input type="checkbox" id="writeSubtitlesToggle" />
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">Download &amp; embed subtitles</span>
+            </label>
+
+            <div id="subtitleLangsContainer" class="sub-option">
+              <label class="select-label">
+                <span>Subtitle languages</span>
+                <input
+                  id="subtitleLangsInput"
+                  type="text"
+                  placeholder="en,es (comma-separated)"
+                  autocomplete="off"
+                  spellcheck="false"
+                  aria-describedby="subtitleLangsHint subtitleLangsError"
+                />
+              </label>
+              <div id="subtitleLangsHint" class="settings-hint">
+                Comma-separated language codes (for example <code>en,es</code>). Use
+                <code>all</code> for every available language.
+              </div>
+              <p
+                id="subtitleLangsError"
+                class="url-validation-message"
+                role="alert"
+                aria-live="polite"
+              ></p>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div
             id="settingsSectionHeaderBrowser"
             class="settings-section-header"
             role="button"
@@ -193,14 +294,21 @@
             role="region"
             aria-labelledby="settingsSectionHeaderBrowser"
           >
-            <label class="toggle-switch">
-              <input type="checkbox" id="hookBrowserToggle" />
-              <span class="toggle-slider"></span>
-              <span class="toggle-text">
-                Hook into web browser
-                <a href="#" id="browserCookiesHelp" class="help-icon" title="Learn more">?</a>
-              </span>
-            </label>
+            <div class="toggle-row">
+              <label class="toggle-switch">
+                <input type="checkbox" id="hookBrowserToggle" />
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">Hook into web browser</span>
+              </label>
+              <a
+                href="#"
+                id="browserCookiesHelp"
+                class="help-icon"
+                title="Learn more"
+                aria-label="Learn more about browser cookie integration"
+                >?</a
+              >
+            </div>
 
             <div id="browserChoiceContainer" class="sub-option">
               <label class="select-label">
@@ -212,6 +320,10 @@
                   <option value="Brave">Brave</option>
                 </select>
               </label>
+              <div id="browserWindowsHint" class="settings-hint hidden">
+                On Windows, Chromium browsers (Chrome, Edge, Brave) encrypt their cookies in a way
+                yt-dlp cannot read, so ROSI uses Firefox cookies here.
+              </div>
             </div>
           </div>
         </section>
@@ -320,7 +432,7 @@
             >
               ▸ Update channel settings
             </button>
-            <div id="updateChannelContainer" class="sub-option">
+            <div id="updateChannelContainer" class="sub-option" aria-hidden="true">
               <label class="select-label">
                 <span>Update Channel:</span>
                 <select id="updateChannelSelect">
@@ -445,7 +557,9 @@
           Reset All Settings
         </button>
         <div class="version-info">
-          <a id="versionLink" href="#">Loading...</a>
+          <a id="versionLink" href="#" aria-label="View release notes (opens externally)"
+            >Loading...</a
+          >
           <span id="betaBadge" class="beta-badge hidden">BETA</span>
         </div>
       </div>
@@ -454,7 +568,13 @@
     <main id="main-content" class="main-content">
       <div class="app-shell">
         <header class="top-bar">
-          <button id="settingsBtn" class="icon-btn" title="Settings" aria-label="Settings">
+          <button
+            id="settingsBtn"
+            class="icon-btn"
+            title="Settings"
+            aria-label="Settings"
+            aria-expanded="false"
+          >
             <svg
               width="22"
               height="22"
@@ -614,19 +734,83 @@
                 aria-live="polite"
               ></p>
 
+              <div class="preview-actions">
+                <button
+                  id="previewBtn"
+                  class="preview-btn"
+                  type="button"
+                  data-default-text="Preview"
+                  disabled
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                  Preview
+                </button>
+              </div>
+
+              <div
+                id="preview-card"
+                class="preview-card"
+                role="region"
+                aria-label="Video preview"
+                aria-live="polite"
+              >
+                <button
+                  id="previewClose"
+                  class="preview-close"
+                  type="button"
+                  title="Hide preview"
+                  aria-label="Hide preview"
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
+                </button>
+                <div class="preview-thumb-wrap">
+                  <img id="preview-thumb" class="preview-thumb" alt="" />
+                  <span id="preview-duration" class="preview-duration"></span>
+                  <span id="preview-playlist-badge" class="preview-playlist-badge">Playlist</span>
+                </div>
+                <div class="preview-meta">
+                  <p id="preview-title" class="preview-title"></p>
+                  <p id="preview-sub" class="preview-sub"></p>
+                </div>
+              </div>
+
               <div id="progress-container" class="progress-container">
                 <div id="progress-phases" class="progress-phases">
-                  <div class="progress-phase active" data-phase="download">
+                  <div class="progress-phase active" data-phase="download" aria-current="step">
                     <span class="phase-dot"></span>
                     <span class="phase-label">Download</span>
                   </div>
-                  <div class="progress-phase-connector"></div>
-                  <div class="progress-phase" data-phase="merge">
+                  <div class="progress-phase-connector" aria-hidden="true"></div>
+                  <div class="progress-phase" data-phase="merge" aria-hidden="true">
                     <span class="phase-dot"></span>
                     <span class="phase-label">Merge</span>
                   </div>
-                  <div class="progress-phase-connector"></div>
-                  <div class="progress-phase" data-phase="convert">
+                  <div class="progress-phase-connector" aria-hidden="true"></div>
+                  <div class="progress-phase" data-phase="convert" aria-hidden="true">
                     <span class="phase-dot"></span>
                     <span class="phase-label">Convert</span>
                   </div>
@@ -635,10 +819,18 @@
                   <span id="progress-status" class="progress-status" aria-live="polite">Ready</span>
                   <span id="progress-percent" class="progress-percent" aria-live="polite"></span>
                 </div>
-                <div class="progress-bar-wrapper">
+                <div
+                  id="progress-bar-wrapper"
+                  class="progress-bar-wrapper"
+                  role="progressbar"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow="0"
+                  aria-labelledby="progress-status"
+                >
                   <div id="progress-bar" class="progress-bar"></div>
                 </div>
-                <div id="progress-details" class="progress-details"></div>
+                <div id="progress-details" class="progress-details" aria-live="polite"></div>
                 <div id="progress-complete-icon" class="progress-complete-icon">
                   <svg
                     width="32"
@@ -820,34 +1012,21 @@
             >
               Queue status updates will appear here.
             </p>
-            <div id="queueList" class="queue-list" aria-live="polite"></div>
+            <div id="queueList" class="queue-list" role="list"></div>
           </section>
 
           <section id="download-history" class="download-history">
-            <div
-              class="history-header"
-              id="historyHeader"
-              role="button"
-              aria-expanded="true"
-              aria-controls="history-list"
-              tabindex="0"
-            >
-              <div class="history-header-left">
-                <svg
-                  class="history-collapse-icon"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <polyline points="6 9 12 15 18 9"></polyline>
-                </svg>
-                <span class="history-title">
+            <div class="history-header">
+              <button
+                type="button"
+                class="history-collapse-btn"
+                id="historyToggle"
+                aria-expanded="true"
+                aria-controls="history-list"
+              >
+                <span class="history-header-left">
                   <svg
+                    class="history-collapse-icon"
                     width="16"
                     height="16"
                     viewBox="0 0 24 24"
@@ -857,14 +1036,29 @@
                     stroke-linecap="round"
                     stroke-linejoin="round"
                   >
-                    <circle cx="12" cy="12" r="10" />
-                    <polyline points="12 6 12 12 16 14" />
+                    <polyline points="6 9 12 15 18 9"></polyline>
                   </svg>
-                  Recent Downloads
+                  <span class="history-title">
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="12" cy="12" r="10" />
+                      <polyline points="12 6 12 12 16 14" />
+                    </svg>
+                    Recent Downloads
+                  </span>
+                  <span id="history-count" class="history-count">0</span>
                 </span>
-                <span id="history-count" class="history-count">0</span>
-              </div>
+              </button>
               <button
+                type="button"
                 id="clearHistory"
                 class="history-clear-btn"
                 title="Clear history"
@@ -886,34 +1080,21 @@
                 </svg>
               </button>
             </div>
-            <div id="history-list" class="history-list"></div>
+            <div id="history-list" class="history-list" role="list"></div>
           </section>
 
           <section id="console-section" class="console-section">
-            <div
-              class="console-header"
-              id="consoleHeader"
-              role="button"
-              aria-expanded="false"
-              aria-controls="output"
-              tabindex="0"
-            >
-              <div class="console-header-left">
-                <svg
-                  class="console-collapse-icon"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <polyline points="6 9 12 15 18 9"></polyline>
-                </svg>
-                <span class="console-title">
+            <div class="console-header">
+              <button
+                type="button"
+                class="console-collapse-btn"
+                id="consoleToggleBtn"
+                aria-expanded="false"
+                aria-controls="output"
+              >
+                <span class="console-header-left">
                   <svg
+                    class="console-collapse-icon"
                     width="16"
                     height="16"
                     viewBox="0 0 24 24"
@@ -923,13 +1104,28 @@
                     stroke-linecap="round"
                     stroke-linejoin="round"
                   >
-                    <polyline points="4 17 10 11 4 5" />
-                    <line x1="12" y1="19" x2="20" y2="19" />
+                    <polyline points="6 9 12 15 18 9"></polyline>
                   </svg>
-                  Console Output
+                  <span class="console-title">
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <polyline points="4 17 10 11 4 5" />
+                      <line x1="12" y1="19" x2="20" y2="19" />
+                    </svg>
+                    Console Output
+                  </span>
                 </span>
-              </div>
+              </button>
               <button
+                type="button"
                 id="clearConsole"
                 class="console-clear-btn"
                 title="Clear console"
@@ -951,14 +1147,22 @@
                 </svg>
               </button>
             </div>
-            <pre id="output" class="console-output"></pre>
+            <pre id="output" class="console-output" role="log" aria-label="Console output"></pre>
           </section>
         </div>
 
         <div id="update-banner" class="update-banner">
           <div class="update-banner-content">
             <span id="update-banner-text" class="update-banner-text">Downloading update…</span>
-            <div class="update-banner-progress">
+            <div
+              id="update-banner-progress"
+              class="update-banner-progress"
+              role="progressbar"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+              aria-labelledby="update-banner-text"
+            >
               <div id="update-banner-bar" class="update-banner-bar"></div>
             </div>
             <span
@@ -968,7 +1172,13 @@
               aria-live="polite"
               aria-atomic="true"
             ></span>
-            <button id="update-banner-cancel" class="update-banner-cancel">Cancel</button>
+            <button
+              id="update-banner-cancel"
+              class="update-banner-cancel"
+              aria-label="Cancel update download"
+            >
+              Cancel
+            </button>
           </div>
         </div>
 
@@ -990,6 +1200,7 @@
       role="dialog"
       aria-modal="true"
       aria-labelledby="modal-title"
+      aria-hidden="true"
     >
       <div class="modal-box">
         <h3 id="modal-title">Modal Title</h3>
@@ -1005,6 +1216,7 @@
       role="dialog"
       aria-modal="true"
       aria-label="Open Source Licenses"
+      aria-hidden="true"
     >
       <div class="licenses-container">
         <div class="licenses-header">
@@ -1025,11 +1237,16 @@
             </svg>
           </button>
         </div>
-        <iframe id="licenses-frame" src="licenses-iframe.html"></iframe>
+        <iframe id="licenses-frame" src="licenses-iframe.html" title="ROSI licenses"></iframe>
       </div>
     </div>
 
     <div id="toast-container" class="toast-container" aria-live="polite"></div>
+    <div
+      id="toast-container-assertive"
+      class="toast-container toast-container-assertive"
+      aria-live="assertive"
+    ></div>
 
     <!-- Setup Wizard Overlay -->
     <div
@@ -1038,9 +1255,18 @@
       role="dialog"
       aria-modal="true"
       aria-labelledby="wizard-title"
+      aria-hidden="true"
     >
       <div class="wizard-card">
-        <div class="wizard-progress">
+        <div id="wizard-step-announce" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+        <div
+          class="wizard-progress"
+          role="progressbar"
+          aria-valuemin="1"
+          aria-valuemax="4"
+          aria-valuenow="1"
+          aria-label="Setup progress"
+        >
           <div class="wizard-progress-bar" id="wizard-progress-bar"></div>
         </div>
 

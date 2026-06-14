@@ -1,2 +1,7 @@
-Place the platform-specific ffmpeg binary in this directory.
-See resources/ffmpeg/README.md for details.
+Place Linux x64 FFmpeg binaries here:
+- ffmpeg
+- ffprobe
+
+Build from: https://github.com/BurntToasters/ffmpeg-static-builds
+
+Ensure execute permissions: chmod +x ffmpeg ffprobe

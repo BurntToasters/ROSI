@@ -16,6 +16,8 @@ const api: RendererApi = {
   getChannel: () =>
     process.env.CHANNEL === 'msstore' || process.windowsStore ? 'msstore' : 'github',
   getFormats: (url: string) => ipcRenderer.invoke('getFormats', url),
+  getVideoInfo: (url: string) => ipcRenderer.invoke('get-video-info', url),
+  cancelVideoInfo: () => ipcRenderer.send('cancel-video-info'),
   selectDownloadLocation: () => ipcRenderer.invoke('select-download-location'),
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings: Partial<Settings>) => ipcRenderer.invoke('save-settings', settings),
@@ -42,12 +44,6 @@ const api: RendererApi = {
     const listener = (_: Electron.IpcRendererEvent, data: UpdaterProgressEvent) => callback(data);
     ipcRenderer.on('updater-progress', listener);
     return () => ipcRenderer.removeListener('updater-progress', listener);
-  },
-  onDownloadProgress: (callback: (data: Record<string, unknown>) => void) => {
-    const listener = (_: Electron.IpcRendererEvent, data: Record<string, unknown>) =>
-      callback(data);
-    ipcRenderer.on('download-progress', listener);
-    return () => ipcRenderer.removeListener('download-progress', listener);
   },
   onProgress: (callback: (message: string) => void) => {
     const listener = (_: Electron.IpcRendererEvent, message: string) => callback(message);
@@ -85,6 +81,11 @@ const api: RendererApi = {
     const listener = (_: Electron.IpcRendererEvent, queue: QueueItem[]) => callback(queue);
     ipcRenderer.on('queue-update', listener);
     return () => ipcRenderer.removeListener('queue-update', listener);
+  },
+  onSettingsImported: (callback: (settings: Settings) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, data: Settings) => callback(data);
+    ipcRenderer.on('settings-imported', listener);
+    return () => ipcRenderer.removeListener('settings-imported', listener);
   },
 };
 

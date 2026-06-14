@@ -5,11 +5,15 @@ import log from 'electron-log/main.js';
 import type { AudioFormat, DownloadStats, Settings } from '../types';
 import {
   ALLOWED_AUDIO_FORMATS,
+  ALLOWED_BROWSERS,
   ALLOWED_CONVERT_FORMATS,
   MAX_FORMAT_COUNTS,
   MAX_SETTINGS_IMPORT_BYTES,
   CURRENT_SETTINGS_VERSION,
+  SUBTITLE_LANGS_PATTERN,
 } from './constants';
+import { validateDownloadPath, validateFfmpegPathValue } from '../utils/ipcValidation';
+import { clearGpuCache } from './gpu';
 
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 const statsPath = path.join(app.getPath('userData'), 'download-stats.json');
@@ -28,7 +32,7 @@ const defaultSettings: Settings = {
   keepOriginalAfterConvert: true,
   firstLaunch: true,
   hookBrowser: false,
-  browserChoice: 'Chrome',
+  browserChoice: 'chrome',
   animateBackground: true,
   notifications: true,
   denoReminderDismissed: false,
@@ -36,9 +40,15 @@ const defaultSettings: Settings = {
   gpuType: 'auto',
   bestQuality: false,
   ffmpegPath: '',
+  downloadFolder: '',
   hideSupportModal: false,
   checkUpdatesOnStartup: true,
   updateChannel: 'auto',
+  writeSubtitles: false,
+  subtitleLangs: 'en',
+  embedThumbnail: false,
+  embedMetadata: false,
+  sponsorblockRemove: false,
 };
 
 export function getDefaultSettings(): Settings {
@@ -69,6 +79,15 @@ function readConvertFormat(value: unknown): string {
     : defaultSettings.convertFormat;
 }
 
+function readSubtitleLangs(value: unknown): string {
+  if (typeof value !== 'string') return defaultSettings.subtitleLangs;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 256 || !SUBTITLE_LANGS_PATTERN.test(trimmed)) {
+    return defaultSettings.subtitleLangs;
+  }
+  return trimmed;
+}
+
 function readUpdateChannel(value: unknown): Settings['updateChannel'] {
   return value === 'stable' || value === 'beta' || value === 'auto'
     ? value
@@ -85,6 +104,39 @@ function readGpuType(value: unknown): Settings['gpuType'] {
   return value === 'auto' || value === 'nvidia' || value === 'amd' || value === 'intel'
     ? value
     : defaultSettings.gpuType;
+}
+
+function readBrowserChoice(value: unknown): string {
+  const raw = readString(value, defaultSettings.browserChoice);
+  const capped = raw.length > 64 ? raw.slice(0, 64) : raw;
+  const normalized = capped.trim().toLowerCase();
+  if (ALLOWED_BROWSERS.has(normalized)) {
+    return normalized;
+  }
+  return defaultSettings.browserChoice;
+}
+
+function readFfmpegPath(value: unknown): string {
+  const raw = readString(value, defaultSettings.ffmpegPath);
+  const capped = raw.length > 1024 ? raw.slice(0, 1024) : raw;
+  const validation = validateFfmpegPathValue(capped.trim() || undefined);
+  if (!validation.ok) {
+    return defaultSettings.ffmpegPath;
+  }
+  return validation.data || '';
+}
+
+function readDownloadFolder(value: unknown): string {
+  const raw = readString(value, defaultSettings.downloadFolder);
+  const capped = raw.length > 4096 ? raw.slice(0, 4096) : raw;
+  if (!capped.trim()) {
+    return defaultSettings.downloadFolder;
+  }
+  const validation = validateDownloadPath(capped);
+  if (!validation.ok) {
+    return defaultSettings.downloadFolder;
+  }
+  return validation.data;
 }
 
 function readSettingsVersion(value: unknown): number {
@@ -123,7 +175,7 @@ export function migrateSettings(rawSettings: unknown): Settings {
     ),
     firstLaunch: readBoolean(rawSettings.firstLaunch, defaultSettings.firstLaunch),
     hookBrowser: readBoolean(rawSettings.hookBrowser, defaultSettings.hookBrowser),
-    browserChoice: readString(rawSettings.browserChoice, defaultSettings.browserChoice),
+    browserChoice: readBrowserChoice(rawSettings.browserChoice),
     animateBackground: readBoolean(
       rawSettings.animateBackground,
       defaultSettings.animateBackground
@@ -136,13 +188,22 @@ export function migrateSettings(rawSettings: unknown): Settings {
     gpuAcceleration: readBoolean(rawSettings.gpuAcceleration, defaultSettings.gpuAcceleration),
     gpuType: readGpuType(rawSettings.gpuType),
     bestQuality: readBoolean(rawSettings.bestQuality, defaultSettings.bestQuality),
-    ffmpegPath: readString(rawSettings.ffmpegPath, defaultSettings.ffmpegPath),
+    ffmpegPath: readFfmpegPath(rawSettings.ffmpegPath),
+    downloadFolder: readDownloadFolder(rawSettings.downloadFolder),
     hideSupportModal: readBoolean(rawSettings.hideSupportModal, defaultSettings.hideSupportModal),
     checkUpdatesOnStartup: readBoolean(
       rawSettings.checkUpdatesOnStartup,
       defaultSettings.checkUpdatesOnStartup
     ),
     updateChannel: readUpdateChannel(rawSettings.updateChannel),
+    writeSubtitles: readBoolean(rawSettings.writeSubtitles, defaultSettings.writeSubtitles),
+    subtitleLangs: readSubtitleLangs(rawSettings.subtitleLangs),
+    embedThumbnail: readBoolean(rawSettings.embedThumbnail, defaultSettings.embedThumbnail),
+    embedMetadata: readBoolean(rawSettings.embedMetadata, defaultSettings.embedMetadata),
+    sponsorblockRemove: readBoolean(
+      rawSettings.sponsorblockRemove,
+      defaultSettings.sponsorblockRemove
+    ),
   };
 }
 
@@ -178,6 +239,13 @@ export function saveSettings(
     const completeSettings = normalizeSettingsVersion(
       migrateSettings({ ...existing, ...newSettings })
     );
+    if (
+      (newSettings.ffmpegPath !== undefined && newSettings.ffmpegPath !== existing.ffmpegPath) ||
+      (newSettings.gpuAcceleration !== undefined &&
+        newSettings.gpuAcceleration !== existing.gpuAcceleration)
+    ) {
+      clearGpuCache();
+    }
     const tmpPath = `${settingsPath}.tmp`;
     fs.writeFileSync(tmpPath, JSON.stringify(completeSettings, null, 2), { mode: 0o600 });
     fs.renameSync(tmpPath, settingsPath);
@@ -296,7 +364,7 @@ export async function exportSettingsToFile(
   if (canceled || !filePath) return false;
   try {
     const settings = loadSettings();
-    fs.writeFileSync(filePath, JSON.stringify(settings, null, 2));
+    fs.writeFileSync(filePath, JSON.stringify(settings, null, 2), { mode: 0o600 });
     return true;
   } catch (error) {
     log.error('Failed to export settings:', error);
@@ -306,7 +374,7 @@ export async function exportSettingsToFile(
 
 export async function importSettingsFromFile(
   parentWindow: Electron.BrowserWindow | null
-): Promise<boolean> {
+): Promise<Settings | false> {
   if (!parentWindow || parentWindow.isDestroyed()) return false;
   const { canceled, filePaths } = await dialog.showOpenDialog(parentWindow, {
     title: 'Import Settings',
@@ -334,7 +402,7 @@ export async function importSettingsFromFile(
     const tmpPath = `${settingsPath}.tmp`;
     fs.writeFileSync(tmpPath, JSON.stringify(migrated, null, 2), { mode: 0o600 });
     fs.renameSync(tmpPath, settingsPath);
-    return true;
+    return migrated;
   } catch (error) {
     log.error('Failed to import settings:', error);
     return false;
