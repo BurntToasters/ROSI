@@ -85,11 +85,23 @@ describe('platform bundled ffmpeg resolution', () => {
     expect(platform.getEffectiveFfmpegPath('')).toBe(expectedPath);
   });
 
-  it('falls back to system ffmpeg when no bundled or custom path is available', async () => {
+  it('resolveFfmpegLocationForYtdlp returns bundled directory for yt-dlp', async () => {
+    const resourcesPath = createTempResourcesPath();
+    const ffmpegName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+    const ffprobeName = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
+    createBinary(resourcesPath, path.join('ffmpeg', ffmpegName));
+    createBinary(resourcesPath, path.join('ffmpeg', ffprobeName));
+    const platform = await loadPlatformModule(resourcesPath);
+
+    expect(platform.resolveFfmpegLocationForYtdlp('')).toBe(path.join(resourcesPath, 'ffmpeg'));
+  });
+
+  it('resolveFfmpegLocationForYtdlp returns null when no bundled or custom path exists', async () => {
     const resourcesPath = createTempResourcesPath();
     fs.mkdirSync(path.join(resourcesPath, 'ffmpeg'), { recursive: true });
     const platform = await loadPlatformModule(resourcesPath);
 
+    expect(platform.resolveFfmpegLocationForYtdlp('')).toBeNull();
     expect(platform.resolveBundledFfmpegPath()).toBeNull();
     expect(platform.hasBundledFfmpeg()).toBe(false);
     expect(platform.getEffectiveFfmpegPath('')).toBe('ffmpeg');

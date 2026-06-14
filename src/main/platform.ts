@@ -142,6 +142,42 @@ export function resolveFfmpegPath(customPath: unknown): string | null {
   return candidate;
 }
 
+function copyHelperBinaryToTemp(sourcePath: string): string {
+  const binaryName = path.basename(sourcePath);
+  const isFlatpak = Boolean(process.env.FLATPAK_ID);
+  const binDir = isFlatpak
+    ? path.join(app.getPath('userData'), '.bin')
+    : path.join(app.getPath('temp'), 'rosi-bin');
+  if (!fs.existsSync(binDir)) fs.mkdirSync(binDir, { recursive: true });
+  const tmpBin = path.join(binDir, binaryName);
+  fs.copyFileSync(sourcePath, tmpBin);
+  fs.chmodSync(tmpBin, 0o755);
+
+  const probeName = isWindows ? 'ffprobe.exe' : 'ffprobe';
+  const probeSrc = path.join(path.dirname(sourcePath), probeName);
+  if (fs.existsSync(probeSrc)) {
+    const tmpProbe = path.join(binDir, probeName);
+    fs.copyFileSync(probeSrc, tmpProbe);
+    fs.chmodSync(tmpProbe, 0o755);
+  }
+
+  return tmpBin;
+}
+
+function ensureFfmpegHelperBinaries(dir: string): string | null {
+  const ext = isWindows ? '.exe' : '';
+  const ffmpegPath = path.join(dir, `ffmpeg${ext}`);
+  const ffprobePath = path.join(dir, `ffprobe${ext}`);
+  let effectiveFfmpeg: string | null = null;
+  if (fs.existsSync(ffmpegPath)) {
+    effectiveFfmpeg = ensureExecutable(ffmpegPath);
+  }
+  if (fs.existsSync(ffprobePath)) {
+    ensureExecutable(ffprobePath);
+  }
+  return effectiveFfmpeg;
+}
+
 function ensureExecutable(filePath: string): string {
   if (isWindows) return filePath;
 
@@ -159,16 +195,7 @@ function ensureExecutable(filePath: string): string {
             fs.accessSync(filePath, fs.constants.X_OK);
           } catch {
             try {
-              const binaryName = path.basename(filePath);
-              const isFlatpak = Boolean(process.env.FLATPAK_ID);
-              const binDir = isFlatpak
-                ? path.join(app.getPath('userData'), '.bin')
-                : path.join(app.getPath('temp'), 'rosi-bin');
-              if (!fs.existsSync(binDir)) fs.mkdirSync(binDir, { recursive: true });
-              const tmpBin = path.join(binDir, binaryName);
-              fs.copyFileSync(filePath, tmpBin);
-              fs.chmodSync(tmpBin, 0o755);
-              return tmpBin;
+              return copyHelperBinaryToTemp(filePath);
             } catch (copyErr) {
               log.error(
                 `Failed to copy ffmpeg to temp for execution: ${(copyErr as Error).message}`
@@ -218,10 +245,12 @@ export function resolveBundledFfmpegPath(): string | null {
     const ext = isWindows ? '.exe' : '';
     const bundledPath = path.join(bundledDir, `ffmpeg${ext}`);
     if (fs.existsSync(bundledPath)) {
-      const effectivePath = ensureExecutable(bundledPath);
-      cachedBundledFfmpegPath = effectivePath;
-      log.info(`Resolved bundled ffmpeg at: ${effectivePath}`);
-      return effectivePath;
+      const effectivePath = ensureFfmpegHelperBinaries(bundledDir);
+      if (effectivePath) {
+        cachedBundledFfmpegPath = effectivePath;
+        log.info(`Resolved bundled ffmpeg at: ${effectivePath}`);
+        return effectivePath;
+      }
     }
   }
 
@@ -256,36 +285,69 @@ export function getEffectiveFfmpegPath(customPath?: string | null): string {
   return 'ffmpeg';
 }
 
+export function resolveFfmpegLocationForYtdlp(customPath?: string | null): string | null {
+  const resolved = resolveFfmpegPath(customPath);
+  if (resolved) {
+    const dir = path.dirname(resolved);
+    ensureFfmpegHelperBinaries(dir);
+    return dir;
+  }
+
+  const bundledDir = getBundledFfmpegDir();
+  if (!bundledDir) return null;
+
+  const ext = isWindows ? '.exe' : '';
+  if (!fs.existsSync(path.join(bundledDir, `ffmpeg${ext}`))) return null;
+
+  ensureFfmpegHelperBinaries(bundledDir);
+  return bundledDir;
+}
+
 export function hasBundledFfmpeg(): boolean {
   return resolveBundledFfmpegPath() !== null;
 }
 
 export function verifyBundledFfmpeg(): void {
-  const ffmpegPath = resolveBundledFfmpegPath();
-  if (!ffmpegPath) {
+  const bundledDir = getBundledFfmpegDir();
+  if (!bundledDir) {
     log.info('No bundled ffmpeg found; will rely on system ffmpeg.');
     return;
   }
 
-  try {
-    const proc = spawnWithEnv(ffmpegPath, ['-version'], { shell: false });
-    let output = '';
-    proc.stdout?.on('data', (data: Buffer) => {
-      if (output.length < 512) output += data.toString();
-    });
-    proc.on('close', (code: number | null) => {
-      if (code === 0 && output) {
-        const firstLine = output.split('\n')[0]?.trim() ?? '';
-        log.info(`Bundled ffmpeg verified: ${firstLine}`);
-      } else {
-        log.warn(`Bundled ffmpeg at ${ffmpegPath} exited with code ${code}`);
-      }
-    });
-    proc.on('error', (err: Error) => {
-      log.warn(`Bundled ffmpeg at ${ffmpegPath} failed to execute: ${err.message}`);
-    });
-  } catch (err) {
-    log.warn(`Failed to verify bundled ffmpeg: ${(err as Error).message}`);
+  ensureFfmpegHelperBinaries(bundledDir);
+
+  const ext = isWindows ? '.exe' : '';
+  const helpers = [
+    { label: 'ffmpeg', filePath: path.join(bundledDir, `ffmpeg${ext}`) },
+    { label: 'ffprobe', filePath: path.join(bundledDir, `ffprobe${ext}`) },
+  ];
+
+  for (const helper of helpers) {
+    if (!fs.existsSync(helper.filePath)) {
+      log.warn(`Bundled ${helper.label} not found at ${helper.filePath}`);
+      continue;
+    }
+
+    try {
+      const proc = spawnWithEnv(helper.filePath, ['-version'], { shell: false });
+      let output = '';
+      proc.stdout?.on('data', (data: Buffer) => {
+        if (output.length < 512) output += data.toString();
+      });
+      proc.on('close', (code: number | null) => {
+        if (code === 0 && output) {
+          const firstLine = output.split('\n')[0]?.trim() ?? '';
+          log.info(`Bundled ${helper.label} verified: ${firstLine}`);
+        } else {
+          log.warn(`Bundled ${helper.label} at ${helper.filePath} exited with code ${code}`);
+        }
+      });
+      proc.on('error', (err: Error) => {
+        log.warn(`Bundled ${helper.label} at ${helper.filePath} failed to execute: ${err.message}`);
+      });
+    } catch (err) {
+      log.warn(`Failed to verify bundled ${helper.label}: ${(err as Error).message}`);
+    }
   }
 }
 
