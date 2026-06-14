@@ -1,21 +1,14 @@
-<!-- hidden <p align="center">
-
-<img width="45%" height="1012" alt="ROSI-3-1-1" src="https://github.com/user-attachments/assets/c42baa99-5ffa-4700-86c1-cc9aad3b9c7c" />
-  &nbsp;
-  <img width="45%" height="1012" alt="ROSI-3-x-app" src="https://github.com/user-attachments/assets/2105b523-7392-4c4c-8241-425b0096ca24" />
-
-</p> -->
-
+<!--
 > [!NOTE]
-> 🅱️ This is a Beta build.
+> 🅱️ This is a Beta build. -->
 
 # ⬇️ Downloads
 
-| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                  | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS     | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                                                                                  |
-| :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **EXE:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-Windows-arm64.exe) | **[Universal DMG](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-MacOS-universal.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-Linux-arm64.AppImage) |
-| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div>                    | **[Universal ZIP](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-MacOS-universal.zip)** | **DEB:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-Linux-arm64.deb)                 |
-|                                                                                                                                                                                                                    |                                                                                                                     | **RPM:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0-beta.2/ROSI-Linux-aarch64.rpm)              |
+| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                    | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                                                                    |
+| :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **EXE:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0/ROSI-Windows-arm64.exe) | **[Universal DMG](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0/ROSI-MacOS-universal.dmg)**    | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0/ROSI-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0/ROSI-Linux-arm64.AppImage) |
+| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div>      | **[Universal ZIP](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0/ROSI-MacOS-universal.zip)**    | **DEB:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0/ROSI-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0/ROSI-Linux-arm64.deb)                 |
+|                                                                                                                                                                                                      |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0/ROSI-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.0/ROSI-Linux-aarch64.rpm)              |
 
 > [!IMPORTANT]
 > The `.sig` files in this repo are NOT normal GPG signatures — they are for ROSI's built-in updater to verify the integrity of updates before downloading and installing.
@@ -37,30 +30,24 @@
 
 ---
 
-## Changes in `v4.1.0-beta.2:`
-
-- **Updater:** Fixed macOS in-app updates where **Restart Now** did nothing after an update finished downloading.
-- **Updater:** Fixed the `Auto` update channel so beta installs actually receive beta updates when that setting is selected.
-- **Downloads:** Manual downloads and the queue no longer stomp each other — ROSI blocks conflicting starts instead of silently killing one mid-run.
-- **Downloads:** Queue downloads now use your chosen download folder instead of always saving to system Downloads.
-- **Settings:** Importing settings refreshes the UI in-place instead of forcing a full app restart.
-- **macOS:** Closing the window now stops active downloads instead of leaving `yt-dlp` running headless in the background.
-- **Security:** Tightened download URL validation, output path checks, `ffmpeg` path handling on import, and subprocess environment hardening.
-- **UI:** Accessibility and polish pass — setup wizard focus trapping, clearer modal buttons, progress bar screen-reader support, queue confirm dialogs, theme flash fix on launch, and assorted UX cleanup.
-- **Testing:** Expanded automated coverage for the updater, downloader, preview pipeline, IPC validation, and renderer modules.
-- **PKG:** Updated packages.
-
-## Changes in `v4.1.0-beta.1:`
+## Changes in `v4.1.0:`
 
 - **NEW - Preview:** Added video preview before downloading so ROSI can show the title, uploader, duration, thumbnail, playlist info, and other basic metadata before saving.
 - **NEW - Enhancements:** Added download options for embedded metadata, embedded thumbnails / cover art, subtitles with custom language codes, and SponsorBlock segment removal.
+- **Updater:** Fixed macOS in-app updates where **Restart Now** did nothing after an update finished downloading.
+- **Updater:** Fixed the `Auto` update channel so beta installs actually receive beta updates when that setting is selected.
+- **Downloads:** Manual downloads and the queue no longer stomp each other. ROSI now blocks conflicting starts instead of silently killing one mid-run.
+- **Downloads:** Queue downloads now use your chosen download folder instead of always saving to system Downloads.
 - **Conversion:** Updated FFmpeg conversion to probe source codecs first, then copy compatible video/audio streams instead of re-encoding when possible.
 - **GPU detection:** Updated hardware acceleration detection to probe actual FFmpeg encoders, cache the result, and only claim a GPU path when that encoder can run.
+- **Settings:** Importing settings refreshes the UI in-place instead of forcing a full app restart.
+- **macOS:** Closing the window now stops active downloads instead of leaving `yt-dlp` running headless in the background.
+- **Security:** Tightened download URL validation, output path checks, `ffmpeg` path handling on import, and subprocess environment hardening.
 - **Typescript:** Migrated the main renderer engine from JavaScript to TypeScript and widened renderer type coverage.
-- **UI:** Split the renderer CSS into focused files, bundled local Manrope / IBM Plex Mono fonts, tightened CSP by removing remote Google Fonts, and added the preview/enhancement UI.
+- **UI:** Split the renderer CSS into focused files, bundled local Manrope / IBM Plex Mono fonts, tightened CSP by removing remote Google Fonts, and shipped a broader accessibility and polish pass across the setup wizard, modals, queue, launch theming, and update progress UI.
 - **FFMPEG:** Updated FFmpeg compliance docs, notices, source offer, and binary placeholders for FFmpeg `8.1` builds on Windows, Linux, and macOS arm64. macOS x64 stays on FFmpeg `8.0.1`.
-- **Testing:** Added jsdom DOM coverage for the renderer plus tests for video info parsing, codec-aware FFmpeg args, GPU probing, settings migration, IPC validation, and queue wiring.
-- **PKG:** Updated packages.
+- **Testing:** Expanded automated coverage across the updater, downloader, preview pipeline, IPC validation, renderer modules, video info parsing, codec-aware FFmpeg args, GPU probing, settings migration, and queue wiring.
+- **PKG:** Updated packages and bundled binaries.
 
 ## Changes in `v4.0.0:`
 
@@ -89,9 +76,9 @@ Nothing.. yet!
 </details>
 
 > [!IMPORTANT]
-> **Note:** MSI builds are NOT provided for beta releases. Use the EXE installer.
+> **Note:** MSI builds are not currently provided. Use the EXE installer.
 
-# ℹ️ Installation & Notes
+## ℹ️ Release Info
 
 ### 🔐 GPG Signing
 
