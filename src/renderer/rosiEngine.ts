@@ -2162,7 +2162,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   };
 
-  bindExternalLink(browserCookiesHelp, 'https://help.rosie.run/about-browser-cookies');
+  bindExternalLink(browserCookiesHelp, 'https://help.rosie.run/rosi/en-us/about-browser-cookies');
   bindExternalLink(helpLink, 'https://help.rosie.run/rosi/en-us/faq');
   bindExternalLink(supportLink, 'https://rosie.run/support');
   bindExternalLink(websiteLink, 'https://rosie.run');
