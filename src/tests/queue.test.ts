@@ -10,7 +10,8 @@ const {
   startDownloadMock,
   cancelActiveSessionMock,
   loadSettingsMock,
-  ytdlpFixturePath,
+  getCurrentYtdlpFixturePath,
+  resetTestPaths,
 } = vi.hoisted(() => {
   const nodeOs = require('os') as typeof import('os');
   const nodePath = require('path') as typeof import('path');
@@ -85,12 +86,19 @@ const {
     }
   }
 
-  const userDataDir = nodePath.join(
-    nodeOs.tmpdir(),
-    `rosi-queue-test-${randomBytes(8).toString('hex')}`
-  );
-  const downloadsDir = nodePath.join(userDataDir, 'downloads');
-  const ytdlpFixturePath = nodePath.join(userDataDir, 'yt-dlp.exe');
+  function createTestPaths() {
+    const userDataDir = nodePath.join(
+      nodeOs.tmpdir(),
+      `rosi-queue-test-${randomBytes(8).toString('hex')}`
+    );
+    return {
+      userDataDir,
+      downloadsDir: nodePath.join(userDataDir, 'downloads'),
+      ytdlpFixturePath: nodePath.join(userDataDir, 'yt-dlp.exe'),
+    };
+  }
+
+  let currentPaths = createTestPaths();
 
   const app = {
     whenReady: vi.fn(() => Promise.resolve()),
@@ -99,8 +107,8 @@ const {
     relaunch: vi.fn(),
     exit: vi.fn(),
     getPath: vi.fn((name: string) => {
-      if (name === 'downloads') return downloadsDir;
-      return userDataDir;
+      if (name === 'downloads') return currentPaths.downloadsDir;
+      return currentPaths.userDataDir;
     }),
     getVersion: vi.fn(() => '4.0.0'),
     getAppPath: vi.fn(() => process.cwd()),
@@ -131,7 +139,11 @@ const {
       keepOriginalAfterConvert: true,
       ffmpegPath: '',
     })),
-    ytdlpFixturePath,
+    getCurrentYtdlpFixturePath: () => currentPaths.ytdlpFixturePath,
+    resetTestPaths: () => {
+      currentPaths = createTestPaths();
+      return currentPaths;
+    },
   };
 });
 
@@ -165,7 +177,7 @@ vi.mock('electron', () => ({
 
 vi.mock('../main/platform', () => ({
   isPackaged: true,
-  resolveYtdlpPath: vi.fn(() => ytdlpFixturePath),
+  resolveYtdlpPath: vi.fn(() => getCurrentYtdlpFixturePath()),
   verifyBundledFfmpeg: vi.fn(),
 }));
 
@@ -260,6 +272,7 @@ async function waitForAuthorizedHandlers() {
 }
 
 async function initializeMainModule() {
+  resetTestPaths();
   const userDataDir = appMock.getPath('userData');
   fs.rmSync(userDataDir, { recursive: true, force: true });
   fs.mkdirSync(path.join(userDataDir, 'downloads'), { recursive: true });
@@ -267,6 +280,7 @@ async function initializeMainModule() {
   clearHandlerMaps();
   sendMock.mockClear();
   resetDownloadMocks();
+  const ytdlpFixturePath = getCurrentYtdlpFixturePath();
   fs.mkdirSync(path.dirname(ytdlpFixturePath), { recursive: true });
   fs.writeFileSync(ytdlpFixturePath, '');
   vi.resetModules();
@@ -279,6 +293,7 @@ async function reloadMainModulePreservingUserData() {
   destroyAllBrowserWindows();
   clearHandlerMaps();
   sendMock.mockClear();
+  const ytdlpFixturePath = getCurrentYtdlpFixturePath();
   fs.mkdirSync(path.dirname(ytdlpFixturePath), { recursive: true });
   fs.writeFileSync(ytdlpFixturePath, '');
   vi.resetModules();
