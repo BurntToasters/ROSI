@@ -6,5 +6,5 @@ Icon=com.burnttoasters.rosi
 Type=Application
 Categories=Utility;AudioVideo;Network;
 StartupNotify=true
-StartupWMClass=Rosi
+StartupWMClass=com.burnttoasters.rosi
 Keywords=video;download;yt-dlp;youtube;converter;ffmpeg;

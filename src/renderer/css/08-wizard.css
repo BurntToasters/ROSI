@@ -1,0 +1,232 @@
+@keyframes wizardFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.wizard-icon {
+  margin-bottom: var(--spacing-lg);
+}
+
+.wizard-heading {
+  font-size: 1.5rem;
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
+  margin-bottom: var(--spacing-sm);
+}
+
+.wizard-description {
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: var(--spacing-lg);
+  max-width: 400px;
+}
+
+.wizard-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--spacing-sm);
+  width: 100%;
+  max-width: 420px;
+}
+
+.wizard-theme-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.wizard-theme-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm);
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.wizard-theme-option input:checked + .wizard-theme-card {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.wizard-theme-card:hover {
+  border-color: var(--border-default);
+}
+
+.wizard-theme-preview {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+}
+
+.wizard-preview-system {
+  background: linear-gradient(135deg, #1a1a2e 50%, #f0f0f5 50%);
+}
+
+.wizard-preview-dark {
+  background: #0d0f14;
+}
+
+.wizard-preview-light {
+  background: #eef3f8;
+}
+
+.wizard-preview-purple {
+  background: #18122a;
+}
+
+.wizard-theme-label {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  font-weight: var(--weight-medium);
+}
+
+.wizard-options {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  text-align: left;
+}
+
+.wizard-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: var(--transition-fast);
+  position: relative;
+}
+
+.wizard-toggle:hover {
+  background: var(--surface-3);
+  border-color: var(--border-default);
+}
+
+.wizard-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.wizard-toggle input:checked + .toggle-slider {
+  background: var(--accent);
+}
+
+.wizard-toggle input:checked + .toggle-slider::after {
+  transform: translateX(20px);
+  background: var(--text-primary);
+}
+
+.wizard-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wizard-toggle-text strong {
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
+.wizard-toggle-text small {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+.wizard-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--spacing-xl);
+  padding-top: var(--spacing-lg);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.wizard-dots {
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
+.wizard-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface-3);
+  transition: var(--transition-fast);
+}
+
+.wizard-dot.active {
+  background: var(--accent);
+  width: 20px;
+  border-radius: 4px;
+}
+
+.wizard-btn {
+  padding: var(--spacing-sm) var(--spacing-lg);
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: var(--transition-fast);
+  min-width: 100px;
+}
+
+.wizard-btn-primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.wizard-btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.wizard-btn-secondary {
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+.wizard-btn-secondary:hover {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.wizard-btn-secondary[hidden] {
+  display: none;
+}
+
+@media (max-width: 480px) {
+  .wizard-theme-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .wizard-card {
+    padding: var(--spacing-xl) var(--spacing-md) var(--spacing-md);
+  }
+}

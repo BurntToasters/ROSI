@@ -12,7 +12,7 @@ const {
   loadSettingsMock,
   getEffectiveFfmpegPathMock,
   resolveVideoEncoderMock,
-  buildFfmpegArgsMock,
+  probeMediaCodecsMock,
   buildYtdlpArgsMock,
   showMessageBoxMock,
   logErrorMock,
@@ -30,7 +30,7 @@ const {
     loadSettingsMock: vi.fn(),
     getEffectiveFfmpegPathMock: vi.fn(() => 'ffmpeg'),
     resolveVideoEncoderMock: vi.fn(async () => 'copy'),
-    buildFfmpegArgsMock: vi.fn(() => ['-i', 'in.mp4', '-c:v', 'copy', '-y', 'out.mp4']),
+    probeMediaCodecsMock: vi.fn(async () => ({})),
     buildYtdlpArgsMock: vi.fn(({ url }: { url: string }) => ({
       args: ['--print', 'after_move:filepath', '-o', '%(title)s.%(ext)s', url],
       statusMessages: [],
@@ -63,11 +63,15 @@ vi.mock('../main/settings', () => ({
   recordDownload: recordDownloadMock,
 }));
 
-vi.mock('../main/download/commandBuilders', () => ({
-  resolveVideoEncoder: resolveVideoEncoderMock,
-  buildFfmpegArgs: buildFfmpegArgsMock,
-  buildYtdlpArgs: buildYtdlpArgsMock,
-}));
+vi.mock('../main/download/commandBuilders', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../main/download/commandBuilders')>();
+  return {
+    ...actual,
+    resolveVideoEncoder: resolveVideoEncoderMock,
+    buildYtdlpArgs: buildYtdlpArgsMock,
+    probeMediaCodecs: probeMediaCodecsMock,
+  };
+});
 
 vi.mock('electron', () => ({
   dialog: { showMessageBox: showMessageBoxMock },
@@ -113,6 +117,12 @@ function createSender() {
     isDestroyed: () => false,
     send: vi.fn(),
   } as unknown as Electron.WebContents;
+}
+
+async function flush() {
+  for (let i = 0; i < 5; i += 1) {
+    await Promise.resolve();
+  }
 }
 
 describe('download error paths', () => {
@@ -333,7 +343,7 @@ describe('download error paths', () => {
     proc.stdout.emit('data', '/tmp/downloads/video.mp4\n');
     proc.emit('close', 0);
 
-    expect(onComplete).toHaveBeenCalledWith('✅ Download complete (no conversion).');
+    expect(onComplete).toHaveBeenCalledWith('✅ Download complete (no conversion).', 'success');
   });
 
   it('calls onComplete callback on cancellation', () => {
@@ -355,7 +365,7 @@ describe('download error paths', () => {
 
     cancelActiveSession(true);
 
-    expect(onComplete).toHaveBeenCalledWith('⏹️ Cancelled.');
+    expect(onComplete).toHaveBeenCalledWith('⏹️ Cancelled.', 'cancelled');
   });
 
   it('logs onComplete callback errors during silent cancellation', () => {
@@ -373,7 +383,8 @@ describe('download error paths', () => {
       null,
       () => {
         throw new Error('cancel callback failed');
-      }
+      },
+      'queue'
     );
 
     cancelActiveSession(false);
@@ -431,7 +442,7 @@ describe('download error paths', () => {
     proc.stdout.emit('data', '/tmp/downloads/video.mp4\n');
     proc.emit('close', 0);
 
-    expect(recordDownloadMock).toHaveBeenCalledWith('success');
+    expect(recordDownloadMock).toHaveBeenCalledWith('success', 'mp4', undefined);
   });
 
   it('records cancelled outcome on cancel', () => {
@@ -545,6 +556,38 @@ describe('download error paths', () => {
     expect(sender.send).toHaveBeenCalledWith('complete', '❌ Failed (Invalid Folder).');
   });
 
+  it('uses stream copy in ffmpeg argv when probed codecs are container-compatible', async () => {
+    const ytProc = createProc();
+    const ffProc = createProc();
+    spawnWithEnvMock.mockReturnValueOnce(ytProc).mockReturnValueOnce(ffProc);
+    probeMediaCodecsMock.mockResolvedValueOnce({ video: 'h264', audio: 'aac' });
+    resolveVideoEncoderMock.mockResolvedValueOnce('h264_nvenc');
+    const sender = createSender();
+
+    loadSettingsMock.mockReturnValue({
+      ...loadSettingsMock(),
+      convertEnabled: true,
+      convertFormat: 'mp4',
+    });
+
+    startDownload(
+      '/tmp/ytdlp',
+      sender,
+      {
+        url: 'https://example.com/video',
+        outputPath: '/tmp/downloads',
+      },
+      null
+    );
+
+    ytProc.stdout.emit('data', '/tmp/downloads/video.webm\n');
+    ytProc.emit('close', 0);
+    await flush();
+
+    const ffmpegArgs = spawnWithEnvMock.mock.calls[1]?.[1] as string[] | undefined;
+    expect(ffmpegArgs).toEqual(expect.arrayContaining(['-c:v', 'copy', '-c:a', 'copy']));
+  });
+
   it('handles conversion enabled with valid format', () => {
     const ytProc = createProc();
     const ffProc = createProc();
@@ -602,7 +645,7 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/????\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
     ffProc.emit('close', 0);
 
     expect(renameSyncMock.mock.calls[0]?.[0].replace(/\\/g, '/')).toMatch(
@@ -638,7 +681,7 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/video.mp4\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
 
     expect(sender.send).toHaveBeenCalledWith('complete', '✅ Done (Already MP4).');
   });
@@ -668,7 +711,7 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/bad:name.webm\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
     ffProc.stdout.emit('data', Buffer.from('ffmpeg output'));
     ffProc.stderr.emit('data', Buffer.from('ffmpeg warning'));
     ffProc.emit('close', 0);
@@ -703,7 +746,7 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/video.webm\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
     ffProc.emit('close', 0);
 
     expect(sender.send).toHaveBeenCalledWith(
@@ -737,7 +780,7 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/video.webm\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
     ffProc.emit('close', 1);
 
     expect(unlinkSyncMock).toHaveBeenCalled();
@@ -769,7 +812,7 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/video.webm\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
     ffProc.emit('error', new Error('ENOENT'));
 
     expect(sender.send).toHaveBeenCalledWith(
@@ -808,7 +851,7 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/video.webm\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
     ffProc.emit('error', new Error('permission denied'));
 
     expect(sender.send).toHaveBeenCalledWith(
@@ -843,7 +886,7 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/bad:name.webm\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
 
     expect(sender.send).toHaveBeenCalledWith('complete', '❌ Conversion failed (setup error).');
   });
@@ -995,7 +1038,7 @@ describe('download error paths', () => {
     expect(getEffectiveFfmpegPathMock).toHaveBeenCalledWith('/custom/ffmpeg');
     ytProc.stdout.emit('data', '/tmp/downloads/video.webm\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
     ffProc.emit('close', 0);
 
     expect(unlinkSyncMock).toHaveBeenCalled();
@@ -1093,7 +1136,8 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/video.webm\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
+    await flush();
 
     expect(sender.send).toHaveBeenCalledWith('progress', '🖥️ Using GPU acceleration (h264_nvenc)');
   });
@@ -1124,7 +1168,7 @@ describe('download error paths', () => {
 
     ytProc.stdout.emit('data', '/tmp/downloads/video.webm\n');
     ytProc.emit('close', 0);
-    await Promise.resolve();
+    await flush();
     await vi.advanceTimersByTimeAsync(600_000);
 
     expect(sender.send).toHaveBeenCalledWith(

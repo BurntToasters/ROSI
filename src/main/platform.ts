@@ -232,15 +232,22 @@ export function resolveBundledFfmpegPath(): string | null {
 export function getEffectiveFfmpegPath(customPath?: string | null): string {
   const resolved = resolveFfmpegPath(customPath);
   if (resolved) {
-    const pathLike =
-      path.isAbsolute(resolved) ||
-      resolved.includes(path.sep) ||
-      resolved.includes('/') ||
-      resolved.includes('\\');
-    if (!pathLike || fs.existsSync(resolved)) {
-      return resolved;
+    const baseName = path.basename(resolved).toLowerCase();
+    const validBasename =
+      resolved === 'ffmpeg' || baseName === 'ffmpeg' || baseName === 'ffmpeg.exe';
+    if (!validBasename) {
+      log.warn(`Custom ffmpeg path has invalid basename, falling back: ${resolved}`);
+    } else {
+      const pathLike =
+        path.isAbsolute(resolved) ||
+        resolved.includes(path.sep) ||
+        resolved.includes('/') ||
+        resolved.includes('\\');
+      if (!pathLike || fs.existsSync(resolved)) {
+        return resolved;
+      }
+      log.warn(`Custom ffmpeg path does not exist, falling back: ${resolved}`);
     }
-    log.warn(`Custom ffmpeg path does not exist, falling back: ${resolved}`);
   }
 
   const bundled = resolveBundledFfmpegPath();
@@ -339,29 +346,21 @@ export function resolveYtdlpPath(): string {
             fs.chmodSync(tmpBin, 0o755);
             resolved = tmpBin;
           } catch (copyErr) {
-            dialog.showErrorBox(
-              'Permission Error',
-              `Failed to prepare yt-dlp for execution at ${resolved}.\nError: ${(copyErr as Error).message}`
+            log.error(
+              `Failed to prepare yt-dlp for execution at ${resolved}: ${(copyErr as Error).message}`
             );
-            app.quit();
           }
         }
       } else {
-        dialog.showErrorBox(
-          'Permission Error',
-          `Failed to set executable permissions on yt-dlp binary at ${resolved}.\nError: ${(err as Error).message}`
+        log.error(
+          `Failed to set executable permissions on yt-dlp binary at ${resolved}: ${(err as Error).message}`
         );
-        app.quit();
       }
     }
   }
 
   if (!fs.existsSync(resolved)) {
-    dialog.showErrorBox(
-      'Missing Dependency',
-      `yt-dlp binary not found at ${resolved}.\nPlease ensure ${ytdlpBinary} is in the application's directory.`
-    );
-    app.quit();
+    log.error(`yt-dlp binary not found at ${resolved}`);
   }
 
   return resolved;

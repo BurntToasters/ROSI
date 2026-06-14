@@ -364,7 +364,7 @@ describe('downloader format fetch', () => {
     proc.emit('close', 0);
 
     expect(onComplete).toHaveBeenCalledTimes(1);
-    expect(onComplete).toHaveBeenCalledWith('✅ Download complete (no conversion).');
+    expect(onComplete).toHaveBeenCalledWith('✅ Download complete (no conversion).', 'success');
   });
 
   it('invokes onComplete callback when session is cancelled', () => {
@@ -387,7 +387,7 @@ describe('downloader format fetch', () => {
     cancelActiveSession(true);
 
     expect(onComplete).toHaveBeenCalledTimes(1);
-    expect(onComplete).toHaveBeenCalledWith('⏹️ Cancelled.');
+    expect(onComplete).toHaveBeenCalledWith('⏹️ Cancelled.', 'cancelled');
   });
 
   it('creates missing output directory before starting download', () => {

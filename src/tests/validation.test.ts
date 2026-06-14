@@ -1,3 +1,5 @@
+import * as path from 'path';
+import { pathToFileURL } from 'url';
 import { describe, it, expect } from 'vitest';
 import * as validation from '../utils/validation';
 
@@ -18,6 +20,35 @@ describe('validation helpers', () => {
       expect(validation.isSafeHttpUrl('')).toBe(false);
       expect(validation.isSafeHttpUrl(null)).toBe(false);
     });
+
+    it('rejects private and local hosts', () => {
+      expect(validation.isSafeHttpUrl('http://localhost/video')).toBe(false);
+      expect(validation.isSafeHttpUrl('http://127.0.0.1/video')).toBe(false);
+      expect(validation.isSafeHttpUrl('http://192.168.1.1/video')).toBe(false);
+      expect(validation.isSafeHttpUrl('http://169.254.169.254/latest/meta-data')).toBe(false);
+    });
+
+    it('rejects decimal IPv4 host literals', () => {
+      expect(validation.isSafeHttpUrl('http://2130706433/video')).toBe(false);
+    });
+
+    it('rejects DNS rebinding hostnames', () => {
+      expect(validation.isSafeHttpUrl('http://127.0.0.1.nip.io/video')).toBe(false);
+      expect(validation.isSafeHttpUrl('http://app.localtest.me/video')).toBe(false);
+      expect(validation.isPrivateOrLocalHost('evil.nip.io')).toBe(true);
+      expect(validation.isPrivateOrLocalHost('tenant.sslip.io')).toBe(true);
+    });
+  });
+
+  describe('isPrivateOrLocalHost', () => {
+    it('detects local and private hosts', () => {
+      expect(validation.isPrivateOrLocalHost('localhost')).toBe(true);
+      expect(validation.isPrivateOrLocalHost('127.0.0.1')).toBe(true);
+      expect(validation.isPrivateOrLocalHost('10.0.0.1')).toBe(true);
+      expect(validation.isPrivateOrLocalHost('192.168.0.1')).toBe(true);
+      expect(validation.isPrivateOrLocalHost('169.254.169.254')).toBe(true);
+      expect(validation.isPrivateOrLocalHost('example.com')).toBe(false);
+    });
   });
 
   describe('isSafeExternalUrl', () => {
@@ -32,10 +63,14 @@ describe('validation helpers', () => {
       );
     });
 
+    it('accepts mailto links', () => {
+      expect(validation.isSafeExternalUrl('mailto:support@example.com')).toBe(true);
+      expect(validation.isSafeExternalUrl('  mailto:help@rosie.run  ')).toBe(true);
+    });
+
     it('rejects other schemes and invalid input', () => {
       expect(validation.isSafeExternalUrl('file:///tmp/test')).toBe(false);
       expect(validation.isSafeExternalUrl('javascript:alert(1)')).toBe(false);
-      expect(validation.isSafeExternalUrl('mailto:support@example.com')).toBe(false);
       expect(validation.isSafeExternalUrl('not a url')).toBe(false);
       expect(validation.isSafeExternalUrl('')).toBe(false);
       expect(validation.isSafeExternalUrl(undefined)).toBe(false);
@@ -44,11 +79,20 @@ describe('validation helpers', () => {
 
   describe('isAllowedNavigationUrl', () => {
     it('only allows file URLs', () => {
+      const sampleFile = pathToFileURL(path.resolve(path.join('app', 'index.html'))).href;
+      expect(validation.isAllowedNavigationUrl(sampleFile)).toBe(true);
       expect(validation.isAllowedNavigationUrl('file:///C:/app/index.html')).toBe(true);
-      expect(validation.isAllowedNavigationUrl('file:///Users/test/app/index.html')).toBe(true);
       expect(validation.isAllowedNavigationUrl('https://example.com')).toBe(false);
       expect(validation.isAllowedNavigationUrl('javascript:alert(1)')).toBe(false);
       expect(validation.isAllowedNavigationUrl('')).toBe(false);
+    });
+
+    it('restricts file URLs to an allowed base when provided', () => {
+      const base = path.resolve(path.join('rosi-nav-test', 'app'));
+      const insideFile = path.join(base, 'index.html');
+      const outsideFile = path.resolve(base, '..', 'other', 'index.html');
+      expect(validation.isAllowedNavigationUrl(pathToFileURL(insideFile).href, base)).toBe(true);
+      expect(validation.isAllowedNavigationUrl(pathToFileURL(outsideFile).href, base)).toBe(false);
     });
   });
 });

@@ -1,3 +1,5 @@
+import * as os from 'os';
+import * as path from 'path';
 import { describe, it, expect } from 'vitest';
 import {
   validateDownloadRequestPayload,
@@ -10,7 +12,7 @@ import {
 describe('ipc validation null and edge-case handling', () => {
   const validBase = {
     url: 'https://example.com/video',
-    outputPath: '/tmp/downloads',
+    outputPath: path.join(os.homedir(), 'Downloads'),
   };
 
   describe('validateDownloadRequestPayload null inputs', () => {
@@ -110,7 +112,7 @@ describe('ipc validation null and edge-case handling', () => {
       expect(validateDownloadRequestPayload({ ...validBase, keepOriginal: [] }).ok).toBe(false);
     });
 
-    it('rejects empty string convertFormat after trim', () => {
+    it('accepts whitespace-only convertFormat as undefined', () => {
       const result = validateDownloadRequestPayload({
         ...validBase,
         convertFormat: '   ',
@@ -132,26 +134,25 @@ describe('ipc validation null and edge-case handling', () => {
       }
     });
 
-    it('rejects non-numeric videoFormat strings', () => {
-      const result = validateDownloadRequestPayload({
-        ...validBase,
-        videoFormat: 'best',
-      });
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain('videoFormat must be a numeric format ID');
-      }
+    it('accepts non-numeric yt-dlp format IDs', () => {
+      expect(validateDownloadRequestPayload({ ...validBase, videoFormat: 'hls-1080' }).ok).toBe(
+        true
+      );
+      expect(validateDownloadRequestPayload({ ...validBase, videoFormat: '136-drc' }).ok).toBe(
+        true
+      );
+      expect(validateDownloadRequestPayload({ ...validBase, audioFormat: 'sb0' }).ok).toBe(true);
     });
 
-    it('rejects non-numeric audioFormat strings', () => {
-      const result = validateDownloadRequestPayload({
-        ...validBase,
-        audioFormat: 'bestaudio',
-      });
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain('audioFormat must be a numeric format ID');
+    it('rejects format IDs containing whitespace or shell metacharacters', () => {
+      const bad = validateDownloadRequestPayload({ ...validBase, videoFormat: '137; rm -rf /' });
+      expect(bad.ok).toBe(false);
+      if (!bad.ok) {
+        expect(bad.error.message).toContain('videoFormat must be a valid yt-dlp format ID');
       }
+      expect(validateDownloadRequestPayload({ ...validBase, audioFormat: 'best audio' }).ok).toBe(
+        false
+      );
     });
 
     it('rejects non-http URL schemes', () => {
@@ -275,7 +276,7 @@ describe('ipc validation null and edge-case handling', () => {
     });
 
     it('accepts Unix absolute paths', () => {
-      const result = validateFileLocationPayload('/home/user/file.mp4');
+      const result = validateFileLocationPayload(path.join(os.homedir(), 'file.mp4'));
       expect(result.ok).toBe(true);
     });
   });

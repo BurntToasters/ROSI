@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Notification } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
+import { randomUUID } from 'crypto';
 import log from 'electron-log/main.js';
 import { isPackaged, resolveYtdlpPath, verifyBundledFfmpeg } from './platform';
 import {
@@ -18,6 +19,7 @@ import {
   downloadUpdate,
   cancelUpdateDownload,
   installUpdate,
+  applyChannelFromSettings,
 } from './updater';
 import { checkDenoInstalled, installDeno } from './deno';
 import { detectGpu } from './gpu';
@@ -27,7 +29,9 @@ import {
   killAllProcesses,
   fetchFormats,
   cancelFormats,
+  canStartDownload,
 } from './downloader';
+import { fetchVideoInfo, cancelVideoInfo } from './download/videoInfo';
 import { isSafeExternalUrl, isSafeHttpUrl, isAllowedNavigationUrl } from '../utils/validation';
 import {
   errorResult,
@@ -37,19 +41,28 @@ import {
   validateFileLocationPayload,
   validateNotificationPayload,
   validateSettingsPatchPayload,
+  validateDownloadPath,
 } from '../utils/ipcValidation';
 import { SPLASH_SHOW_DELAY_MS, SPLASH_FADE_DELAY_MS, MAX_QUEUE_SIZE } from './constants';
-import type { DownloadRequestOptions, QueueItem } from '../types';
+import type { DownloadRequestOptions, DownloadOutcome, QueueItem } from '../types';
 
 log.initialize();
 
+process.setMaxListeners(48);
+
 process.on('uncaughtException', (error) => {
   log.error('Uncaught exception:', error);
+  try {
+    flushQueueOnShutdown();
+  } catch {}
   try {
     killAllProcesses();
   } catch {}
   try {
     cancelFormats();
+  } catch {}
+  try {
+    cancelVideoInfo();
   } catch {}
   try {
     dialog.showErrorBox(
@@ -66,7 +79,13 @@ process.on('unhandledRejection', (reason) => {
   log.error('Unhandled rejection:', reason);
 });
 
-const ytdlpPath = resolveYtdlpPath();
+let ytdlpPath: string | null = null;
+function getYtdlpPath(): string {
+  if (!ytdlpPath) {
+    ytdlpPath = resolveYtdlpPath();
+  }
+  return ytdlpPath;
+}
 const isSmokeRun = process.argv.includes('--smoke') || process.env.ROSI_SMOKE === '1';
 const isPrimaryInstance =
   isSmokeRun || typeof app.requestSingleInstanceLock !== 'function'
@@ -79,9 +98,18 @@ let splashWindow: BrowserWindow | null = null;
 let mainWindowCloseInProgress = false;
 let mainWindowCloseTimer: NodeJS.Timeout | null = null;
 let appQuitting = false;
+let isInstallingUpdate = false;
+let renderProcessReloadCount = 0;
 
 function getMainWindow() {
   return mainWindow;
+}
+
+function assertMainWindowSender(event?: { sender?: { id?: number } }): boolean {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return false;
+  }
+  return event?.sender?.id === mainWindow.webContents.id;
 }
 
 function clearMainWindowCloseTimer() {
@@ -103,11 +131,18 @@ function createSplashWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webSecurity: true,
     },
-    roundedCorners: true,
+    ...(process.platform === 'darwin' ? { roundedCorners: true } : {}),
   });
   void splashWindow.loadFile(path.join(__dirname, '..', '..', 'src', 'renderer', 'splash.html'));
   splashWindow.center();
+  setTimeout(() => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.close();
+      splashWindow = null;
+    }
+  }, 30_000);
 }
 
 async function runRendererSmokeChecks(windowRef: BrowserWindow): Promise<string[]> {
@@ -245,8 +280,6 @@ function createWindow() {
     height: 900,
     minWidth: 900,
     minHeight: 700,
-    maxWidth: 1800,
-    maxHeight: 1400,
     icon: path.join(__dirname, '..', '..', 'src', 'renderer', 'app.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -265,7 +298,7 @@ function createWindow() {
   clearMainWindowCloseTimer();
 
   mainWindow.on('close', (event) => {
-    if (isSmokeRun || mainWindowCloseInProgress) {
+    if (isSmokeRun || mainWindowCloseInProgress || isInstallingUpdate) {
       return;
     }
     if (!mainWindow || mainWindow.isDestroyed()) {
@@ -294,7 +327,24 @@ function createWindow() {
   mainWindow.on('closed', () => {
     clearMainWindowCloseTimer();
     mainWindowCloseInProgress = false;
+    isInstallingUpdate = false;
+    if (process.platform === 'darwin' && !appQuitting) {
+      stopActiveDownloadsAndQueue();
+    }
     mainWindow = null;
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    log.error(`Main window failed to load: ${errorCode} ${errorDescription}`);
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.close();
+      splashWindow = null;
+    }
+    dialog.showErrorBox(
+      'Load Error',
+      `ROSI failed to load the application window.\n\n${errorDescription}`
+    );
+    app.quit();
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -309,12 +359,20 @@ function createWindow() {
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     log.error(`Renderer process gone: ${details.reason} (exit code: ${details.exitCode})`);
     if (details.reason !== 'clean-exit' && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.reload();
+      if (renderProcessReloadCount < 3) {
+        renderProcessReloadCount += 1;
+        mainWindow.reload();
+        return;
+      }
+      dialog.showErrorBox(
+        'Renderer Error',
+        'The application window failed to recover after multiple reload attempts. Please restart ROSI.'
+      );
     }
   });
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (!isAllowedNavigationUrl(url)) {
+    if (!isAllowedNavigationUrl(url, app.getAppPath())) {
       event.preventDefault();
       if (isSafeExternalUrl(url)) {
         shell.openExternal(url).catch((err) => {
@@ -383,6 +441,16 @@ void app.whenReady().then(() => {
     return;
   }
 
+  const resolvedYtdlpPath = getYtdlpPath();
+  if (!fs.existsSync(resolvedYtdlpPath)) {
+    dialog.showErrorBox(
+      'Missing Dependency',
+      `yt-dlp binary not found at ${resolvedYtdlpPath}.\nPlease ensure the yt-dlp binary is in the application's directory.`
+    );
+    app.quit();
+    return;
+  }
+
   if (!isSmokeRun) {
     createSplashWindow();
   }
@@ -406,6 +474,7 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   appQuitting = true;
+  flushQueueOnShutdown();
   try {
     killAllProcesses();
   } catch (error) {
@@ -415,6 +484,11 @@ app.on('before-quit', () => {
     cancelFormats();
   } catch (error) {
     log.error('Error cancelling formats on quit:', error);
+  }
+  try {
+    cancelVideoInfo();
+  } catch (error) {
+    log.error('Error cancelling video info on quit:', error);
   }
 });
 
@@ -450,14 +524,49 @@ if (!process.windowsStore) {
   ipcMain.handle('check-for-updates', () => checkForUpdates(isPackaged, loadSettings));
   ipcMain.handle('download-update', () => downloadUpdate());
   ipcMain.on('cancel-update-download', () => cancelUpdateDownload(getMainWindow));
-  ipcMain.on('install-update', () => installUpdate());
+  ipcMain.on('install-update', (event) => {
+    if (!assertMainWindowSender(event)) {
+      return;
+    }
+    isInstallingUpdate = true;
+    clearMainWindowCloseTimer();
+    try {
+      installUpdate();
+      setTimeout(() => {
+        if (isInstallingUpdate && mainWindow && !mainWindow.isDestroyed()) {
+          isInstallingUpdate = false;
+        }
+      }, 8000);
+    } catch (error) {
+      isInstallingUpdate = false;
+      log.error('Failed to install update:', error);
+    }
+  });
 }
 
-ipcMain.handle('check-deno-installed', () => checkDenoInstalled());
-ipcMain.handle('install-deno', () => installDeno(mainWindow));
+ipcMain.handle('check-deno-installed', (event) => {
+  if (!assertMainWindowSender(event)) {
+    return false;
+  }
+  return checkDenoInstalled();
+});
+ipcMain.handle('install-deno', (event) => {
+  if (!assertMainWindowSender(event)) {
+    return { error: 'Unauthorized sender.' };
+  }
+  return installDeno(mainWindow);
+});
 
-ipcMain.handle('get-settings', () => loadSettings());
-ipcMain.handle('save-settings', (_, data) => {
+ipcMain.handle('get-settings', (event) => {
+  if (!assertMainWindowSender(event)) {
+    return getDefaultSettings();
+  }
+  return loadSettings();
+});
+ipcMain.handle('save-settings', (event, data) => {
+  if (!assertMainWindowSender(event)) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
   const validation = validateSettingsPatchPayload(data);
   if (!validation.ok) {
     return errorResult(validation.error.code, validation.error.message, validation.error.details);
@@ -467,13 +576,22 @@ ipcMain.handle('save-settings', (_, data) => {
   if (!saved) {
     return errorResult('INTERNAL_ERROR', 'Failed to persist settings.');
   }
-  return okResult(loadSettings());
+  const updated = loadSettings();
+  if (!process.windowsStore && validation.data.updateChannel !== undefined) {
+    applyChannelFromSettings(updated);
+  }
+  return okResult(updated);
 });
 
-ipcMain.handle('detect-gpu', () => detectGpu());
+ipcMain.handle('detect-gpu', (event) => {
+  if (!assertMainWindowSender(event)) {
+    return { nvidia: false, amd: false, intel: false };
+  }
+  return detectGpu();
+});
 
 ipcMain.on('reset-settings', (event) => {
-  if (mainWindow && !mainWindow.isDestroyed() && event.sender?.id !== mainWindow.webContents.id) {
+  if (!assertMainWindowSender(event)) {
     return;
   }
   try {
@@ -490,7 +608,10 @@ ipcMain.on('reset-settings', (event) => {
   }
 });
 
-ipcMain.handle('open-external', async (_, url) => {
+ipcMain.handle('open-external', async (event, url) => {
+  if (!assertMainWindowSender(event)) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
   const validation = validateExternalUrlPayload(url);
   if (!validation.ok) {
     return errorResult(validation.error.code, validation.error.message, validation.error.details);
@@ -505,7 +626,10 @@ ipcMain.handle('open-external', async (_, url) => {
   }
 });
 
-ipcMain.handle('select-download-location', async () => {
+ipcMain.handle('select-download-location', async (event) => {
+  if (!assertMainWindowSender(event)) {
+    return null;
+  }
   try {
     const defaultPath = app.getPath('downloads');
     const focusedWindow = BrowserWindow.getFocusedWindow();
@@ -524,13 +648,16 @@ ipcMain.handle('select-download-location', async () => {
   }
 });
 
-ipcMain.handle('getFormats', async (_, url) => {
+ipcMain.handle('getFormats', async (event, url) => {
+  if (!assertMainWindowSender(event)) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
   if (typeof url !== 'string' || !isSafeHttpUrl(url)) {
     return errorResult('INVALID_URL', 'Invalid URL provided.');
   }
 
   try {
-    const formats = await fetchFormats(ytdlpPath, url);
+    const formats = await fetchFormats(getYtdlpPath(), url);
     return okResult(formats);
   } catch (error) {
     const message =
@@ -546,23 +673,65 @@ ipcMain.handle('getFormats', async (_, url) => {
   }
 });
 ipcMain.on('cancel-formats', (event) => {
-  if (mainWindow && !mainWindow.isDestroyed() && event.sender?.id !== mainWindow.webContents.id) {
+  if (!assertMainWindowSender(event)) {
     return;
   }
   cancelFormats();
 });
 
+ipcMain.handle('get-video-info', async (event, url) => {
+  if (!assertMainWindowSender(event)) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
+  if (typeof url !== 'string' || !isSafeHttpUrl(url)) {
+    return errorResult('INVALID_URL', 'Invalid URL provided.');
+  }
+
+  try {
+    const info = await fetchVideoInfo(getYtdlpPath(), url);
+    return okResult(info);
+  } catch (error) {
+    const message =
+      typeof error === 'string'
+        ? error
+        : error instanceof Error
+          ? error.message
+          : 'Failed to fetch video info.';
+    if (message.toLowerCase().includes('cancel')) {
+      return errorResult('NOT_AVAILABLE', message);
+    }
+    return errorResult('INTERNAL_ERROR', message);
+  }
+});
+
+ipcMain.on('cancel-video-info', (event) => {
+  if (!assertMainWindowSender(event)) {
+    return;
+  }
+  cancelVideoInfo();
+});
+
 ipcMain.handle('download-video', (event, options) => {
-  if (mainWindow && !mainWindow.isDestroyed() && event.sender?.id !== mainWindow.webContents.id) {
+  if (!assertMainWindowSender(event)) {
     return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
   }
   const validation = validateDownloadRequestPayload(options);
   if (!validation.ok) {
     return errorResult(validation.error.code, validation.error.message, validation.error.details);
   }
+  if (!canStartDownload('manual')) {
+    return errorResult('NOT_AVAILABLE', 'A queue download is already in progress.');
+  }
 
   try {
-    startDownload(ytdlpPath, event.sender, validation.data as DownloadRequestOptions, mainWindow);
+    startDownload(
+      getYtdlpPath(),
+      event.sender,
+      validation.data as DownloadRequestOptions,
+      mainWindow,
+      undefined,
+      'manual'
+    );
     return okResult({ started: true });
   } catch (error) {
     log.error('Error in download-video handler:', error);
@@ -571,7 +740,7 @@ ipcMain.handle('download-video', (event, options) => {
 });
 
 ipcMain.on('cancel-download', (event) => {
-  if (mainWindow && !mainWindow.isDestroyed() && event.sender?.id !== mainWindow.webContents.id) {
+  if (!assertMainWindowSender(event)) {
     return;
   }
   try {
@@ -581,12 +750,27 @@ ipcMain.on('cancel-download', (event) => {
   }
 });
 
-ipcMain.handle('restart-app', () => {
+ipcMain.handle('restart-app', (event) => {
+  if (!assertMainWindowSender(event)) {
+    return;
+  }
+  appQuitting = true;
+  try {
+    cancelActiveSession(false);
+    killAllProcesses();
+    cancelFormats();
+    cancelVideoInfo();
+  } catch (error) {
+    log.error('Error cleaning up before restart:', error);
+  }
   app.relaunch();
   app.exit(0);
 });
 
-ipcMain.handle('open-file-location', async (_, filePath) => {
+ipcMain.handle('open-file-location', async (event, filePath) => {
+  if (!assertMainWindowSender(event)) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
   const validation = validateFileLocationPayload(filePath);
   if (!validation.ok) {
     return errorResult(validation.error.code, validation.error.message, validation.error.details);
@@ -614,7 +798,10 @@ ipcMain.handle('open-file-location', async (_, filePath) => {
   }
 });
 
-ipcMain.handle('show-notification', (_, options) => {
+ipcMain.handle('show-notification', (event, options) => {
+  if (!assertMainWindowSender(event)) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
   const validation = validateNotificationPayload(options);
   if (!validation.ok) {
     return errorResult(validation.error.code, validation.error.message, validation.error.details);
@@ -632,7 +819,7 @@ ipcMain.handle('show-notification', (_, options) => {
       silent: false,
     });
 
-    notification.on('click', () => {
+    notification.once('click', () => {
       try {
         const win = getMainWindow();
         if (win && !win.isDestroyed()) {
@@ -655,7 +842,10 @@ ipcMain.handle('show-notification', (_, options) => {
   }
 });
 
-ipcMain.handle('export-settings', async () => {
+ipcMain.handle('export-settings', async (event) => {
+  if (!assertMainWindowSender(event)) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
   try {
     const parentWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
     const success = await exportSettingsToFile(parentWindow);
@@ -667,11 +857,17 @@ ipcMain.handle('export-settings', async () => {
   }
 });
 
-ipcMain.handle('import-settings', async () => {
+ipcMain.handle('import-settings', async (event) => {
+  if (!assertMainWindowSender(event)) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
   try {
     const parentWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
-    const success = await importSettingsFromFile(parentWindow);
-    if (!success) return errorResult('INTERNAL_ERROR', 'Import cancelled or failed.');
+    const importedSettings = await importSettingsFromFile(parentWindow);
+    if (!importedSettings) return errorResult('INTERNAL_ERROR', 'Import cancelled or failed.');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('settings-imported', importedSettings);
+    }
     return okResult({ imported: true });
   } catch (error) {
     log.error('Error importing settings:', error);
@@ -679,9 +875,17 @@ ipcMain.handle('import-settings', async () => {
   }
 });
 
-ipcMain.handle('get-stats', () => loadStats());
+ipcMain.handle('get-stats', (event) => {
+  if (!assertMainWindowSender(event)) {
+    return loadStats();
+  }
+  return loadStats();
+});
 
-ipcMain.handle('reset-stats', () => {
+ipcMain.handle('reset-stats', (event) => {
+  if (!assertMainWindowSender(event)) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
   const success = resetStats();
   if (!success) return errorResult('INTERNAL_ERROR', 'Failed to reset stats.');
   return okResult(undefined);
@@ -732,6 +936,8 @@ function loadPersistedQueue(): QueueItem[] {
   return [];
 }
 
+let persistQueueTimer: NodeJS.Timeout | null = null;
+
 function persistQueue(): void {
   const tempPath = `${queuePath}.tmp`;
   try {
@@ -756,14 +962,50 @@ function persistQueue(): void {
 downloadQueue = loadPersistedQueue();
 
 function generateQueueId(): string {
-  return `q_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  return `q_${randomUUID()}`;
+}
+
+function schedulePersistQueue(): void {
+  if (persistQueueTimer) {
+    clearTimeout(persistQueueTimer);
+  }
+  persistQueueTimer = setTimeout(() => {
+    persistQueueTimer = null;
+    persistQueue();
+  }, 300);
+}
+
+function flushQueueOnShutdown() {
+  if (persistQueueTimer) {
+    clearTimeout(persistQueueTimer);
+    persistQueueTimer = null;
+  }
+  persistQueue();
+}
+
+function stopActiveDownloadsAndQueue() {
+  queueCancelled = true;
+  isQueueRunning = false;
+  queueActiveItemId = null;
+  try {
+    cancelActiveSession(false);
+  } catch {}
+  try {
+    killAllProcesses();
+  } catch {}
+  try {
+    cancelFormats();
+  } catch {}
+  try {
+    cancelVideoInfo();
+  } catch {}
 }
 
 function broadcastQueue() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('queue-update', downloadQueue);
   }
-  persistQueue();
+  schedulePersistQueue();
 }
 
 async function processQueue() {
@@ -795,24 +1037,31 @@ async function processQueue() {
       }
 
       const settings = loadSettings();
+      let outputPath = app.getPath('downloads');
+      const rawFolder = settings.downloadFolder?.trim();
+      if (rawFolder) {
+        const folderValidation = validateDownloadPath(rawFolder);
+        if (folderValidation.ok && folderValidation.data) {
+          outputPath = folderValidation.data;
+        }
+      }
       const options: DownloadRequestOptions = {
         url: nextItem.url,
-        outputPath: app.getPath('downloads'),
+        outputPath,
         ffmpegPath: settings.ffmpegPath || undefined,
         convertFormat: settings.convertEnabled ? settings.convertFormat : undefined,
         keepOriginal: settings.convertEnabled ? settings.keepOriginalAfterConvert : undefined,
       };
 
       let settled = false;
-      const completeListener = (statusMessage: string) => {
+      const completeListener = (statusMessage: string, outcome?: DownloadOutcome) => {
         if (settled) return;
         settled = true;
 
-        const msg = String(statusMessage || '').toLowerCase();
-        if (msg.includes('cancel')) {
+        if (outcome === 'cancelled') {
           nextItem.status = 'cancelled';
           nextItem.error = undefined;
-        } else if (msg.includes('\u2705') || msg.includes('complete') || msg.includes('done')) {
+        } else if (outcome === 'success') {
           nextItem.status = 'completed';
           nextItem.error = undefined;
         } else {
@@ -826,7 +1075,14 @@ async function processQueue() {
       };
 
       try {
-        startDownload(ytdlpPath, mainWindow.webContents, options, mainWindow, completeListener);
+        startDownload(
+          getYtdlpPath(),
+          mainWindow.webContents,
+          options,
+          mainWindow,
+          completeListener,
+          'queue'
+        );
       } catch (error) {
         nextItem.status = 'failed';
         nextItem.error = (error as Error).message;
@@ -844,7 +1100,7 @@ async function processQueue() {
 }
 
 ipcMain.handle('add-to-queue', (event, urls) => {
-  if (mainWindow && !mainWindow.isDestroyed() && event.sender?.id !== mainWindow.webContents.id) {
+  if (!assertMainWindowSender(event)) {
     return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
   }
   if (!Array.isArray(urls)) {
@@ -869,7 +1125,7 @@ ipcMain.handle('add-to-queue', (event, urls) => {
 });
 
 ipcMain.handle('remove-from-queue', (event, id) => {
-  if (mainWindow && !mainWindow.isDestroyed() && event.sender?.id !== mainWindow.webContents.id) {
+  if (!assertMainWindowSender(event)) {
     return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
   }
   if (typeof id !== 'string') {
@@ -887,7 +1143,10 @@ ipcMain.handle('remove-from-queue', (event, id) => {
   return okResult(undefined);
 });
 
-ipcMain.handle('clear-queue', () => {
+ipcMain.handle('clear-queue', (event) => {
+  if (!assertMainWindowSender(event)) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
   if (isQueueRunning) {
     queueCancelled = true;
     cancelActiveSession(true);
@@ -899,9 +1158,17 @@ ipcMain.handle('clear-queue', () => {
   return okResult(undefined);
 });
 
-ipcMain.handle('get-queue', () => downloadQueue);
+ipcMain.handle('get-queue', (event) => {
+  if (!assertMainWindowSender(event)) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
+  return downloadQueue;
+});
 
-ipcMain.handle('start-queue', () => {
+ipcMain.handle('start-queue', (event) => {
+  if (!assertMainWindowSender(event)) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
   const pending = downloadQueue.filter((item) => item.status === 'pending');
   if (pending.length === 0) {
     return errorResult('NOT_AVAILABLE', 'No pending items in queue.');
@@ -909,13 +1176,19 @@ ipcMain.handle('start-queue', () => {
   if (isQueueRunning) {
     return errorResult('VALIDATION_ERROR', 'Queue is already running.');
   }
+  if (!canStartDownload('queue')) {
+    return errorResult('NOT_AVAILABLE', 'A manual download is already in progress.');
+  }
   isQueueRunning = true;
   queueCancelled = false;
   void processQueue();
   return okResult({ started: true });
 });
 
-ipcMain.handle('cancel-queue', () => {
+ipcMain.handle('cancel-queue', (event) => {
+  if (!assertMainWindowSender(event)) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
   try {
     queueCancelled = true;
     isQueueRunning = false;

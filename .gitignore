@@ -41,6 +41,8 @@ build/Release
 *.tgz
 src/renderer/modules/*.js
 src/renderer/modules/*.js.map
+src/renderer/rosiEngine.js
+src/renderer/rosiEngine.js.map
 
 # macOS provisioning
 *.provisionprofile

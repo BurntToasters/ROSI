@@ -25,6 +25,9 @@ win:
         - 'yt-dlp*.exe'
     - from: resources/ffmpeg/win/${arch}
       to: ffmpeg
+      filter:
+        - 'ffmpeg.exe'
+        - 'ffprobe.exe'
     - from: resources/ffmpeg/NOTICE.txt
       to: ffmpeg/NOTICE.txt
     - from: resources/ffmpeg/ffmpeg_license.txt
@@ -48,7 +51,8 @@ mac:
     - from: resources/ffmpeg/mac/${arch}
       to: ffmpeg
       filter:
-        - '**/*'
+        - 'ffmpeg'
+        - 'ffprobe'
     - from: resources/ffmpeg/NOTICE.txt
       to: ffmpeg/NOTICE.txt
     - from: resources/ffmpeg/ffmpeg_license.txt
@@ -62,6 +66,7 @@ linux:
     - rpm
   icon: build/app-icon.png
   category: Utility
+  syncDesktopName: true
   extraResources:
     - from: assets/
       to: assets/
@@ -69,6 +74,9 @@ linux:
         - 'yt-dlp_linux*'
     - from: resources/ffmpeg/linux/${arch}
       to: ffmpeg
+      filter:
+        - 'ffmpeg'
+        - 'ffprobe'
     - from: resources/ffmpeg/NOTICE.txt
       to: ffmpeg/NOTICE.txt
     - from: resources/ffmpeg/ffmpeg_license.txt
