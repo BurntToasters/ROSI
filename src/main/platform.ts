@@ -298,7 +298,65 @@ function getYtdlpBinaryName() {
 
 export const ytdlpBinary = getYtdlpBinaryName();
 
-export function resolveYtdlpPath(): string {
+let effectiveYtdlpPath: string | null = null;
+
+const MAX_PROBE_BUFFER = 4096;
+
+function findMacSystemYtdlpPath(): string | null {
+  if (!isMac) return null;
+
+  const homeDir = safeHomeDir();
+  const candidates = [
+    path.join(homeDir, '.local', 'bin', 'yt-dlp'),
+    '/opt/homebrew/bin/yt-dlp',
+    '/usr/local/bin/yt-dlp',
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) {
+        const stats = fs.statSync(candidate);
+        if (stats.isFile()) return candidate;
+      }
+    } catch {
+      // try next candidate
+    }
+  }
+
+  return null;
+}
+
+function probeYtdlpBinary(ytdlpPath: string): Promise<{ ok: boolean; detail: string }> {
+  return new Promise((resolve) => {
+    let stderr = '';
+    let stdout = '';
+    const proc = spawn(ytdlpPath, ['--version'], {
+      env: { ...process.env, PATH: buildEnhancedPath() },
+      shell: false,
+    });
+
+    proc.stdout?.on('data', (data: Buffer) => {
+      if (stdout.length < 512) stdout += data.toString();
+    });
+    proc.stderr?.on('data', (data: Buffer) => {
+      if (stderr.length < MAX_PROBE_BUFFER) stderr += data.toString();
+    });
+
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve({ ok: true, detail: stdout.trim() || stderr.trim() });
+        return;
+      }
+      resolve({ ok: false, detail: stderr.trim() || stdout.trim() || `exit code ${code}` });
+    });
+
+    proc.on('error', (err: Error) => {
+      resolve({ ok: false, detail: err.message });
+    });
+  });
+}
+
+function resolveBundledYtdlpPath(): string {
   let resolved = '';
 
   if (isPackaged) {
@@ -364,4 +422,59 @@ export function resolveYtdlpPath(): string {
   }
 
   return resolved;
+}
+
+export function resolveYtdlpPath(): string {
+  return effectiveYtdlpPath ?? resolveBundledYtdlpPath();
+}
+
+export async function initializeYtdlpPath(): Promise<string> {
+  if (effectiveYtdlpPath) return effectiveYtdlpPath;
+
+  const bundled = resolveBundledYtdlpPath();
+  if (!isMac || !isPackaged) {
+    effectiveYtdlpPath = bundled;
+    return bundled;
+  }
+
+  const bundledProbe = await probeYtdlpBinary(bundled);
+  if (bundledProbe.ok) {
+    log.info(
+      `Bundled yt-dlp verified: ${bundledProbe.detail.split('\n')[0] ?? bundledProbe.detail}`
+    );
+    effectiveYtdlpPath = bundled;
+    return bundled;
+  }
+
+  log.warn(`Bundled yt-dlp failed startup check at ${bundled}: ${bundledProbe.detail}`);
+
+  const systemPath = findMacSystemYtdlpPath();
+  if (systemPath) {
+    const systemProbe = await probeYtdlpBinary(systemPath);
+    if (systemProbe.ok) {
+      log.info(`Using system yt-dlp fallback at ${systemPath}`);
+      effectiveYtdlpPath = systemPath;
+      return systemPath;
+    }
+    log.warn(`System yt-dlp failed startup check at ${systemPath}: ${systemProbe.detail}`);
+  }
+
+  effectiveYtdlpPath = bundled;
+  return bundled;
+}
+
+export function verifyBundledYtdlp(): void {
+  const bundled = resolveBundledYtdlpPath();
+  if (!fs.existsSync(bundled)) {
+    log.info('No bundled yt-dlp found.');
+    return;
+  }
+
+  void probeYtdlpBinary(bundled).then((result) => {
+    if (result.ok) {
+      log.info(`Bundled yt-dlp verified: ${result.detail.split('\n')[0] ?? result.detail}`);
+      return;
+    }
+    log.warn(`Bundled yt-dlp at ${bundled} failed verification: ${result.detail}`);
+  });
 }

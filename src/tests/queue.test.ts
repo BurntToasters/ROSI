@@ -177,7 +177,7 @@ vi.mock('electron', () => ({
 
 vi.mock('../main/platform', () => ({
   isPackaged: true,
-  resolveYtdlpPath: vi.fn(() => getCurrentYtdlpFixturePath()),
+  initializeYtdlpPath: vi.fn(async () => getCurrentYtdlpFixturePath()),
   verifyBundledFfmpeg: vi.fn(),
 }));
 
