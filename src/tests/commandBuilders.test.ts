@@ -268,15 +268,60 @@ describe('command builders', () => {
         videoFormat: '137',
         audioFormat: '140',
       },
-      ffmpegLocation: '/usr/bin/ffmpeg',
+      ffmpegLocation: '/usr/bin',
     });
 
     expect(result.args).toContain('--ffmpeg-location');
-    expect(result.args).toContain('/usr/bin/ffmpeg');
+    expect(result.args).toContain('/usr/bin');
     expect(result.args).toContain('--cookies-from-browser');
     expect(result.args).toContain('firefox');
     expect(result.args).toContain('137+140');
     expect(result.statusMessages).toContain('📹 Using formats: video=137, audio=140');
+  });
+
+  it('places optional flags before the URL separator, not after it', () => {
+    const url = 'https://example.com/video';
+    const result = buildYtdlpArgs({
+      normalizedDownloadDir: '/tmp/downloads',
+      url,
+      settings: createSettings({
+        hookBrowser: true,
+        browserChoice: 'Firefox',
+        writeSubtitles: true,
+        embedThumbnail: true,
+        embedMetadata: true,
+        sponsorblockRemove: true,
+      }),
+      options: {
+        url,
+        outputPath: '/tmp/downloads',
+        videoFormat: '271',
+        audioFormat: '251',
+      },
+      ffmpegLocation: '/Applications/Rosi.app/Contents/Resources/ffmpeg',
+      pathOutputFile: '/tmp/rosi-path.txt',
+    });
+
+    const separatorIndex = result.args.indexOf('--');
+    expect(separatorIndex).toBeGreaterThan(-1);
+    expect(result.args[separatorIndex + 1]).toBe(url);
+    expect(result.args[result.args.length - 1]).toBe(url);
+
+    for (const flag of [
+      '--print-to-file',
+      '--ffmpeg-location',
+      '--cookies-from-browser',
+      '--write-subs',
+      '--embed-thumbnail',
+      '--embed-metadata',
+      '--sponsorblock-remove',
+    ]) {
+      expect(result.args.indexOf(flag)).toBeGreaterThan(-1);
+      expect(result.args.indexOf(flag)).toBeLessThan(separatorIndex);
+    }
+    expect(result.args[result.args.indexOf('--ffmpeg-location') + 1]).toBe(
+      '/Applications/Rosi.app/Contents/Resources/ffmpeg'
+    );
   });
 
   it('builds yt-dlp args for audio-only mode when no format override is provided', () => {
