@@ -471,7 +471,7 @@ export function startDownload(
   const settings = loadSettings();
   const effectiveSettings: Settings = { ...settings };
   const ffmpegCommand = getEffectiveFfmpegPath(options.ffmpegPath || settings.ffmpegPath);
-  const ffmpegLocation = ffmpegCommand !== 'ffmpeg' ? ffmpegCommand : null;
+  const ffmpegLocation = ffmpegCommand !== 'ffmpeg' ? path.dirname(ffmpegCommand) : null;
 
   if (options.convertFormat !== undefined) {
     if (typeof options.convertFormat === 'string' && options.convertFormat.trim() !== '') {
