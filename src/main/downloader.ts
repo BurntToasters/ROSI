@@ -583,6 +583,16 @@ export function startDownload(
       if (exitType === 'failed') {
         cleanupPathFile();
         sendProgress(session, `❌ Download failed: yt-dlp process exited with code ${code}`);
+        if (
+          downloadErrorData.includes('different Team IDs') ||
+          downloadErrorData.includes('[PYI-') ||
+          downloadErrorData.includes('Failed to load Python shared library')
+        ) {
+          sendProgress(
+            session,
+            '   macOS blocked the bundled yt-dlp runtime (code signing). Install yt-dlp via Homebrew as a workaround, or use a rebuilt ROSI release with signed helpers.'
+          );
+        }
         sendProgress(session, `   Check console and stderr output above for details.`);
         completeSession(session, '❌ Download failed.', 'failed');
         return;
