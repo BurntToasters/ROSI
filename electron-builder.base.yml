@@ -1,6 +1,15 @@
 appId: com.burnttoasters.rosi
 productName: Rosi
 asar: true
+# Harden the packaged Electron binary. electron-builder flips these via
+# @electron/fuses during packaging and re-signs the binary afterwards.
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
 files:
   - 'dist/**/*'
   - 'src/renderer/**/*'
@@ -23,6 +32,7 @@ win:
       to: assets/
       filter:
         - 'yt-dlp*.exe'
+        - 'YT-DLP-NOTICES.txt'
     - from: resources/ffmpeg/win/${arch}
       to: ffmpeg
       filter:
@@ -48,6 +58,8 @@ mac:
   extraResources:
     - from: assets/yt-dlp_macos
       to: assets/yt-dlp_macos
+    - from: assets/YT-DLP-NOTICES.txt
+      to: assets/YT-DLP-NOTICES.txt
     - from: resources/ffmpeg/mac/${arch}
       to: ffmpeg
       filter:
@@ -72,6 +84,7 @@ linux:
       to: assets/
       filter:
         - 'yt-dlp_linux*'
+        - 'YT-DLP-NOTICES.txt'
     - from: resources/ffmpeg/linux/${arch}
       to: ffmpeg
       filter:

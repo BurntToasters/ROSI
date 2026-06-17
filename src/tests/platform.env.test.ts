@@ -5,14 +5,15 @@ import * as path from 'path';
 const initialResourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
 const initialPlatform = process.platform;
 const initialArch = process.arch;
-const ffmpegBinaryName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-const ffprobeBinaryName = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
-
-function bundledHelperExists(target: string): boolean {
+function bundledHelperExists(
+  target: string,
+  platform: NodeJS.Platform = process.platform
+): boolean {
+  const ffmpegName = platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  const ffprobeName = platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
   const normalized = target.replace(/\\/g, '/');
   return (
-    normalized.endsWith(`/ffmpeg/${ffmpegBinaryName}`) ||
-    normalized.endsWith(`/ffmpeg/${ffprobeBinaryName}`)
+    normalized.endsWith(`/ffmpeg/${ffmpegName}`) || normalized.endsWith(`/ffmpeg/${ffprobeName}`)
   );
 }
 
@@ -306,7 +307,7 @@ describe('platform env and ffmpeg verification', () => {
 
   it('chmods bundled ffmpeg on Linux when not executable', async () => {
     const { mod, mocks } = await loadPlatform((m) => {
-      m.existsSyncMock.mockImplementation((target: string) => bundledHelperExists(target));
+      m.existsSyncMock.mockImplementation((target: string) => bundledHelperExists(target, 'linux'));
       m.statSyncMock.mockReturnValue({ isDirectory: () => false, mode: 0o644 });
     }, 'linux');
 
@@ -319,7 +320,7 @@ describe('platform env and ffmpeg verification', () => {
 
   it('copies bundled ffmpeg to temp bin when chmod and access fail on Linux', async () => {
     const { mod, mocks } = await loadPlatform((m) => {
-      m.existsSyncMock.mockImplementation((target: string) => bundledHelperExists(target));
+      m.existsSyncMock.mockImplementation((target: string) => bundledHelperExists(target, 'linux'));
       m.statSyncMock.mockReturnValue({ isDirectory: () => false, mode: 0o644 });
       m.chmodSyncMock.mockImplementationOnce(() => {
         const err = new Error('readonly') as NodeJS.ErrnoException;
@@ -344,7 +345,7 @@ describe('platform env and ffmpeg verification', () => {
   it('copies bundled ffmpeg to app data bin inside Flatpak', async () => {
     vi.stubEnv('FLATPAK_ID', 'com.burnttoasters.rosi');
     const { mod, mocks } = await loadPlatform((m) => {
-      m.existsSyncMock.mockImplementation((target: string) => bundledHelperExists(target));
+      m.existsSyncMock.mockImplementation((target: string) => bundledHelperExists(target, 'linux'));
       m.statSyncMock.mockReturnValue({ isDirectory: () => false, mode: 0o644 });
       m.chmodSyncMock.mockImplementationOnce(() => {
         const err = new Error('readonly') as NodeJS.ErrnoException;

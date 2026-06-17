@@ -5,7 +5,9 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 /**
- * Re-sign bundled helper binaries after electron-builder signs the app.
+ * Sign bundled helper binaries during the afterPack hook, BEFORE electron-builder
+ * signs and seals the .app bundle. Signing nested Mach-O after the bundle is
+ * sealed would invalidate the parent signature / notarization.
  * PyInstaller sidecars (yt-dlp) extract a Python runtime at launch; without
  * disable-library-validation they fail with Team ID mismatches on macOS.
  */

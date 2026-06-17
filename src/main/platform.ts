@@ -393,7 +393,7 @@ function probeYtdlpBinary(ytdlpPath: string): Promise<{ ok: boolean; detail: str
     let stderr = '';
     let stdout = '';
     const proc = spawn(ytdlpPath, ['--version'], {
-      env: { ...process.env, PATH: buildEnhancedPath() },
+      env: { ...buildSafeEnv(), PATH: buildEnhancedPath() },
       shell: false,
     });
 

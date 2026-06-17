@@ -941,9 +941,12 @@ function formatRelativeTime(timestamp: number) {
 }
 
 function escapeHtml(str: string) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function renderHistory() {
@@ -977,26 +980,39 @@ function renderHistory() {
           ? 'Cancelled'
           : 'Failed';
 
-    item.innerHTML = `
-      <div class="history-item-info">
-        <span class="history-filename" title="${escapeHtml(entry.filename)}">${escapeHtml(entry.filename)}</span>
-        <span class="history-time">${formatRelativeTime(entry.timestamp)}</span>
-      </div>
-      <div class="history-item-actions">
-        <span class="history-status ${entry.status}">${statusLabel}</span>
-        ${entry.status === 'success' && entry.path ? `<button type="button" class="history-open-btn" aria-label="Open file location for ${escapeHtml(entry.filename)}">Open</button>` : ''}
-      </div>
-    `;
+    const info = document.createElement('div');
+    info.className = 'history-item-info';
+    const filenameEl = document.createElement('span');
+    filenameEl.className = 'history-filename';
+    filenameEl.title = entry.filename;
+    filenameEl.textContent = entry.filename;
+    const timeEl = document.createElement('span');
+    timeEl.className = 'history-time';
+    timeEl.textContent = formatRelativeTime(entry.timestamp);
+    info.append(filenameEl, timeEl);
 
-    if (entry.path) {
-      const openBtn = item.querySelector('.history-open-btn');
-      if (openBtn) {
-        openBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          if (entry.path) void window.api.openFileLocation(entry.path);
-        });
-      }
+    const actions = document.createElement('div');
+    actions.className = 'history-item-actions';
+    const statusEl = document.createElement('span');
+    statusEl.className = `history-status ${entry.status}`;
+    statusEl.textContent = statusLabel;
+    actions.appendChild(statusEl);
+
+    if (entry.status === 'success' && entry.path) {
+      const filePath = entry.path;
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.className = 'history-open-btn';
+      openBtn.setAttribute('aria-label', `Open file location for ${entry.filename}`);
+      openBtn.textContent = 'Open';
+      openBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        void window.api.openFileLocation(filePath);
+      });
+      actions.appendChild(openBtn);
     }
+
+    item.append(info, actions);
 
     fragment.appendChild(item);
   });
@@ -2162,7 +2178,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   };
 
-  bindExternalLink(browserCookiesHelp, 'https://help.rosie.run/about-browser-cookies');
+  bindExternalLink(browserCookiesHelp, 'https://help.rosie.run/rosi/en-us/about-browser-cookies');
   bindExternalLink(helpLink, 'https://help.rosie.run/rosi/en-us/faq');
   bindExternalLink(supportLink, 'https://rosie.run/support');
   bindExternalLink(websiteLink, 'https://rosie.run');

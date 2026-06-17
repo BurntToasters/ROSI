@@ -103,6 +103,7 @@
 
     const icon = document.createElement('span');
     icon.className = 'toast-icon';
+    // eslint-disable-next-line no-unsanitized/property -- TOAST_ICONS is a static, code-defined map of trusted SVG markup; no user input.
     icon.innerHTML = TOAST_ICONS[type] || TOAST_ICONS.info;
 
     const msg = document.createElement('span');
@@ -187,6 +188,7 @@
       button.onclick = typeof onCancel === 'function' ? onCancel : null;
     } else {
       button.classList.remove('loading');
+      // eslint-disable-next-line no-unsanitized/property -- restores the button's own markup captured earlier from button.innerHTML; trusted app content, no user input.
       button.innerHTML = button.dataset.defaultHtml || button.dataset.defaultText || 'Action';
       button.disabled = false;
       button.removeAttribute('aria-busy');

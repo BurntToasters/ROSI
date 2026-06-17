@@ -48,7 +48,7 @@ function cleanReleaseArtifacts() {
 }
 
 function cleanRendererModuleArtifacts() {
-  let entries = [];
+  let entries;
   try {
     entries = fs.readdirSync(RENDERER_MODULES_DIR, { withFileTypes: true });
   } catch (error) {
