@@ -45,7 +45,7 @@
   --font-sans: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'IBM Plex Mono', 'SF Mono', 'Fira Code', 'Consolas', monospace;
 
-  --text-xs: 0.6rem;
+  --text-xs: 0.72rem;
   --text-sm: 0.75rem;
   --text-base: 0.92rem;
   --text-md: 1rem;
@@ -72,7 +72,7 @@
   --text-primary: #ffffff;
   --text-secondary: rgba(255, 255, 255, 0.8);
   --text-tertiary: rgba(255, 255, 255, 0.7);
-  --text-muted: rgba(255, 255, 255, 0.45);
+  --text-muted: rgba(255, 255, 255, 0.62);
 
   --accent: #22d3ee;
   --accent-light: #67e8f9;
@@ -194,7 +194,7 @@
   --text-primary: #ffffff;
   --text-secondary: rgba(255, 255, 255, 0.78);
   --text-tertiary: rgba(255, 255, 255, 0.7);
-  --text-muted: rgba(255, 255, 255, 0.45);
+  --text-muted: rgba(255, 255, 255, 0.62);
   --accent: #8b5cf6;
   --accent-light: #a78bfa;
   --accent-dark: #7c3aed;
@@ -237,7 +237,7 @@
   --text-primary: #0f172a;
   --text-secondary: rgba(15, 23, 42, 0.82);
   --text-tertiary: rgba(15, 23, 42, 0.7);
-  --text-muted: rgba(15, 23, 42, 0.52);
+  --text-muted: rgba(15, 23, 42, 0.66);
   --accent: #2563eb;
   --accent-light: #3b82f6;
   --accent-dark: #1d4ed8;

@@ -231,13 +231,11 @@ describe('renderer modules', () => {
       );
     });
 
-    it('escapes malicious URL content in renderQueue output', () => {
-      const escapeHtml = (value: string) =>
-        value
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;');
+    it('does not allow crafted URL content to inject markup in renderQueue output', () => {
+      // Intentionally pass a permissive escaper to prove the sink no longer
+      // depends on escaping correctness: renderQueue now builds DOM nodes and
+      // assigns untrusted values via textContent/title, so markup cannot inject.
+      const escapeHtml = (value: string) => value;
       const maliciousUrl = 'https://example.com/"><img src=x onerror=alert(1)>';
       modules().queue!.renderQueue(
         [{ id: 'q_xss', status: 'pending', url: maliciousUrl }],
@@ -250,9 +248,19 @@ describe('renderer modules', () => {
       );
 
       const queueList = document.getElementById('queue-list')!;
+      // No element was injected from the URL string.
       expect(queueList.querySelector('img')).toBeNull();
-      expect(queueList.querySelector('.queue-item-url')!.textContent).toContain('example.com');
-      expect(queueList.innerHTML).toContain('&quot;');
+      expect(queueList.querySelectorAll('.queue-item')).toHaveLength(1);
+      // No event-handler attribute leaked onto any node.
+      queueList.querySelectorAll('*').forEach((node) => {
+        expect(node.getAttribute('onerror')).toBeNull();
+        expect(node.getAttribute('onmouseover')).toBeNull();
+      });
+      const urlEl = queueList.querySelector('.queue-item-url')!;
+      expect(urlEl.textContent).toContain('example.com');
+      // The full raw URL is preserved verbatim as the title's text value
+      // (stored as data, never parsed as HTML).
+      expect(urlEl.getAttribute('title')).toBe(maliciousUrl);
     });
 
     it('removes pending queue items through the remove button', async () => {
