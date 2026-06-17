@@ -16,7 +16,7 @@ ROSI is an Electron GUI for yt-dlp
 
 # LICENSES
 
-- Rosi includes the official YT-DLP binary which on its own uses the [unlicense] license, however there are bundled third party packages. Read [THIRD‑PARTY‑NOTICES](THIRD‑PARTY‑NOTICES.md) for more.
+- Rosi includes the official YT-DLP binary which on its own uses the [unlicense] license, however there are bundled third party packages. Read [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES.md) for more.
 - Please make sure to also read the [license](LICENSE) for the source of this project (excluding third part binaries and packages).
 
 # Requirements
@@ -38,7 +38,7 @@ Download ROSI source code from source (main)
 1. Download zip of release source code (non-release source code are not recommended as they may contain issues not yet fixed for a release).
 2. Unzip the folder folder, place it in a good location on your computer.
 3. Install [NodeJS](https://nodejs.org/en/download) and [NPM](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm) _(Required to build ROSI)_.
-4. Run `npm i --save-dev` to download the required electron packages.
+4. Run `npm install` to download the required build dependencies (including Electron).
 5. View the package.json file to see the `npm run build` commands available.
 
 # ROSI LTS Version

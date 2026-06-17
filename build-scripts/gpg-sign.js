@@ -117,17 +117,25 @@ function signFile(filePath) {
       gpgArgs.push('--local-user', GPG_KEY_ID);
     }
 
+    // Pass the passphrase over stdin (--passphrase-fd 0) instead of argv so it
+    // never appears in the process table or in any error.message (which, for
+    // execFileSync, embeds the full argv).
+    const execOptions = { stdio: ['pipe', 'pipe', 'pipe'] };
     if (GPG_PASSPHRASE) {
-      gpgArgs.push('--pinentry-mode', 'loopback', '--passphrase', GPG_PASSPHRASE);
+      gpgArgs.push('--pinentry-mode', 'loopback', '--passphrase-fd', '0');
+      execOptions.input = GPG_PASSPHRASE + '\n';
     }
 
     gpgArgs.push('--output', ascFile, filePath);
 
-    execFileSync('gpg', gpgArgs, { stdio: 'pipe' });
+    execFileSync('gpg', gpgArgs, execOptions);
     console.log('   ✓ Created ' + path.basename(ascFile));
     return ascFile;
   } catch (error) {
-    console.error('   ✗ FAILED: ' + fileName + ':', error.message);
+    // Do not log error.message: it can contain the full gpg argv. Surface only
+    // the exit status so a secret on the command line can never reach the log.
+    const status = typeof error.status === 'number' ? ` (exit code ${error.status})` : '';
+    console.error('   ✗ FAILED to sign ' + fileName + status);
     return null;
   }
 }
@@ -355,7 +363,7 @@ async function getOrCreateRelease() {
       );
 
       if (!Array.isArray(releases)) {
-        throw new Error('Unexpected releases payload type');
+        throw new Error('Unexpected releases payload type', { cause: error });
       }
 
       const matchingReleases = releases.filter(function (r) {

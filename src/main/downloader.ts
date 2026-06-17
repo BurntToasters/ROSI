@@ -642,6 +642,7 @@ export function startDownload(
           : resolvedDownloadDir;
         const relativePath = path.relative(compareDownloadDir, compareFilePath);
         if (
+          path.isAbsolute(relativePath) ||
           relativePath === '..' ||
           relativePath.startsWith(`..${path.sep}`) ||
           relativePath.startsWith('../')
