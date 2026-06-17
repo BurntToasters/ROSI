@@ -10,6 +10,11 @@ on:
 permissions:
   contents: read
 
+# Avoid burning the 3-OS matrix on superseded pushes/PR updates.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   NODE_VERSION: '24'
 
@@ -123,3 +128,41 @@ jobs:
 
       - name: Dependency Review
         uses: actions/dependency-review-action@v5
+
+  coverage:
+    name: Coverage thresholds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run coverage and enforce per-file thresholds
+        run: npm run test:cov
+
+  audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit dependencies (fails on high/critical)
+        run: npm audit --audit-level=high

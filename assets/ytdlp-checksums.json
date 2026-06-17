@@ -1,0 +1,11 @@
+{
+  "_comment": "SHA-256 of the committed yt-dlp binaries. Regenerate ONLY after verifying the binaries against yt-dlp upstream SHA2-256SUMS. See build-scripts/check-ytdlp.js.",
+  "generatedAt": "2026-06-17T21:25:31.250Z",
+  "binaries": {
+    "yt-dlp.exe": "3a48cb955d55c8821b60ccbdbbc6f61bc958f2f3d3b7ad5eaf3d83a543293a27",
+    "yt-dlp_arm64.exe": "847583f91bb6d26479c1dc9643c2f4b8857a90b40d619da97b0cfabccb9138d0",
+    "yt-dlp_macos": "b82c3626952e6c14eaf654cc565866775ffd0b9ffb7021628ac59b42c2f4f244",
+    "yt-dlp_linux": "bf8aac79b72287a6d2043074415132558b43743a8f9461a22b0141e90f16ce66",
+    "yt-dlp_linux_aarch64": "cabd246445bdfde0eda0dfe68bbe90354be83f3fdbbf077df11a2ea55f41cdbd"
+  }
+}

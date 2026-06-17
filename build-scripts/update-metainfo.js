@@ -57,7 +57,6 @@ if (!releasesSectionMatch) {
 }
 
 const releaseSelfClosingRegex = /<release\b[^>]*\/>/;
-const releasePairedRegex = /<release\b[^>]*>[\s\S]*?<\/release>/;
 
 const currentReleaseMatch =
   releasesSectionMatch[0].match(releaseSelfClosingRegex) ||
@@ -77,17 +76,12 @@ if (currentReleaseMatch) {
   }
 }
 
-let updatedSection = releasesSectionMatch[0];
-if (releaseSelfClosingRegex.test(updatedSection)) {
-  updatedSection = updatedSection.replace(releaseSelfClosingRegex, newReleaseTag);
-} else if (releasePairedRegex.test(updatedSection)) {
-  updatedSection = updatedSection.replace(releasePairedRegex, newReleaseTag);
-} else {
-  updatedSection = updatedSection.replace(
-    /<releases>\s*/,
-    `<releases>\n${newReleaseTag}\n${baseIndent}`
-  );
-}
+// Prepend the new release so version history is preserved (AppStream / Flathub
+// expect a newest-first history rather than a single repeatedly-replaced entry).
+const updatedSection = releasesSectionMatch[0].replace(
+  /<releases>[^\S\r\n]*\r?\n?\s*/,
+  `<releases>\n${releaseIndent}${newReleaseTag.trim()}\n`
+);
 
 if (updatedSection === releasesSectionMatch[0]) {
   console.log('✓ AppStream metadata already up to date');

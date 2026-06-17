@@ -10,17 +10,17 @@ command: rosi
 separate-locales: false
 
 finish-args:
-  # X11 + XShm access
+  # X11 + XShm access (only used as a fallback when Wayland is unavailable)
   - --share=ipc
-  - --socket=x11
+  - --socket=fallback-x11
   # Wayland access
   - --socket=wayland
   # Network access (for downloading videos & updates)
   - --share=network
   # GPU acceleration (for hardware-accelerated encoding)
   - --device=dri
-  # File system access for saving downloads
-  - --filesystem=home
+  # File system access for saving downloads (least privilege; arbitrary
+  # user-chosen locations go through the file-chooser portal, not --filesystem=home)
   - --filesystem=xdg-videos
   - --filesystem=xdg-download
   # Notifications
