@@ -55,7 +55,7 @@ export function probeMediaCodecs(ffmpegCommand: string, inputPath: string): Prom
       return;
     }
 
-    proc.stderr?.on('data', (data) => {
+    proc.stderr?.on('data', (data: Buffer) => {
       if (stderr.length < MAX_ERROR_BUFFER) stderr += data.toString();
     });
     proc.on('close', () => finish(parse()));

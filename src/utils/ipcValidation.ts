@@ -67,6 +67,15 @@ function isAllowedDownloadBase(resolvedPath: string): boolean {
       return true;
     }
   }
+  if (process.platform === 'linux') {
+    // Allow common external/removable mount roots on Linux.
+    for (const mountRoot of ['/mnt', '/media', '/run/media']) {
+      const resolved = path.resolve(mountRoot);
+      if (resolvedPath === resolved || isPathWithinBase(resolvedPath, resolved)) {
+        return true;
+      }
+    }
+  }
   if (process.platform === 'win32' && isAbsolutePath(resolvedPath)) {
     const normalized = resolvedPath.replace(/\//g, '\\').toLowerCase();
     const blocked = [

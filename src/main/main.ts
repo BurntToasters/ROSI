@@ -266,7 +266,7 @@ async function runRendererSmokeChecks(windowRef: BrowserWindow): Promise<string[
     })();
   `;
 
-  const result = await windowRef.webContents.executeJavaScript(script, true);
+  const result: unknown = await windowRef.webContents.executeJavaScript(script, true);
   if (!Array.isArray(result)) {
     return ['Smoke script returned an invalid response payload.'];
   }
@@ -905,7 +905,7 @@ function readQueueFromDisk(filePath: string): QueueItem[] | null {
   try {
     if (!fs.existsSync(filePath)) return null;
     const raw = fs.readFileSync(filePath, 'utf-8');
-    const parsed = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return null;
     return parsed
       .filter(
