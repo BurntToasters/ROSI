@@ -120,11 +120,11 @@ export async function installDeno(
       resolve({ success: false, error: 'Installation timed out after 2 minutes' });
     }, DENO_INSTALL_TIMEOUT_MS);
 
-    proc.stdout?.on('data', (data) => {
+    proc.stdout?.on('data', (data: Buffer) => {
       if (output.length < MAX_OUTPUT_BUFFER) output += data.toString();
     });
 
-    proc.stderr?.on('data', (data) => {
+    proc.stderr?.on('data', (data: Buffer) => {
       if (error.length < MAX_ERROR_BUFFER) error += data.toString();
     });
 
