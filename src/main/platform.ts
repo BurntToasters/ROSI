@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
-import { app, dialog } from 'electron';
+import { app } from 'electron';
 import log from 'electron-log/main.js';
 
 export const isWindows = process.platform === 'win32';

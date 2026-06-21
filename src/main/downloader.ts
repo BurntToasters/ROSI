@@ -336,7 +336,10 @@ async function runConversion(
       sendProgress(session, `🖥️ Using GPU acceleration (${videoEncoder})`);
     }
 
-    const ffProc = spawnWithEnv(ffmpegCommand, ffmpegArgs);
+    const ffProc = spawnWithEnv(ffmpegCommand, ffmpegArgs, {
+      // New process group so kill(-pid) reaches any ffmpeg sub-processes too.
+      detached: !isWindows,
+    });
     session.ffmpegProcess = ffProc;
 
     const conversionTimeout = setTimeout(() => {
@@ -346,11 +349,11 @@ async function runConversion(
       completeSession(session, '❌ Conversion failed (timeout).', 'failed');
     }, FFMPEG_CONVERT_TIMEOUT_MS);
 
-    ffProc.stdout?.on('data', (data) => {
+    ffProc.stdout?.on('data', (data: Buffer) => {
       if (!isActiveSession(session)) return;
       sendProgress(session, `[ffmpeg] ${data.toString().trim()}`);
     });
-    ffProc.stderr?.on('data', (data) => {
+    ffProc.stderr?.on('data', (data: Buffer) => {
       if (!isActiveSession(session)) return;
       sendProgress(session, `[ffmpeg] ${data.toString().trim()}`);
     });
@@ -548,13 +551,16 @@ export function startDownload(
     sendProgress(session, `   Command: ${ytdlpBinary} ${ytdlpArgs.join(' ')}`);
     const ytProc = spawnWithEnv(ytdlpPath, ytdlpArgs, {
       env: { PYTHONUNBUFFERED: '1' },
+      // On Unix, spawn as a new process-group leader so kill(-pid) delivers
+      // signals to yt-dlp AND any ffmpeg it spawns internally for merging.
+      detached: !isWindows,
     });
     session.ytdlpProcess = ytProc;
 
     let downloadOutputData = '';
     let downloadErrorData = '';
 
-    ytProc.stdout?.on('data', (data) => {
+    ytProc.stdout?.on('data', (data: Buffer) => {
       if (!isActiveSession(session)) return;
       const message = data.toString();
       if (downloadOutputData.length + message.length > MAX_OUTPUT_BUFFER) {
@@ -564,7 +570,7 @@ export function startDownload(
       sendProgress(session, message.trim());
     });
 
-    ytProc.stderr?.on('data', (data) => {
+    ytProc.stderr?.on('data', (data: Buffer) => {
       if (!isActiveSession(session)) return;
       const message = data.toString();
       if (downloadErrorData.length < MAX_ERROR_BUFFER) {

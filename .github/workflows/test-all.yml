@@ -164,5 +164,5 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Audit dependencies (fails on high/critical)
-        run: npm audit --audit-level=high
+      - name: Audit dependencies (fails on high/critical in shipped code)
+        run: npm audit --omit=dev --audit-level=high

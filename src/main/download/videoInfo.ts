@@ -31,17 +31,19 @@ export function parseVideoInfo(jsonString: string): VideoInfo | null {
 
   const data = parsed as Record<string, unknown>;
   const isPlaylist = data._type === 'playlist' || Array.isArray(data.entries);
-  const entries = Array.isArray(data.entries) ? data.entries : null;
+  const entries: unknown[] | null = Array.isArray(data.entries)
+    ? (data.entries as unknown[])
+    : null;
 
   let thumbnail = pickThumbnail(data.thumbnail);
   if (!thumbnail && Array.isArray(data.thumbnails) && data.thumbnails.length > 0) {
-    const last = data.thumbnails[data.thumbnails.length - 1];
+    const last: unknown = (data.thumbnails as unknown[])[data.thumbnails.length - 1];
     if (last && typeof last === 'object') {
       thumbnail = pickThumbnail((last as Record<string, unknown>).url);
     }
   }
   if (!thumbnail && entries && entries.length > 0) {
-    const first = entries[0];
+    const first: unknown = entries[0];
     if (first && typeof first === 'object') {
       thumbnail = pickThumbnail((first as Record<string, unknown>).thumbnail);
     }
