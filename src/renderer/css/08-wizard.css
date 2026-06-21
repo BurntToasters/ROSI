@@ -65,6 +65,12 @@
   background: var(--accent-subtle);
 }
 
+/* Focus ring on the visible card when its hidden radio is keyboard-focused. */
+.wizard-theme-option input:focus-visible + .wizard-theme-card {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .wizard-theme-card:hover {
   border-color: var(--border-default);
 }
@@ -129,6 +135,12 @@
   position: absolute;
   opacity: 0;
   pointer-events: none;
+}
+
+/* Focus ring on wizard toggle slider proxy. */
+.wizard-toggle input:focus-visible + .toggle-slider {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .wizard-toggle input:checked + .toggle-slider {

@@ -52,13 +52,6 @@ function isMac() {
   return navigator.platform.toLowerCase().includes('mac');
 }
 
-function getModifierKey() {
-  if (uiModule && typeof uiModule.getModifierKey === 'function') {
-    return uiModule.getModifierKey();
-  }
-  return isMac() ? 'metaKey' : 'ctrlKey';
-}
-
 function getModifierKeyName() {
   if (uiModule && typeof uiModule.getModifierKeyName === 'function') {
     return uiModule.getModifierKeyName();
@@ -73,7 +66,7 @@ function isValidUrl(string: string) {
   try {
     const url = new URL(string);
     return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch (_) {
+  } catch {
     return false;
   }
 }
@@ -104,7 +97,7 @@ function syncLicensesTheme(theme: ThemeName) {
     if (root) {
       root.dataset.theme = theme;
     }
-  } catch (_) {
+  } catch {
     /* ignore */
   }
 }
@@ -172,7 +165,7 @@ function applyTheme(preference: string) {
   syncLicensesTheme(appliedTheme);
   try {
     localStorage.setItem('rosi-theme', themePreference);
-  } catch (_) {
+  } catch {
     /* ignore */
   }
   return appliedTheme;
@@ -886,7 +879,7 @@ interface HistoryEntry {
 function loadHistory(): HistoryEntry[] {
   try {
     const data = localStorage.getItem(HISTORY_KEY);
-    return data ? JSON.parse(data) : [];
+    return data ? (JSON.parse(data) as HistoryEntry[]) : [];
   } catch {
     return [];
   }
@@ -1104,7 +1097,7 @@ async function checkForUpdates() {
         priority: true,
       });
     }
-  } catch (e) {
+  } catch {
     finishManualUpdateCheck();
     showModal({
       title: 'Update Check Failed',
@@ -1145,8 +1138,6 @@ function hideUpdateBanner() {
 }
 
 function setupAutoUpdater() {
-  let updateVersion = '';
-
   const cancelBtn = document.getElementById('update-banner-cancel');
   if (cancelBtn) {
     cancelBtn.addEventListener('click', () => {
@@ -1167,7 +1158,6 @@ function setupAutoUpdater() {
 
         case 'available': {
           const version = data.version ?? '';
-          updateVersion = version;
           const isBetaUpdate =
             data.isBeta ||
             (updatesModule && typeof updatesModule.isPrereleaseVersion === 'function'
@@ -1279,7 +1269,7 @@ function cleanupUpdaterListeners() {
     if (typeof cleanup === 'function') {
       try {
         cleanup();
-      } catch (e) {
+      } catch {
         /* ignore */
       }
     }
@@ -1826,7 +1816,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         settings = result.data as RosiSettings;
         resolve(true);
-      } catch (_error) {
+      } catch {
         if (!silent) {
           showSettingsSaveError('Could not save settings due to an unexpected error.');
         }
@@ -2975,7 +2965,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             { label: 'Close', primary: true },
           ],
         });
-      } catch (e) {
+      } catch {
         showToast('Could not load statistics.', { type: 'error' });
       }
     });
@@ -3517,7 +3507,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (typeof cleanup === 'function') {
         try {
           cleanup();
-        } catch (e) {}
+        } catch {}
       }
     });
     cleanupUpdaterListeners();
