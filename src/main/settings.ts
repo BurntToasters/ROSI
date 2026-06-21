@@ -220,7 +220,7 @@ export function loadSettings(): Settings {
       return { ...defaultSettings };
     }
     const raw = fs.readFileSync(settingsPath, 'utf-8');
-    const loaded = JSON.parse(raw);
+    const loaded: unknown = JSON.parse(raw);
     return normalizeSettingsVersion(migrateSettings(loaded));
   } catch (error) {
     log.warn('Failed to load settings, using defaults:', error);
@@ -279,8 +279,9 @@ export function loadStats(): DownloadStats {
   try {
     if (!fs.existsSync(statsPath)) return getDefaultStats();
     const raw = fs.readFileSync(statsPath, 'utf-8');
-    const loaded = JSON.parse(raw);
-    if (!loaded || typeof loaded !== 'object' || Array.isArray(loaded)) return getDefaultStats();
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return getDefaultStats();
+    const loaded = parsed as Record<string, unknown>;
     const stats = getDefaultStats();
     if (typeof loaded.totalDownloads === 'number') stats.totalDownloads = loaded.totalDownloads;
     if (typeof loaded.successfulDownloads === 'number')
@@ -296,7 +297,7 @@ export function loadStats(): DownloadStats {
       !Array.isArray(loaded.formatCounts) &&
       loaded.formatCounts !== null
     )
-      stats.formatCounts = { ...loaded.formatCounts };
+      stats.formatCounts = { ...(loaded.formatCounts as Record<string, number>) };
     if (typeof loaded.firstDownloadAt === 'number') stats.firstDownloadAt = loaded.firstDownloadAt;
     if (typeof loaded.lastDownloadAt === 'number') stats.lastDownloadAt = loaded.lastDownloadAt;
     return stats;
@@ -391,7 +392,7 @@ export async function importSettingsFromFile(
       return false;
     }
     const raw = fs.readFileSync(filePaths[0], 'utf-8');
-    const loaded = JSON.parse(raw);
+    const loaded: unknown = JSON.parse(raw);
     if (!loaded || typeof loaded !== 'object' || Array.isArray(loaded)) {
       log.warn('Imported settings file has invalid structure.');
       return false;

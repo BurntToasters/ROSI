@@ -1,5 +1,6 @@
 import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
+import nounsanitized from 'eslint-plugin-no-unsanitized';
 
 export default tseslint.config(
   eslint.configs.recommended,
@@ -45,6 +46,25 @@ export default tseslint.config(
       'no-empty': ['error', { allowEmptyCatch: true }],
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-misused-promises': ['error', { checksVoidReturn: false }],
+
+      // Type-aware unsafe-data-flow rules. Kept as warnings so they surface
+      // risky `any` flows without breaking the build; promote to 'error' as the
+      // remaining warnings are burned down.
+      '@typescript-eslint/no-unsafe-assignment': 'warn',
+      '@typescript-eslint/no-unsafe-member-access': 'warn',
+      '@typescript-eslint/no-unsafe-call': 'warn',
+      '@typescript-eslint/no-unsafe-return': 'warn',
+      '@typescript-eslint/no-unsafe-argument': 'warn',
+    },
+  },
+  {
+    // Flag unsanitized DOM sinks (innerHTML/insertAdjacentHTML/etc.) in the
+    // renderer, where untrusted yt-dlp/queue data is rendered.
+    files: ['src/renderer/**/*.ts'],
+    plugins: { 'no-unsanitized': nounsanitized },
+    rules: {
+      'no-unsanitized/method': 'error',
+      'no-unsanitized/property': 'error',
     },
   },
   {

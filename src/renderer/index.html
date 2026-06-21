@@ -7,23 +7,7 @@
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self';"
     />
     <title>ROSI</title>
-    <script>
-      (function () {
-        try {
-          var pref = localStorage.getItem('rosi-theme');
-          var theme = pref;
-          if (!theme || theme === 'system') {
-            theme =
-              window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
-                ? 'dark'
-                : 'light';
-          } else if (theme !== 'light' && theme !== 'dark' && theme !== 'purple') {
-            theme = 'dark';
-          }
-          document.documentElement.dataset.theme = theme;
-        } catch (e) {}
-      })();
-    </script>
+    <script src="theme-init.js"></script>
     <link rel="stylesheet" href="main.css" />
   </head>
   <body>
@@ -315,9 +299,14 @@
                 <span>Browser:</span>
                 <select id="browserChoice">
                   <option value="Chrome">Chrome</option>
+                  <option value="Chromium">Chromium</option>
                   <option value="Firefox">Firefox</option>
                   <option value="Edge">Edge</option>
                   <option value="Brave">Brave</option>
+                  <option value="Opera">Opera</option>
+                  <option value="Safari">Safari</option>
+                  <option value="Vivaldi">Vivaldi</option>
+                  <option value="Whale">Whale</option>
                 </select>
               </label>
               <div id="browserWindowsHint" class="settings-hint hidden">

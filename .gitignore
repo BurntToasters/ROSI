@@ -58,3 +58,6 @@ resources/ffmpeg/**/ffplay.exe
 
 # REPL history
 .node_repl_history
+
+# Test scratch dirs
+.tmp-*/

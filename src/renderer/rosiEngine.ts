@@ -52,13 +52,6 @@ function isMac() {
   return navigator.platform.toLowerCase().includes('mac');
 }
 
-function getModifierKey() {
-  if (uiModule && typeof uiModule.getModifierKey === 'function') {
-    return uiModule.getModifierKey();
-  }
-  return isMac() ? 'metaKey' : 'ctrlKey';
-}
-
 function getModifierKeyName() {
   if (uiModule && typeof uiModule.getModifierKeyName === 'function') {
     return uiModule.getModifierKeyName();
@@ -73,7 +66,7 @@ function isValidUrl(string: string) {
   try {
     const url = new URL(string);
     return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch (_) {
+  } catch {
     return false;
   }
 }
@@ -104,7 +97,7 @@ function syncLicensesTheme(theme: ThemeName) {
     if (root) {
       root.dataset.theme = theme;
     }
-  } catch (_) {
+  } catch {
     /* ignore */
   }
 }
@@ -172,7 +165,7 @@ function applyTheme(preference: string) {
   syncLicensesTheme(appliedTheme);
   try {
     localStorage.setItem('rosi-theme', themePreference);
-  } catch (_) {
+  } catch {
     /* ignore */
   }
   return appliedTheme;
@@ -886,7 +879,7 @@ interface HistoryEntry {
 function loadHistory(): HistoryEntry[] {
   try {
     const data = localStorage.getItem(HISTORY_KEY);
-    return data ? JSON.parse(data) : [];
+    return data ? (JSON.parse(data) as HistoryEntry[]) : [];
   } catch {
     return [];
   }
@@ -941,9 +934,12 @@ function formatRelativeTime(timestamp: number) {
 }
 
 function escapeHtml(str: string) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function renderHistory() {
@@ -977,26 +973,39 @@ function renderHistory() {
           ? 'Cancelled'
           : 'Failed';
 
-    item.innerHTML = `
-      <div class="history-item-info">
-        <span class="history-filename" title="${escapeHtml(entry.filename)}">${escapeHtml(entry.filename)}</span>
-        <span class="history-time">${formatRelativeTime(entry.timestamp)}</span>
-      </div>
-      <div class="history-item-actions">
-        <span class="history-status ${entry.status}">${statusLabel}</span>
-        ${entry.status === 'success' && entry.path ? `<button type="button" class="history-open-btn" aria-label="Open file location for ${escapeHtml(entry.filename)}">Open</button>` : ''}
-      </div>
-    `;
+    const info = document.createElement('div');
+    info.className = 'history-item-info';
+    const filenameEl = document.createElement('span');
+    filenameEl.className = 'history-filename';
+    filenameEl.title = entry.filename;
+    filenameEl.textContent = entry.filename;
+    const timeEl = document.createElement('span');
+    timeEl.className = 'history-time';
+    timeEl.textContent = formatRelativeTime(entry.timestamp);
+    info.append(filenameEl, timeEl);
 
-    if (entry.path) {
-      const openBtn = item.querySelector('.history-open-btn');
-      if (openBtn) {
-        openBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          if (entry.path) void window.api.openFileLocation(entry.path);
-        });
-      }
+    const actions = document.createElement('div');
+    actions.className = 'history-item-actions';
+    const statusEl = document.createElement('span');
+    statusEl.className = `history-status ${entry.status}`;
+    statusEl.textContent = statusLabel;
+    actions.appendChild(statusEl);
+
+    if (entry.status === 'success' && entry.path) {
+      const filePath = entry.path;
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.className = 'history-open-btn';
+      openBtn.setAttribute('aria-label', `Open file location for ${entry.filename}`);
+      openBtn.textContent = 'Open';
+      openBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        void window.api.openFileLocation(filePath);
+      });
+      actions.appendChild(openBtn);
     }
+
+    item.append(info, actions);
 
     fragment.appendChild(item);
   });
@@ -1088,7 +1097,7 @@ async function checkForUpdates() {
         priority: true,
       });
     }
-  } catch (e) {
+  } catch {
     finishManualUpdateCheck();
     showModal({
       title: 'Update Check Failed',
@@ -1129,8 +1138,6 @@ function hideUpdateBanner() {
 }
 
 function setupAutoUpdater() {
-  let updateVersion = '';
-
   const cancelBtn = document.getElementById('update-banner-cancel');
   if (cancelBtn) {
     cancelBtn.addEventListener('click', () => {
@@ -1151,7 +1158,6 @@ function setupAutoUpdater() {
 
         case 'available': {
           const version = data.version ?? '';
-          updateVersion = version;
           const isBetaUpdate =
             data.isBeta ||
             (updatesModule && typeof updatesModule.isPrereleaseVersion === 'function'
@@ -1263,7 +1269,7 @@ function cleanupUpdaterListeners() {
     if (typeof cleanup === 'function') {
       try {
         cleanup();
-      } catch (e) {
+      } catch {
         /* ignore */
       }
     }
@@ -1810,7 +1816,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         settings = result.data as RosiSettings;
         resolve(true);
-      } catch (_error) {
+      } catch {
         if (!silent) {
           showSettingsSaveError('Could not save settings due to an unexpected error.');
         }
@@ -2162,7 +2168,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   };
 
-  bindExternalLink(browserCookiesHelp, 'https://help.rosie.run/about-browser-cookies');
+  bindExternalLink(browserCookiesHelp, 'https://help.rosie.run/rosi/en-us/about-browser-cookies');
   bindExternalLink(helpLink, 'https://help.rosie.run/rosi/en-us/faq');
   bindExternalLink(supportLink, 'https://rosie.run/support');
   bindExternalLink(websiteLink, 'https://rosie.run');
@@ -2959,7 +2965,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             { label: 'Close', primary: true },
           ],
         });
-      } catch (e) {
+      } catch {
         showToast('Could not load statistics.', { type: 'error' });
       }
     });
@@ -3501,7 +3507,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (typeof cleanup === 'function') {
         try {
           cleanup();
-        } catch (e) {}
+        } catch {}
       }
     });
     cleanupUpdaterListeners();

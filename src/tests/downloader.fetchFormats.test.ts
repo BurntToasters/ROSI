@@ -23,6 +23,7 @@ vi.mock('../main/platform', () => ({
   spawnWithEnv: spawnWithEnvMock,
   resolveFfmpegPath: vi.fn(() => null),
   getEffectiveFfmpegPath: vi.fn(() => 'ffmpeg'),
+  resolveFfmpegLocationForYtdlp: vi.fn(() => null),
   ytdlpBinary: 'yt-dlp',
   isWindows: process.platform === 'win32',
   isMac: process.platform === 'darwin',
