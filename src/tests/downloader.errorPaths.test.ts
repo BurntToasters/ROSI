@@ -11,6 +11,7 @@ const {
   recordDownloadMock,
   loadSettingsMock,
   getEffectiveFfmpegPathMock,
+  resolveFfmpegLocationForYtdlpMock,
   resolveVideoEncoderMock,
   probeMediaCodecsMock,
   buildYtdlpArgsMock,
@@ -29,6 +30,7 @@ const {
     recordDownloadMock: vi.fn(),
     loadSettingsMock: vi.fn(),
     getEffectiveFfmpegPathMock: vi.fn(() => 'ffmpeg'),
+    resolveFfmpegLocationForYtdlpMock: vi.fn(() => null),
     resolveVideoEncoderMock: vi.fn(async () => 'copy'),
     probeMediaCodecsMock: vi.fn(async () => ({})),
     buildYtdlpArgsMock: vi.fn(({ url }: { url: string }) => ({
@@ -53,6 +55,7 @@ vi.mock('fs', () => ({
 vi.mock('../main/platform', () => ({
   spawnWithEnv: spawnWithEnvMock,
   getEffectiveFfmpegPath: getEffectiveFfmpegPathMock,
+  resolveFfmpegLocationForYtdlp: resolveFfmpegLocationForYtdlpMock,
   ytdlpBinary: 'yt-dlp',
   isWindows: process.platform === 'win32',
   isMac: process.platform === 'darwin',

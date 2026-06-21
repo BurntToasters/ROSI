@@ -9,37 +9,86 @@ function normalizeHostname(hostname: string): string {
   return trimmed;
 }
 
-function parseDecimalIpv4(host: string): number | null {
-  if (!/^\d+$/.test(host)) return null;
-  const value = Number(host);
-  if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) return null;
-  return value;
-}
-
 function ipv4FromDecimal(value: number): string {
   return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff].join(
     '.'
   );
 }
 
-function parseHexIpv4(host: string): string | null {
-  const match = host.match(/^0x([0-9a-f]{1,8})$/i);
-  if (!match?.[1]) return null;
-  const value = parseInt(match[1], 16);
-  if (!Number.isFinite(value) || value < 0 || value > 0xffffffff) return null;
-  return ipv4FromDecimal(value);
+// Parse a single IPv4 "part" the way the C resolver (inet_aton) does: a leading
+// "0x" means hex, a leading "0" means octal, otherwise decimal.
+function parseIpv4Part(part: string): number | null {
+  if (/^0x[0-9a-f]+$/i.test(part)) {
+    const value = parseInt(part.slice(2), 16);
+    return Number.isInteger(value) ? value : null;
+  }
+  if (/^0[0-7]+$/.test(part)) {
+    const value = parseInt(part, 8);
+    return Number.isInteger(value) ? value : null;
+  }
+  if (/^(?:0|[1-9]\d*)$/.test(part)) {
+    const value = Number(part);
+    return Number.isInteger(value) ? value : null;
+  }
+  return null;
+}
+
+// Canonicalize any IPv4 representation (dotted/decimal/hex/octal/shorthand and
+// mixtures, e.g. 0177.0.0.1, 127.1, 0x7f.0.0.1, 2130706433) into dotted-quad,
+// matching inet_aton semantics. Returns null if the host is not an IPv4 literal.
+function canonicalizeIpv4(host: string): string | null {
+  if (!/^[0-9a-fx.]+$/i.test(host)) return null;
+  const parts = host.split('.');
+  if (parts.length === 0 || parts.length > 4) return null;
+
+  const nums: number[] = [];
+  for (const part of parts) {
+    if (part === '') return null;
+    const parsed = parseIpv4Part(part);
+    if (parsed === null || parsed < 0) return null;
+    nums.push(parsed);
+  }
+
+  // All but the final part must each fit in a single byte.
+  for (let i = 0; i < nums.length - 1; i += 1) {
+    if ((nums[i] as number) > 0xff) return null;
+  }
+
+  const last = nums[nums.length - 1] as number;
+  let value: number;
+  switch (nums.length) {
+    case 1:
+      value = last;
+      break;
+    case 2:
+      if (last > 0xffffff) return null;
+      value = (((nums[0] as number) << 24) >>> 0) + last;
+      break;
+    case 3:
+      if (last > 0xffff) return null;
+      value = ((((nums[0] as number) << 24) | ((nums[1] as number) << 16)) >>> 0) + last;
+      break;
+    case 4:
+      if (last > 0xff) return null;
+      value =
+        (((nums[0] as number) << 24) |
+          ((nums[1] as number) << 16) |
+          ((nums[2] as number) << 8) |
+          last) >>>
+        0;
+      break;
+    default:
+      return null;
+  }
+
+  if (value < 0 || value > 0xffffffff) return null;
+  return ipv4FromDecimal(value >>> 0);
 }
 
 function isPrivateOrLocalIpv4(host: string): boolean {
-  const decimal = parseDecimalIpv4(host);
-  if (decimal !== null) {
-    return isPrivateOrLocalIpv4(ipv4FromDecimal(decimal));
-  }
-  const hexMapped = parseHexIpv4(host);
-  if (hexMapped) {
-    return isPrivateOrLocalIpv4(hexMapped);
-  }
-  const match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  const canonical = canonicalizeIpv4(host);
+  if (canonical === null) return false;
+  const match = canonical.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (!match) return false;
   const octets = match.slice(1, 5).map((value) => Number(value));
   if (octets.some((value) => value > 255)) return false;

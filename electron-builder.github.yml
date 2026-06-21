@@ -12,4 +12,7 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   notarize: true
-afterSign: build-scripts/sign-mac-helpers.js
+# Sign the bundled helper binaries (yt-dlp, ffmpeg, ffprobe) during afterPack —
+# BEFORE electron-builder signs/seals the .app — so the parent signature stays
+# valid and notarization is not invalidated by re-signing nested code.
+afterPack: build-scripts/sign-mac-helpers.js

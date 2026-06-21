@@ -1,0 +1,51 @@
+yt-dlp Binary Distribution Notice
+=================================
+
+This application (ROSI) bundles and redistributes the official yt-dlp
+standalone binary.
+
+yt-dlp itself
+-------------
+License: The Unlicense (public domain dedication)
+Project: https://github.com/yt-dlp/yt-dlp
+License text: https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE
+
+Bundled components inside the standalone binary
+-----------------------------------------------
+The yt-dlp standalone binary is produced with PyInstaller and statically
+bundles a Python interpreter plus several third-party components. Some of these
+are licensed under the GPL/LGPL and therefore carry a source-availability
+obligation:
+
+  Component        License                 Source
+  ---------------  ----------------------  --------------------------------------
+  yt-dlp           The Unlicense           https://github.com/yt-dlp/yt-dlp
+  mutagen          GPL-2.0-or-later        https://github.com/quodlibet/mutagen
+  AtomicParsley    GPL-2.0-or-later        https://github.com/wez/atomicparsley
+  pycryptodome     Public domain + BSD-2   https://github.com/Legrandin/pycryptodome
+  websockets       BSD-3-Clause            https://github.com/python-websockets/websockets
+  certifi          MPL-2.0                 https://github.com/certifi/python-certifi
+  brotli/brotlicffi MIT                    https://github.com/google/brotli
+  Python           PSF License v2          https://github.com/python/cpython
+
+The authoritative, version-specific list of bundled components and their
+licenses is published by the yt-dlp project at:
+  https://github.com/yt-dlp/yt-dlp/blob/master/THIRD_PARTY_LICENSES.txt
+(When updating the bundled yt-dlp binary, drop the matching upstream
+THIRD_PARTY_LICENSES.txt next to this file.)
+
+Written Source Offer (GPLv2 Section 3(b))
+-----------------------------------------
+For the GPL-licensed components statically bundled in the yt-dlp binary
+distributed with ROSI (e.g. mutagen, AtomicParsley), BurntToasters offers to
+provide, for a charge no more than the cost of physically performing
+distribution, the complete corresponding source code. This offer is valid for at
+least three years from the date you received the binaries.
+
+The corresponding source is also freely available from the upstream projects
+listed above. To request source on physical media, contact:
+  BurntToasters <code@rosie.run>
+
+ROSI invokes yt-dlp as an external process and is not a derivative work of
+yt-dlp or any of its bundled components. ROSI is licensed under the Mozilla
+Public License 2.0 (MPL-2.0).

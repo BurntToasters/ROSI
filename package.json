@@ -1,6 +1,6 @@
 {
   "name": "rosi",
-  "version": "4.1.2",
+  "version": "4.1.3",
   "private": true,
   "description": "Electron GUI for yt-dlp",
   "desktopName": "com.burnttoasters.rosi.desktop",
@@ -13,8 +13,8 @@
   "main": "dist/main/main.js",
   "packageManager": "npm@11.10.1",
   "engines": {
-    "node": ">=24.x",
-    "npm": ">=10.x"
+    "node": ">=24",
+    "npm": ">=11"
   },
   "scripts": {
     "gitprune": "node build-scripts/git-prune-local-branches.js",
@@ -24,6 +24,8 @@
     "hooks:install": "node build-scripts/install-hooks.js",
     "clean": "node build-scripts/dist-tools.js clean && node build-scripts/dist-tools.js clean-release",
     "licenses": "npx npm-license-crawler --production --json licenses.json",
+    "ytdlp:check": "node build-scripts/check-ytdlp.js",
+    "ytdlp:check:generate": "node build-scripts/check-ytdlp.js --generate",
     "compile:main": "tsc --project tsconfig.main.json",
     "compile:renderer": "tsc --project tsconfig.renderer.json",
     "compile": "node build-scripts/dist-tools.js clean && npm run compile:main && npm run compile:renderer && node build-scripts/dist-tools.js copy",
@@ -38,7 +40,7 @@
     "ffmpeg:check:linux:x64": "npm run ffmpeg:check -- --target linux:x64",
     "ffmpeg:check:linux:arm64": "npm run ffmpeg:check -- --target linux:arm64",
     "prerelease:prepare": "node build-scripts/release-warning.js",
-    "prebuild:base": "npm run compile && npm run licenses",
+    "prebuild:base": "npm run compile && npm run licenses && npm run ytdlp:check",
     "prebuild": "npm run prebuild:base && npm run ffmpeg:check:current",
     "prebuild:win": "npm run prebuild:base && npm run ffmpeg:check:win",
     "prebuild:win:x64": "npm run prebuild:base && npm run ffmpeg:check:win:x64",
@@ -61,8 +63,8 @@
     "test:watch": "vitest",
     "test:all": "node build-scripts/test-all.js",
     "test:cov": "vitest run --coverage && node build-scripts/check-coverage-thresholds.js",
-    "lint": "eslint src/",
-    "lint:fix": "eslint src/ --fix",
+    "lint": "eslint src/ build-scripts/",
+    "lint:fix": "eslint src/ build-scripts/ --fix",
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
     "start": "npm run clean && npm run compile && electron .",
@@ -119,7 +121,7 @@
     "setup:deb": "sudo apt update && sudo apt install -y build-essential libgtk-3-dev libnotify-dev libnss3-dev libxss-dev libxtst-dev libatspi2.0-dev uuid-dev libsecret-1-dev libx11-dev rpm flatpak flatpak-builder && sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo"
   },
   "overrides": {
-    "tar": "^7.5.3"
+    "tar": "^7.5.8"
   },
   "repository": {
     "type": "git",
@@ -140,6 +142,7 @@
     "electron": "^42.0.0",
     "electron-builder": "^26.7.0",
     "eslint": "^10.3.0",
+    "eslint-plugin-no-unsanitized": "^4.1.2",
     "husky": "^9.1.7",
     "js-yaml": "^4.1.0",
     "jsdom": "^29.1.1",
