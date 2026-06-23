@@ -294,9 +294,12 @@
   opacity: 0.8;
 }
 
-.download-btn .loader-icon {
+.loader-icon {
+  display: block;
+  flex-shrink: 0;
   width: 20px;
   height: 20px;
+  object-fit: contain;
   animation: spin 1s linear infinite;
 }
 
