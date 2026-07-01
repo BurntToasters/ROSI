@@ -30,6 +30,7 @@ import {
   fetchFormats,
   cancelFormats,
   canStartDownload,
+  isDownloadBusy,
 } from './downloader';
 import { fetchVideoInfo, cancelVideoInfo } from './download/videoInfo';
 import { isSafeExternalUrl, isSafeHttpUrl, isAllowedNavigationUrl } from '../utils/validation';
@@ -303,6 +304,24 @@ function createWindow() {
     }
     if (!mainWindow || mainWindow.isDestroyed()) {
       return;
+    }
+
+    // Warn the user if a download or queue is in progress.
+    if (isDownloadBusy() || isQueueRunning) {
+      event.preventDefault();
+      const choice = dialog.showMessageBoxSync(mainWindow, {
+        type: 'warning',
+        buttons: ['Cancel', 'Close Anyway'],
+        defaultId: 0,
+        cancelId: 0,
+        title: 'Download in Progress',
+        message: 'A download is currently in progress.',
+        detail: 'Closing ROSI now will cancel the active download. Are you sure?',
+      });
+      if (choice === 0) {
+        return; // User chose Cancel — stay open.
+      }
+      // User chose to close — fall through to the flush logic.
     }
 
     event.preventDefault();
@@ -632,7 +651,11 @@ ipcMain.handle('select-download-location', async (event) => {
     return null;
   }
   try {
-    const defaultPath = app.getPath('downloads');
+    // Prefer the user's last-chosen folder over the generic Downloads dir.
+    const settings = loadSettings();
+    const savedFolder = settings.downloadFolder?.trim();
+    const defaultPath =
+      savedFolder && fs.existsSync(savedFolder) ? savedFolder : app.getPath('downloads');
     const focusedWindow = BrowserWindow.getFocusedWindow();
     const parentWindow =
       focusedWindow || (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);

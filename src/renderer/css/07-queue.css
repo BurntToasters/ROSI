@@ -76,6 +76,11 @@
   box-shadow: 0 0 0 2px var(--accent-subtle);
 }
 
+.queue-url-input.drag-over {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
 .queue-url-input:disabled {
   opacity: 0.7;
   cursor: not-allowed;

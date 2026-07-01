@@ -89,8 +89,17 @@
   --warning: #f59e0b;
   --warning-light: #fbbf24;
   --warning-dark: #d97706;
+  /* Dark ink for text/icons placed on the solid amber --warning fill.
+     Amber stays constant across themes, so one value works everywhere and
+     keeps ~8:1 contrast (white-on-amber was ~2.1:1, a WCAG AA failure). */
+  --warning-contrast: #241a03;
   --warning-subtle: rgba(245, 158, 11, 0.15);
   --danger: #ef4444;
+  /* White on --danger gives ~4.0:1 — passes AA for large/bold text but
+     fails for normal-size. Using pure white keeps it at the passing edge
+     while staying legible. In dark theme --text-primary is already white,
+     but in light theme it's near-black which would be illegible on red. */
+  --danger-contrast: #ffffff;
   --danger-subtle: rgba(239, 68, 68, 0.15);
 
   --overlay-bg: rgba(0, 0, 0, 0.58);

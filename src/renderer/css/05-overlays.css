@@ -97,7 +97,7 @@
 .modal-buttons .modal-btn-primary {
   background: var(--accent);
   border-color: transparent;
-  color: var(--text-primary);
+  color: var(--accent-contrast);
 }
 
 .modal-buttons .modal-btn-primary:hover {
@@ -113,7 +113,7 @@
 .modal-buttons .modal-btn-danger:hover {
   background: var(--danger);
   border-color: var(--danger);
-  color: var(--text-primary);
+  color: var(--danger-contrast);
 }
 
 .licenses-container {
