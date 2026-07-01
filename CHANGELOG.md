@@ -5,9 +5,9 @@
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                    | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                                                                    |
 | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **EXE:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.4/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.4/ROSI-Windows-arm64.exe) | **[Universal DMG](https://github.com/BurntToasters/ROSI/releases/download/v4.1.4/ROSI-MacOS-universal.dmg)**    | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.4/ROSI-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.4/ROSI-Linux-arm64.AppImage) |
-| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div>      | **[Universal ZIP](https://github.com/BurntToasters/ROSI/releases/download/v4.1.4/ROSI-MacOS-universal.zip)**    | **DEB:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.4/ROSI-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.4/ROSI-Linux-arm64.deb)                 |
-|                                                                                                                                                                                                      |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.4/ROSI-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.4/ROSI-Linux-aarch64.rpm)              |
+| **EXE:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.5/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.5/ROSI-Windows-arm64.exe) | **[Universal DMG](https://github.com/BurntToasters/ROSI/releases/download/v4.1.5/ROSI-MacOS-universal.dmg)**    | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.5/ROSI-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.5/ROSI-Linux-arm64.AppImage) |
+| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div>      | **[Universal ZIP](https://github.com/BurntToasters/ROSI/releases/download/v4.1.5/ROSI-MacOS-universal.zip)**    | **DEB:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.5/ROSI-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.5/ROSI-Linux-arm64.deb)                 |
+|                                                                                                                                                                                                      |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.5/ROSI-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.1.5/ROSI-Linux-aarch64.rpm)              |
 
 > [!IMPORTANT]
 > The `.sig` files in this repo are NOT normal GPG signatures — they are for ROSI's built-in updater to verify the integrity of updates before downloading and installing.
@@ -17,6 +17,18 @@
 ### ℹ️ Enjoying ROSI? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
 
 ---
+
+## Changes in `v4.1.5:`
+
+- **UI:** Fixed WCAG color contrast failures on the download button, modal primary buttons, help-icon hover, history "Open" hover, reset-button hover, modal danger hover, and the beta badge. Added `--warning-contrast` and `--danger-contrast` design tokens.
+- **UX:** Added a close-confirmation dialog when a download or queue is actively running to prevent accidental progress loss.
+- **UX:** The download folder picker now opens to your last-chosen folder instead of always defaulting to `~/Downloads`.
+- **NEW - Queue Drag-and-Drop:** You can now drag and drop URLs directly into the queue textarea.
+- **NEW - Queue Keyboard Shortcut:** Added Ctrl/Cmd+Enter to submit URLs from the queue textarea.
+- **UI:** Toast notifications are now capped at 5 visible per container to prevent screen flooding during rapid error loops.
+- **UI:** Added explicit `type="button"` to all button elements for HTML robustness.
+- **Testing:** Cleaned up ESLint configuration to suppress `no-unsafe-*` noise in test files while keeping full strictness on production code.
+- **PKG:** Updated packages.
 
 ## Changes in `v4.1.4:`
 

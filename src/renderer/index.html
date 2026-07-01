@@ -24,7 +24,7 @@
     >
       <div class="sidebar-header">
         <h2 id="sidebarTitle">Settings</h2>
-        <button id="closeSidebar" class="sidebar-close" aria-label="Close settings">
+        <button type="button" id="closeSidebar" class="sidebar-close" aria-label="Close settings">
           <svg
             width="20"
             height="20"
@@ -414,6 +414,7 @@
             </label>
 
             <button
+              type="button"
               id="showUpdateChannelBtn"
               class="settings-link-btn"
               aria-expanded="false"
@@ -432,7 +433,7 @@
               </label>
             </div>
 
-            <button id="checkUpdateBtn" class="settings-btn">
+            <button type="button" id="checkUpdateBtn" class="settings-btn">
               <svg
                 width="18"
                 height="18"
@@ -451,7 +452,7 @@
               Check for Updates
             </button>
 
-            <button id="shortcutsBtn" class="settings-btn">
+            <button type="button" id="shortcutsBtn" class="settings-btn">
               <svg
                 width="18"
                 height="18"
@@ -470,7 +471,7 @@
               Keyboard Shortcuts
             </button>
 
-            <button id="viewStatsBtn" class="settings-btn">
+            <button type="button" id="viewStatsBtn" class="settings-btn">
               <svg
                 width="18"
                 height="18"
@@ -488,7 +489,7 @@
               Download Statistics
             </button>
 
-            <button id="exportSettingsBtn" class="settings-btn">
+            <button type="button" id="exportSettingsBtn" class="settings-btn">
               <svg
                 width="18"
                 height="18"
@@ -506,7 +507,7 @@
               Export Settings
             </button>
 
-            <button id="importSettingsBtn" class="settings-btn">
+            <button type="button" id="importSettingsBtn" class="settings-btn">
               <svg
                 width="18"
                 height="18"
@@ -528,7 +529,7 @@
       </div>
 
       <div class="sidebar-footer">
-        <button id="resetSettings" class="reset-btn">
+        <button type="button" id="resetSettings" class="reset-btn">
           <svg
             width="16"
             height="16"
@@ -558,6 +559,7 @@
       <div class="app-shell">
         <header class="top-bar">
           <button
+            type="button"
             id="settingsBtn"
             class="icon-btn"
             title="Settings"
@@ -658,6 +660,7 @@
                     aria-describedby="urlValidationMessage"
                   />
                   <button
+                    type="button"
                     id="pasteUrl"
                     class="paste-btn"
                     title="Paste from clipboard"
@@ -678,6 +681,7 @@
                     </svg>
                   </button>
                   <button
+                    type="button"
                     id="clearUrl"
                     class="clear-btn hidden"
                     title="Clear"
@@ -698,7 +702,12 @@
                     </svg>
                   </button>
                 </div>
-                <button id="downloadBtn" class="download-btn" data-default-text="Download">
+                <button
+                  type="button"
+                  id="downloadBtn"
+                  class="download-btn"
+                  data-default-text="Download"
+                >
                   <svg
                     width="20"
                     height="20"
@@ -839,6 +848,7 @@
 
               <div id="formatOptions" class="format-options">
                 <button
+                  type="button"
                   id="fetchFormatsBtn"
                   class="fetch-formats-btn"
                   data-default-text="Check Available Formats"
@@ -907,6 +917,7 @@
                 aria-describedby="queueStatusMessage"
               ></textarea>
               <button
+                type="button"
                 id="addToQueueBtn"
                 class="queue-action-btn queue-add-btn"
                 title="Add to queue"
@@ -930,6 +941,7 @@
             </div>
             <div class="queue-controls">
               <button
+                type="button"
                 id="startQueueBtn"
                 class="queue-action-btn queue-start-btn"
                 title="Start queue"
@@ -950,6 +962,7 @@
                 Start Queue
               </button>
               <button
+                type="button"
                 id="cancelQueueBtn"
                 class="queue-action-btn queue-cancel-btn"
                 title="Cancel queue"
@@ -970,6 +983,7 @@
                 Cancel Queue
               </button>
               <button
+                type="button"
                 id="clearQueueBtn"
                 class="queue-action-btn queue-clear-btn"
                 title="Clear queue"
@@ -1162,6 +1176,7 @@
               aria-atomic="true"
             ></span>
             <button
+              type="button"
               id="update-banner-cancel"
               class="update-banner-cancel"
               aria-label="Cancel update download"
@@ -1210,7 +1225,7 @@
       <div class="licenses-container">
         <div class="licenses-header">
           <h3>Open Source Licenses</h3>
-          <button id="close-licenses" class="modal-close-btn" aria-label="Close">
+          <button type="button" id="close-licenses" class="modal-close-btn" aria-label="Close">
             <svg
               width="20"
               height="20"

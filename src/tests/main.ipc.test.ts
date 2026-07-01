@@ -287,6 +287,7 @@ vi.mock('../main/downloader', () => ({
   fetchFormats: fetchFormatsMock,
   cancelFormats: cancelFormatsMock,
   canStartDownload: vi.fn(() => true),
+  isDownloadBusy: vi.fn(() => false),
 }));
 
 vi.mock('../main/download/videoInfo', () => ({

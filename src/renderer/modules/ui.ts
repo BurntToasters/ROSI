@@ -94,6 +94,13 @@
     const container = getToastContainer(type);
     if (!container) return;
 
+    // Cap visible toasts to prevent screen flooding during rapid errors.
+    const MAX_VISIBLE_TOASTS = 5;
+    const existing = container.querySelectorAll('.toast');
+    if (existing.length >= MAX_VISIBLE_TOASTS) {
+      existing[0]?.remove();
+    }
+
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
     if (type === 'error' || type === 'warning') {
