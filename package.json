@@ -62,6 +62,7 @@
     "u": "npm update && npm run release:prepare && npm run format && npm run test:all",
     "test:watch": "vitest",
     "test:all": "node build-scripts/test-all.js",
+    "test:headless": "npm run test:all && npm run test:cov && npm run smoke:runtime:fast",
     "test:cov": "vitest run --coverage && node build-scripts/check-coverage-thresholds.js",
     "lint": "eslint src/ build-scripts/",
     "lint:fix": "eslint src/ build-scripts/ --fix",
