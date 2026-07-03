@@ -19,6 +19,7 @@ const {
   exportSettingsToFileMock,
   importSettingsFromFileMock,
   showOpenDialogMock,
+  showMessageBoxSyncMock,
   openExternalMock,
   openPathMock,
   showItemInFolderMock,
@@ -35,6 +36,7 @@ const {
   detectGpuMock,
   fetchFormatsMock,
   cancelFormatsMock,
+  isDownloadBusyMock,
   fetchVideoInfoMock,
   cancelVideoInfoMock,
   ytdlpFixturePath,
@@ -184,12 +186,11 @@ const {
       convertEnabled: false,
       convertFormat: 'mp4',
     })),
-    showOpenDialogMock: vi.fn(
-      async (): Promise<{ canceled: boolean; filePaths: string[] }> => ({
-        canceled: true,
-        filePaths: [],
-      })
-    ),
+    showOpenDialogMock: vi.fn(async (): Promise<{ canceled: boolean; filePaths: string[] }> => ({
+      canceled: true,
+      filePaths: [],
+    })),
+    showMessageBoxSyncMock: vi.fn(() => 0),
     openExternalMock: vi.fn(async () => {}),
     openPathMock: vi.fn(async () => ''),
     showItemInFolderMock: vi.fn(),
@@ -206,6 +207,7 @@ const {
     detectGpuMock: vi.fn(async () => ({ nvidia: false, amd: false, intel: false })),
     fetchFormatsMock: vi.fn(async () => 'ok'),
     cancelFormatsMock: vi.fn(),
+    isDownloadBusyMock: vi.fn(() => false),
     fetchVideoInfoMock: vi.fn(async () => ({
       title: 'Example Video',
       duration: 120,
@@ -229,6 +231,7 @@ vi.mock('electron', () => ({
   },
   dialog: {
     showOpenDialog: showOpenDialogMock,
+    showMessageBoxSync: showMessageBoxSyncMock,
     showErrorBox: vi.fn(),
   },
   shell: {
@@ -287,6 +290,7 @@ vi.mock('../main/downloader', () => ({
   fetchFormats: fetchFormatsMock,
   cancelFormats: cancelFormatsMock,
   canStartDownload: vi.fn(() => true),
+  isDownloadBusy: isDownloadBusyMock,
 }));
 
 vi.mock('../main/download/videoInfo', () => ({
@@ -343,6 +347,8 @@ async function initializeMainModule(options?: { beforeImport?: (userDataDir: str
   });
   showOpenDialogMock.mockClear();
   showOpenDialogMock.mockResolvedValue({ canceled: true, filePaths: [] });
+  showMessageBoxSyncMock.mockClear();
+  showMessageBoxSyncMock.mockReturnValue(0);
   openExternalMock.mockClear();
   openExternalMock.mockResolvedValue(undefined);
   openPathMock.mockClear();
@@ -368,6 +374,8 @@ async function initializeMainModule(options?: { beforeImport?: (userDataDir: str
   fetchFormatsMock.mockClear();
   fetchFormatsMock.mockResolvedValue('ok');
   cancelFormatsMock.mockClear();
+  isDownloadBusyMock.mockClear();
+  isDownloadBusyMock.mockReturnValue(false);
   fetchVideoInfoMock.mockClear();
   fetchVideoInfoMock.mockResolvedValue({
     title: 'Example Video',
@@ -829,6 +837,42 @@ describe('main process IPC wiring and queue behavior', () => {
     expect(sendMock).not.toHaveBeenCalledWith('prepare-for-close');
   });
 
+  it('keeps the window open when the user cancels close during an active download', () => {
+    const mainWindow = getPrimaryWindow();
+    const closeHandler = getWindowHandler(mainWindow, 'close');
+    const preventDefault = vi.fn();
+    isDownloadBusyMock.mockReturnValueOnce(true);
+    showMessageBoxSyncMock.mockReturnValueOnce(0);
+
+    closeHandler({ preventDefault });
+
+    expect(preventDefault).toHaveBeenCalled();
+    expect(showMessageBoxSyncMock).toHaveBeenCalledWith(
+      mainWindow,
+      expect.objectContaining({
+        buttons: ['Cancel', 'Close Anyway'],
+        defaultId: 0,
+        cancelId: 0,
+      })
+    );
+    expect(sendMock).not.toHaveBeenCalledWith('prepare-for-close');
+    expect(mainWindow.destroy).not.toHaveBeenCalled();
+  });
+
+  it('continues the close flow when the user confirms close during an active download', () => {
+    const mainWindow = getPrimaryWindow();
+    const closeHandler = getWindowHandler(mainWindow, 'close');
+    const preventDefault = vi.fn();
+    isDownloadBusyMock.mockReturnValueOnce(true);
+    showMessageBoxSyncMock.mockReturnValueOnce(1);
+
+    closeHandler({ preventDefault });
+
+    expect(preventDefault).toHaveBeenCalled();
+    expect(showMessageBoxSyncMock).toHaveBeenCalled();
+    expect(sendMock).toHaveBeenCalledWith('prepare-for-close');
+  });
+
   it('waits for renderer settings flush before closing main window', () => {
     const mainWindow = getPrimaryWindow();
     mainWindow.webContents.id = 99;
@@ -985,6 +1029,32 @@ describe('main process IPC wiring and queue behavior', () => {
       (windowRef.destroy as unknown as () => void)();
     }
     expect(await handleHandlers['select-download-location']!(authorizedEvent)).toBeNull();
+  });
+
+  it('opens the download folder dialog at the last saved folder when it exists', async () => {
+    const savedFolder = path.join(appMock.getPath('userData'), 'saved-downloads');
+    fs.mkdirSync(savedFolder, { recursive: true });
+    loadSettingsMock.mockReturnValueOnce({
+      convertEnabled: false,
+      convertFormat: 'mp4',
+      keepOriginalAfterConvert: true,
+      ffmpegPath: '',
+      downloadFolder: savedFolder,
+    });
+    showOpenDialogMock.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: [savedFolder],
+    });
+
+    await handleHandlers['select-download-location']!(authorizedEvent);
+
+    expect(showOpenDialogMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        defaultPath: savedFolder,
+        properties: ['openDirectory', 'createDirectory'],
+      })
+    );
   });
 
   it('handles file location IPC branches', async () => {

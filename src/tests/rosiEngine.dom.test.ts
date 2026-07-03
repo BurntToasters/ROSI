@@ -252,6 +252,122 @@ describe('rosiEngine DOM wiring', () => {
     expect(api.addToQueue).toHaveBeenCalledWith(['https://example.com/a', 'https://example.com/b']);
   });
 
+  it('adds queue URLs with Ctrl+Enter from the queue textarea', async () => {
+    const api = buildMockApi();
+    await loadEngine(api);
+    const queueInput = document.getElementById('queueUrlInput') as HTMLTextAreaElement;
+    queueInput.value = 'https://example.com/shortcut';
+
+    queueInput.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true })
+    );
+    await flush();
+
+    expect(api.addToQueue).toHaveBeenCalledWith(['https://example.com/shortcut']);
+  });
+
+  it('accepts dropped URLs in the queue textarea', async () => {
+    const api = buildMockApi();
+    await loadEngine(api);
+    const queueInput = document.getElementById('queueUrlInput') as HTMLTextAreaElement;
+    queueInput.value = 'https://example.com/existing';
+    const dropEvent = new Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(dropEvent, 'dataTransfer', {
+      value: {
+        getData: (type: string) => (type === 'text/uri-list' ? 'https://example.com/dropped' : ''),
+      },
+    });
+
+    queueInput.dispatchEvent(dropEvent);
+
+    expect(queueInput.value).toBe('https://example.com/existing\nhttps://example.com/dropped');
+  });
+
+  it('renders queue updates pushed from the main process', async () => {
+    let queueUpdateCb:
+      | ((queue: Array<{ id: string; status: string; url: string; addedAt: number }>) => void)
+      | null = null;
+    const api = buildMockApi({
+      onQueueUpdate: ((cb: typeof queueUpdateCb) => {
+        queueUpdateCb = cb;
+        return () => {};
+      }) as unknown as ReturnType<typeof vi.fn>,
+    });
+    await loadEngine(api);
+
+    queueUpdateCb?.([
+      {
+        id: 'q_1',
+        status: 'pending',
+        url: 'https://example.com/queued',
+        addedAt: Date.now(),
+      },
+    ]);
+    await flush();
+
+    expect(document.getElementById('queueCount')?.textContent).toBe('1');
+    expect(document.getElementById('queueList')?.textContent).toContain('example.com');
+  });
+
+  it('persists settings and notifies the main process before close', async () => {
+    let prepareForCloseCb: (() => Promise<void>) | null = null;
+    const api = buildMockApi({
+      onPrepareForClose: ((cb: () => Promise<void>) => {
+        prepareForCloseCb = cb;
+        return () => {};
+      }) as unknown as ReturnType<typeof vi.fn>,
+    });
+    await loadEngine(api);
+
+    expect(typeof prepareForCloseCb).toBe('function');
+    await prepareForCloseCb?.();
+
+    expect(api.saveSettings).toHaveBeenCalled();
+    expect(api.notifySettingsFlushed).toHaveBeenCalled();
+  });
+
+  it('refreshes the visible theme when settings are imported', async () => {
+    let settingsImportedCb: ((settings: ReturnType<typeof defaultSettings>) => void) | null = null;
+    const api = buildMockApi({
+      onSettingsImported: ((cb: typeof settingsImportedCb) => {
+        settingsImportedCb = cb;
+        return () => {};
+      }) as unknown as ReturnType<typeof vi.fn>,
+    });
+    await loadEngine(api);
+
+    settingsImportedCb?.({
+      ...defaultSettings(),
+      theme: 'light',
+    });
+    await flush();
+
+    expect(document.documentElement.dataset.theme).toBe('light');
+  });
+
+  it('starts a direct download from a valid URL and selected folder', async () => {
+    const savePath = '/Users/test/Downloads';
+    const api = buildMockApi({
+      selectDownloadLocation: vi.fn(() => Promise.resolve(savePath)),
+    });
+    await loadEngine(api);
+    const url = document.getElementById('url') as HTMLInputElement;
+    url.value = 'https://example.com/video';
+    url.dispatchEvent(new Event('input', { bubbles: true }));
+    await flush();
+
+    (document.getElementById('downloadBtn') as HTMLButtonElement).click();
+    await flush(50);
+
+    expect(api.selectDownloadLocation).toHaveBeenCalled();
+    expect(api.downloadVideo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: 'https://example.com/video',
+        outputPath: savePath,
+      })
+    );
+  });
+
   it('renders a video preview from getVideoInfo', async () => {
     const api = buildMockApi({
       getVideoInfo: vi.fn(() =>

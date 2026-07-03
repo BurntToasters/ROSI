@@ -478,7 +478,7 @@ function showKeyboardShortcuts() {
   const modKey = getModifierKeyName();
   showModal({
     title: 'Keyboard Shortcuts',
-    message: `${modKey}+D - Restart application\n${modKey}+F - Focus URL input field\n${modKey}+, - Open settings`,
+    message: `${modKey}+D - Restart application\n${modKey}+F - Focus URL input field\n${modKey}+, - Open settings\n${modKey}+Enter - Submit queue URLs (when focused)`,
     buttons: [{ label: 'OK', primary: true }],
   });
 }
@@ -3096,6 +3096,36 @@ document.addEventListener('DOMContentLoaded', async () => {
   syncQueueActionBusyState();
 
   if (addToQueueBtn && queueUrlInput) {
+    // Allow Ctrl/Cmd+Enter to submit from the textarea (standard multi-line UX).
+    queueUrlInput.addEventListener('keydown', (e) => {
+      const modKey = isMac() ? e.metaKey : e.ctrlKey;
+      if (modKey && e.key === 'Enter') {
+        e.preventDefault();
+        addToQueueBtn.click();
+      }
+    });
+
+    // Accept drag-and-drop of URLs into the queue textarea.
+    queueUrlInput.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      queueUrlInput.classList.add('drag-over');
+    });
+    queueUrlInput.addEventListener('dragleave', () => {
+      queueUrlInput.classList.remove('drag-over');
+    });
+    queueUrlInput.addEventListener('drop', (e) => {
+      const dragEvent = e as DragEvent;
+      dragEvent.preventDefault();
+      queueUrlInput.classList.remove('drag-over');
+      const dt = dragEvent.dataTransfer;
+      const text = dt ? dt.getData('text/uri-list') || dt.getData('text/plain') : '';
+      if (text.trim()) {
+        const existing = queueUrlInput.value.trim();
+        queueUrlInput.value = existing ? `${existing}\n${text.trim()}` : text.trim();
+        queueUrlInput.dispatchEvent(new Event('input'));
+      }
+    });
+
     addToQueueBtn.addEventListener('click', async () => {
       if (queueActionLocks > 0) return;
       const raw = queueUrlInput.value.trim();
