@@ -1,9 +1,15 @@
 const { spawn, spawnSync } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const electronBinary = require('electron');
+const trackedExecutableAssets = [
+  path.join(ROOT, 'assets', 'yt-dlp_macos'),
+  path.join(ROOT, 'assets', 'yt-dlp_linux'),
+  path.join(ROOT, 'assets', 'yt-dlp_linux_aarch64'),
+];
 
 function runCommand(cmd, args, options = {}) {
   const result = spawnSync(cmd, args, {
@@ -16,10 +22,42 @@ function runCommand(cmd, args, options = {}) {
   }
 }
 
+function snapshotFileModes(paths) {
+  return paths
+    .map((filePath) => {
+      try {
+        const stat = fs.statSync(filePath);
+        return { filePath, mode: stat.mode };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function restoreFileModes(snapshots) {
+  for (const snapshot of snapshots) {
+    try {
+      fs.chmodSync(snapshot.filePath, snapshot.mode);
+    } catch {
+      // Best effort: smoke cleanup should not hide the real Electron exit code.
+    }
+  }
+}
+
 function runRuntimeSmoke(skipCompile = false) {
   if (!skipCompile) {
     runCommand(npmCmd, ['run', 'compile']);
   }
+
+  const modeSnapshots = snapshotFileModes(trackedExecutableAssets);
+  let restoredModes = false;
+  const restoreModesOnce = () => {
+    if (restoredModes) return;
+    restoredModes = true;
+    restoreFileModes(modeSnapshots);
+  };
+  process.on('exit', restoreModesOnce);
 
   const smokeArgs = ['.', '--dev', '--smoke'];
   const env = {
@@ -43,17 +81,22 @@ function runRuntimeSmoke(skipCompile = false) {
     if (!child.killed) {
       child.kill();
     }
-    setTimeout(() => process.exit(1), 500);
+    setTimeout(() => {
+      restoreModesOnce();
+      process.exit(1);
+    }, 500);
   }, timeoutMs);
 
   child.on('error', (error) => {
     clearTimeout(timeout);
     console.error('Failed to start Electron runtime smoke:', error);
+    restoreModesOnce();
     process.exit(1);
   });
 
   child.on('exit', (code, signal) => {
     clearTimeout(timeout);
+    restoreModesOnce();
     if (signal) {
       console.error(`Runtime smoke terminated by signal: ${signal}`);
       process.exit(1);
