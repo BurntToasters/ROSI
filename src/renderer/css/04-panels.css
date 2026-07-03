@@ -214,7 +214,7 @@
 
 .history-open-btn:hover {
   background: var(--accent);
-  color: var(--text-primary);
+  color: var(--accent-contrast);
 }
 
 .history-empty {

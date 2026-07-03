@@ -155,6 +155,17 @@ describe('renderer modules', () => {
       expect(toast?.getAttribute('role')).toBeNull();
     });
 
+    it('showToast caps visible toasts per container', () => {
+      for (let index = 1; index <= 6; index += 1) {
+        modules().ui!.showToast(`Message ${index}`, { type: 'success', duration: 0 });
+      }
+
+      const toasts = Array.from(document.querySelectorAll('.toast-success'));
+      expect(toasts).toHaveLength(5);
+      expect(toasts[0]?.textContent).toContain('Message 2');
+      expect(toasts[4]?.textContent).toContain('Message 6');
+    });
+
     it('setButtonLoading toggles loading state and aria-busy', () => {
       const button = document.createElement('button');
       button.textContent = 'Download';

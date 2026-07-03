@@ -356,7 +356,7 @@ select option {
 
 .help-icon:hover {
   background: var(--accent);
-  color: var(--text-primary);
+  color: var(--accent-contrast);
 }
 
 .help-icon:focus-visible {
@@ -440,7 +440,7 @@ select option {
 
 .reset-btn:hover {
   background: var(--danger);
-  color: var(--text-primary);
+  color: var(--danger-contrast);
 }
 
 .version-info {
@@ -480,6 +480,6 @@ select option {
   padding: 1px 6px;
   border-radius: 4px;
   background: var(--warning);
-  color: var(--text-primary);
+  color: var(--warning-contrast);
   line-height: 1.4;
 }

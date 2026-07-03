@@ -106,6 +106,15 @@ export default tseslint.config(
     files: ['src/tests/**/*.ts'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'warn',
+      // Test mocks are intentionally loose-typed; the unsafe-data-flow
+      // rules fire on nearly every vi.fn() call and mock object. Keep them
+      // off in tests so lint stays actionable in production code.
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-require-imports': 'off',
     },
   },
   {
