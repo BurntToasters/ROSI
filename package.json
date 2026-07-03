@@ -30,6 +30,7 @@
     "compile:renderer": "tsc --project tsconfig.renderer.json",
     "compile": "node build-scripts/dist-tools.js clean && npm run compile:main && npm run compile:renderer && node build-scripts/dist-tools.js copy",
     "get:ffmpeg": "node build-scripts/get-ffmpeg.js",
+    "get:ffmpeg:all": "node build-scripts/get-ffmpeg.js --all && node build-scripts/check-ffmpeg.js --all --generate-checksums",
     "ffmpeg:check": "node build-scripts/check-ffmpeg.js",
     "ffmpeg:check:all": "npm run ffmpeg:check -- --all",
     "ffmpeg:check:current": "npm run ffmpeg:check -- --current",
