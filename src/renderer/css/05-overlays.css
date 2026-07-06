@@ -81,42 +81,55 @@
 .modal-buttons button {
   min-width: 100px;
   padding: var(--spacing-sm) var(--spacing-lg);
-  background: var(--surface-2);
-  border: 1px solid var(--border-subtle);
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   font-size: var(--text-base);
   font-weight: var(--weight-medium);
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition: var(--button-transition);
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .modal-buttons button:hover {
-  background: var(--surface-3);
-  border-color: var(--border-default);
+  background: var(--button-neutral-bg-hover);
+  border-color: var(--border-strong);
   color: var(--text-primary);
+  transform: var(--button-lift);
+  box-shadow: var(--button-neutral-shadow-hover);
+}
+
+.modal-buttons button:active {
+  transform: var(--button-press);
+  box-shadow: var(--button-active-shadow);
 }
 
 .modal-buttons .modal-btn-primary {
-  background: var(--accent);
-  border-color: transparent;
+  background: var(--button-primary-bg);
+  border-color: var(--accent-dark);
   color: var(--accent-contrast);
+  box-shadow: var(--button-primary-shadow);
 }
 
 .modal-buttons .modal-btn-primary:hover {
-  background: var(--accent-hover);
+  background: var(--button-primary-bg-hover);
+  border-color: var(--accent-hover);
+  box-shadow: var(--button-primary-shadow-hover);
 }
 
 .modal-buttons .modal-btn-danger {
-  background: var(--danger-subtle);
-  border-color: var(--danger);
+  background: var(--button-danger-bg);
+  border-color: rgba(239, 68, 68, 0.3);
   color: var(--danger);
+  box-shadow: var(--button-danger-shadow);
 }
 
 .modal-buttons .modal-btn-danger:hover {
-  background: var(--danger);
+  background: var(--button-danger-bg-hover);
   border-color: var(--danger);
   color: var(--danger-contrast);
+  box-shadow: var(--button-danger-shadow-hover);
 }
 
 .licenses-container {
@@ -152,18 +165,21 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--surface-2);
-  border: 1px solid var(--border-subtle);
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition: var(--button-transition);
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .modal-close-btn:hover {
-  background: var(--danger-subtle);
+  background: var(--button-danger-bg);
   border-color: var(--danger);
   color: var(--danger);
+  transform: var(--button-lift);
+  box-shadow: var(--button-danger-shadow);
 }
 
 .licenses-container iframe {
@@ -254,21 +270,24 @@
 }
 
 .update-banner-cancel {
-  background: var(--surface-2);
-  border: 1px solid var(--border-subtle);
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   color: var(--text-secondary);
   padding: var(--spacing-xs) var(--spacing-sm);
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
   cursor: pointer;
   white-space: nowrap;
-  transition: var(--transition-fast);
+  transition: var(--button-transition);
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .update-banner-cancel:hover {
-  background: var(--danger-subtle);
+  background: var(--button-danger-bg);
   border-color: var(--danger);
   color: var(--danger);
+  transform: var(--button-lift);
+  box-shadow: var(--button-danger-shadow);
 }
 
 .toast-container {

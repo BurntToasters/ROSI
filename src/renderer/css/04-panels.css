@@ -97,17 +97,21 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: transparent;
-  border: none;
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition: var(--button-transition);
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .history-clear-btn:hover {
-  background: var(--danger-subtle);
+  background: var(--button-danger-bg);
+  border-color: var(--danger);
   color: var(--danger);
+  transform: var(--button-lift);
+  box-shadow: var(--button-danger-shadow);
 }
 
 .history-list {
@@ -207,18 +211,22 @@
 .history-open-btn {
   font-size: var(--text-xs);
   color: var(--accent-light);
-  background: var(--accent-subtle);
-  border: none;
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   padding: 2px 8px;
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition: var(--button-transition);
   white-space: nowrap;
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .history-open-btn:hover {
-  background: var(--accent);
+  background: var(--button-primary-bg);
+  border-color: var(--accent-dark);
   color: var(--accent-contrast);
+  transform: var(--button-lift);
+  box-shadow: var(--button-primary-shadow-hover);
 }
 
 .history-empty {
@@ -293,17 +301,21 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: transparent;
-  border: none;
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition: var(--button-transition);
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .console-clear-btn:hover {
-  background: var(--danger-subtle);
+  background: var(--button-danger-bg);
+  border-color: var(--danger);
   color: var(--danger);
+  transform: var(--button-lift);
+  box-shadow: var(--button-danger-shadow);
 }
 
 .console-output {

@@ -131,6 +131,56 @@
   --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.25);
   --shadow-glow: none;
 
+  --button-neutral-bg: linear-gradient(to bottom, var(--surface-2) 0%, var(--surface-1) 100%);
+  --button-neutral-bg-hover: linear-gradient(to bottom, var(--surface-3) 0%, var(--surface-2) 100%);
+  --button-primary-bg: linear-gradient(to bottom, var(--accent) 0%, var(--accent-hover) 100%);
+  --button-primary-bg-hover: linear-gradient(
+    to bottom,
+    var(--accent-hover) 0%,
+    var(--accent-light) 100%
+  );
+  --button-danger-bg: linear-gradient(
+    to bottom,
+    var(--danger-subtle) 0%,
+    color-mix(in srgb, var(--danger-subtle) 85%, black) 100%
+  );
+  --button-danger-bg-hover: linear-gradient(
+    to bottom,
+    var(--danger) 0%,
+    color-mix(in srgb, var(--danger) 85%, black) 100%
+  );
+  --button-neutral-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05), inset 1px 0 0 rgba(255, 255, 255, 0.03),
+    inset 0 -1.5px 0 rgba(0, 0, 0, 0.25), inset -1px 0 0 rgba(0, 0, 0, 0.15),
+    0 1px 2px rgba(0, 0, 0, 0.1);
+  --button-neutral-shadow-hover:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 1px 0 0 rgba(255, 255, 255, 0.05),
+    inset 0 -1.5px 0 rgba(0, 0, 0, 0.25), inset -1px 0 0 rgba(0, 0, 0, 0.15),
+    0 2px 4px rgba(0, 0, 0, 0.14);
+  --button-primary-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35), inset 1px 0 0 rgba(255, 255, 255, 0.2),
+    inset 0 -1.5px 0 rgba(0, 0, 0, 0.3), inset -1px 0 0 rgba(0, 0, 0, 0.15),
+    0 1px 2px rgba(0, 0, 0, 0.15);
+  --button-primary-shadow-hover:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45), inset 1px 0 0 rgba(255, 255, 255, 0.25),
+    inset 0 -1.5px 0 rgba(0, 0, 0, 0.3), inset -1px 0 0 rgba(0, 0, 0, 0.15),
+    0 2px 4px rgba(0, 0, 0, 0.2), 0 0 12px var(--accent-glow);
+  --button-danger-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.15), inset 1px 0 0 rgba(255, 255, 255, 0.1),
+    inset 0 -1.5px 0 rgba(0, 0, 0, 0.3), inset -1px 0 0 rgba(0, 0, 0, 0.2),
+    0 1px 2px rgba(0, 0, 0, 0.12);
+  --button-danger-shadow-hover:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25), inset 1px 0 0 rgba(255, 255, 255, 0.15),
+    inset 0 -1.5px 0 rgba(0, 0, 0, 0.3), inset -1px 0 0 rgba(0, 0, 0, 0.2),
+    0 2px 4px rgba(0, 0, 0, 0.2);
+  --button-active-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.22), 0 1px 1px rgba(0, 0, 0, 0.05);
+  --button-danger-active-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3), 0 1px 1px rgba(0, 0, 0, 0.05);
+  --button-lift: translateY(-0.5px);
+  --button-press: translateY(0.5px);
+  --button-transition:
+    transform 100ms ease, border-color var(--transition-fast), background var(--transition-fast),
+    color var(--transition-fast);
+
   --transition-fast: 150ms ease;
   --transition-normal: 250ms ease;
   --transition-slow: 400ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -423,11 +473,22 @@ html[data-flat-ui='true'] .console-section {
 
 html[data-flat-ui='true'] .download-btn,
 html[data-flat-ui='true'] .settings-btn,
+html[data-flat-ui='true'] .settings-link-btn,
 html[data-flat-ui='true'] .icon-btn,
+html[data-flat-ui='true'] .top-bar-links a,
 html[data-flat-ui='true'] .reset-btn,
 html[data-flat-ui='true'] .modal-buttons button,
+html[data-flat-ui='true'] .modal-close-btn,
+html[data-flat-ui='true'] .update-banner-cancel,
 html[data-flat-ui='true'] .queue-action-btn,
-html[data-flat-ui='true'] .preview-btn {
+html[data-flat-ui='true'] .preview-btn,
+html[data-flat-ui='true'] .paste-btn,
+html[data-flat-ui='true'] .clear-btn,
+html[data-flat-ui='true'] .history-clear-btn,
+html[data-flat-ui='true'] .console-clear-btn,
+html[data-flat-ui='true'] .history-open-btn,
+html[data-flat-ui='true'] .fetch-formats-btn,
+html[data-flat-ui='true'] .wizard-btn {
   border-bottom: 1px solid var(--border-default) !important;
   transform: none !important;
   box-shadow: none !important;
@@ -437,11 +498,22 @@ html[data-flat-ui='true'] .preview-btn {
 
 html[data-flat-ui='true'] .download-btn:hover,
 html[data-flat-ui='true'] .settings-btn:hover,
+html[data-flat-ui='true'] .settings-link-btn:hover,
 html[data-flat-ui='true'] .icon-btn:hover,
+html[data-flat-ui='true'] .top-bar-links a:hover,
 html[data-flat-ui='true'] .reset-btn:hover,
 html[data-flat-ui='true'] .modal-buttons button:hover,
+html[data-flat-ui='true'] .modal-close-btn:hover,
+html[data-flat-ui='true'] .update-banner-cancel:hover,
 html[data-flat-ui='true'] .queue-action-btn:hover,
-html[data-flat-ui='true'] .preview-btn:hover {
+html[data-flat-ui='true'] .preview-btn:hover,
+html[data-flat-ui='true'] .paste-btn:hover,
+html[data-flat-ui='true'] .clear-btn:hover,
+html[data-flat-ui='true'] .history-clear-btn:hover,
+html[data-flat-ui='true'] .console-clear-btn:hover,
+html[data-flat-ui='true'] .history-open-btn:hover,
+html[data-flat-ui='true'] .fetch-formats-btn:hover,
+html[data-flat-ui='true'] .wizard-btn:hover {
   background: var(--surface-hover) !important;
   transform: none !important;
   box-shadow: none !important;
@@ -449,18 +521,57 @@ html[data-flat-ui='true'] .preview-btn:hover {
 
 html[data-flat-ui='true'] .download-btn:active,
 html[data-flat-ui='true'] .settings-btn:active,
+html[data-flat-ui='true'] .settings-link-btn:active,
 html[data-flat-ui='true'] .icon-btn:active,
+html[data-flat-ui='true'] .top-bar-links a:active,
 html[data-flat-ui='true'] .reset-btn:active,
-html[data-flat-ui='true'] .modal-buttons button:active {
+html[data-flat-ui='true'] .modal-buttons button:active,
+html[data-flat-ui='true'] .modal-close-btn:active,
+html[data-flat-ui='true'] .update-banner-cancel:active,
+html[data-flat-ui='true'] .queue-action-btn:active,
+html[data-flat-ui='true'] .preview-btn:active,
+html[data-flat-ui='true'] .paste-btn:active,
+html[data-flat-ui='true'] .clear-btn:active,
+html[data-flat-ui='true'] .history-clear-btn:active,
+html[data-flat-ui='true'] .console-clear-btn:active,
+html[data-flat-ui='true'] .history-open-btn:active,
+html[data-flat-ui='true'] .fetch-formats-btn:active,
+html[data-flat-ui='true'] .wizard-btn:active {
   transform: none !important;
 }
 
-/* Standardize primary active switch for flat mode */
-html[data-flat-ui='true'] .download-btn {
+/* Keep semantic fills in flat mode without the raised button treatment. */
+html[data-flat-ui='true'] .download-btn,
+html[data-flat-ui='true'] .queue-add-btn,
+html[data-flat-ui='true'] .modal-buttons .modal-btn-primary,
+html[data-flat-ui='true'] .wizard-btn-primary {
   background: var(--accent) !important;
   color: var(--accent-contrast) !important;
   border: 1px solid var(--accent-dark) !important;
 }
-html[data-flat-ui='true'] .download-btn:hover {
+
+html[data-flat-ui='true'] .download-btn:hover,
+html[data-flat-ui='true'] .queue-add-btn:hover,
+html[data-flat-ui='true'] .modal-buttons .modal-btn-primary:hover,
+html[data-flat-ui='true'] .wizard-btn-primary:hover {
   background: var(--accent-hover) !important;
+}
+
+html[data-flat-ui='true'] .reset-btn,
+html[data-flat-ui='true'] .modal-buttons .modal-btn-danger {
+  background: var(--danger-subtle) !important;
+  color: var(--danger) !important;
+  border: 1px solid var(--danger) !important;
+}
+
+html[data-flat-ui='true'] .reset-btn:hover,
+html[data-flat-ui='true'] .modal-buttons .modal-btn-danger:hover,
+html[data-flat-ui='true'] .modal-close-btn:hover,
+html[data-flat-ui='true'] .update-banner-cancel:hover,
+html[data-flat-ui='true'] .clear-btn:hover,
+html[data-flat-ui='true'] .history-clear-btn:hover,
+html[data-flat-ui='true'] .console-clear-btn:hover {
+  background: var(--danger) !important;
+  color: var(--danger-contrast) !important;
+  border-color: var(--danger) !important;
 }
