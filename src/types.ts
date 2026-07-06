@@ -15,6 +15,7 @@ export interface Settings {
   hookBrowser: boolean;
   browserChoice: string;
   animateBackground: boolean;
+  flatUi: boolean;
   notifications: boolean;
   denoReminderDismissed: boolean;
   gpuAcceleration: boolean;
