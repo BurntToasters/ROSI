@@ -540,12 +540,38 @@ html[data-flat-ui='true'] .wizard-btn:active {
   transform: none !important;
 }
 
-/* Standardize primary active switch for flat mode */
-html[data-flat-ui='true'] .download-btn {
+/* Keep semantic fills in flat mode without the raised button treatment. */
+html[data-flat-ui='true'] .download-btn,
+html[data-flat-ui='true'] .queue-add-btn,
+html[data-flat-ui='true'] .modal-buttons .modal-btn-primary,
+html[data-flat-ui='true'] .wizard-btn-primary {
   background: var(--accent) !important;
   color: var(--accent-contrast) !important;
   border: 1px solid var(--accent-dark) !important;
 }
-html[data-flat-ui='true'] .download-btn:hover {
+
+html[data-flat-ui='true'] .download-btn:hover,
+html[data-flat-ui='true'] .queue-add-btn:hover,
+html[data-flat-ui='true'] .modal-buttons .modal-btn-primary:hover,
+html[data-flat-ui='true'] .wizard-btn-primary:hover {
   background: var(--accent-hover) !important;
+}
+
+html[data-flat-ui='true'] .reset-btn,
+html[data-flat-ui='true'] .modal-buttons .modal-btn-danger {
+  background: var(--danger-subtle) !important;
+  color: var(--danger) !important;
+  border: 1px solid var(--danger) !important;
+}
+
+html[data-flat-ui='true'] .reset-btn:hover,
+html[data-flat-ui='true'] .modal-buttons .modal-btn-danger:hover,
+html[data-flat-ui='true'] .modal-close-btn:hover,
+html[data-flat-ui='true'] .update-banner-cancel:hover,
+html[data-flat-ui='true'] .clear-btn:hover,
+html[data-flat-ui='true'] .history-clear-btn:hover,
+html[data-flat-ui='true'] .console-clear-btn:hover {
+  background: var(--danger) !important;
+  color: var(--danger-contrast) !important;
+  border-color: var(--danger) !important;
 }
