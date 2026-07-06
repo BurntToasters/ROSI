@@ -120,11 +120,26 @@
   width: 100%;
   max-width: var(--download-card-max-width);
   padding: var(--spacing-2xl);
-  background: var(--surface-1);
-  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-1) 32%, transparent);
+  backdrop-filter: blur(var(--blur-lg));
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
+  box-shadow:
+    var(--shadow-lg),
+    0 8px 32px rgba(0, 0, 0, 0.28);
   animation: cardEntrance 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+  transition:
+    transform var(--transition-springy),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-springy);
+}
+
+.download-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    var(--shadow-lg),
+    0 12px 40px rgba(0, 0, 0, 0.35);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 .download-card::before {
@@ -260,8 +275,9 @@
   align-items: center;
   gap: var(--spacing-sm);
   padding: var(--spacing-md) var(--spacing-xl);
-  background: var(--accent);
-  border: none;
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  border: 1px solid var(--accent-dark);
+  border-bottom: 4px solid var(--accent-dark);
   border-radius: var(--radius-lg);
   /* Dark ink on the light accent fill. White text on cyan was ~1.8:1 (WCAG
      fail); --accent-contrast adapts per theme and stays >=4.5:1. */
@@ -270,11 +286,15 @@
   font-weight: var(--weight-semibold);
   cursor: pointer;
   transition:
-    transform var(--transition-fast),
-    box-shadow var(--transition-fast),
-    background var(--transition-fast);
+    transform 0.1s ease,
+    box-shadow 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease;
   white-space: nowrap;
   overflow: hidden;
+  box-shadow:
+    var(--shadow-sm),
+    0 2px 4px rgba(0, 0, 0, 0.12);
 }
 
 .download-btn::after {
@@ -282,13 +302,18 @@
 }
 
 .download-btn:hover {
-  background: var(--accent-hover);
+  background: linear-gradient(135deg, var(--accent-hover), var(--accent-light));
   transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
+  box-shadow:
+    var(--shadow-md),
+    0 0 16px var(--accent-glow);
+  border-bottom-width: 5px;
 }
 
 .download-btn:active {
-  transform: translateY(0);
+  transform: translateY(3px);
+  border-bottom-width: 1px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
 .download-btn.loading {
@@ -559,4 +584,78 @@
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+/* ── Header Flat UI Switch ── */
+.flat-ui-toggle-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  cursor: pointer;
+  user-select: none;
+  -webkit-app-region: no-drag;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  transition: var(--transition-fast);
+}
+
+.flat-ui-toggle-wrap:hover {
+  background: var(--surface-2);
+}
+
+.flat-ui-toggle-wrap input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.flat-ui-toggle-slider {
+  position: relative;
+  width: var(--toggle-sm-width); /* 36px */
+  height: var(--toggle-sm-height); /* 20px */
+  background: var(--surface-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  transition: var(--transition-fast);
+}
+
+.flat-ui-toggle-slider::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: var(--toggle-sm-dot); /* 14px */
+  height: var(--toggle-sm-dot);
+  background: var(--text-secondary);
+  border-radius: var(--radius-full);
+  transition:
+    transform var(--transition-springy),
+    width var(--transition-fast),
+    background var(--transition-fast);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.flat-ui-toggle-wrap input:checked + .flat-ui-toggle-slider {
+  background: var(--accent);
+  border-color: var(--accent-light);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.flat-ui-toggle-wrap input:checked + .flat-ui-toggle-slider::after {
+  transform: translateX(16px);
+  background: var(--text-primary);
+}
+
+.flat-ui-toggle-wrap:active .flat-ui-toggle-slider::after {
+  width: calc(var(--toggle-sm-dot) + 3px);
+}
+
+.flat-ui-toggle-wrap input:checked:active + .flat-ui-toggle-slider::after {
+  transform: translateX(13px);
+}
+
+.flat-ui-toggle-label {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  font-weight: var(--weight-medium);
 }
