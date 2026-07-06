@@ -116,29 +116,25 @@
   font-size: var(--text-xs);
   font-weight: var(--weight-medium);
   border: 1px solid var(--border-default);
-  border-bottom: 3px solid var(--border-default);
   border-radius: var(--radius-md);
-  background: var(--surface-1);
+  background: var(--button-neutral-bg);
   color: var(--text-secondary);
   cursor: pointer;
-  transition:
-    transform 0.1s ease,
-    border-color var(--transition-fast),
-    background var(--transition-fast);
+  transition: var(--button-transition);
   min-height: 32px;
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .queue-action-btn:hover {
-  background: var(--surface-2);
-  border-color: var(--border-default);
-  border-bottom-color: var(--border-strong);
-  transform: translateY(-1px);
+  background: var(--button-neutral-bg-hover);
+  border-color: var(--border-strong);
+  transform: var(--button-lift);
+  box-shadow: var(--button-neutral-shadow-hover);
 }
 
 .queue-action-btn:active {
-  transform: translateY(2px);
-  border-bottom-width: 1px;
-  margin-top: 2px;
+  transform: var(--button-press);
+  box-shadow: var(--button-active-shadow);
 }
 
 .queue-action-btn:disabled {
@@ -148,14 +144,16 @@
 }
 
 .queue-add-btn {
-  background: var(--accent);
+  background: var(--button-primary-bg);
   color: var(--accent-contrast);
-  border-color: var(--accent);
+  border-color: var(--accent-dark);
+  box-shadow: var(--button-primary-shadow);
 }
 
 .queue-add-btn:hover {
-  background: var(--accent-hover);
+  background: var(--button-primary-bg-hover);
   border-color: var(--accent-hover);
+  box-shadow: var(--button-primary-shadow-hover);
 }
 
 .queue-empty-message {

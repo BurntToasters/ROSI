@@ -406,8 +406,8 @@ select option {
 }
 
 .settings-link-btn {
-  background: var(--surface-1);
-  border: 1px solid var(--border-subtle);
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   font-size: var(--text-sm);
@@ -415,13 +415,16 @@ select option {
   padding: var(--spacing-xs) var(--spacing-sm);
   margin-left: var(--spacing-md);
   margin-bottom: var(--spacing-xs);
-  transition: var(--transition-fast);
+  transition: var(--button-transition);
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .settings-link-btn:hover {
-  background: var(--surface-2);
+  background: var(--button-neutral-bg-hover);
   border-color: var(--accent);
   color: var(--accent);
+  transform: var(--button-lift);
+  box-shadow: var(--button-neutral-shadow-hover);
 }
 
 .settings-btn {
@@ -430,32 +433,28 @@ select option {
   align-items: center;
   gap: var(--spacing-sm);
   padding: var(--spacing-sm) var(--spacing-md);
-  background: var(--surface-1);
-  border: 1px solid var(--border-subtle);
-  border-bottom: 3px solid var(--border-default);
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   font-size: var(--text-base);
   cursor: pointer;
-  transition:
-    transform 0.1s ease,
-    border-color var(--transition-fast),
-    background var(--transition-fast);
+  transition: var(--button-transition);
   margin-bottom: var(--spacing-sm);
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .settings-btn:hover {
-  background: var(--surface-2);
-  border-color: var(--border-default);
-  border-bottom-color: var(--accent-light);
+  background: var(--button-neutral-bg-hover);
+  border-color: var(--border-strong);
   color: var(--text-primary);
-  transform: translateY(-1px);
+  transform: var(--button-lift);
+  box-shadow: var(--button-neutral-shadow-hover);
 }
 
 .settings-btn:active {
-  transform: translateY(2px);
-  border-bottom-width: 1px;
-  margin-bottom: calc(var(--spacing-sm) + 2px);
+  transform: var(--button-press);
+  box-shadow: var(--button-active-shadow);
 }
 
 .settings-btn svg {
@@ -475,31 +474,28 @@ select option {
   justify-content: center;
   gap: var(--spacing-sm);
   padding: var(--spacing-md);
-  background: var(--danger-subtle);
-  border: 1px solid transparent;
-  border-bottom: 4px solid rgba(239, 68, 68, 0.4);
+  background: var(--button-danger-bg);
+  border: 1px solid rgba(239, 68, 68, 0.3);
   border-radius: var(--radius-md);
   color: var(--danger);
   font-size: 0.85rem;
   font-weight: var(--weight-medium);
   cursor: pointer;
-  transition:
-    transform 0.1s ease,
-    background var(--transition-fast),
-    color var(--transition-fast);
+  transition: var(--button-transition);
+  box-shadow: var(--button-danger-shadow);
 }
 
 .reset-btn:hover {
-  background: var(--danger);
+  background: var(--button-danger-bg-hover);
   color: var(--danger-contrast);
-  border-bottom-color: var(--danger-contrast);
-  transform: translateY(-1px);
+  border-color: var(--danger);
+  transform: var(--button-lift);
+  box-shadow: var(--button-danger-shadow-hover);
 }
 
 .reset-btn:active {
-  transform: translateY(3px);
-  border-bottom-width: 1px;
-  margin-top: 3px;
+  transform: var(--button-press);
+  box-shadow: var(--button-danger-active-shadow);
 }
 
 .version-info {
