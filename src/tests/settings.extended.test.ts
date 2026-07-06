@@ -100,6 +100,7 @@ describe('settings extended coverage', () => {
       readFileSyncMock.mockReturnValue(JSON.stringify({ theme: 'dark' }));
       const settings = loadSettings();
       expect(settings.theme).toBe('dark');
+      expect(settings.flatUi).toBe(false);
       expect(settings.audioOnly).toBe(false);
       expect(settings.convertFormat).toBe('mp4');
     });
@@ -417,12 +418,15 @@ describe('settings extended coverage', () => {
     it('successfully imports valid settings file', async () => {
       showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: ['/tmp/good.json'] });
       statSyncMock.mockReturnValue({ size: 500 });
-      readFileSyncMock.mockReturnValue(JSON.stringify({ theme: 'dark', audioOnly: true }));
+      readFileSyncMock.mockReturnValue(
+        JSON.stringify({ theme: 'dark', audioOnly: true, flatUi: true })
+      );
       const result = await importSettingsFromFile({ isDestroyed: () => false } as any);
       expect(result).toEqual(
         expect.objectContaining({
           theme: 'dark',
           audioOnly: true,
+          flatUi: true,
         })
       );
       expect(writeFileSyncMock).toHaveBeenCalled();

@@ -21,6 +21,7 @@ interface RosiSettings {
   hookBrowser: boolean;
   browserChoice: string;
   animateBackground: boolean;
+  flatUi: boolean;
   notifications: boolean;
   denoReminderDismissed: boolean;
   gpuAcceleration: boolean;
@@ -1714,6 +1715,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       hookBrowser: false,
       browserChoice: 'Chrome',
       animateBackground: true,
+      flatUi: localStorage.getItem('rosi-flat-ui') === 'true',
       notifications: true,
       denoReminderDismissed: false,
       gpuAcceleration: false,
@@ -2015,12 +2017,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       updateBackgroundAnimation(settings.animateBackground ?? true);
     }
     if (flatUiToggle) {
-      const isFlat = localStorage.getItem('rosi-flat-ui') === 'true';
+      const isFlat =
+        typeof settings.flatUi === 'boolean'
+          ? settings.flatUi
+          : localStorage.getItem('rosi-flat-ui') === 'true';
+      settings.flatUi = isFlat;
       flatUiToggle.checked = isFlat;
       if (isFlat) {
         document.documentElement.dataset.flatUi = 'true';
+        localStorage.setItem('rosi-flat-ui', 'true');
       } else {
         delete document.documentElement.dataset.flatUi;
+        localStorage.setItem('rosi-flat-ui', 'false');
       }
     }
     if (themeSelect) {
@@ -2712,6 +2720,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (flatUiToggle) {
     flatUiToggle.addEventListener('change', (e) => {
       const checked = (e.target as HTMLInputElement).checked;
+      settings.flatUi = checked;
       if (checked) {
         document.documentElement.dataset.flatUi = 'true';
         localStorage.setItem('rosi-flat-ui', 'true');
@@ -2719,6 +2728,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         delete document.documentElement.dataset.flatUi;
         localStorage.setItem('rosi-flat-ui', 'false');
       }
+      void persistSettings();
     });
   }
 
@@ -3533,6 +3543,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       try {
         updateUIFromSettings();
         applyTheme(settings.theme ?? 'system');
+        localStorage.setItem('rosi-flat-ui', settings.flatUi ? 'true' : 'false');
       } catch (e) {
         logError('Failed to refresh UI after settings import', e);
       }

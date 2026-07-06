@@ -55,12 +55,14 @@ function defaultSettings() {
     hookBrowser: false,
     browserChoice: 'Chrome',
     animateBackground: true,
+    flatUi: false,
     notifications: true,
     denoReminderDismissed: true,
     gpuAcceleration: false,
     gpuType: 'auto',
     bestQuality: false,
     ffmpegPath: '',
+    downloadFolder: '',
     hideSupportModal: true,
     checkUpdatesOnStartup: false,
     updateChannel: 'auto',
@@ -343,6 +345,24 @@ describe('rosiEngine DOM wiring', () => {
     await flush();
 
     expect(document.documentElement.dataset.theme).toBe('light');
+  });
+
+  it('persists flat UI through settings when the toggle changes', async () => {
+    const api = buildMockApi();
+    await loadEngine(api);
+
+    const toggle = document.getElementById('flatUiToggle') as HTMLInputElement;
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event('change', { bubbles: true }));
+    await flush(350);
+
+    expect(document.documentElement.dataset.flatUi).toBe('true');
+    expect(localStorage.getItem('rosi-flat-ui')).toBe('true');
+    expect(api.saveSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        flatUi: true,
+      })
+    );
   });
 
   it('starts a direct download from a valid URL and selected folder', async () => {

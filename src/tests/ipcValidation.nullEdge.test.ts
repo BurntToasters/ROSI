@@ -214,6 +214,7 @@ describe('ipc validation null and edge-case handling', () => {
     it('rejects null boolean fields', () => {
       expect(validateSettingsPatchPayload({ showConsoleOutput: null }).ok).toBe(false);
       expect(validateSettingsPatchPayload({ audioOnly: null }).ok).toBe(false);
+      expect(validateSettingsPatchPayload({ flatUi: null }).ok).toBe(false);
       expect(validateSettingsPatchPayload({ convertEnabled: null }).ok).toBe(false);
       expect(validateSettingsPatchPayload({ gpuAcceleration: null }).ok).toBe(false);
     });

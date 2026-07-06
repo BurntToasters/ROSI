@@ -14,8 +14,7 @@
     0 8px 32px rgba(0, 0, 0, 0.28);
   transition:
     transform var(--transition-springy),
-    border-color var(--transition-fast),
-    box-shadow var(--transition-springy);
+    border-color var(--transition-fast);
 }
 
 .queue-header {

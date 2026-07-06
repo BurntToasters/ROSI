@@ -34,6 +34,7 @@ const defaultSettings: Settings = {
   hookBrowser: false,
   browserChoice: 'chrome',
   animateBackground: true,
+  flatUi: false,
   notifications: true,
   denoReminderDismissed: false,
   gpuAcceleration: false,
@@ -180,6 +181,7 @@ export function migrateSettings(rawSettings: unknown): Settings {
       rawSettings.animateBackground,
       defaultSettings.animateBackground
     ),
+    flatUi: readBoolean(rawSettings.flatUi, defaultSettings.flatUi),
     notifications: readBoolean(rawSettings.notifications, defaultSettings.notifications),
     denoReminderDismissed: readBoolean(
       rawSettings.denoReminderDismissed,
