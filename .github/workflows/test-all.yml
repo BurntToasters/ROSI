@@ -2,10 +2,13 @@ name: CI
 
 on:
   pull_request:
+    branches:
+      - main
+      - beta
   push:
     branches:
       - main
-      - master
+      - beta
 
 permissions:
   contents: read

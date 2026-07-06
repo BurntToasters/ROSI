@@ -1,11 +1,15 @@
 .download-history {
   display: none;
   margin: 0 var(--spacing-xl) var(--spacing-md);
-  background: var(--console-bg);
-  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-1) 32%, transparent);
+  backdrop-filter: blur(var(--blur-lg));
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-lg);
   overflow: hidden;
   flex-shrink: 0;
+  box-shadow:
+    var(--shadow-sm),
+    0 4px 16px rgba(0, 0, 0, 0.15);
 }
 
 .download-history.visible {
@@ -227,11 +231,15 @@
 .console-section {
   display: none;
   margin: 0 var(--spacing-xl) var(--spacing-lg);
-  background: var(--console-bg);
-  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-1) 32%, transparent);
+  backdrop-filter: blur(var(--blur-lg));
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-lg);
   overflow: hidden;
   flex-shrink: 0;
+  box-shadow:
+    var(--shadow-sm),
+    0 4px 16px rgba(0, 0, 0, 0.15);
 }
 
 .console-section.visible {
