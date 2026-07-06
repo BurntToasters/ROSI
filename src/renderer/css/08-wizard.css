@@ -200,33 +200,51 @@
 
 .wizard-btn {
   padding: var(--spacing-sm) var(--spacing-lg);
-  border: none;
+  border: 1px solid var(--border-default);
+  border-bottom: 3px solid var(--border-default);
   border-radius: var(--radius-md);
   font-size: var(--text-base);
   font-weight: var(--weight-medium);
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition:
+    transform 0.1s ease,
+    border-color var(--transition-fast),
+    background var(--transition-fast),
+    color var(--transition-fast);
   min-width: 100px;
 }
 
 .wizard-btn-primary {
   background: var(--accent);
+  border-color: var(--accent-dark);
+  border-bottom-color: var(--accent-dark);
   color: var(--accent-contrast);
 }
 
 .wizard-btn-primary:hover {
   background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+.wizard-btn-primary:active {
+  transform: translateY(2px);
+  border-bottom-width: 1px;
 }
 
 .wizard-btn-secondary {
   background: var(--surface-2);
   color: var(--text-secondary);
-  border: 1px solid var(--border-subtle);
 }
 
 .wizard-btn-secondary:hover {
   background: var(--surface-3);
   color: var(--text-primary);
+  transform: translateY(-1px);
+}
+
+.wizard-btn-secondary:active {
+  transform: translateY(2px);
+  border-bottom-width: 1px;
 }
 
 .wizard-btn-secondary[hidden] {

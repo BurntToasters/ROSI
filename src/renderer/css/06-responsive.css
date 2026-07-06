@@ -102,10 +102,24 @@
   width: 100%;
   max-width: var(--download-card-max-width);
   padding: clamp(1.35rem, 3vw, 2.15rem);
-  box-shadow: var(--shadow-md);
-  border: 1px solid color-mix(in srgb, var(--border-default) 85%, transparent);
-  background: color-mix(in srgb, var(--surface-1) 90%, transparent);
-  backdrop-filter: blur(var(--blur-md));
+  box-shadow:
+    var(--shadow-lg),
+    0 8px 32px rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: color-mix(in srgb, var(--surface-1) 32%, transparent);
+  backdrop-filter: blur(var(--blur-lg));
+  transition:
+    transform var(--transition-springy),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-springy);
+}
+
+.download-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    var(--shadow-lg),
+    0 12px 40px rgba(0, 0, 0, 0.35);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 .download-card::before {
@@ -402,8 +416,8 @@
 }
 
 .sidebar {
-  width: min(360px, calc(100vw - 22px));
-  border-right: 1px solid var(--border-default);
+  width: min(360px, calc(100vw - 24px));
+  border: 1px solid var(--border-default);
 }
 
 .sidebar-header {
