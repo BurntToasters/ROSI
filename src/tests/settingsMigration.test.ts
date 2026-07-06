@@ -35,6 +35,7 @@ describe('settings migration', () => {
       convertFormat: 'mp3',
       updateChannel: 'beta',
       gpuType: 'nvidia',
+      flatUi: true,
       settingsVersion: 0,
     });
 
@@ -44,7 +45,14 @@ describe('settings migration', () => {
     expect(migrated.convertFormat).toBe('mp3');
     expect(migrated.updateChannel).toBe('beta');
     expect(migrated.gpuType).toBe('nvidia');
+    expect(migrated.flatUi).toBe(true);
     expect(migrated.settingsVersion).toBe(CURRENT_SETTINGS_VERSION);
+  });
+
+  it('adds flat UI with a default value during migration', () => {
+    const migrated = migrateSettings({ settingsVersion: 2 });
+
+    expect(migrated.flatUi).toBe(false);
   });
 
   it('falls back on invalid enum fields', () => {

@@ -306,6 +306,7 @@ function isValidSettingsKey(key: string): key is keyof Settings {
     key === 'hookBrowser' ||
     key === 'browserChoice' ||
     key === 'animateBackground' ||
+    key === 'flatUi' ||
     key === 'notifications' ||
     key === 'denoReminderDismissed' ||
     key === 'gpuAcceleration' ||
@@ -365,6 +366,7 @@ export function validateSettingsPatchPayload(value: unknown): ValidationResult<P
       rawKey === 'firstLaunch' ||
       rawKey === 'hookBrowser' ||
       rawKey === 'animateBackground' ||
+      rawKey === 'flatUi' ||
       rawKey === 'notifications' ||
       rawKey === 'denoReminderDismissed' ||
       rawKey === 'gpuAcceleration' ||

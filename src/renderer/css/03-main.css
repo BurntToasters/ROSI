@@ -24,23 +24,27 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--surface-2);
-  border: 1px solid var(--border-subtle);
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition: var(--button-transition);
+  box-shadow: var(--button-neutral-shadow);
   -webkit-app-region: no-drag;
 }
 
 .icon-btn:hover {
-  background: var(--accent-subtle);
+  background: var(--button-neutral-bg-hover);
   border-color: var(--accent);
   color: var(--accent-light);
+  transform: var(--button-lift);
+  box-shadow: var(--button-neutral-shadow-hover);
 }
 
 .icon-btn:active {
-  transform: scale(0.97);
+  transform: var(--button-press);
+  box-shadow: var(--button-active-shadow);
 }
 
 .app-brand {
@@ -84,20 +88,24 @@
   align-items: center;
   justify-content: center;
   color: var(--text-tertiary);
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast),
-    transform var(--transition-fast);
+  transition: var(--button-transition);
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .top-bar-links a:hover {
-  background: var(--surface-2);
+  background: var(--button-neutral-bg-hover);
+  border-color: var(--border-strong);
   color: var(--text-primary);
+  transform: var(--button-lift);
+  box-shadow: var(--button-neutral-shadow-hover);
 }
 
 .top-bar-links a:active {
-  transform: scale(0.97);
+  transform: var(--button-press);
+  box-shadow: var(--button-active-shadow);
 }
 
 .top-bar-links a:focus-visible {
@@ -130,8 +138,7 @@
   animation: cardEntrance 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
   transition:
     transform var(--transition-springy),
-    border-color var(--transition-fast),
-    box-shadow var(--transition-springy);
+    border-color var(--transition-fast);
 }
 
 .download-card:hover {
@@ -163,8 +170,7 @@
   transform: scale(1.01);
   transition:
     transform var(--transition-fast),
-    border-color var(--transition-fast),
-    box-shadow var(--transition-fast);
+    border-color var(--transition-fast);
 }
 
 .download-title {
@@ -231,17 +237,21 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--surface-3);
-  border: none;
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   color: var(--text-tertiary);
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition: var(--button-transition);
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .paste-btn:hover {
-  background: var(--accent-subtle);
+  background: var(--button-neutral-bg-hover);
+  border-color: var(--accent);
   color: var(--accent-light);
+  transform: var(--button-lift);
+  box-shadow: var(--button-neutral-shadow-hover);
 }
 
 .paste-btn.hidden {
@@ -256,17 +266,21 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--surface-3);
-  border: none;
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   color: var(--text-tertiary);
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition: var(--button-transition);
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .clear-btn:hover {
-  background: var(--danger-subtle);
+  background: var(--button-danger-bg);
+  border-color: rgba(239, 68, 68, 0.3);
   color: var(--danger);
+  transform: var(--button-lift);
+  box-shadow: var(--button-danger-shadow);
 }
 
 .download-btn {
@@ -275,9 +289,8 @@
   align-items: center;
   gap: var(--spacing-sm);
   padding: var(--spacing-md) var(--spacing-xl);
-  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  background: var(--button-primary-bg);
   border: 1px solid var(--accent-dark);
-  border-bottom: 4px solid var(--accent-dark);
   border-radius: var(--radius-lg);
   /* Dark ink on the light accent fill. White text on cyan was ~1.8:1 (WCAG
      fail); --accent-contrast adapts per theme and stays >=4.5:1. */
@@ -286,15 +299,12 @@
   font-weight: var(--weight-semibold);
   cursor: pointer;
   transition:
-    transform 0.1s ease,
-    box-shadow 0.15s ease,
-    background 0.15s ease,
-    border-color 0.15s ease;
+    transform 100ms ease,
+    background var(--transition-fast),
+    border-color var(--transition-fast);
   white-space: nowrap;
   overflow: hidden;
-  box-shadow:
-    var(--shadow-sm),
-    0 2px 4px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--button-primary-shadow);
 }
 
 .download-btn::after {
@@ -302,18 +312,14 @@
 }
 
 .download-btn:hover {
-  background: linear-gradient(135deg, var(--accent-hover), var(--accent-light));
-  transform: translateY(-1px);
-  box-shadow:
-    var(--shadow-md),
-    0 0 16px var(--accent-glow);
-  border-bottom-width: 5px;
+  background: var(--button-primary-bg-hover);
+  transform: var(--button-lift);
+  box-shadow: var(--button-primary-shadow-hover);
 }
 
 .download-btn:active {
-  transform: translateY(3px);
-  border-bottom-width: 1px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  transform: var(--button-press);
+  box-shadow: var(--button-active-shadow);
 }
 
 .download-btn.loading {
@@ -380,9 +386,7 @@
   height: 8px;
   border-radius: var(--radius-full);
   background: var(--text-muted);
-  transition:
-    background var(--transition-normal),
-    box-shadow var(--transition-normal);
+  transition: background var(--transition-normal);
 }
 
 .progress-phase.active .phase-dot {
@@ -535,20 +539,23 @@
   justify-content: center;
   gap: var(--spacing-sm);
   padding: var(--spacing-md);
-  background: var(--surface-3);
-  border: 1px solid var(--border-subtle);
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   font-size: var(--text-base);
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition: var(--button-transition);
   margin-bottom: var(--spacing-lg);
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .fetch-formats-btn:hover {
-  background: var(--accent-subtle);
+  background: var(--button-neutral-bg-hover);
   border-color: var(--accent);
   color: var(--accent-light);
+  transform: var(--button-lift);
+  box-shadow: var(--button-neutral-shadow-hover);
 }
 
 .format-grid {
