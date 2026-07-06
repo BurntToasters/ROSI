@@ -14,5 +14,10 @@
       theme = 'dark';
     }
     document.documentElement.dataset.theme = theme;
+
+    var flatUi = localStorage.getItem('rosi-flat-ui');
+    if (flatUi === 'true') {
+      document.documentElement.dataset.flatUi = 'true';
+    }
   } catch (e) {}
 })();

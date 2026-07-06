@@ -1861,6 +1861,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const checkUpdateBtn = byId<HTMLButtonElement>('checkUpdateBtn');
   const animateBackgroundToggle = byId<HTMLInputElement>('animateBackgroundToggle');
   const themeSelect = byId<HTMLSelectElement>('themeSelect');
+  const flatUiToggle = byId<HTMLInputElement>('flatUiToggle');
   const bestQualityToggle = byId<HTMLInputElement>('bestQualityToggle');
   const audioOnlyToggle = byId<HTMLInputElement>('audioOnlyToggle');
   const audioFormatContainer = byId('audioFormatContainer');
@@ -2012,6 +2013,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (animateBackgroundToggle) {
       animateBackgroundToggle.checked = settings.animateBackground ?? true;
       updateBackgroundAnimation(settings.animateBackground ?? true);
+    }
+    if (flatUiToggle) {
+      const isFlat = localStorage.getItem('rosi-flat-ui') === 'true';
+      flatUiToggle.checked = isFlat;
+      if (isFlat) {
+        document.documentElement.dataset.flatUi = 'true';
+      } else {
+        delete document.documentElement.dataset.flatUi;
+      }
     }
     if (themeSelect) {
       const nextTheme =
@@ -2699,6 +2709,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       void persistSettings();
     });
   }
+  if (flatUiToggle) {
+    flatUiToggle.addEventListener('change', (e) => {
+      const checked = (e.target as HTMLInputElement).checked;
+      if (checked) {
+        document.documentElement.dataset.flatUi = 'true';
+        localStorage.setItem('rosi-flat-ui', 'true');
+      } else {
+        delete document.documentElement.dataset.flatUi;
+        localStorage.setItem('rosi-flat-ui', 'false');
+      }
+    });
+  }
 
   if (bestQualityToggle) {
     bestQualityToggle.addEventListener('change', (e) => {
@@ -2879,7 +2901,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           {
             label: '⟳ Reset & Restart',
             danger: true,
-            action: () => window.api.resetSettings(),
+            action: () => {
+              localStorage.removeItem('rosi-flat-ui');
+              localStorage.removeItem('rosi-theme');
+              window.api.resetSettings();
+            },
           },
         ],
       });
