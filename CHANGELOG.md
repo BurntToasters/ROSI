@@ -21,6 +21,7 @@
 ## Changes in `v4.2.0-beta.4:`
 
 - **YT-DLP:** Updated `yt-dlp` to `2026.07.04`.
+- **Electron:** Updated electron major release to `v43`.
 
 ## Changes in `v4.2.0-beta.3:`
 
