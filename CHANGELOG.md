@@ -22,6 +22,7 @@
 
 - **YT-DLP:** Updated `yt-dlp` to `2026.07.04`.
 - **Electron:** Updated electron major release to `v43`.
+- **FFMPEG:** Updated bundled FFmpeg wording, notices, and GPL source offer for FFmpeg `8.1.2` across Windows, macOS, and Linux.
 
 ## Changes in `v4.2.0-beta.3:`
 
@@ -69,7 +70,7 @@
 - **Security:** Tightened download URL validation, output path checks, `ffmpeg` path handling on import, and subprocess environment hardening.
 - **Typescript:** Migrated the main renderer engine from JavaScript to TypeScript and widened renderer type coverage.
 - **UI:** Split the renderer CSS into focused files, bundled local Manrope / IBM Plex Mono fonts, tightened CSP by removing remote Google Fonts, and shipped a broader accessibility and polish pass across the setup wizard, modals, queue, launch theming, and update progress UI.
-- **FFMPEG:** Updated FFmpeg compliance docs, notices, source offer, and binary placeholders for FFmpeg `8.1` builds on Windows, Linux, and macOS arm64. macOS x64 stays on FFmpeg `8.0.1`.
+- **FFMPEG:** Updated FFmpeg compliance docs, notices, source offer, and binary placeholders for bundled FFmpeg builds.
 - **Testing:** Expanded automated coverage across the updater, downloader, preview pipeline, IPC validation, renderer modules, video info parsing, codec-aware FFmpeg args, GPU probing, settings migration, and queue wiring.
 - **PKG:** Updated packages and bundled binaries.
 

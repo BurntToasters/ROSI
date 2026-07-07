@@ -26,11 +26,12 @@
    License: GPL‑2.0‑or‑later <br>
    Link: https://www.gnu.org/licenses/old-licenses/gpl-2.0.html <br>
    Source: https://github.com/BurntToasters/ffmpeg-static-builds <br>
-   ROSI bundles static GPL builds of FFmpeg 8.1 for Windows, Linux, and macOS arm64;
-   macOS x64 remains on FFmpeg 8.0.1. FFmpeg is invoked as an external process and is
-   not linked into ROSI. The complete corresponding source code, build scripts, and
-   configuration are available at the source URL above. A written source offer is
-   included with the distributed binaries at `ffmpeg/SOURCE_OFFER.txt`. <br>
+   ROSI bundles static GPL builds of FFmpeg 8.1.2 for Windows, Linux, and macOS.
+   FFmpeg is invoked as an external process and is not linked into ROSI. The
+   complete corresponding source code, build scripts, and configuration are
+   available at https://github.com/BurntToasters/ffmpeg-static-builds/releases/tag/ffmpeg-v8.1.2.
+   A written source offer is included with the distributed binaries at
+   `ffmpeg/SOURCE_OFFER.txt`. <br>
 
 # Python intepreter full license
 
