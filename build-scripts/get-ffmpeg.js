@@ -8,7 +8,7 @@
  * FFMPEG_DL_SERVER in .env, then extracts them into resources/ffmpeg/.
  *
  * Usage:
- *   node build-scripts/get-ffmpeg.js               # current OS + arch
+ *   node build-scripts/get-ffmpeg.js               # current OS (x64 and arm64)
  *   node build-scripts/get-ffmpeg.js --all          # all 6 platform/arch combos
  *   node build-scripts/get-ffmpeg.js --target mac:arm64 --target win:x64
  *
@@ -75,7 +75,7 @@ function usage() {
     'Usage: node build-scripts/get-ffmpeg.js [--all] [--target <platform:arch>]...\n' +
       '  Platforms: win, mac, linux\n' +
       '  Architectures: x64, arm64\n' +
-      '  Default: current OS + arch\n' +
+      '  Default: current OS (x64 and arm64)\n' +
       '\n' +
       '  Requires FFMPEG_DL_SERVER to be set in .env'
   );
@@ -131,14 +131,16 @@ function parseArgs(args) {
     });
   }
 
-  // Default: current OS + arch
+  // Default: current OS, both x64 and arm64 architectures
   const platform = normalizePlatform(process.platform);
-  const arch = normalizeArch(process.arch);
-  if (!platform || !arch) {
-    console.error(`Unsupported current platform: ${process.platform}:${process.arch}`);
+  if (!platform) {
+    console.error(`Unsupported current platform: ${process.platform}`);
     process.exit(1);
   }
-  return [{ platform, arch }];
+  return [
+    { platform, arch: 'x64' },
+    { platform, arch: 'arm64' },
+  ];
 }
 
 /** Download a URL to a local file path, following redirects. */
