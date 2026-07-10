@@ -100,7 +100,8 @@ interface RosiUiModule {
   setButtonLoading: (
     button: HTMLButtonElement | null,
     isLoading: boolean,
-    onCancel?: (() => void) | null
+    onCancel?: (() => void) | null,
+    cancelLabel?: string
   ) => void;
   showToast: (
     message: unknown,

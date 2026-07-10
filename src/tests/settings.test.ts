@@ -90,6 +90,8 @@ describe('settings persistence', () => {
     const result = saveSettings(
       {
         audioOnly: true,
+        downloadProfilesEnabled: true,
+        downloadMode: 'audio',
         theme: 'purple',
         updateChannel: 'stable',
       },

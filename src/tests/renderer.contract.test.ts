@@ -115,7 +115,8 @@ describe('renderer wiring and accessibility contracts', () => {
     expect(indexHtml).toMatch(
       /id="subtitleLangsInput"[\s\S]*aria-describedby="subtitleLangsHint subtitleLangsError"/
     );
-    expect(indexHtml).toMatch(/id="progress-details"[\s\S]*aria-live="polite"/);
+    expect(indexHtml).toMatch(/id="progress-status"[\s\S]*aria-live="polite"/);
+    expect(indexHtml).toMatch(/id="progress-details" class="progress-details"><\/div>/);
     expect(indexHtml).toMatch(/id="versionLink"[\s\S]*opens externally/);
     expect(engine).toMatch(/barWrapper\.setAttribute\('aria-valuenow', '0'\)/);
     expect(engine).toMatch(/aria-current', 'step'/);
@@ -125,6 +126,8 @@ describe('renderer wiring and accessibility contracts', () => {
     );
 
     expect(readRendererFile('licenses-iframe.html')).toMatch(/<html lang="en">/);
-    expect(uiModule).toMatch(/setAttribute\('aria-label', 'Cancel download'\)/);
+    expect(uiModule).toMatch(/setAttribute\('aria-label', cancelLabel\)/);
+    expect(engine).toMatch(/'Cancel format check'/);
+    expect(engine).toMatch(/'Cancel preview'/);
   });
 });
