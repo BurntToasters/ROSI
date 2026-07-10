@@ -28,7 +28,9 @@ const projectRoot = path.resolve(__dirname, '..');
 
 // ─── Platform / arch maps ────────────────────────────────────────────────────
 
-/** Maps process.platform / user-facing aliases → internal dir name */
+/** Maps process.platform / user-facing aliases → internal dir name
+ * @type {Record<string, string>}
+ */
 const PLATFORM_DIR = {
   win32: 'win',
   darwin: 'mac',
@@ -37,13 +39,16 @@ const PLATFORM_DIR = {
   mac: 'mac',
 };
 
-/** Maps internal dir name → server filename segment */
+/** Maps internal dir name → server filename segment
+ * @type {Record<string, string>}
+ */
 const PLATFORM_URL_SEGMENT = {
   win: 'win',
   mac: 'macOS',
   linux: 'linux',
 };
 
+/** @type {Record<string, string>} */
 const ARCH_ALIASES = {
   x64: 'x64',
   arm64: 'arm64',
@@ -62,10 +67,16 @@ const ALL_TARGETS = [
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/**
+ * @param {string} value
+ */
 function normalizePlatform(value) {
   return PLATFORM_DIR[value] || null;
 }
 
+/**
+ * @param {string} value
+ */
 function normalizeArch(value) {
   return ARCH_ALIASES[value] || null;
 }
@@ -82,6 +93,9 @@ function usage() {
   process.exit(1);
 }
 
+/**
+ * @param {string[]} args
+ */
 function parseArgs(args) {
   let explicitAll = false;
   const targets = [];
@@ -143,7 +157,11 @@ function parseArgs(args) {
   ];
 }
 
-/** Download a URL to a local file path, following redirects. */
+/** Download a URL to a local file path, following redirects.
+ * @param {string} url
+ * @param {string} destPath
+ * @returns {Promise<void>}
+ */
 function download(url, destPath) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(destPath);
@@ -151,6 +169,9 @@ function download(url, destPath) {
     let totalBytes = 0;
     let lastLoggedPercent = -1;
 
+    /**
+     * @param {string} requestUrl
+     */
     function doRequest(requestUrl) {
       const proto = requestUrl.startsWith('https://') ? https : http;
       proto
@@ -219,7 +240,11 @@ function find7z() {
   return null;
 }
 
-/** Extract a .7z archive into a destination directory. */
+/** Extract a .7z archive into a destination directory.
+ * @param {string} sevenZipBin
+ * @param {string} archivePath
+ * @param {string} destDir
+ */
 function extract7z(sevenZipBin, archivePath, destDir) {
   fs.mkdirSync(destDir, { recursive: true });
   execFileSync(sevenZipBin, ['x', archivePath, `-o${destDir}`, '-y'], {
@@ -269,7 +294,8 @@ async function main() {
     try {
       await download(url, tmpFile);
     } catch (err) {
-      console.error(`\n[${platform}:${arch}] Download failed: ${err.message}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`\n[${platform}:${arch}] Download failed: ${msg}`);
       process.exit(1);
     }
     console.log(`[${platform}:${arch}] Download complete.`);
@@ -278,7 +304,8 @@ async function main() {
     try {
       extract7z(sevenZipBin, tmpFile, destDir);
     } catch (err) {
-      console.error(`\n[${platform}:${arch}] Extraction failed: ${err.message}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`\n[${platform}:${arch}] Extraction failed: ${msg}`);
       // Clean up archive
       try {
         fs.unlinkSync(tmpFile);
@@ -292,7 +319,8 @@ async function main() {
     try {
       fs.unlinkSync(tmpFile);
     } catch (err) {
-      console.warn(`[${platform}:${arch}] Warning: could not delete temp archive: ${err.message}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[${platform}:${arch}] Warning: could not delete temp archive: ${msg}`);
     }
 
     console.log(`[${platform}:${arch}] Done.\n`);
