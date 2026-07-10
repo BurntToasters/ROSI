@@ -118,12 +118,17 @@ html[data-flat-ui='true'] .sidebar.open {
 }
 
 .settings-section-header {
+  width: 100%;
   display: flex;
   justify-content: space-between;
   align-items: center;
   cursor: pointer;
   padding: var(--spacing-xs) 0;
   margin-bottom: var(--spacing-xs);
+  color: inherit;
+  text-align: left;
+  border: 0;
+  background: transparent;
   border-radius: var(--radius-sm);
   transition: var(--transition-fast);
 }
