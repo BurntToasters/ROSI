@@ -16,7 +16,8 @@
     setButtonLoading: (
       button: UiButtonElement | null,
       isLoading: boolean,
-      onCancel?: (() => void) | null
+      onCancel?: (() => void) | null,
+      cancelLabel?: string
     ) => void;
     showToast: (message: unknown, options?: ToastOptions) => void;
     toggleAdvancedUI: (show: boolean) => void;
@@ -170,7 +171,8 @@
   function setButtonLoading(
     button: UiButtonElement | null,
     isLoading: boolean,
-    onCancel?: (() => void) | null
+    onCancel?: (() => void) | null,
+    cancelLabel = 'Cancel download'
   ) {
     if (!button) return;
     if (!button.dataset.defaultHtml) {
@@ -188,7 +190,7 @@
       button.disabled = false;
       button.setAttribute('aria-busy', 'true');
       if (typeof onCancel === 'function') {
-        button.setAttribute('aria-label', 'Cancel download');
+        button.setAttribute('aria-label', cancelLabel);
       } else {
         button.removeAttribute('aria-label');
       }

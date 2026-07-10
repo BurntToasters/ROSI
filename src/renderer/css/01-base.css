@@ -95,11 +95,8 @@
   --warning-contrast: #241a03;
   --warning-subtle: rgba(245, 158, 11, 0.15);
   --danger: #ef4444;
-  /* White on --danger gives ~4.0:1 — passes AA for large/bold text but
-     fails for normal-size. Using pure white keeps it at the passing edge
-     while staying legible. In dark theme --text-primary is already white,
-     but in light theme it's near-black which would be illegible on red. */
-  --danger-contrast: #ffffff;
+  /* Dark ink stays readable across the raised danger-hover gradient. */
+  --danger-contrast: #120b20;
   --danger-subtle: rgba(239, 68, 68, 0.15);
 
   --overlay-bg: rgba(0, 0, 0, 0.58);
@@ -144,11 +141,7 @@
     var(--danger-subtle) 0%,
     color-mix(in srgb, var(--danger-subtle) 85%, black) 100%
   );
-  --button-danger-bg-hover: linear-gradient(
-    to bottom,
-    var(--danger) 0%,
-    color-mix(in srgb, var(--danger) 85%, black) 100%
-  );
+  --button-danger-bg-hover: linear-gradient(to bottom, #f05252 0%, #dc4a4a 100%);
   --button-neutral-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.05), inset 1px 0 0 rgba(255, 255, 255, 0.03),
     inset 0 -1.5px 0 rgba(0, 0, 0, 0.25), inset -1px 0 0 rgba(0, 0, 0, 0.15),
@@ -255,10 +248,11 @@
   --text-secondary: rgba(255, 255, 255, 0.78);
   --text-tertiary: rgba(255, 255, 255, 0.7);
   --text-muted: rgba(255, 255, 255, 0.62);
-  --accent: #8b5cf6;
-  --accent-light: #a78bfa;
-  --accent-dark: #7c3aed;
-  --accent-hover: #7c3aed;
+  /* White ink stays AA-safe at every endpoint of raised primary gradients. */
+  --accent: #7c3aed;
+  --accent-light: #7c3aed;
+  --accent-dark: #5b21b6;
+  --accent-hover: #6d28d9;
   --accent-contrast: #ffffff;
   --accent-glow: rgba(139, 92, 246, 0.2);
   --accent-subtle: rgba(139, 92, 246, 0.12);
@@ -488,6 +482,8 @@ html[data-flat-ui='true'] .history-clear-btn,
 html[data-flat-ui='true'] .console-clear-btn,
 html[data-flat-ui='true'] .history-open-btn,
 html[data-flat-ui='true'] .fetch-formats-btn,
+html[data-flat-ui='true'] .download-profile-btn,
+html[data-flat-ui='true'] .change-folder-btn,
 html[data-flat-ui='true'] .wizard-btn {
   border-bottom: 1px solid var(--border-default) !important;
   transform: none !important;
@@ -513,6 +509,8 @@ html[data-flat-ui='true'] .history-clear-btn:hover,
 html[data-flat-ui='true'] .console-clear-btn:hover,
 html[data-flat-ui='true'] .history-open-btn:hover,
 html[data-flat-ui='true'] .fetch-formats-btn:hover,
+html[data-flat-ui='true'] .download-profile-btn:hover,
+html[data-flat-ui='true'] .change-folder-btn:hover,
 html[data-flat-ui='true'] .wizard-btn:hover {
   background: var(--surface-hover) !important;
   transform: none !important;
@@ -536,6 +534,8 @@ html[data-flat-ui='true'] .history-clear-btn:active,
 html[data-flat-ui='true'] .console-clear-btn:active,
 html[data-flat-ui='true'] .history-open-btn:active,
 html[data-flat-ui='true'] .fetch-formats-btn:active,
+html[data-flat-ui='true'] .download-profile-btn:active,
+html[data-flat-ui='true'] .change-folder-btn:active,
 html[data-flat-ui='true'] .wizard-btn:active {
   transform: none !important;
 }
@@ -543,6 +543,7 @@ html[data-flat-ui='true'] .wizard-btn:active {
 /* Keep semantic fills in flat mode without the raised button treatment. */
 html[data-flat-ui='true'] .download-btn,
 html[data-flat-ui='true'] .queue-add-btn,
+html[data-flat-ui='true'] .download-profile-btn.selected,
 html[data-flat-ui='true'] .modal-buttons .modal-btn-primary,
 html[data-flat-ui='true'] .wizard-btn-primary {
   background: var(--accent) !important;
@@ -552,6 +553,7 @@ html[data-flat-ui='true'] .wizard-btn-primary {
 
 html[data-flat-ui='true'] .download-btn:hover,
 html[data-flat-ui='true'] .queue-add-btn:hover,
+html[data-flat-ui='true'] .download-profile-btn.selected:hover,
 html[data-flat-ui='true'] .modal-buttons .modal-btn-primary:hover,
 html[data-flat-ui='true'] .wizard-btn-primary:hover {
   background: var(--accent-hover) !important;

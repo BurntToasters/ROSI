@@ -41,10 +41,14 @@ interface MockApi {
 
 function defaultSettings() {
   return {
-    settingsVersion: 3,
+    settingsVersion: 5,
     theme: 'dark',
     showConsoleOutput: false,
     consoleCollapsed: false,
+    queueCollapsed: false,
+    downloadProfilesEnabled: false,
+    downloadMode: 'best-video',
+    askDownloadLocation: false,
     advancedOptions: false,
     audioOnly: false,
     audioFormat: 'mp3',
@@ -244,6 +248,57 @@ describe('rosiEngine DOM wiring', () => {
     expect(api.saveSettings).toHaveBeenCalled();
   });
 
+  it('keeps download profiles hidden until enabled in settings', async () => {
+    const api = buildMockApi();
+    await loadEngine(api);
+
+    const composer = document.getElementById('downloadProfilesComposer') as HTMLElement;
+    const profilesToggle = document.getElementById('downloadProfilesToggle') as HTMLInputElement;
+    expect(composer.classList.contains('hidden')).toBe(true);
+
+    profilesToggle.checked = true;
+    profilesToggle.dispatchEvent(new Event('change', { bubbles: true }));
+    await flush();
+
+    expect(composer.classList.contains('hidden')).toBe(false);
+    expect(api.saveSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        downloadProfilesEnabled: true,
+        downloadMode: 'best-video',
+        bestQuality: true,
+      })
+    );
+  });
+
+  it('switches enabled profiles and exposes Audio format choice', async () => {
+    const api = buildMockApi({
+      getSettings: vi.fn(() =>
+        Promise.resolve({
+          ...defaultSettings(),
+          downloadProfilesEnabled: true,
+          downloadMode: 'best-video',
+          bestQuality: true,
+        })
+      ),
+    });
+    await loadEngine(api);
+
+    (document.getElementById('profileAudioBtn') as HTMLButtonElement).click();
+    await flush();
+
+    expect(
+      document.getElementById('profileAudioFormatContainer')?.classList.contains('hidden')
+    ).toBe(false);
+    expect(api.saveSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        downloadMode: 'audio',
+        audioOnly: true,
+        advancedOptions: false,
+        bestQuality: false,
+      })
+    );
+  });
+
   it('adds URLs to the queue via the queue input', async () => {
     const api = buildMockApi();
     await loadEngine(api);
@@ -266,6 +321,31 @@ describe('rosiEngine DOM wiring', () => {
     await flush();
 
     expect(api.addToQueue).toHaveBeenCalledWith(['https://example.com/shortcut']);
+  });
+
+  it('collapses queue and persists the preference', async () => {
+    const api = buildMockApi();
+    await loadEngine(api);
+
+    const queueSection = document.getElementById('queueSection') as HTMLElement;
+    const queueBody = document.getElementById('queueBody') as HTMLElement;
+    const queueToggle = document.getElementById('queueToggleBtn') as HTMLButtonElement;
+
+    expect(queueSection.classList.contains('collapsed')).toBe(false);
+    expect(queueToggle.getAttribute('aria-expanded')).toBe('true');
+
+    queueToggle.click();
+    await flush(350);
+
+    expect(queueSection.classList.contains('collapsed')).toBe(true);
+    expect(queueToggle.getAttribute('aria-expanded')).toBe('false');
+    expect(queueBody.getAttribute('aria-hidden')).toBe('true');
+    expect(queueBody.inert).toBe(true);
+    expect(api.saveSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        queueCollapsed: true,
+      })
+    );
   });
 
   it('accepts dropped URLs in the queue textarea', async () => {
@@ -341,10 +421,12 @@ describe('rosiEngine DOM wiring', () => {
     settingsImportedCb?.({
       ...defaultSettings(),
       theme: 'light',
+      queueCollapsed: true,
     });
     await flush();
 
     expect(document.documentElement.dataset.theme).toBe('light');
+    expect(document.getElementById('queueSection')?.classList.contains('collapsed')).toBe(true);
   });
 
   it('persists flat UI through settings when the toggle changes', async () => {
@@ -385,6 +467,54 @@ describe('rosiEngine DOM wiring', () => {
         url: 'https://example.com/video',
         outputPath: savePath,
       })
+    );
+  });
+
+  it('uses saved folder for direct downloads unless Ask every time is enabled', async () => {
+    const savePath = '/Users/test/Downloads';
+    const api = buildMockApi({
+      getSettings: vi.fn(() => Promise.resolve({ ...defaultSettings(), downloadFolder: savePath })),
+    });
+    await loadEngine(api);
+    const url = document.getElementById('url') as HTMLInputElement;
+    url.value = 'https://example.com/video';
+    url.dispatchEvent(new Event('input', { bubbles: true }));
+    await flush();
+
+    (document.getElementById('downloadBtn') as HTMLButtonElement).click();
+    await flush(50);
+
+    expect(api.selectDownloadLocation).not.toHaveBeenCalled();
+    expect(api.downloadVideo).toHaveBeenCalledWith(
+      expect.objectContaining({ outputPath: savePath })
+    );
+  });
+
+  it('opens folder picker when Ask every time is enabled', async () => {
+    const savedPath = '/Users/test/Downloads';
+    const selectedPath = '/Users/test/Other Downloads';
+    const api = buildMockApi({
+      getSettings: vi.fn(() =>
+        Promise.resolve({
+          ...defaultSettings(),
+          downloadFolder: savedPath,
+          askDownloadLocation: true,
+        })
+      ),
+      selectDownloadLocation: vi.fn(() => Promise.resolve(selectedPath)),
+    });
+    await loadEngine(api);
+    const url = document.getElementById('url') as HTMLInputElement;
+    url.value = 'https://example.com/video';
+    url.dispatchEvent(new Event('input', { bubbles: true }));
+    await flush();
+
+    (document.getElementById('downloadBtn') as HTMLButtonElement).click();
+    await flush(50);
+
+    expect(api.selectDownloadLocation).toHaveBeenCalledOnce();
+    expect(api.downloadVideo).toHaveBeenCalledWith(
+      expect.objectContaining({ outputPath: selectedPath })
     );
   });
 
