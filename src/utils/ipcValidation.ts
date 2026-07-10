@@ -296,6 +296,10 @@ function isValidSettingsKey(key: string): key is keyof Settings {
     key === 'theme' ||
     key === 'showConsoleOutput' ||
     key === 'consoleCollapsed' ||
+    key === 'queueCollapsed' ||
+    key === 'downloadProfilesEnabled' ||
+    key === 'downloadMode' ||
+    key === 'askDownloadLocation' ||
     key === 'advancedOptions' ||
     key === 'audioOnly' ||
     key === 'audioFormat' ||
@@ -359,6 +363,9 @@ export function validateSettingsPatchPayload(value: unknown): ValidationResult<P
     if (
       rawKey === 'showConsoleOutput' ||
       rawKey === 'consoleCollapsed' ||
+      rawKey === 'queueCollapsed' ||
+      rawKey === 'downloadProfilesEnabled' ||
+      rawKey === 'askDownloadLocation' ||
       rawKey === 'advancedOptions' ||
       rawKey === 'audioOnly' ||
       rawKey === 'convertEnabled' ||
@@ -385,6 +392,23 @@ export function validateSettingsPatchPayload(value: unknown): ValidationResult<P
         };
       }
       patch[rawKey] = rawValue;
+      continue;
+    }
+
+    if (rawKey === 'downloadMode') {
+      if (
+        !isString(rawValue) ||
+        (rawValue !== 'best-video' && rawValue !== 'audio' && rawValue !== 'custom')
+      ) {
+        return {
+          ok: false,
+          error: buildError(
+            'VALIDATION_ERROR',
+            'downloadMode must be best-video, audio, or custom.'
+          ),
+        };
+      }
+      patch.downloadMode = rawValue as Settings['downloadMode'];
       continue;
     }
 

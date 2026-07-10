@@ -41,7 +41,9 @@ describe('settings migration', () => {
 
     expect(migrated.showConsoleOutput).toBe(true);
     expect(migrated.theme).toBe('purple');
-    expect(migrated.audioOnly).toBe(true);
+    expect(migrated.downloadProfilesEnabled).toBe(false);
+    expect(migrated.downloadMode).toBe('audio');
+    expect(migrated.audioOnly).toBe(false);
     expect(migrated.convertFormat).toBe('mp3');
     expect(migrated.updateChannel).toBe('beta');
     expect(migrated.gpuType).toBe('nvidia');
@@ -53,6 +55,7 @@ describe('settings migration', () => {
     const migrated = migrateSettings({ settingsVersion: 2 });
 
     expect(migrated.flatUi).toBe(false);
+    expect(migrated.queueCollapsed).toBe(false);
   });
 
   it('falls back on invalid enum fields', () => {
@@ -86,6 +89,21 @@ describe('settings migration', () => {
     expect(migrated.embedThumbnail).toBe(false);
     expect(migrated.embedMetadata).toBe(false);
     expect(migrated.sponsorblockRemove).toBe(false);
+  });
+
+  it('keeps profiles opt-in and activates their mapped flags only when enabled', () => {
+    const disabled = migrateSettings({ audioOnly: true });
+    expect(disabled.downloadProfilesEnabled).toBe(false);
+    expect(disabled.downloadMode).toBe('audio');
+    expect(disabled.audioOnly).toBe(false);
+
+    const enabled = migrateSettings({
+      downloadProfilesEnabled: true,
+      downloadMode: 'custom',
+    });
+    expect(enabled.advancedOptions).toBe(true);
+    expect(enabled.audioOnly).toBe(false);
+    expect(enabled.bestQuality).toBe(false);
   });
 
   it('preserves valid enhancement settings and rejects malformed subtitle langs', () => {

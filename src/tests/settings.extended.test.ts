@@ -419,7 +419,12 @@ describe('settings extended coverage', () => {
       showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: ['/tmp/good.json'] });
       statSyncMock.mockReturnValue({ size: 500 });
       readFileSyncMock.mockReturnValue(
-        JSON.stringify({ theme: 'dark', audioOnly: true, flatUi: true })
+        JSON.stringify({
+          theme: 'dark',
+          downloadProfilesEnabled: true,
+          downloadMode: 'audio',
+          flatUi: true,
+        })
       );
       const result = await importSettingsFromFile({ isDestroyed: () => false } as any);
       expect(result).toEqual(

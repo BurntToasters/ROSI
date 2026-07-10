@@ -438,6 +438,7 @@
 .preview-btn:focus-visible,
 .paste-btn:focus-visible,
 .queue-action-btn:focus-visible,
+.queue-collapse-btn:focus-visible,
 .history-open-btn:focus-visible,
 .history-collapse-btn:focus-visible,
 .console-collapse-btn:focus-visible,
