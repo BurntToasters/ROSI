@@ -118,7 +118,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['build-scripts/*.js'],
+    files: ['build-scripts/*.{js,cjs}'],
     languageOptions: {
       globals: {
         require: 'readonly',
