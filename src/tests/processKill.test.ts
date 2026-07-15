@@ -2,9 +2,9 @@ import { EventEmitter } from 'events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChildProcess } from 'child_process';
 
-const { execFileMock, isWindowsMock, logErrorMock } = vi.hoisted(() => ({
+const { execFileMock, platformState, logErrorMock } = vi.hoisted(() => ({
   execFileMock: vi.fn(),
-  isWindowsMock: vi.fn(() => false),
+  platformState: { isWindows: false },
   logErrorMock: vi.fn(),
 }));
 
@@ -13,7 +13,9 @@ vi.mock('child_process', () => ({
 }));
 
 vi.mock('../main/platform', () => ({
-  isWindows: isWindowsMock,
+  get isWindows() {
+    return platformState.isWindows;
+  },
 }));
 
 vi.mock('electron-log/main.js', () => ({
@@ -43,7 +45,7 @@ describe('killChildProcess', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
-    isWindowsMock.mockReturnValue(false);
+    platformState.isWindows = false;
   });
 
   afterEach(() => {
@@ -59,14 +61,38 @@ describe('killChildProcess', () => {
   });
 
   it('sends SIGTERM and schedules SIGKILL after 5 seconds', () => {
+    const processKillSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
     const proc = createProc();
-    killChildProcess(proc, 'yt-dlp');
+    try {
+      killChildProcess(proc, 'yt-dlp');
 
-    expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
-    expect(proc.kill).not.toHaveBeenCalledWith('SIGKILL');
+      expect(processKillSpy).toHaveBeenCalledWith(-4242, 'SIGTERM');
+      expect(proc.kill).not.toHaveBeenCalledWith('SIGTERM');
+      expect(proc.kill).not.toHaveBeenCalledWith('SIGKILL');
 
-    vi.advanceTimersByTime(5000);
-    expect(proc.kill).toHaveBeenCalledWith('SIGKILL');
+      vi.advanceTimersByTime(5000);
+      expect(processKillSpy).toHaveBeenCalledWith(-4242, 'SIGKILL');
+      expect(proc.kill).not.toHaveBeenCalledWith('SIGKILL');
+    } finally {
+      processKillSpy.mockRestore();
+    }
+  });
+
+  it('falls back to direct POSIX kills when process-group signals fail', () => {
+    const processKillSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw new Error('missing process group');
+    });
+    const proc = createProc();
+    try {
+      killChildProcess(proc, 'yt-dlp');
+
+      expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
+
+      vi.advanceTimersByTime(5000);
+      expect(proc.kill).toHaveBeenCalledWith('SIGKILL');
+    } finally {
+      processKillSpy.mockRestore();
+    }
   });
 
   it('clears the force-kill timer when the process exits', () => {
@@ -81,7 +107,7 @@ describe('killChildProcess', () => {
   });
 
   it('uses taskkill on Windows when force-kill is needed', () => {
-    isWindowsMock.mockReturnValue(true);
+    platformState.isWindows = true;
     const proc = createProc(9001);
     killChildProcess(proc, 'ffmpeg');
 
@@ -95,7 +121,7 @@ describe('killChildProcess', () => {
   });
 
   it('logs and falls back to taskkill on Windows when SIGTERM throws', () => {
-    isWindowsMock.mockReturnValue(true);
+    platformState.isWindows = true;
     const proc = createProc(9002);
     proc.kill = vi.fn(() => {
       throw new Error('kill failed');

@@ -1,10 +1,15 @@
 export type AudioFormat = 'mp3' | 'flac' | 'ogg' | 'wav' | 'm4a' | 'opus';
+export type DownloadProfile = 'best-video' | 'audio' | 'custom';
 
 export interface Settings {
   settingsVersion: number;
   theme: ThemePreference;
   showConsoleOutput: boolean;
   consoleCollapsed: boolean;
+  queueCollapsed: boolean;
+  downloadProfilesEnabled: boolean;
+  downloadMode: DownloadProfile;
+  askDownloadLocation: boolean;
   advancedOptions: boolean;
   audioOnly: boolean;
   audioFormat: AudioFormat;
@@ -15,6 +20,7 @@ export interface Settings {
   hookBrowser: boolean;
   browserChoice: string;
   animateBackground: boolean;
+  flatUi: boolean;
   notifications: boolean;
   denoReminderDismissed: boolean;
   gpuAcceleration: boolean;

@@ -176,6 +176,11 @@ describe('ipc validation helpers', () => {
       settingsVersion: 1,
       theme: 'system',
       showConsoleOutput: true,
+      queueCollapsed: true,
+      flatUi: true,
+      downloadProfilesEnabled: true,
+      downloadMode: 'audio',
+      askDownloadLocation: true,
       browserChoice: 'firefox',
       updateChannel: 'stable',
       gpuType: 'intel',
@@ -185,12 +190,19 @@ describe('ipc validation helpers', () => {
     if (!valid.ok) return;
     expect(valid.data.settingsVersion).toBe(1);
     expect(valid.data.theme).toBe('system');
+    expect(valid.data.queueCollapsed).toBe(true);
+    expect(valid.data.flatUi).toBe(true);
+    expect(valid.data.downloadProfilesEnabled).toBe(true);
+    expect(valid.data.downloadMode).toBe('audio');
+    expect(valid.data.askDownloadLocation).toBe(true);
     expect(valid.data.browserChoice).toBe('firefox');
     expect(Object.keys(valid.data)).not.toContain('unknownField');
 
     expect(validateSettingsPatchPayload({ settingsVersion: 0 }).ok).toBe(false);
     expect(validateSettingsPatchPayload({ theme: 'night' }).ok).toBe(false);
     expect(validateSettingsPatchPayload({ audioOnly: 'true' }).ok).toBe(false);
+    expect(validateSettingsPatchPayload({ flatUi: 'true' }).ok).toBe(false);
+    expect(validateSettingsPatchPayload({ downloadMode: 'video' }).ok).toBe(false);
     expect(validateSettingsPatchPayload({ browserChoice: 123 }).ok).toBe(false);
     expect(validateSettingsPatchPayload({ browserChoice: 'curl' }).ok).toBe(false);
     expect(validateSettingsPatchPayload({ convertFormat: '../../bad' }).ok).toBe(false);

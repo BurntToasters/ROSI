@@ -1,23 +1,48 @@
 /* ── Queue Section ── */
 
 .queue-section {
-  background: color-mix(in srgb, var(--surface-1) 90%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border-default) 80%, transparent);
+  background: color-mix(in srgb, var(--surface-1) 32%, transparent);
+  backdrop-filter: blur(var(--blur-lg));
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-lg);
   overflow: hidden;
   display: flex;
   flex-direction: column;
   animation: slideDown 0.3s ease;
-  box-shadow: var(--shadow-sm);
+  box-shadow:
+    var(--shadow-lg),
+    0 8px 32px rgba(0, 0, 0, 0.28);
+  transition:
+    transform var(--transition-springy),
+    border-color var(--transition-fast);
 }
 
 .queue-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--spacing-sm) var(--spacing-md);
+  padding: 0 var(--spacing-md);
   background: color-mix(in srgb, var(--console-header-bg) 94%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--border-default) 65%, transparent);
+}
+
+.queue-collapse-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: var(--spacing-sm) 0;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  user-select: none;
+  text-align: left;
+  transition: var(--transition-fast);
+}
+
+.queue-collapse-btn:hover {
+  color: var(--text-primary);
 }
 
 .queue-header-left {
@@ -26,11 +51,29 @@
   gap: var(--spacing-sm);
 }
 
+.queue-collapse-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--text-tertiary);
+  transition: transform var(--transition-normal);
+}
+
+.queue-section.collapsed .queue-collapse-icon {
+  transform: rotate(-90deg);
+}
+
 .queue-title {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
   font-size: var(--text-sm);
   color: var(--text-tertiary);
   font-weight: var(--weight-semibold);
   letter-spacing: 0.015em;
+}
+
+.queue-title svg {
+  color: var(--accent-light);
 }
 
 .queue-count {
@@ -43,6 +86,15 @@
   min-width: 20px;
   text-align: center;
   border: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent);
+}
+
+.queue-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.queue-section.collapsed .queue-body {
+  display: none;
 }
 
 .queue-input-row {
@@ -76,6 +128,11 @@
   box-shadow: 0 0 0 2px var(--accent-subtle);
 }
 
+.queue-url-input.drag-over {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
 .queue-url-input:disabled {
   opacity: 0.7;
   cursor: not-allowed;
@@ -105,16 +162,24 @@
   font-weight: var(--weight-medium);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  background: var(--surface-1);
+  background: var(--button-neutral-bg);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition: var(--button-transition);
   min-height: 32px;
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .queue-action-btn:hover {
-  background: var(--surface-2);
+  background: var(--button-neutral-bg-hover);
   border-color: var(--border-strong);
+  transform: var(--button-lift);
+  box-shadow: var(--button-neutral-shadow-hover);
+}
+
+.queue-action-btn:active {
+  transform: var(--button-press);
+  box-shadow: var(--button-active-shadow);
 }
 
 .queue-action-btn:disabled {
@@ -124,14 +189,16 @@
 }
 
 .queue-add-btn {
-  background: var(--accent);
+  background: var(--button-primary-bg);
   color: var(--accent-contrast);
-  border-color: var(--accent);
+  border-color: var(--accent-dark);
+  box-shadow: var(--button-primary-shadow);
 }
 
 .queue-add-btn:hover {
-  background: var(--accent-hover);
+  background: var(--button-primary-bg-hover);
   border-color: var(--accent-hover);
+  box-shadow: var(--button-primary-shadow-hover);
 }
 
 .queue-empty-message {
@@ -258,10 +325,13 @@
 .wizard-card {
   width: 90%;
   max-width: 520px;
-  background: var(--surface-1);
-  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-1) 32%, transparent);
+  backdrop-filter: blur(var(--blur-lg));
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
+  box-shadow:
+    var(--shadow-lg),
+    0 16px 48px rgba(0, 0, 0, 0.4);
   padding: var(--spacing-2xl) var(--spacing-xl) var(--spacing-xl);
   display: flex;
   flex-direction: column;

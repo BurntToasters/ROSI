@@ -3,5 +3,6 @@ Place Linux x64 FFmpeg binaries here:
 - ffprobe
 
 Build from: https://github.com/BurntToasters/ffmpeg-static-builds
+Version: FFmpeg 8.1.2 (GPL static)
 
 Ensure execute permissions: chmod +x ffmpeg ffprobe

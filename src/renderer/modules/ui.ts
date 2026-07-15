@@ -16,7 +16,8 @@
     setButtonLoading: (
       button: UiButtonElement | null,
       isLoading: boolean,
-      onCancel?: (() => void) | null
+      onCancel?: (() => void) | null,
+      cancelLabel?: string
     ) => void;
     showToast: (message: unknown, options?: ToastOptions) => void;
     toggleAdvancedUI: (show: boolean) => void;
@@ -94,6 +95,13 @@
     const container = getToastContainer(type);
     if (!container) return;
 
+    // Cap visible toasts to prevent screen flooding during rapid errors.
+    const MAX_VISIBLE_TOASTS = 5;
+    const existing = container.querySelectorAll('.toast');
+    if (existing.length >= MAX_VISIBLE_TOASTS) {
+      existing[0]?.remove();
+    }
+
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
     if (type === 'error' || type === 'warning') {
@@ -163,7 +171,8 @@
   function setButtonLoading(
     button: UiButtonElement | null,
     isLoading: boolean,
-    onCancel?: (() => void) | null
+    onCancel?: (() => void) | null,
+    cancelLabel = 'Cancel download'
   ) {
     if (!button) return;
     if (!button.dataset.defaultHtml) {
@@ -181,7 +190,7 @@
       button.disabled = false;
       button.setAttribute('aria-busy', 'true');
       if (typeof onCancel === 'function') {
-        button.setAttribute('aria-label', 'Cancel download');
+        button.setAttribute('aria-label', cancelLabel);
       } else {
         button.removeAttribute('aria-label');
       }
