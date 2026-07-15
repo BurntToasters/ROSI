@@ -1039,7 +1039,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # Application framework and runtime
 
 > This section is maintained by hand. The `licenses.json` produced by
-> `npm-license-crawler --production` only covers ROSI's runtime npm
+> `license-checker --production` only covers ROSI's runtime npm
 > dependencies and **cannot** capture Electron (a devDependency that is shipped
 > at runtime), Chromium, Node.js, or the bundled native binaries. Those are
 > enumerated here.
