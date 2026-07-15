@@ -36,4 +36,4 @@ npm run ffmpeg:check -- --target win:x64
 
 # Licenses
 
-npx npm-license-crawler --production --json licenses.json
+npx license-checker --production --json --out licenses.json
