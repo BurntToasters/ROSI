@@ -89,8 +89,14 @@
   --warning: #f59e0b;
   --warning-light: #fbbf24;
   --warning-dark: #d97706;
+  /* Dark ink for text/icons placed on the solid amber --warning fill.
+     Amber stays constant across themes, so one value works everywhere and
+     keeps ~8:1 contrast (white-on-amber was ~2.1:1, a WCAG AA failure). */
+  --warning-contrast: #241a03;
   --warning-subtle: rgba(245, 158, 11, 0.15);
   --danger: #ef4444;
+  /* Dark ink stays readable across the raised danger-hover gradient. */
+  --danger-contrast: #120b20;
   --danger-subtle: rgba(239, 68, 68, 0.15);
 
   --overlay-bg: rgba(0, 0, 0, 0.58);
@@ -122,9 +128,56 @@
   --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.25);
   --shadow-glow: none;
 
+  --button-neutral-bg: linear-gradient(to bottom, var(--surface-2) 0%, var(--surface-1) 100%);
+  --button-neutral-bg-hover: linear-gradient(to bottom, var(--surface-3) 0%, var(--surface-2) 100%);
+  --button-primary-bg: linear-gradient(to bottom, var(--accent) 0%, var(--accent-hover) 100%);
+  --button-primary-bg-hover: linear-gradient(
+    to bottom,
+    var(--accent-hover) 0%,
+    var(--accent-light) 100%
+  );
+  --button-danger-bg: linear-gradient(
+    to bottom,
+    var(--danger-subtle) 0%,
+    color-mix(in srgb, var(--danger-subtle) 85%, black) 100%
+  );
+  --button-danger-bg-hover: linear-gradient(to bottom, #f05252 0%, #dc4a4a 100%);
+  --button-neutral-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05), inset 1px 0 0 rgba(255, 255, 255, 0.03),
+    inset 0 -1.5px 0 rgba(0, 0, 0, 0.25), inset -1px 0 0 rgba(0, 0, 0, 0.15),
+    0 1px 2px rgba(0, 0, 0, 0.1);
+  --button-neutral-shadow-hover:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 1px 0 0 rgba(255, 255, 255, 0.05),
+    inset 0 -1.5px 0 rgba(0, 0, 0, 0.25), inset -1px 0 0 rgba(0, 0, 0, 0.15),
+    0 2px 4px rgba(0, 0, 0, 0.14);
+  --button-primary-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35), inset 1px 0 0 rgba(255, 255, 255, 0.2),
+    inset 0 -1.5px 0 rgba(0, 0, 0, 0.3), inset -1px 0 0 rgba(0, 0, 0, 0.15),
+    0 1px 2px rgba(0, 0, 0, 0.15);
+  --button-primary-shadow-hover:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45), inset 1px 0 0 rgba(255, 255, 255, 0.25),
+    inset 0 -1.5px 0 rgba(0, 0, 0, 0.3), inset -1px 0 0 rgba(0, 0, 0, 0.15),
+    0 2px 4px rgba(0, 0, 0, 0.2), 0 0 12px var(--accent-glow);
+  --button-danger-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.15), inset 1px 0 0 rgba(255, 255, 255, 0.1),
+    inset 0 -1.5px 0 rgba(0, 0, 0, 0.3), inset -1px 0 0 rgba(0, 0, 0, 0.2),
+    0 1px 2px rgba(0, 0, 0, 0.12);
+  --button-danger-shadow-hover:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25), inset 1px 0 0 rgba(255, 255, 255, 0.15),
+    inset 0 -1.5px 0 rgba(0, 0, 0, 0.3), inset -1px 0 0 rgba(0, 0, 0, 0.2),
+    0 2px 4px rgba(0, 0, 0, 0.2);
+  --button-active-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.22), 0 1px 1px rgba(0, 0, 0, 0.05);
+  --button-danger-active-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3), 0 1px 1px rgba(0, 0, 0, 0.05);
+  --button-lift: translateY(-0.5px);
+  --button-press: translateY(0.5px);
+  --button-transition:
+    transform 100ms ease, border-color var(--transition-fast), background var(--transition-fast),
+    color var(--transition-fast);
+
   --transition-fast: 150ms ease;
   --transition-normal: 250ms ease;
   --transition-slow: 400ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-springy: 500ms cubic-bezier(0.16, 1, 0.3, 1);
 
   --blur-sm: 4px;
   --blur-md: 8px;
@@ -195,10 +248,11 @@
   --text-secondary: rgba(255, 255, 255, 0.78);
   --text-tertiary: rgba(255, 255, 255, 0.7);
   --text-muted: rgba(255, 255, 255, 0.62);
-  --accent: #8b5cf6;
-  --accent-light: #a78bfa;
-  --accent-dark: #7c3aed;
-  --accent-hover: #7c3aed;
+  /* White ink stays AA-safe at every endpoint of raised primary gradients. */
+  --accent: #7c3aed;
+  --accent-light: #7c3aed;
+  --accent-dark: #5b21b6;
+  --accent-hover: #6d28d9;
   --accent-contrast: #ffffff;
   --accent-glow: rgba(139, 92, 246, 0.2);
   --accent-subtle: rgba(139, 92, 246, 0.12);
@@ -227,10 +281,10 @@
   --bg-gradient-start: #f4f7fb;
   --bg-gradient-mid: #eef3f8;
   --bg-gradient-end: #e7edf5;
-  --surface-1: rgba(255, 255, 255, 0.76);
-  --surface-2: rgba(255, 255, 255, 0.88);
-  --surface-3: rgba(255, 255, 255, 0.95);
-  --surface-hover: rgba(232, 239, 249, 0.95);
+  --surface-1: rgba(255, 255, 255, 0.45);
+  --surface-2: rgba(255, 255, 255, 0.62);
+  --surface-3: rgba(255, 255, 255, 0.75);
+  --surface-hover: rgba(255, 255, 255, 0.85);
   --border-subtle: rgba(15, 23, 42, 0.12);
   --border-default: rgba(15, 23, 42, 0.22);
   --border-strong: rgba(15, 23, 42, 0.32);
@@ -337,4 +391,189 @@ body.animate-bg {
   50% {
     background-position: 100% 50%;
   }
+}
+
+/* ── Flat UI Mode Overrides ── */
+html[data-flat-ui='true'] {
+  --blur-sm: 0px !important;
+  --blur-md: 0px !important;
+  --blur-lg: 0px !important;
+  --shadow-lg: none !important;
+  --shadow-md: none !important;
+  --shadow-sm: none !important;
+  --accent-glow: transparent !important;
+
+  /* Solid Dark surface overrides */
+  --surface-1: #16181d !important;
+  --surface-2: #1e222b !important;
+  --surface-3: #272c37 !important;
+  --surface-hover: #2f3644 !important;
+  --border-subtle: #242933 !important;
+  --border-default: #3b4252 !important;
+  --border-strong: #4c566a !important;
+  --sidebar-bg-start: #0d0f13 !important;
+  --sidebar-bg-end: #0d0f13 !important;
+  --modal-bg-start: #16181d !important;
+  --modal-bg-end: #16181d !important;
+}
+
+html[data-flat-ui='true'][data-theme='purple'] {
+  /* Solid Purple surface overrides */
+  --surface-1: #1a1626 !important;
+  --surface-2: #221c33 !important;
+  --surface-3: #2d2444 !important;
+  --surface-hover: #372c54 !important;
+  --border-subtle: #2b2340 !important;
+  --border-default: #413561 !important;
+  --border-strong: #52437a !important;
+  --sidebar-bg-start: #120e1e !important;
+  --sidebar-bg-end: #120e1e !important;
+  --modal-bg-start: #1a1626 !important;
+  --modal-bg-end: #1a1626 !important;
+}
+
+html[data-flat-ui='true'][data-theme='light'] {
+  /* Solid Light surface overrides */
+  --surface-1: #ffffff !important;
+  --surface-2: #f1f5f9 !important;
+  --surface-3: #e2e8f0 !important;
+  --surface-hover: #cbd5e1 !important;
+  --border-subtle: #e2e8f0 !important;
+  --border-default: #cbd5e1 !important;
+  --border-strong: #94a3b8 !important;
+  --sidebar-bg-start: #f8fafc !important;
+  --sidebar-bg-end: #f8fafc !important;
+  --modal-bg-start: #ffffff !important;
+  --modal-bg-end: #ffffff !important;
+}
+
+/* Strip backdrop filters */
+html[data-flat-ui='true'] *,
+html[data-flat-ui='true'] *::before,
+html[data-flat-ui='true'] *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Reset 3D buttons and cards */
+html[data-flat-ui='true'] .download-card,
+html[data-flat-ui='true'] .queue-section,
+html[data-flat-ui='true'] .download-history,
+html[data-flat-ui='true'] .console-section {
+  box-shadow: none !important;
+  transform: none !important;
+  border-width: 1px !important;
+}
+
+html[data-flat-ui='true'] .download-btn,
+html[data-flat-ui='true'] .settings-btn,
+html[data-flat-ui='true'] .settings-link-btn,
+html[data-flat-ui='true'] .icon-btn,
+html[data-flat-ui='true'] .top-bar-links a,
+html[data-flat-ui='true'] .reset-btn,
+html[data-flat-ui='true'] .modal-buttons button,
+html[data-flat-ui='true'] .modal-close-btn,
+html[data-flat-ui='true'] .update-banner-cancel,
+html[data-flat-ui='true'] .queue-action-btn,
+html[data-flat-ui='true'] .preview-btn,
+html[data-flat-ui='true'] .paste-btn,
+html[data-flat-ui='true'] .clear-btn,
+html[data-flat-ui='true'] .history-clear-btn,
+html[data-flat-ui='true'] .console-clear-btn,
+html[data-flat-ui='true'] .history-open-btn,
+html[data-flat-ui='true'] .fetch-formats-btn,
+html[data-flat-ui='true'] .download-profile-btn,
+html[data-flat-ui='true'] .change-folder-btn,
+html[data-flat-ui='true'] .wizard-btn {
+  border-bottom: 1px solid var(--border-default) !important;
+  transform: none !important;
+  box-shadow: none !important;
+  background: var(--surface-2) !important;
+  color: var(--text-primary) !important;
+}
+
+html[data-flat-ui='true'] .download-btn:hover,
+html[data-flat-ui='true'] .settings-btn:hover,
+html[data-flat-ui='true'] .settings-link-btn:hover,
+html[data-flat-ui='true'] .icon-btn:hover,
+html[data-flat-ui='true'] .top-bar-links a:hover,
+html[data-flat-ui='true'] .reset-btn:hover,
+html[data-flat-ui='true'] .modal-buttons button:hover,
+html[data-flat-ui='true'] .modal-close-btn:hover,
+html[data-flat-ui='true'] .update-banner-cancel:hover,
+html[data-flat-ui='true'] .queue-action-btn:hover,
+html[data-flat-ui='true'] .preview-btn:hover,
+html[data-flat-ui='true'] .paste-btn:hover,
+html[data-flat-ui='true'] .clear-btn:hover,
+html[data-flat-ui='true'] .history-clear-btn:hover,
+html[data-flat-ui='true'] .console-clear-btn:hover,
+html[data-flat-ui='true'] .history-open-btn:hover,
+html[data-flat-ui='true'] .fetch-formats-btn:hover,
+html[data-flat-ui='true'] .download-profile-btn:hover,
+html[data-flat-ui='true'] .change-folder-btn:hover,
+html[data-flat-ui='true'] .wizard-btn:hover {
+  background: var(--surface-hover) !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+html[data-flat-ui='true'] .download-btn:active,
+html[data-flat-ui='true'] .settings-btn:active,
+html[data-flat-ui='true'] .settings-link-btn:active,
+html[data-flat-ui='true'] .icon-btn:active,
+html[data-flat-ui='true'] .top-bar-links a:active,
+html[data-flat-ui='true'] .reset-btn:active,
+html[data-flat-ui='true'] .modal-buttons button:active,
+html[data-flat-ui='true'] .modal-close-btn:active,
+html[data-flat-ui='true'] .update-banner-cancel:active,
+html[data-flat-ui='true'] .queue-action-btn:active,
+html[data-flat-ui='true'] .preview-btn:active,
+html[data-flat-ui='true'] .paste-btn:active,
+html[data-flat-ui='true'] .clear-btn:active,
+html[data-flat-ui='true'] .history-clear-btn:active,
+html[data-flat-ui='true'] .console-clear-btn:active,
+html[data-flat-ui='true'] .history-open-btn:active,
+html[data-flat-ui='true'] .fetch-formats-btn:active,
+html[data-flat-ui='true'] .download-profile-btn:active,
+html[data-flat-ui='true'] .change-folder-btn:active,
+html[data-flat-ui='true'] .wizard-btn:active {
+  transform: none !important;
+}
+
+/* Keep semantic fills in flat mode without the raised button treatment. */
+html[data-flat-ui='true'] .download-btn,
+html[data-flat-ui='true'] .queue-add-btn,
+html[data-flat-ui='true'] .download-profile-btn.selected,
+html[data-flat-ui='true'] .modal-buttons .modal-btn-primary,
+html[data-flat-ui='true'] .wizard-btn-primary {
+  background: var(--accent) !important;
+  color: var(--accent-contrast) !important;
+  border: 1px solid var(--accent-dark) !important;
+}
+
+html[data-flat-ui='true'] .download-btn:hover,
+html[data-flat-ui='true'] .queue-add-btn:hover,
+html[data-flat-ui='true'] .download-profile-btn.selected:hover,
+html[data-flat-ui='true'] .modal-buttons .modal-btn-primary:hover,
+html[data-flat-ui='true'] .wizard-btn-primary:hover {
+  background: var(--accent-hover) !important;
+}
+
+html[data-flat-ui='true'] .reset-btn,
+html[data-flat-ui='true'] .modal-buttons .modal-btn-danger {
+  background: var(--danger-subtle) !important;
+  color: var(--danger) !important;
+  border: 1px solid var(--danger) !important;
+}
+
+html[data-flat-ui='true'] .reset-btn:hover,
+html[data-flat-ui='true'] .modal-buttons .modal-btn-danger:hover,
+html[data-flat-ui='true'] .modal-close-btn:hover,
+html[data-flat-ui='true'] .update-banner-cancel:hover,
+html[data-flat-ui='true'] .clear-btn:hover,
+html[data-flat-ui='true'] .history-clear-btn:hover,
+html[data-flat-ui='true'] .console-clear-btn:hover {
+  background: var(--danger) !important;
+  color: var(--danger-contrast) !important;
+  border-color: var(--danger) !important;
 }

@@ -27,4 +27,4 @@ export const ALLOWED_BROWSERS = new Set([
 export const MAX_QUEUE_SIZE = 500;
 export const MAX_FORMAT_COUNTS = 10_000;
 export const MAX_SETTINGS_IMPORT_BYTES = 1_048_576;
-export const CURRENT_SETTINGS_VERSION = 3;
+export const CURRENT_SETTINGS_VERSION = 5;

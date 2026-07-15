@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { app, dialog } from 'electron';
 import log from 'electron-log/main.js';
-import type { AudioFormat, DownloadStats, Settings } from '../types';
+import type { AudioFormat, DownloadProfile, DownloadStats, Settings } from '../types';
 import {
   ALLOWED_AUDIO_FORMATS,
   ALLOWED_BROWSERS,
@@ -24,6 +24,10 @@ const defaultSettings: Settings = {
   theme: 'system',
   showConsoleOutput: false,
   consoleCollapsed: false,
+  queueCollapsed: false,
+  downloadProfilesEnabled: false,
+  downloadMode: 'best-video',
+  askDownloadLocation: false,
   advancedOptions: false,
   audioOnly: false,
   audioFormat: 'mp3',
@@ -34,6 +38,7 @@ const defaultSettings: Settings = {
   hookBrowser: false,
   browserChoice: 'chrome',
   animateBackground: true,
+  flatUi: false,
   notifications: true,
   denoReminderDismissed: false,
   gpuAcceleration: false,
@@ -71,6 +76,16 @@ function readAudioFormat(value: unknown): AudioFormat {
   return typeof value === 'string' && ALLOWED_AUDIO_FORMATS.has(value as AudioFormat)
     ? (value as AudioFormat)
     : defaultSettings.audioFormat;
+}
+
+function readDownloadMode(value: unknown, fallback: DownloadProfile): DownloadProfile {
+  return value === 'best-video' || value === 'audio' || value === 'custom' ? value : fallback;
+}
+
+function inferDownloadMode(rawSettings: Record<string, unknown>): DownloadProfile {
+  if (rawSettings.audioOnly === true) return 'audio';
+  if (rawSettings.advancedOptions === true) return 'custom';
+  return 'best-video';
 }
 
 function readConvertFormat(value: unknown): string {
@@ -156,6 +171,23 @@ export function migrateSettings(rawSettings: unknown): Settings {
     return { ...defaultSettings };
   }
 
+  const downloadProfilesEnabled = readBoolean(
+    rawSettings.downloadProfilesEnabled,
+    defaultSettings.downloadProfilesEnabled
+  );
+  const downloadMode = readDownloadMode(rawSettings.downloadMode, inferDownloadMode(rawSettings));
+  const profileFlags = downloadProfilesEnabled
+    ? {
+        advancedOptions: downloadMode === 'custom',
+        audioOnly: downloadMode === 'audio',
+        bestQuality: downloadMode === 'best-video',
+      }
+    : {
+        advancedOptions: false,
+        audioOnly: false,
+        bestQuality: false,
+      };
+
   return {
     settingsVersion: readSettingsVersion(rawSettings.settingsVersion),
     theme: readTheme(rawSettings.theme),
@@ -164,8 +196,15 @@ export function migrateSettings(rawSettings: unknown): Settings {
       defaultSettings.showConsoleOutput
     ),
     consoleCollapsed: readBoolean(rawSettings.consoleCollapsed, defaultSettings.consoleCollapsed),
-    advancedOptions: readBoolean(rawSettings.advancedOptions, defaultSettings.advancedOptions),
-    audioOnly: readBoolean(rawSettings.audioOnly, defaultSettings.audioOnly),
+    queueCollapsed: readBoolean(rawSettings.queueCollapsed, defaultSettings.queueCollapsed),
+    downloadProfilesEnabled,
+    downloadMode,
+    askDownloadLocation: readBoolean(
+      rawSettings.askDownloadLocation,
+      defaultSettings.askDownloadLocation
+    ),
+    advancedOptions: profileFlags.advancedOptions,
+    audioOnly: profileFlags.audioOnly,
     audioFormat: readAudioFormat(rawSettings.audioFormat),
     convertEnabled: readBoolean(rawSettings.convertEnabled, defaultSettings.convertEnabled),
     convertFormat: readConvertFormat(rawSettings.convertFormat),
@@ -180,6 +219,7 @@ export function migrateSettings(rawSettings: unknown): Settings {
       rawSettings.animateBackground,
       defaultSettings.animateBackground
     ),
+    flatUi: readBoolean(rawSettings.flatUi, defaultSettings.flatUi),
     notifications: readBoolean(rawSettings.notifications, defaultSettings.notifications),
     denoReminderDismissed: readBoolean(
       rawSettings.denoReminderDismissed,
@@ -187,7 +227,7 @@ export function migrateSettings(rawSettings: unknown): Settings {
     ),
     gpuAcceleration: readBoolean(rawSettings.gpuAcceleration, defaultSettings.gpuAcceleration),
     gpuType: readGpuType(rawSettings.gpuType),
-    bestQuality: readBoolean(rawSettings.bestQuality, defaultSettings.bestQuality),
+    bestQuality: profileFlags.bestQuality,
     ffmpegPath: readFfmpegPath(rawSettings.ffmpegPath),
     downloadFolder: readDownloadFolder(rawSettings.downloadFolder),
     hideSupportModal: readBoolean(rawSettings.hideSupportModal, defaultSettings.hideSupportModal),

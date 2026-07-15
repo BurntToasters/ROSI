@@ -28,10 +28,13 @@
   width: 90%;
   max-width: var(--modal-max-width);
   padding: var(--spacing-xl);
-  background: var(--modal-bg-start);
-  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--modal-bg-start) 65%, transparent);
+  backdrop-filter: blur(var(--blur-lg));
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
+  box-shadow:
+    var(--shadow-lg),
+    0 16px 48px rgba(0, 0, 0, 0.4);
   transform: scale(1) translateY(0);
   opacity: 1;
   transition:
@@ -78,42 +81,55 @@
 .modal-buttons button {
   min-width: 100px;
   padding: var(--spacing-sm) var(--spacing-lg);
-  background: var(--surface-2);
-  border: 1px solid var(--border-subtle);
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   font-size: var(--text-base);
   font-weight: var(--weight-medium);
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition: var(--button-transition);
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .modal-buttons button:hover {
-  background: var(--surface-3);
-  border-color: var(--border-default);
+  background: var(--button-neutral-bg-hover);
+  border-color: var(--border-strong);
   color: var(--text-primary);
+  transform: var(--button-lift);
+  box-shadow: var(--button-neutral-shadow-hover);
+}
+
+.modal-buttons button:active {
+  transform: var(--button-press);
+  box-shadow: var(--button-active-shadow);
 }
 
 .modal-buttons .modal-btn-primary {
-  background: var(--accent);
-  border-color: transparent;
-  color: var(--text-primary);
+  background: var(--button-primary-bg);
+  border-color: var(--accent-dark);
+  color: var(--accent-contrast);
+  box-shadow: var(--button-primary-shadow);
 }
 
 .modal-buttons .modal-btn-primary:hover {
-  background: var(--accent-hover);
+  background: var(--button-primary-bg-hover);
+  border-color: var(--accent-hover);
+  box-shadow: var(--button-primary-shadow-hover);
 }
 
 .modal-buttons .modal-btn-danger {
-  background: var(--danger-subtle);
-  border-color: var(--danger);
+  background: var(--button-danger-bg);
+  border-color: rgba(239, 68, 68, 0.3);
   color: var(--danger);
+  box-shadow: var(--button-danger-shadow);
 }
 
 .modal-buttons .modal-btn-danger:hover {
-  background: var(--danger);
+  background: var(--button-danger-bg-hover);
   border-color: var(--danger);
-  color: var(--text-primary);
+  color: var(--danger-contrast);
+  box-shadow: var(--button-danger-shadow-hover);
 }
 
 .licenses-container {
@@ -149,18 +165,21 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--surface-2);
-  border: 1px solid var(--border-subtle);
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition: var(--button-transition);
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .modal-close-btn:hover {
-  background: var(--danger-subtle);
+  background: var(--button-danger-bg);
   border-color: var(--danger);
   color: var(--danger);
+  transform: var(--button-lift);
+  box-shadow: var(--button-danger-shadow);
 }
 
 .licenses-container iframe {
@@ -251,21 +270,24 @@
 }
 
 .update-banner-cancel {
-  background: var(--surface-2);
-  border: 1px solid var(--border-subtle);
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   color: var(--text-secondary);
   padding: var(--spacing-xs) var(--spacing-sm);
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
   cursor: pointer;
   white-space: nowrap;
-  transition: var(--transition-fast);
+  transition: var(--button-transition);
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .update-banner-cancel:hover {
-  background: var(--danger-subtle);
+  background: var(--button-danger-bg);
   border-color: var(--danger);
   color: var(--danger);
+  transform: var(--button-lift);
+  box-shadow: var(--button-danger-shadow);
 }
 
 .toast-container {
@@ -289,11 +311,13 @@
   align-items: center;
   gap: var(--spacing-md);
   padding: var(--spacing-md) var(--spacing-lg);
-  background: var(--surface-2);
-  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-2) 65%, transparent);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   backdrop-filter: blur(var(--blur-lg));
-  box-shadow: var(--shadow-md);
+  box-shadow:
+    var(--shadow-md),
+    0 8px 24px rgba(0, 0, 0, 0.2);
   color: var(--text-primary);
   font-size: var(--text-base);
   max-width: 380px;
@@ -301,7 +325,7 @@
   transform: translateX(calc(100% + var(--spacing-xl)));
   opacity: 0;
   transition:
-    transform var(--transition-slow),
+    transform var(--transition-springy),
     opacity var(--transition-normal);
 }
 
@@ -414,6 +438,7 @@
 .preview-btn:focus-visible,
 .paste-btn:focus-visible,
 .queue-action-btn:focus-visible,
+.queue-collapse-btn:focus-visible,
 .history-open-btn:focus-visible,
 .history-collapse-btn:focus-visible,
 .console-collapse-btn:focus-visible,

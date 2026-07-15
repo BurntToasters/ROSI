@@ -154,12 +154,12 @@ function parseArgs(args) {
     resolvedTargets = allTargets();
   } else if (includeCurrent) {
     const platform = normalizePlatform(process.platform);
-    const arch = normalizeArch(process.arch);
-    if (!platform || !arch || !REQUIRED_BINARIES[platform]?.[arch]) {
-      console.error(`Current runtime target is unsupported: ${process.platform}:${process.arch}`);
+    if (!platform || !REQUIRED_BINARIES[platform]) {
+      console.error(`Current runtime target is unsupported: ${process.platform}`);
       process.exit(1);
     }
-    targets.push({ platform, arch });
+    targets.push({ platform, arch: 'x64' });
+    targets.push({ platform, arch: 'arm64' });
     resolvedTargets = dedupeTargets(targets);
   } else if (targets.length === 0) {
     resolvedTargets = allTargets();

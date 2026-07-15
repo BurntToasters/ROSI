@@ -1,11 +1,15 @@
 .download-history {
   display: none;
   margin: 0 var(--spacing-xl) var(--spacing-md);
-  background: var(--console-bg);
-  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-1) 32%, transparent);
+  backdrop-filter: blur(var(--blur-lg));
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-lg);
   overflow: hidden;
   flex-shrink: 0;
+  box-shadow:
+    var(--shadow-sm),
+    0 4px 16px rgba(0, 0, 0, 0.15);
 }
 
 .download-history.visible {
@@ -93,17 +97,21 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: transparent;
-  border: none;
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition: var(--button-transition);
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .history-clear-btn:hover {
-  background: var(--danger-subtle);
+  background: var(--button-danger-bg);
+  border-color: var(--danger);
   color: var(--danger);
+  transform: var(--button-lift);
+  box-shadow: var(--button-danger-shadow);
 }
 
 .history-list {
@@ -203,18 +211,22 @@
 .history-open-btn {
   font-size: var(--text-xs);
   color: var(--accent-light);
-  background: var(--accent-subtle);
-  border: none;
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   padding: 2px 8px;
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition: var(--button-transition);
   white-space: nowrap;
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .history-open-btn:hover {
-  background: var(--accent);
-  color: var(--text-primary);
+  background: var(--button-primary-bg);
+  border-color: var(--accent-dark);
+  color: var(--accent-contrast);
+  transform: var(--button-lift);
+  box-shadow: var(--button-primary-shadow-hover);
 }
 
 .history-empty {
@@ -227,11 +239,15 @@
 .console-section {
   display: none;
   margin: 0 var(--spacing-xl) var(--spacing-lg);
-  background: var(--console-bg);
-  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-1) 32%, transparent);
+  backdrop-filter: blur(var(--blur-lg));
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-lg);
   overflow: hidden;
   flex-shrink: 0;
+  box-shadow:
+    var(--shadow-sm),
+    0 4px 16px rgba(0, 0, 0, 0.15);
 }
 
 .console-section.visible {
@@ -285,17 +301,21 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: transparent;
-  border: none;
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition: var(--button-transition);
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .console-clear-btn:hover {
-  background: var(--danger-subtle);
+  background: var(--button-danger-bg);
+  border-color: var(--danger);
   color: var(--danger);
+  transform: var(--button-lift);
+  box-shadow: var(--button-danger-shadow);
 }
 
 .console-output {

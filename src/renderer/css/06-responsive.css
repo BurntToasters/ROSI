@@ -102,10 +102,23 @@
   width: 100%;
   max-width: var(--download-card-max-width);
   padding: clamp(1.35rem, 3vw, 2.15rem);
-  box-shadow: var(--shadow-md);
-  border: 1px solid color-mix(in srgb, var(--border-default) 85%, transparent);
-  background: color-mix(in srgb, var(--surface-1) 90%, transparent);
-  backdrop-filter: blur(var(--blur-md));
+  box-shadow:
+    var(--shadow-lg),
+    0 8px 32px rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: color-mix(in srgb, var(--surface-1) 32%, transparent);
+  backdrop-filter: blur(var(--blur-lg));
+  transition:
+    transform var(--transition-springy),
+    border-color var(--transition-fast);
+}
+
+.download-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    var(--shadow-lg),
+    0 12px 40px rgba(0, 0, 0, 0.35);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 .download-card::before {
@@ -162,20 +175,20 @@
   padding: 0.4rem 0.7rem;
   font-size: var(--text-sm);
   color: var(--text-secondary);
-  background: var(--surface-1);
-  border: 1px solid var(--border-subtle);
+  background: var(--button-neutral-bg);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition:
-    background 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease;
+  transition: var(--button-transition);
+  box-shadow: var(--button-neutral-shadow);
 }
 
 .preview-btn:hover:not(:disabled) {
-  background: var(--surface-2);
+  background: var(--button-neutral-bg-hover);
   border-color: var(--border-strong);
   color: var(--text-primary);
+  transform: var(--button-lift);
+  box-shadow: var(--button-neutral-shadow-hover);
 }
 
 .preview-btn:disabled {
@@ -333,14 +346,14 @@
   min-height: var(--control-height);
   justify-content: center;
   min-width: 170px;
-  border: 1px solid color-mix(in srgb, var(--accent-light) 35%, transparent);
-  letter-spacing: 0.018em;
-  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--accent-dark);
+  letter-spacing: 0;
+  box-shadow: var(--button-primary-shadow);
 }
 
 .download-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
+  transform: var(--button-lift);
+  box-shadow: var(--button-primary-shadow-hover);
 }
 
 .download-btn:disabled,
@@ -402,8 +415,8 @@
 }
 
 .sidebar {
-  width: min(360px, calc(100vw - 22px));
-  border-right: 1px solid var(--border-default);
+  width: min(360px, calc(100vw - 24px));
+  border: 1px solid var(--border-default);
 }
 
 .sidebar-header {
@@ -455,7 +468,7 @@
 
 .settings-btn:hover,
 .settings-link-btn:hover {
-  transform: none;
+  transform: var(--button-lift);
 }
 
 .modal-box {

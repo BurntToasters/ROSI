@@ -11,6 +11,10 @@ interface RosiSettings {
   theme: 'system' | 'light' | 'dark' | 'purple';
   showConsoleOutput: boolean;
   consoleCollapsed: boolean;
+  queueCollapsed: boolean;
+  downloadProfilesEnabled: boolean;
+  downloadMode: 'best-video' | 'audio' | 'custom';
+  askDownloadLocation: boolean;
   advancedOptions: boolean;
   audioOnly: boolean;
   audioFormat: string;
@@ -21,6 +25,7 @@ interface RosiSettings {
   hookBrowser: boolean;
   browserChoice: string;
   animateBackground: boolean;
+  flatUi: boolean;
   notifications: boolean;
   denoReminderDismissed: boolean;
   gpuAcceleration: boolean;
@@ -225,10 +230,11 @@ function toggleConsoleCollapse(forceCollapsed?: boolean) {
 function setButtonLoading(
   button: HTMLButtonElement | null,
   isLoading: boolean,
-  onCancel?: (() => void) | null
+  onCancel?: (() => void) | null,
+  cancelLabel?: string
 ) {
   if (uiModule && typeof uiModule.setButtonLoading === 'function') {
-    uiModule.setButtonLoading(button, isLoading, onCancel);
+    uiModule.setButtonLoading(button, isLoading, onCancel, cancelLabel);
   }
 }
 
@@ -478,7 +484,7 @@ function showKeyboardShortcuts() {
   const modKey = getModifierKeyName();
   showModal({
     title: 'Keyboard Shortcuts',
-    message: `${modKey}+D - Restart application\n${modKey}+F - Focus URL input field\n${modKey}+, - Open settings`,
+    message: `${modKey}+D - Restart application\n${modKey}+F - Focus URL input field\n${modKey}+, - Open settings\n${modKey}+Enter - Submit queue URLs (when focused)`,
     buttons: [{ label: 'OK', primary: true }],
   });
 }
@@ -518,12 +524,17 @@ async function fetchFormats() {
       isFetchingFormats = false;
       setButtonLoading(btn, false);
     };
-    setButtonLoading(btn, true, () => {
-      if (window.api.cancelFormats) {
-        window.api.cancelFormats();
-      }
-      fetchFormatsAbort?.();
-    });
+    setButtonLoading(
+      btn,
+      true,
+      () => {
+        if (window.api.cancelFormats) {
+          window.api.cancelFormats();
+        }
+        fetchFormatsAbort?.();
+      },
+      'Cancel format check'
+    );
     const videoSelect = document.getElementById('videoFormat') as HTMLSelectElement | null;
     const audioSelect = document.getElementById('audioFormat') as HTMLSelectElement | null;
     if (videoSelect) videoSelect.innerHTML = '<option value="">Loading...</option>';
@@ -1563,15 +1574,11 @@ function launchSetupWizard(
     }
 
     // Download prefs
-    const bestQuality = document.getElementById('wizard-best-quality') as HTMLInputElement | null;
-    const audioOnly = document.getElementById('wizard-audio-only') as HTMLInputElement | null;
     const notifications = document.getElementById(
       'wizard-notifications'
     ) as HTMLInputElement | null;
     const autoUpdates = document.getElementById('wizard-auto-updates') as HTMLInputElement | null;
 
-    if (bestQuality) settings.bestQuality = bestQuality.checked;
-    if (audioOnly) settings.audioOnly = audioOnly.checked;
     if (notifications) settings.notifications = notifications.checked;
     if (autoUpdates) settings.checkUpdatesOnStartup = autoUpdates.checked;
   }
@@ -1583,12 +1590,6 @@ function launchSetupWizard(
 
     const themeSelect = document.getElementById('themeSelect') as HTMLSelectElement | null;
     if (themeSelect) themeSelect.value = settings.theme || 'system';
-    const bestQualityToggle = document.getElementById(
-      'bestQualityToggle'
-    ) as HTMLInputElement | null;
-    if (bestQualityToggle) bestQualityToggle.checked = settings.bestQuality;
-    const audioOnlyToggle = document.getElementById('audioOnlyToggle') as HTMLInputElement | null;
-    if (audioOnlyToggle) audioOnlyToggle.checked = settings.audioOnly;
     const notificationsToggle = document.getElementById(
       'notificationsToggle'
     ) as HTMLInputElement | null;
@@ -1655,7 +1656,14 @@ function launchSetupWizard(
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      closeWizard();
+      showModal({
+        title: 'Skip setup?',
+        message: 'Skip setup and use the standard ROSI download settings?',
+        buttons: [
+          { label: 'Keep setting up', primary: true },
+          { label: 'Skip setup', action: closeWizard },
+        ],
+      });
       return;
     }
     if (e.key !== 'Tab') return;
@@ -1702,9 +1710,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (error) {
     logError('Failed to load settings', error);
     settings = {
-      settingsVersion: 3,
+      settingsVersion: 5,
       theme: 'system',
       showConsoleOutput: false,
+      consoleCollapsed: false,
+      queueCollapsed: false,
+      downloadProfilesEnabled: false,
+      downloadMode: 'best-video',
+      askDownloadLocation: false,
       advancedOptions: false,
       audioFormat: 'mp3',
       convertEnabled: false,
@@ -1714,6 +1727,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       hookBrowser: false,
       browserChoice: 'Chrome',
       animateBackground: true,
+      flatUi: localStorage.getItem('rosi-flat-ui') === 'true',
       notifications: true,
       denoReminderDismissed: false,
       gpuAcceleration: false,
@@ -1725,7 +1739,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       checkUpdatesOnStartup: true,
       updateChannel: 'auto',
       audioOnly: false,
-      consoleCollapsed: false,
       writeSubtitles: false,
       subtitleLangs: 'en',
       embedThumbnail: false,
@@ -1840,7 +1853,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById(id) as T | null;
 
   const consoleToggle = byId<HTMLInputElement>('consoleToggle');
-  const advancedToggle = byId<HTMLInputElement>('advancedToggle');
   const keepOriginalToggle = byId<HTMLInputElement>('keepOriginalToggle');
   const hookBrowserToggle = byId<HTMLInputElement>('hookBrowserToggle');
   const browserChoiceContainer = byId('browserChoiceContainer');
@@ -1861,10 +1873,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   const checkUpdateBtn = byId<HTMLButtonElement>('checkUpdateBtn');
   const animateBackgroundToggle = byId<HTMLInputElement>('animateBackgroundToggle');
   const themeSelect = byId<HTMLSelectElement>('themeSelect');
-  const bestQualityToggle = byId<HTMLInputElement>('bestQualityToggle');
-  const audioOnlyToggle = byId<HTMLInputElement>('audioOnlyToggle');
-  const audioFormatContainer = byId('audioFormatContainer');
-  const audioFormatSelect = byId<HTMLSelectElement>('audioFormatSelect');
+  const flatUiToggle = byId<HTMLInputElement>('flatUiToggle');
+  const downloadProfilesToggle = byId<HTMLInputElement>('downloadProfilesToggle');
+  const downloadProfilesComposer = byId('downloadProfilesComposer');
+  const profileBestVideoBtn = byId<HTMLButtonElement>('profileBestVideoBtn');
+  const profileAudioBtn = byId<HTMLButtonElement>('profileAudioBtn');
+  const profileCustomBtn = byId<HTMLButtonElement>('profileCustomBtn');
+  const profileAudioFormatContainer = byId('profileAudioFormatContainer');
+  const profileAudioFormatSelect = byId<HTMLSelectElement>('profileAudioFormatSelect');
+  const downloadFolderSummary = byId('downloadFolderSummary');
+  const changeDownloadFolderBtn = byId<HTMLButtonElement>('changeDownloadFolderBtn');
+  const askDownloadLocationToggle = byId<HTMLInputElement>('askDownloadLocationToggle');
+  const downloadOutputSummary = byId('downloadOutputSummary');
   const notificationsToggle = byId<HTMLInputElement>('notificationsToggle');
   const checkUpdatesOnStartupToggle = byId<HTMLInputElement>('checkUpdatesOnStartupToggle');
   const checkUpdatesOnStartupLabel = byId('checkUpdatesOnStartupLabel');
@@ -1904,6 +1924,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const writeSubtitlesToggle = byId<HTMLInputElement>('writeSubtitlesToggle');
   const subtitleLangsContainer = byId('subtitleLangsContainer');
   const subtitleLangsInput = byId<HTMLInputElement>('subtitleLangsInput');
+  const queueToggleBtn = byId<HTMLButtonElement>('queueToggleBtn');
+  const queueBody = byId<HTMLElement>('queueBody');
   const queueUrlInput = byId<HTMLTextAreaElement>('queueUrlInput');
   const addToQueueBtn = byId<HTMLButtonElement>('addToQueueBtn');
   const startQueueBtn = byId<HTMLButtonElement>('startQueueBtn');
@@ -1942,11 +1964,32 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (browserWindowsHint) browserWindowsHint.classList.remove('hidden');
   }
 
+  function setQueueCollapsed(collapsed: boolean) {
+    if (!queueSection) return false;
+    queueSection.classList.toggle('collapsed', !!collapsed);
+    const isCollapsed = queueSection.classList.contains('collapsed');
+    if (queueToggleBtn) {
+      queueToggleBtn.setAttribute('aria-expanded', String(!isCollapsed));
+    }
+    if (queueBody instanceof HTMLElement) {
+      queueBody.setAttribute('aria-hidden', String(isCollapsed));
+      queueBody.inert = isCollapsed;
+    }
+    return isCollapsed;
+  }
+
+  function toggleQueueCollapsed(collapsed?: boolean) {
+    if (typeof collapsed === 'boolean') {
+      return setQueueCollapsed(collapsed);
+    }
+    if (!queueSection) return false;
+    return setQueueCollapsed(!queueSection.classList.contains('collapsed'));
+  }
+
   // update UI from settings
   const updateUIFromSettings = () => {
     if (
       !consoleToggle ||
-      !advancedToggle ||
       !keepOriginalToggle ||
       !hookBrowserToggle ||
       !browserChoiceContainer ||
@@ -1958,7 +2001,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     )
       return;
     consoleToggle.checked = settings.showConsoleOutput ?? false;
-    advancedToggle.checked = settings.advancedOptions ?? false;
     keepOriginalToggle.checked = settings.keepOriginalAfterConvert ?? true;
     hookBrowserToggle.checked = settings.hookBrowser ?? false;
     browserChoiceSelect.value = settings.browserChoice ?? 'Chrome';
@@ -2005,13 +2047,29 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Restore console collapsed state
     setConsoleCollapsed(!!settings.consoleCollapsed);
+    setQueueCollapsed(!!settings.queueCollapsed);
 
-    toggleAdvancedUI(settings.advancedOptions);
+    toggleAdvancedUI(!!settings.downloadProfilesEnabled && settings.downloadMode === 'custom');
 
     // Update additional options
     if (animateBackgroundToggle) {
       animateBackgroundToggle.checked = settings.animateBackground ?? true;
       updateBackgroundAnimation(settings.animateBackground ?? true);
+    }
+    if (flatUiToggle) {
+      const isFlat =
+        typeof settings.flatUi === 'boolean'
+          ? settings.flatUi
+          : localStorage.getItem('rosi-flat-ui') === 'true';
+      settings.flatUi = isFlat;
+      flatUiToggle.checked = isFlat;
+      if (isFlat) {
+        document.documentElement.dataset.flatUi = 'true';
+        localStorage.setItem('rosi-flat-ui', 'true');
+      } else {
+        delete document.documentElement.dataset.flatUi;
+        localStorage.setItem('rosi-flat-ui', 'false');
+      }
     }
     if (themeSelect) {
       const nextTheme =
@@ -2024,40 +2082,49 @@ document.addEventListener('DOMContentLoaded', async () => {
       themeSelect.value = nextTheme;
       applyTheme(nextTheme);
     }
-    if (bestQualityToggle) {
-      bestQualityToggle.checked = settings.bestQuality ?? false;
-      const bestQualityDisabled =
-        (settings.advancedOptions ?? false) || (settings.audioOnly ?? false);
-      bestQualityToggle.disabled = bestQualityDisabled;
-      if (bestQualityDisabled) {
-        bestQualityToggle.parentElement!.classList.add('disabled');
-        bestQualityToggle.parentElement!.title = settings.audioOnly
-          ? 'Disabled when Audio-only mode is enabled'
-          : 'Disabled when Advanced format selection is enabled';
-      } else {
-        bestQualityToggle.parentElement!.classList.remove('disabled');
-        bestQualityToggle.parentElement!.title = '';
-      }
+    if (downloadProfilesToggle) {
+      downloadProfilesToggle.checked = !!settings.downloadProfilesEnabled;
     }
-    if (audioOnlyToggle) {
-      audioOnlyToggle.checked = settings.audioOnly ?? false;
-      audioOnlyToggle.disabled = settings.advancedOptions ?? false;
-      if (audioOnlyToggle.disabled) {
-        audioOnlyToggle.parentElement!.classList.add('disabled');
-        audioOnlyToggle.parentElement!.title = 'Disabled when Advanced format selection is enabled';
-      } else {
-        audioOnlyToggle.parentElement!.classList.remove('disabled');
-        audioOnlyToggle.parentElement!.title = '';
-      }
+    if (downloadProfilesComposer) {
+      downloadProfilesComposer.classList.toggle('hidden', !settings.downloadProfilesEnabled);
     }
-    if (audioFormatSelect) {
-      audioFormatSelect.value = settings.audioFormat ?? 'mp3';
+    const profileButtons = [
+      ['best-video', profileBestVideoBtn],
+      ['audio', profileAudioBtn],
+      ['custom', profileCustomBtn],
+    ] as const;
+    profileButtons.forEach(([mode, button]) => {
+      if (!button) return;
+      const isSelected = settings.downloadProfilesEnabled && settings.downloadMode === mode;
+      button.classList.toggle('selected', isSelected);
+      button.setAttribute('aria-pressed', String(isSelected));
+    });
+    if (profileAudioFormatSelect) {
+      profileAudioFormatSelect.value = settings.audioFormat ?? 'mp3';
     }
-    if (audioFormatContainer) {
-      if (settings.audioOnly) {
-        audioFormatContainer.classList.add('visible');
+    if (profileAudioFormatContainer) {
+      profileAudioFormatContainer.classList.toggle(
+        'hidden',
+        !settings.downloadProfilesEnabled || settings.downloadMode !== 'audio'
+      );
+    }
+    if (askDownloadLocationToggle) {
+      askDownloadLocationToggle.checked = !!settings.askDownloadLocation;
+    }
+    if (downloadFolderSummary) {
+      const folder = settings.downloadFolder?.trim();
+      downloadFolderSummary.textContent = folder || 'Choose a folder';
+      downloadFolderSummary.title = folder || 'Choose a folder before downloading';
+    }
+    if (downloadOutputSummary) {
+      if (!settings.downloadProfilesEnabled) {
+        downloadOutputSummary.textContent = 'Standard compatible video';
+      } else if (settings.downloadMode === 'best-video') {
+        downloadOutputSummary.textContent = 'Highest available video and audio quality';
+      } else if (settings.downloadMode === 'audio') {
+        downloadOutputSummary.textContent = `${(settings.audioFormat || 'mp3').toUpperCase()} audio`;
       } else {
-        audioFormatContainer.classList.remove('visible');
+        downloadOutputSummary.textContent = 'Custom video and audio formats';
       }
     }
     // disable convert when audio-only is enabled
@@ -2109,6 +2176,26 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (showUpdateChannelBtn) showUpdateChannelBtn.classList.add('hidden');
       }
     }
+  };
+
+  const applyDownloadProfile = (mode: RosiSettings['downloadMode']) => {
+    settings.downloadMode = mode;
+    settings.bestQuality = mode === 'best-video';
+    settings.audioOnly = mode === 'audio';
+    settings.advancedOptions = mode === 'custom';
+    if (mode === 'audio') settings.convertEnabled = false;
+  };
+
+  const setDownloadProfilesEnabled = (enabled: boolean) => {
+    settings.downloadProfilesEnabled = enabled;
+    if (enabled) {
+      applyDownloadProfile(settings.downloadMode || 'best-video');
+    } else {
+      settings.bestQuality = false;
+      settings.audioOnly = false;
+      settings.advancedOptions = false;
+    }
+    updateUIFromSettings();
   };
 
   try {
@@ -2332,11 +2419,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       isFetchingPreview = false;
       setButtonLoading(previewBtn, false);
     };
-    setButtonLoading(previewBtn, true, () => {
-      if (window.api.cancelVideoInfo) window.api.cancelVideoInfo();
-      previewAbort?.();
-      hideVideoPreview();
-    });
+    setButtonLoading(
+      previewBtn,
+      true,
+      () => {
+        if (window.api.cancelVideoInfo) window.api.cancelVideoInfo();
+        previewAbort?.();
+        hideVideoPreview();
+      },
+      'Cancel preview'
+    );
 
     try {
       const result = await window.api.getVideoInfo(url);
@@ -2386,7 +2478,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       historySection.classList.toggle('collapsed', !!collapsed);
       const isCollapsed = historySection.classList.contains('collapsed');
       historyToggle.setAttribute('aria-expanded', String(!isCollapsed));
-      if (historyList) historyList.setAttribute('aria-hidden', String(isCollapsed));
+      if (historyList instanceof HTMLElement) {
+        historyList.setAttribute('aria-hidden', String(isCollapsed));
+        historyList.inert = isCollapsed;
+      }
       return isCollapsed;
     };
     const toggleHistoryCollapsed = () => {
@@ -2457,6 +2552,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       section.querySelector('.settings-section-body');
     if (sectionBody) {
       sectionBody.setAttribute('aria-hidden', String(isCollapsed));
+      if (sectionBody instanceof HTMLElement) {
+        sectionBody.inert = isCollapsed;
+      }
       if (!controlledId && sectionBody.id) {
         header.setAttribute('aria-controls', sectionBody.id);
       }
@@ -2494,12 +2592,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       setSettingsSectionCollapsed(header, !isCollapsed);
     });
     header.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        const isCollapsed = section.classList.contains('collapsed');
-        setSettingsSectionCollapsed(header, !isCollapsed);
-        return;
-      }
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         setSettingsSectionCollapsed(header, true);
@@ -2564,47 +2656,47 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  if (advancedToggle)
-    advancedToggle.addEventListener('change', (e) => {
-      settings.advancedOptions = (e.target as HTMLInputElement).checked;
-      toggleAdvancedUI((e.target as HTMLInputElement).checked);
-
-      if (bestQualityToggle) {
-        bestQualityToggle.disabled = (e.target as HTMLInputElement).checked;
-        if ((e.target as HTMLInputElement).checked) {
-          bestQualityToggle.checked = false;
-          settings.bestQuality = false;
-          bestQualityToggle.parentElement!.classList.add('disabled');
-          bestQualityToggle.parentElement!.title =
-            'Disabled when Advanced format selection is enabled';
-        } else {
-          bestQualityToggle.parentElement!.classList.remove('disabled');
-          bestQualityToggle.parentElement!.title = '';
-        }
-      }
-
-      if (audioOnlyToggle) {
-        audioOnlyToggle.disabled = (e.target as HTMLInputElement).checked;
-        if ((e.target as HTMLInputElement).checked) {
-          audioOnlyToggle.checked = false;
-          settings.audioOnly = false;
-          audioOnlyToggle.parentElement!.classList.add('disabled');
-          audioOnlyToggle.parentElement!.title =
-            'Disabled when Advanced format selection is enabled';
-
-          if (convertToggle) {
-            convertToggle.disabled = false;
-            convertToggle.parentElement!.classList.remove('disabled');
-            convertToggle.parentElement!.title = '';
-          }
-        } else {
-          audioOnlyToggle.parentElement!.classList.remove('disabled');
-          audioOnlyToggle.parentElement!.title = '';
-        }
-      }
-
+  if (downloadProfilesToggle) {
+    downloadProfilesToggle.addEventListener('change', (e) => {
+      setDownloadProfilesEnabled((e.target as HTMLInputElement).checked);
+      void persistSettings(true, true);
+    });
+  }
+  const profileButtons = [
+    ['best-video', profileBestVideoBtn],
+    ['audio', profileAudioBtn],
+    ['custom', profileCustomBtn],
+  ] as const;
+  profileButtons.forEach(([mode, button]) => {
+    button?.addEventListener('click', () => {
+      if (!settings.downloadProfilesEnabled) return;
+      applyDownloadProfile(mode);
+      updateUIFromSettings();
+      void persistSettings(true, true);
+    });
+  });
+  if (profileAudioFormatSelect) {
+    profileAudioFormatSelect.addEventListener('change', (e) => {
+      settings.audioFormat = (e.target as HTMLSelectElement).value;
+      updateUIFromSettings();
+      void persistSettings(true, true);
+    });
+  }
+  if (askDownloadLocationToggle) {
+    askDownloadLocationToggle.addEventListener('change', (e) => {
+      settings.askDownloadLocation = (e.target as HTMLInputElement).checked;
       void persistSettings();
     });
+  }
+  if (changeDownloadFolderBtn) {
+    changeDownloadFolderBtn.addEventListener('click', async () => {
+      const savePath = await window.api.selectDownloadLocation();
+      if (!savePath) return;
+      settings.downloadFolder = savePath;
+      updateUIFromSettings();
+      void persistSettings(true, true);
+    });
+  }
   if (keepOriginalToggle)
     keepOriginalToggle.addEventListener('change', (e) => {
       if (!(e.target as HTMLInputElement).disabled) {
@@ -2699,62 +2791,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       void persistSettings();
     });
   }
-
-  if (bestQualityToggle) {
-    bestQualityToggle.addEventListener('change', (e) => {
-      settings.bestQuality = (e.target as HTMLInputElement).checked;
-      void persistSettings();
-    });
-  }
-
-  // Audio-only toggle
-  if (audioOnlyToggle) {
-    audioOnlyToggle.addEventListener('change', (e) => {
-      settings.audioOnly = (e.target as HTMLInputElement).checked;
-
-      if (audioFormatContainer) {
-        if ((e.target as HTMLInputElement).checked) {
-          audioFormatContainer.classList.add('visible');
-        } else {
-          audioFormatContainer.classList.remove('visible');
-        }
+  if (flatUiToggle) {
+    flatUiToggle.addEventListener('change', (e) => {
+      const checked = (e.target as HTMLInputElement).checked;
+      settings.flatUi = checked;
+      if (checked) {
+        document.documentElement.dataset.flatUi = 'true';
+        localStorage.setItem('rosi-flat-ui', 'true');
+      } else {
+        delete document.documentElement.dataset.flatUi;
+        localStorage.setItem('rosi-flat-ui', 'false');
       }
-
-      if (bestQualityToggle) {
-        bestQualityToggle.disabled = (e.target as HTMLInputElement).checked;
-        if ((e.target as HTMLInputElement).checked) {
-          bestQualityToggle.checked = false;
-          settings.bestQuality = false;
-          bestQualityToggle.parentElement!.classList.add('disabled');
-          bestQualityToggle.parentElement!.title = 'Disabled when Audio-only mode is enabled';
-        } else {
-          bestQualityToggle.parentElement!.classList.remove('disabled');
-          bestQualityToggle.parentElement!.title = '';
-        }
-      }
-
-      if (convertToggle) {
-        convertToggle.disabled = (e.target as HTMLInputElement).checked;
-        if ((e.target as HTMLInputElement).checked) {
-          convertToggle.checked = false;
-          settings.convertEnabled = false;
-          convertToggle.parentElement!.classList.add('disabled');
-          convertToggle.parentElement!.title = 'Disabled when Audio-only mode is enabled';
-          if (convertFormatContainer) convertFormatContainer.classList.remove('visible');
-          if (keepOriginalLabel) keepOriginalLabel.classList.remove('visible');
-        } else {
-          convertToggle.parentElement!.classList.remove('disabled');
-          convertToggle.parentElement!.title = '';
-        }
-      }
-
-      void persistSettings();
-    });
-  }
-
-  if (audioFormatSelect) {
-    audioFormatSelect.addEventListener('change', (e) => {
-      settings.audioFormat = (e.target as HTMLInputElement | HTMLSelectElement).value;
       void persistSettings();
     });
   }
@@ -2879,7 +2926,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           {
             label: '⟳ Reset & Restart',
             danger: true,
-            action: () => window.api.resetSettings(),
+            action: () => {
+              localStorage.removeItem('rosi-flat-ui');
+              localStorage.removeItem('rosi-theme');
+              window.api.resetSettings();
+            },
           },
         ],
       });
@@ -3095,7 +3146,60 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   syncQueueActionBusyState();
 
+  if (queueToggleBtn) {
+    setQueueCollapsed(!!settings.queueCollapsed);
+    queueToggleBtn.addEventListener('click', () => {
+      settings.queueCollapsed = toggleQueueCollapsed();
+      void persistSettings();
+    });
+    queueToggleBtn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        settings.queueCollapsed = toggleQueueCollapsed();
+        void persistSettings();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        settings.queueCollapsed = setQueueCollapsed(true);
+        void persistSettings();
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        settings.queueCollapsed = setQueueCollapsed(false);
+        void persistSettings();
+      }
+    });
+  }
+
   if (addToQueueBtn && queueUrlInput) {
+    // Allow Ctrl/Cmd+Enter to submit from the textarea (standard multi-line UX).
+    queueUrlInput.addEventListener('keydown', (e) => {
+      const modKey = isMac() ? e.metaKey : e.ctrlKey;
+      if (modKey && e.key === 'Enter') {
+        e.preventDefault();
+        addToQueueBtn.click();
+      }
+    });
+
+    // Accept drag-and-drop of URLs into the queue textarea.
+    queueUrlInput.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      queueUrlInput.classList.add('drag-over');
+    });
+    queueUrlInput.addEventListener('dragleave', () => {
+      queueUrlInput.classList.remove('drag-over');
+    });
+    queueUrlInput.addEventListener('drop', (e) => {
+      const dragEvent = e as DragEvent;
+      dragEvent.preventDefault();
+      queueUrlInput.classList.remove('drag-over');
+      const dt = dragEvent.dataTransfer;
+      const text = dt ? dt.getData('text/uri-list') || dt.getData('text/plain') : '';
+      if (text.trim()) {
+        const existing = queueUrlInput.value.trim();
+        queueUrlInput.value = existing ? `${existing}\n${text.trim()}` : text.trim();
+        queueUrlInput.dispatchEvent(new Event('input'));
+      }
+    });
+
     addToQueueBtn.addEventListener('click', async () => {
       if (queueActionLocks > 0) return;
       const raw = queueUrlInput.value.trim();
@@ -3277,17 +3381,21 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
-        let savePath: string | null = null;
-        try {
-          savePath = await window.api.selectDownloadLocation();
-        } catch (dialogError) {
-          logError('Error opening save dialog', dialogError);
-          isDownloading = false;
-          syncPrimaryActionState();
-          showToast('Could not open the save location dialog. Please try again.', {
-            type: 'error',
-          });
-          return;
+        let savePath = settings.askDownloadLocation
+          ? null
+          : settings.downloadFolder?.trim() || null;
+        if (!savePath) {
+          try {
+            savePath = await window.api.selectDownloadLocation();
+          } catch (dialogError) {
+            logError('Error opening save dialog', dialogError);
+            isDownloading = false;
+            syncPrimaryActionState();
+            showToast('Could not open the save location dialog. Please try again.', {
+              type: 'error',
+            });
+            return;
+          }
         }
 
         if (!savePath) {
@@ -3297,7 +3405,14 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
         settings.downloadFolder = savePath;
-        void persistSettings(true);
+        updateUIFromSettings();
+        const saved = await persistSettings(true, true);
+        if (!saved) {
+          isDownloading = false;
+          syncPrimaryActionState();
+          showToast('Could not save download settings. Please try again.', { type: 'error' });
+          return;
+        }
         if (outputEl) outputEl.textContent = '';
         downloadAbort = () => {
           isDownloading = false;
@@ -3477,6 +3592,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       try {
         updateUIFromSettings();
         applyTheme(settings.theme ?? 'system');
+        localStorage.setItem('rosi-flat-ui', settings.flatUi ? 'true' : 'false');
       } catch (e) {
         logError('Failed to refresh UI after settings import', e);
       }
