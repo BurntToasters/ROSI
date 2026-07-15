@@ -25,10 +25,7 @@ module.exports = {
   win: {
     ...(skipWindowsCodeSigning
       ? {
-          signtoolOptions: {
-            signingHashAlgorithms: ['sha256'],
-            sign: path.join(__dirname, 'electron-builder-artifact-sign.cjs'),
-          },
+          signExecutable: false,
         }
       : {
           signtoolOptions: {
