@@ -58,6 +58,7 @@
     "smoke:runtime:fast": "node build-scripts/smoke-runtime.js --skip-compile",
     "watch": "node build-scripts/watch.js",
     "test": "vitest run",
+    "test:release-assets": "vitest run src/tests/buildScripts.postRelease.test.ts",
     "vi": "node build-scripts/vi.js",
     "b": "git fetch origin && git reset --hard && git clean -fd && git switch -C beta origin/beta && git reset --hard origin/beta && git clean -fd && npm run vi",
     "r": "git fetch origin && git reset --hard && git clean -fd && git switch -C main origin/main && git reset --hard origin/main && git clean -fd && npm run vi && npm run gitprune:force",
