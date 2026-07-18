@@ -37,34 +37,85 @@ function getAfterPackLocation(env = process.env) {
   return value.trim();
 }
 
+function comparablePath(value, platform = process.platform) {
+  let resolved = path.resolve(value);
+  try {
+    resolved = fs.realpathSync.native(resolved);
+  } catch {
+    // Destinations and test paths may not exist yet.
+  }
+  return platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function pathsEqual(left, right, platform = process.platform) {
+  return comparablePath(left, platform) === comparablePath(right, platform);
+}
+
+function getReleaseEntries(releaseDir) {
+  if (!fs.existsSync(releaseDir)) {
+    throw new Error(`release directory does not exist: ${releaseDir}`);
+  }
+  const entries = fs.readdirSync(releaseDir);
+  if (entries.length === 0) {
+    throw new Error(`release directory is empty: ${releaseDir}`);
+  }
+  return entries;
+}
+
+function verifyCopiedPath(sourcePath, destinationPath) {
+  const source = fs.statSync(sourcePath);
+  let destination;
+  try {
+    destination = fs.statSync(destinationPath);
+  } catch {
+    throw new Error(`mirrored path is missing: ${destinationPath}`);
+  }
+  if (source.isDirectory() !== destination.isDirectory()) {
+    throw new Error(`mirrored path type differs: ${destinationPath}`);
+  }
+  if (source.isFile() && source.size !== destination.size) {
+    throw new Error(
+      `mirrored file size differs: ${destinationPath} (${destination.size} bytes; expected ${source.size})`
+    );
+  }
+  if (source.isDirectory()) {
+    for (const entry of fs.readdirSync(sourcePath)) {
+      verifyCopiedPath(path.join(sourcePath, entry), path.join(destinationPath, entry));
+    }
+  }
+}
+
 function copyReleaseAssets(releaseDir = RELEASE_DIR, destination) {
   if (!destination) {
-    return;
-  }
-
-  if (!fs.existsSync(releaseDir)) {
-    return;
+    throw new Error('AFTER_PACK_LOC is empty');
   }
 
   const resolvedReleaseDir = path.resolve(releaseDir);
   const resolvedDestination = path.resolve(destination);
 
-  if (resolvedDestination === resolvedReleaseDir) {
-    return;
+  if (pathsEqual(resolvedDestination, resolvedReleaseDir)) {
+    throw new Error('AFTER_PACK_LOC cannot be the release directory');
   }
 
-  if (resolvedDestination.startsWith(`${resolvedReleaseDir}${path.sep}`)) {
+  const releasePrefix = `${resolvedReleaseDir}${path.sep}`;
+  const destinationForComparison =
+    process.platform === 'win32' ? resolvedDestination.toLowerCase() : resolvedDestination;
+  const releasePrefixForComparison =
+    process.platform === 'win32' ? releasePrefix.toLowerCase() : releasePrefix;
+  if (destinationForComparison.startsWith(releasePrefixForComparison)) {
     throw new Error('AFTER_PACK_LOC cannot be inside the release directory');
   }
 
+  const entries = getReleaseEntries(resolvedReleaseDir);
   fs.mkdirSync(resolvedDestination, { recursive: true });
-  const entries = fs.readdirSync(releaseDir);
 
   for (const entry of entries) {
-    const sourcePath = path.join(releaseDir, entry);
+    const sourcePath = path.join(resolvedReleaseDir, entry);
     const destinationPath = path.join(resolvedDestination, entry);
     fs.cpSync(sourcePath, destinationPath, { recursive: true, force: true, errorOnExist: false });
+    verifyCopiedPath(sourcePath, destinationPath);
   }
+  return entries.length;
 }
 
 function run({ releaseDir = RELEASE_DIR, env = process.env } = {}) {
@@ -75,21 +126,28 @@ function run({ releaseDir = RELEASE_DIR, env = process.env } = {}) {
     return { mirrored: false, destination: null };
   }
 
-  copyReleaseAssets(releaseDir, destination);
-  return { mirrored: true, destination: path.resolve(destination) };
+  const copiedEntries = copyReleaseAssets(releaseDir, destination);
+  return { mirrored: true, destination: path.resolve(destination), copiedEntries };
 }
 
 if (require.main === module) {
   try {
     const result = run();
     if (result.mirrored) {
-      console.log(`Mirrored cleaned release assets to: ${result.destination}`);
+      console.log(
+        `Mirrored and verified ${result.copiedEntries} cleaned release entries to: ${result.destination}`
+      );
     } else {
-      console.log('Cleaned release assets; AFTER_PACK_LOC not set, mirror skipped.');
+      console.warn(
+        'WARNING: Cleaned release assets, but AFTER_PACK_LOC is not set; mirror intentionally skipped.'
+      );
     }
   } catch (error) {
     const message = error && error.message ? error.message : String(error);
     console.error(`Failed to finalize release assets: ${message}`);
+    console.error(`Source release directory: ${RELEASE_DIR}`);
+    console.error(`Configured AFTER_PACK_LOC: ${JSON.stringify(getAfterPackLocation())}`);
+    console.error(`Platform: ${process.platform}; Node: ${process.version}; cwd: ${process.cwd()}`);
     process.exit(1);
   }
 }
@@ -100,6 +158,10 @@ module.exports = {
   BUILD_ONLY_FILES,
   cleanReleaseArtifacts,
   getAfterPackLocation,
+  comparablePath,
+  pathsEqual,
+  getReleaseEntries,
+  verifyCopiedPath,
   copyReleaseAssets,
   run,
 };
