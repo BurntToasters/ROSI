@@ -155,10 +155,10 @@
     "js-yaml": "^4.1.0",
     "jsdom": "^29.1.1",
     "license-checker": "^25.0.1",
-    "lint-staged": "^17.0.2",
+    "lint-staged": "^17.1.0",
     "prettier": "^3.8.1",
     "typescript": "^6.0.2",
-    "typescript-eslint": "^8.59.2",
+    "typescript-eslint": "^8.65.0",
     "vitest": "^4.0.16"
   },
   "dependencies": {
