@@ -1,6 +1,34 @@
 export type AudioFormat = 'mp3' | 'flac' | 'ogg' | 'wav' | 'm4a' | 'opus';
 export type DownloadProfile = 'best-video' | 'audio' | 'custom';
 
+export interface PlaylistSelection {
+  mode: 'current' | 'all' | 'range';
+  start?: number;
+  end?: number;
+}
+
+export interface DownloadPreset {
+  id: string;
+  name: string;
+  profile: DownloadProfile;
+  bestQuality?: boolean;
+  audioOnly?: boolean;
+  audioFormat?: AudioFormat;
+  videoFormat?: string;
+  audioFormatId?: string;
+  convertEnabled?: boolean;
+  convertFormat?: string;
+  keepOriginalAfterConvert?: boolean;
+  gpuAcceleration?: boolean;
+  gpuType?: 'auto' | 'nvidia' | 'amd' | 'intel';
+  writeSubtitles?: boolean;
+  subtitleLangs?: string;
+  embedThumbnail?: boolean;
+  embedMetadata?: boolean;
+  sponsorblockRemove?: boolean;
+  playlist?: PlaylistSelection;
+}
+
 export interface Settings {
   settingsVersion: number;
   theme: ThemePreference;
@@ -9,6 +37,7 @@ export interface Settings {
   queueCollapsed: boolean;
   downloadProfilesEnabled: boolean;
   downloadMode: DownloadProfile;
+  downloadPresets: DownloadPreset[];
   askDownloadLocation: boolean;
   advancedOptions: boolean;
   audioOnly: boolean;
@@ -44,10 +73,18 @@ export type DownloadJobPhase = 'download' | 'merge' | 'convert' | 'idle';
 export interface JobProgressEvent {
   phase: DownloadJobPhase;
   phasePercent: number;
+  /** Progress for only the active item, before queue weighting. */
+  itemOverallPercent: number;
+  /** Queue-weighted progress for queue downloads, otherwise itemOverallPercent. */
   overallPercent: number;
+  queueItemId?: string;
   status: string;
   details?: string;
   indeterminate?: boolean;
+  downloadedBytes?: number;
+  totalBytes?: number;
+  speedBytesPerSecond?: number;
+  etaSeconds?: number;
 }
 
 export type MenuAction = 'check-for-updates' | 'open-settings' | 'show-licenses' | 'toggle-sidebar';
@@ -55,6 +92,7 @@ export type MenuAction = 'check-for-updates' | 'open-settings' | 'show-licenses'
 export interface QueueDownloadProgress {
   completedItems: number;
   queueTotal: number;
+  queueItemId?: string;
 }
 
 export type UpdateChannel = 'auto' | 'stable' | 'beta';
@@ -87,28 +125,76 @@ export type DownloadOutcome = 'success' | 'failed' | 'cancelled';
 
 export type DownloadSessionOwner = 'manual' | 'queue';
 
+export interface DownloadRequestOptions {
+  url: string;
+  outputPath: string;
+  ffmpegPath?: string;
+  convertEnabled?: boolean;
+  convertFormat?: string;
+  keepOriginal?: boolean;
+  videoFormat?: string;
+  /** A selected yt-dlp audio format ID. */
+  audioFormat?: string;
+  playlist?: PlaylistSelection;
+  profileEnabled?: boolean;
+  profile?: DownloadProfile;
+  presetId?: string;
+  presetName?: string;
+  bestQuality?: boolean;
+  advancedOptions?: boolean;
+  audioOnly?: boolean;
+  /** Audio extraction format, separate from the yt-dlp audio format ID above. */
+  audioOutputFormat?: AudioFormat;
+  hookBrowser?: boolean;
+  browserChoice?: string;
+  gpuAcceleration?: boolean;
+  gpuType?: 'auto' | 'nvidia' | 'amd' | 'intel';
+  writeSubtitles?: boolean;
+  subtitleLangs?: string;
+  embedThumbnail?: boolean;
+  embedMetadata?: boolean;
+  sponsorblockRemove?: boolean;
+}
+
+export type QueueRequestOverrides = Partial<Omit<DownloadRequestOptions, 'url'>>;
+
+export interface DownloadCompletion {
+  id: string;
+  sessionId?: number;
+  owner: DownloadSessionOwner;
+  queueItemId?: string;
+  outcome: DownloadOutcome;
+  statusMessage: string;
+  url: string;
+  profile?: DownloadProfile;
+  presetId?: string;
+  presetName?: string;
+  request: DownloadRequestOptions;
+  filename?: string;
+  outputPath?: string;
+  sizeBytes?: number;
+  format?: string;
+  error?: string;
+  startedAt: number;
+  completedAt: number;
+}
+
 export interface DownloadSession {
   id: number;
+  completionId: string;
+  startedAt: number;
+  request: DownloadRequestOptions;
   sender: Electron.WebContents;
   owner: DownloadSessionOwner;
   lifecycle: DownloadLifecycleState;
   ytdlpProcess: import('child_process').ChildProcess | null;
   ffmpegProcess: import('child_process').ChildProcess | null;
   onComplete?: (statusMessage: string, outcome: DownloadOutcome) => void;
+  onDownloadComplete?: (completion: DownloadCompletion) => void;
   queueProgress: QueueDownloadProgress | null;
   jobPhase: DownloadJobPhase;
   ytdlpPostprocess: boolean;
   ytdlpDownloadFinished: boolean;
-}
-
-export interface DownloadRequestOptions {
-  url: string;
-  outputPath: string;
-  ffmpegPath?: string;
-  convertFormat?: string;
-  keepOriginal?: boolean;
-  videoFormat?: string;
-  audioFormat?: string;
 }
 
 export interface GpuDetectionResult {
@@ -156,9 +242,25 @@ export interface QueueItem {
   url: string;
   status: 'pending' | 'downloading' | 'completed' | 'failed' | 'cancelled';
   addedAt: number;
+  startedAt?: number;
+  completedAt?: number;
+  request?: DownloadRequestOptions;
+  progress?: JobProgressEvent;
   filename?: string;
+  outputPath?: string;
+  sizeBytes?: number;
   error?: string;
 }
+
+export type QueueReorderDirection = 'up' | 'down';
+
+export interface QueueReorderRequest {
+  id: string;
+  direction: QueueReorderDirection;
+}
+
+/** A persisted download outcome. Structurally identical to a completion event. */
+export type DownloadActivity = DownloadCompletion;
 
 export type UpdaterStatusEvent =
   | { status: 'checking' }
@@ -192,10 +294,11 @@ export interface RendererApi {
   restartApp: () => Promise<void>;
   getChannel: () => DistributionChannel;
   getFormats: (url: string) => Promise<IpcResult<string>>;
-  getVideoInfo: (url: string) => Promise<IpcResult<VideoInfo>>;
+  getVideoInfo: (url: string, playlistMode?: 'current' | 'all') => Promise<IpcResult<VideoInfo>>;
   cancelVideoInfo: () => void;
   selectDownloadLocation: () => Promise<string | null>;
   getSettings: () => Promise<Settings>;
+  getDefaultSettings: () => Promise<IpcResult<Settings>>;
   saveSettings: (settings: Partial<Settings>) => Promise<IpcResult<Settings>>;
   resetSettings: () => void;
   openExternal: (url: string) => Promise<IpcResult<{ opened: boolean }>>;
@@ -223,16 +326,25 @@ export interface RendererApi {
   onJobProgress: (callback: (data: JobProgressEvent) => void) => () => void;
   onMenuAction: (callback: (action: MenuAction) => void) => () => void;
   onComplete: (callback: (message: string) => void) => () => void;
+  onDownloadComplete: (callback: (completion: DownloadCompletion) => void) => () => void;
   openFileLocation: (filePath: string) => Promise<IpcResult<{ opened: boolean }>>;
   showNotification: (options: NotificationRequest) => Promise<IpcResult<{ shown: boolean }>>;
   exportSettings: () => Promise<IpcResult<{ exported: boolean }>>;
   importSettings: () => Promise<IpcResult<{ imported: boolean }>>;
   getStats: () => Promise<DownloadStats>;
   resetStats: () => Promise<IpcResult<void>>;
+  getDownloadActivity: () => Promise<IpcResult<DownloadActivity[]>>;
+  clearDownloadActivity: () => Promise<IpcResult<void>>;
+  onDownloadActivityUpdate: (callback: (activity: DownloadActivity[]) => void) => () => void;
   logError: (message: string) => void;
   notifySettingsFlushed: () => void;
-  addToQueue: (urls: string[]) => Promise<IpcResult<{ added: number }>>;
+  addToQueue: (
+    urls: string[],
+    options?: QueueRequestOverrides
+  ) => Promise<IpcResult<{ added: number; skipped: number }>>;
   removeFromQueue: (id: string) => Promise<IpcResult<void>>;
+  retryQueueItem: (id: string) => Promise<IpcResult<void>>;
+  reorderQueueItem: (request: QueueReorderRequest) => Promise<IpcResult<void>>;
   clearQueue: () => Promise<IpcResult<void>>;
   getQueue: () => Promise<QueueItem[]>;
   startQueue: () => Promise<IpcResult<{ started: boolean }>>;

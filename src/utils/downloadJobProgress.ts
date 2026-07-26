@@ -1,15 +1,6 @@
-export type DownloadJobPhase = 'download' | 'merge' | 'convert' | 'idle';
+import type { DownloadJobPhase, JobProgressEvent } from '../types';
 
-export interface JobProgressEvent {
-  phase: DownloadJobPhase;
-  /** 0–100 within the current phase; NaN means indeterminate for that phase */
-  phasePercent: number;
-  /** 0–100 for the current queue item (or single download) */
-  overallPercent: number;
-  status: string;
-  details?: string;
-  indeterminate?: boolean;
-}
+export type { DownloadJobPhase, JobProgressEvent } from '../types';
 
 export interface ParsedYtdlpProgress {
   percent: number;
@@ -26,6 +17,14 @@ export interface JobProgressPlan {
 export interface QueueProgressContext {
   completedItems: number;
   queueTotal: number;
+  queueItemId?: string;
+}
+
+export interface JobProgressMetrics {
+  downloadedBytes?: number;
+  totalBytes?: number;
+  speedBytesPerSecond?: number;
+  etaSeconds?: number;
 }
 
 export interface YtdlpProgressJson {
@@ -207,20 +206,29 @@ export function buildJobProgressEvent(
   queue: QueueProgressContext | null,
   status: string,
   details?: string,
-  indeterminate?: boolean
+  indeterminate?: boolean,
+  metrics: JobProgressMetrics = {}
 ): JobProgressEvent {
-  const itemOverall = computeItemOverallPercent(phase, phasePercent, plan);
-  const overallPercent = applyQueueWeighting(itemOverall, queue);
+  const itemOverallPercent = computeItemOverallPercent(phase, phasePercent, plan);
+  const overallPercent = applyQueueWeighting(itemOverallPercent, queue);
   const isIndeterminate =
     indeterminate === true || (indeterminate !== false && !Number.isFinite(phasePercent));
+  const nonNegativeMetric = (value: number | undefined): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 
   return {
     phase,
     phasePercent: Number.isFinite(phasePercent) ? phasePercent : Number.NaN,
+    itemOverallPercent,
     overallPercent,
+    queueItemId: queue?.queueItemId,
     status,
     details,
     indeterminate: isIndeterminate,
+    downloadedBytes: nonNegativeMetric(metrics.downloadedBytes),
+    totalBytes: nonNegativeMetric(metrics.totalBytes),
+    speedBytesPerSecond: nonNegativeMetric(metrics.speedBytesPerSecond),
+    etaSeconds: nonNegativeMetric(metrics.etaSeconds),
   };
 }
 

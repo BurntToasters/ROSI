@@ -303,7 +303,10 @@ vi.mock('../main/download/videoInfo', () => ({
   cancelVideoInfo: cancelVideoInfoMock,
 }));
 
-vi.mock('../main/constants', () => ({
+// Keep the real constants (ipcValidation and main both read many of them) and
+// override only the values this suite needs to control.
+vi.mock('../main/constants', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../main/constants')>()),
   SPLASH_SHOW_DELAY_MS: 0,
   SPLASH_FADE_DELAY_MS: 0,
   MAX_QUEUE_SIZE: 500,
@@ -504,7 +507,7 @@ describe('main process IPC wiring and queue behavior', () => {
     const cancelQueue = handleHandlers['cancel-queue'];
 
     const addResult = await addToQueue(authorizedEvent, ['https://example.com/a', 'invalid-url']);
-    expect(addResult).toEqual({ ok: true, data: { added: 1 } });
+    expect(addResult).toEqual({ ok: true, data: { added: 1, skipped: 1 } });
 
     let queue = await getQueue(authorizedEvent);
     expect(queue).toHaveLength(1);
@@ -528,7 +531,7 @@ describe('main process IPC wiring and queue behavior', () => {
       'https://example.com/b',
       'https://example.com/c',
     ]);
-    expect(secondAdd).toEqual({ ok: true, data: { added: 2 } });
+    expect(secondAdd).toEqual({ ok: true, data: { added: 2, skipped: 0 } });
 
     const cancelResult = await cancelQueue(authorizedEvent);
     expect(cancelResult).toEqual({ ok: true, data: undefined });
@@ -547,6 +550,182 @@ describe('main process IPC wiring and queue behavior', () => {
         error: expect.objectContaining({ code: 'NOT_AVAILABLE' }),
       })
     );
+  });
+
+  it('deduplicates queued URLs against the pending queue', async () => {
+    const addToQueue = handleHandlers['add-to-queue']!;
+
+    const first = await addToQueue(authorizedEvent, [
+      'https://example.com/dupe',
+      'https://example.com/dupe#fragment',
+    ]);
+    expect(first).toEqual({ ok: true, data: { added: 1, skipped: 1 } });
+
+    const second = await addToQueue(authorizedEvent, ['https://example.com/dupe']);
+    expect(second).toEqual({ ok: true, data: { added: 0, skipped: 1 } });
+
+    const queue = (await handleHandlers['get-queue']!(authorizedEvent)) as unknown[];
+    expect(queue).toHaveLength(1);
+  });
+
+  it('retries terminal queue items and refuses others', async () => {
+    const retry = handleHandlers['retry-queue-item']!;
+    await handleHandlers['add-to-queue']!(authorizedEvent, ['https://example.com/retry']);
+    const queue = (await handleHandlers['get-queue']!(authorizedEvent)) as Array<{
+      id: string;
+      status: string;
+      error?: string;
+    }>;
+    const item = queue[0]!;
+
+    // A pending item has nothing to retry.
+    expect(await retry(authorizedEvent, item.id)).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code: 'VALIDATION_ERROR' }),
+      })
+    );
+    expect(await retry(authorizedEvent, 'q_missing')).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code: 'NOT_AVAILABLE' }),
+      })
+    );
+    expect(await retry(authorizedEvent, 'bad id')).toEqual(expect.objectContaining({ ok: false }));
+
+    // Cancel it to reach a terminal state, then retry back to pending.
+    await handleHandlers['cancel-queue']!(authorizedEvent);
+    const cancelled = (await handleHandlers['get-queue']!(authorizedEvent)) as Array<{
+      id: string;
+      status: string;
+    }>;
+    expect(cancelled[0]?.status).toBe('cancelled');
+
+    expect(await retry(authorizedEvent, item.id)).toEqual({ ok: true, data: undefined });
+    const retried = (await handleHandlers['get-queue']!(authorizedEvent)) as Array<{
+      status: string;
+      completedAt?: number;
+      error?: string;
+    }>;
+    expect(retried[0]?.status).toBe('pending');
+    expect(retried[0]?.completedAt).toBeUndefined();
+    expect(retried[0]?.error).toBeUndefined();
+  });
+
+  it('reorders pending queue items and rejects invalid moves', async () => {
+    const reorder = handleHandlers['reorder-queue-item']!;
+    await handleHandlers['add-to-queue']!(authorizedEvent, [
+      'https://example.com/first',
+      'https://example.com/second',
+    ]);
+    const queue = (await handleHandlers['get-queue']!(authorizedEvent)) as Array<{
+      id: string;
+      url: string;
+    }>;
+    const [first, second] = [queue[0]!, queue[1]!];
+
+    expect(await reorder(authorizedEvent, { id: first.id, direction: 'down' })).toEqual({
+      ok: true,
+      data: undefined,
+    });
+    const reordered = (await handleHandlers['get-queue']!(authorizedEvent)) as Array<{
+      id: string;
+    }>;
+    expect(reordered[0]?.id).toBe(second.id);
+    expect(reordered[1]?.id).toBe(first.id);
+
+    // The item is now first, so it cannot move further up.
+    expect(await reorder(authorizedEvent, { id: second.id, direction: 'up' })).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code: 'NOT_AVAILABLE' }),
+      })
+    );
+    expect(await reorder(authorizedEvent, { id: 'q_missing', direction: 'up' })).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code: 'NOT_AVAILABLE' }),
+      })
+    );
+    expect(await reorder(authorizedEvent, { id: first.id, direction: 'sideways' })).toEqual(
+      expect.objectContaining({ ok: false })
+    );
+  });
+
+  it('exposes default settings and download activity to the main window only', async () => {
+    const unauthorized = { sender: { id: 999 } };
+
+    const defaults = await handleHandlers['get-default-settings']!(authorizedEvent);
+    expect(defaults).toEqual(expect.objectContaining({ ok: true }));
+    expect(await handleHandlers['get-default-settings']!(unauthorized)).toEqual(
+      expect.objectContaining({ ok: false })
+    );
+
+    const activity = await handleHandlers['get-download-activity']!(authorizedEvent);
+    expect(activity).toEqual({ ok: true, data: [] });
+    expect(await handleHandlers['get-download-activity']!(unauthorized)).toEqual(
+      expect.objectContaining({ ok: false })
+    );
+
+    expect(await handleHandlers['clear-download-activity']!(authorizedEvent)).toEqual({
+      ok: true,
+      data: undefined,
+    });
+    expect(await handleHandlers['clear-download-activity']!(unauthorized)).toEqual(
+      expect.objectContaining({ ok: false })
+    );
+  });
+
+  it('records structured download activity from completed queue items', async () => {
+    startDownloadMock.mockImplementationOnce(
+      (
+        _ytdlpPath: string,
+        _sender: unknown,
+        options: { url: string; outputPath: string },
+        _mainWindow: unknown,
+        _onComplete: unknown,
+        _owner: unknown,
+        _queueProgress: unknown,
+        onDownloadComplete?: (completion: Record<string, unknown>) => void
+      ) => {
+        onDownloadComplete?.({
+          id: 'completion-1',
+          owner: 'queue',
+          outcome: 'success',
+          statusMessage: '✅ Done',
+          url: options.url,
+          // Activity records are re-validated, so the path must be allowed.
+          request: { url: options.url, outputPath: path.join(os.homedir(), 'Downloads') },
+          filename: 'clip.mp4',
+          sizeBytes: 1024,
+          startedAt: Date.now() - 100,
+          completedAt: Date.now(),
+        });
+      }
+    );
+
+    await handleHandlers['add-to-queue']!(authorizedEvent, ['https://example.com/activity']);
+    await handleHandlers['start-queue']!(authorizedEvent);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const activity = (await handleHandlers['get-download-activity']!(authorizedEvent)) as {
+      ok: boolean;
+      data: Array<{ id: string; outcome: string; filename?: string; sizeBytes?: number }>;
+    };
+    expect(activity.ok).toBe(true);
+    expect(activity.data).toHaveLength(1);
+    expect(activity.data[0]).toMatchObject({
+      id: 'completion-1',
+      outcome: 'success',
+      filename: 'clip.mp4',
+      sizeBytes: 1024,
+    });
+
+    const queue = (await handleHandlers['get-queue']!(authorizedEvent)) as Array<{
+      status: string;
+      filename?: string;
+    }>;
+    expect(queue[0]).toMatchObject({ status: 'completed', filename: 'clip.mp4' });
   });
 
   it('rejects malformed queue input and ignores duplicate completion callbacks', async () => {
@@ -1414,7 +1593,11 @@ describe('main process IPC wiring and queue behavior', () => {
     );
 
     expect(result).toEqual({ ok: true, data: info });
-    expect(fetchVideoInfoMock).toHaveBeenCalledWith(ytdlpFixturePath, 'https://example.com/video');
+    expect(fetchVideoInfoMock).toHaveBeenCalledWith(
+      ytdlpFixturePath,
+      'https://example.com/video',
+      undefined
+    );
   });
 
   it('rejects invalid URLs for get-video-info', async () => {

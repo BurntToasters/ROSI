@@ -47,7 +47,9 @@ export class JobProgressReporter {
     this.emit(session, {
       phase: 'idle',
       phasePercent: 0,
+      itemOverallPercent: 0,
       overallPercent: 0,
+      queueItemId: this.queue?.queueItemId,
       status: 'Ready',
       indeterminate: false,
     });
@@ -83,7 +85,13 @@ export class JobProgressReporter {
           this.queue,
           label,
           details,
-          !Number.isFinite(phasePercent)
+          !Number.isFinite(phasePercent),
+          {
+            downloadedBytes: json.downloaded_bytes,
+            totalBytes: json.total_bytes ?? json.total_bytes_estimate,
+            speedBytesPerSecond: json.speed,
+            etaSeconds: json.eta,
+          }
         )
       );
       return true;

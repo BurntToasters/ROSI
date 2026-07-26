@@ -85,6 +85,37 @@ describe('parseVideoInfo', () => {
     expect(info?.thumbnail).toBe('https://example.com/a.jpg');
   });
 
+  it('reports no playlist count when the entry listing was truncated', () => {
+    // Without playlist_count, a truncated listing must not present the fetch
+    // limit as though it were the real playlist length.
+    const entries = Array.from({ length: 4 }, (_, index) => ({ title: `Item ${index}` }));
+    const truncated = parseVideoInfo(
+      JSON.stringify({ _type: 'playlist', title: 'Big playlist', entries }),
+      4
+    );
+    expect(truncated?.isPlaylist).toBe(true);
+    expect(truncated?.playlistCount).toBeNull();
+
+    const complete = parseVideoInfo(
+      JSON.stringify({ _type: 'playlist', title: 'Small playlist', entries }),
+      10
+    );
+    expect(complete?.playlistCount).toBe(4);
+  });
+
+  it('prefers the extractor playlist_count over the entry length', () => {
+    const info = parseVideoInfo(
+      JSON.stringify({
+        _type: 'playlist',
+        title: 'Huge playlist',
+        playlist_count: 4200,
+        entries: [{ title: 'One' }, { title: 'Two' }],
+      }),
+      2
+    );
+    expect(info?.playlistCount).toBe(4200);
+  });
+
   it('uses Playlist as the fallback title for playlist payloads', () => {
     const info = parseVideoInfo(JSON.stringify({ _type: 'playlist', entries: [{ title: 'a' }] }));
     expect(info?.title).toBe('Playlist');
