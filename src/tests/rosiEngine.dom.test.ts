@@ -41,7 +41,7 @@ interface MockApi {
 
 function defaultSettings() {
   return {
-    settingsVersion: 5,
+    settingsVersion: 6,
     theme: 'dark',
     showConsoleOutput: false,
     consoleCollapsed: false,
@@ -75,6 +75,7 @@ function defaultSettings() {
     embedThumbnail: false,
     embedMetadata: false,
     sponsorblockRemove: false,
+    showTaskbarProgress: true,
   };
 }
 
@@ -119,6 +120,8 @@ function buildMockApi(overrides: Partial<MockApi> = {}): MockApi {
     installDeno: vi.fn(() => Promise.resolve({ success: true })),
     detectGpu: vi.fn(() => Promise.resolve({ nvidia: false, amd: false, intel: false })),
     onProgress: noop,
+    onJobProgress: noop,
+    onMenuAction: noop,
     onComplete: noop,
     onQueueUpdate: noop,
     onPrepareForClose: noop,

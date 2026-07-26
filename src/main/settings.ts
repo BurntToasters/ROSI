@@ -54,6 +54,7 @@ const defaultSettings: Settings = {
   embedThumbnail: false,
   embedMetadata: false,
   sponsorblockRemove: false,
+  showTaskbarProgress: true,
 };
 
 export function getDefaultSettings(): Settings {
@@ -243,6 +244,10 @@ export function migrateSettings(rawSettings: unknown): Settings {
     sponsorblockRemove: readBoolean(
       rawSettings.sponsorblockRemove,
       defaultSettings.sponsorblockRemove
+    ),
+    showTaskbarProgress: readBoolean(
+      rawSettings.showTaskbarProgress,
+      defaultSettings.showTaskbarProgress
     ),
   };
 }

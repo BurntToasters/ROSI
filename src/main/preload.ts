@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   DownloadRequestOptions,
   DownloadStats,
+  JobProgressEvent,
+  MenuAction,
   NotificationRequest,
   QueueItem,
   RendererApi,
@@ -49,6 +51,16 @@ const api: RendererApi = {
     const listener = (_: Electron.IpcRendererEvent, message: string) => callback(message);
     ipcRenderer.on('progress', listener);
     return () => ipcRenderer.removeListener('progress', listener);
+  },
+  onJobProgress: (callback: (data: JobProgressEvent) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, data: JobProgressEvent) => callback(data);
+    ipcRenderer.on('job-progress', listener);
+    return () => ipcRenderer.removeListener('job-progress', listener);
+  },
+  onMenuAction: (callback: (action: MenuAction) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, action: MenuAction) => callback(action);
+    ipcRenderer.on('menu-action', listener);
+    return () => ipcRenderer.removeListener('menu-action', listener);
   },
   onComplete: (callback: (message: string) => void) => {
     const listener = (_: Electron.IpcRendererEvent, message: string) => callback(message);

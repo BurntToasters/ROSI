@@ -36,6 +36,25 @@ export interface Settings {
   embedThumbnail: boolean;
   embedMetadata: boolean;
   sponsorblockRemove: boolean;
+  showTaskbarProgress: boolean;
+}
+
+export type DownloadJobPhase = 'download' | 'merge' | 'convert' | 'idle';
+
+export interface JobProgressEvent {
+  phase: DownloadJobPhase;
+  phasePercent: number;
+  overallPercent: number;
+  status: string;
+  details?: string;
+  indeterminate?: boolean;
+}
+
+export type MenuAction = 'check-for-updates' | 'open-settings' | 'show-licenses' | 'toggle-sidebar';
+
+export interface QueueDownloadProgress {
+  completedItems: number;
+  queueTotal: number;
 }
 
 export type UpdateChannel = 'auto' | 'stable' | 'beta';
@@ -76,6 +95,10 @@ export interface DownloadSession {
   ytdlpProcess: import('child_process').ChildProcess | null;
   ffmpegProcess: import('child_process').ChildProcess | null;
   onComplete?: (statusMessage: string, outcome: DownloadOutcome) => void;
+  queueProgress: QueueDownloadProgress | null;
+  jobPhase: DownloadJobPhase;
+  ytdlpPostprocess: boolean;
+  ytdlpDownloadFinished: boolean;
 }
 
 export interface DownloadRequestOptions {
@@ -196,6 +219,8 @@ export interface RendererApi {
   onUpdaterStatus: (callback: (data: UpdaterStatusEvent) => void) => () => void;
   onUpdaterProgress: (callback: (data: UpdaterProgressEvent) => void) => () => void;
   onProgress: (callback: (message: string) => void) => () => void;
+  onJobProgress: (callback: (data: JobProgressEvent) => void) => () => void;
+  onMenuAction: (callback: (action: MenuAction) => void) => () => void;
   onComplete: (callback: (message: string) => void) => () => void;
   openFileLocation: (filePath: string) => Promise<IpcResult<{ opened: boolean }>>;
   showNotification: (options: NotificationRequest) => Promise<IpcResult<{ shown: boolean }>>;

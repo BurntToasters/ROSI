@@ -45,6 +45,7 @@ import {
   validateDownloadPath,
 } from '../utils/ipcValidation';
 import { SPLASH_SHOW_DELAY_MS, SPLASH_FADE_DELAY_MS, MAX_QUEUE_SIZE } from './constants';
+import { installDarwinApplicationMenu } from './appMenu';
 import type { DownloadRequestOptions, DownloadOutcome, QueueItem } from '../types';
 
 log.initialize();
@@ -404,7 +405,12 @@ function createWindow() {
   mainWindow.setMenuBarVisibility(isDev);
   mainWindow.setAutoHideMenuBar(!isDev);
 
-  if (!isDev) {
+  if (process.platform === 'darwin') {
+    installDarwinApplicationMenu({
+      getMainWindow: () => mainWindow,
+      isMsStore: process.env.CHANNEL === 'msstore' || Boolean(process.windowsStore),
+    });
+  } else if (!isDev) {
     mainWindow.removeMenu();
   }
 
@@ -1077,6 +1083,15 @@ async function processQueue() {
         keepOriginal: settings.convertEnabled ? settings.keepOriginalAfterConvert : undefined,
       };
 
+      const completedItems = downloadQueue.filter(
+        (item) =>
+          item.status === 'completed' || item.status === 'failed' || item.status === 'cancelled'
+      ).length;
+      const queueProgress = {
+        completedItems,
+        queueTotal: downloadQueue.length,
+      };
+
       let settled = false;
       const completeListener = (statusMessage: string, outcome?: DownloadOutcome) => {
         if (settled) return;
@@ -1105,7 +1120,8 @@ async function processQueue() {
           options,
           mainWindow,
           completeListener,
-          'queue'
+          'queue',
+          queueProgress
         );
       } catch (error) {
         nextItem.status = 'failed';

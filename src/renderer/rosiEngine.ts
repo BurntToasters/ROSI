@@ -41,6 +41,47 @@ interface RosiSettings {
   embedThumbnail: boolean;
   embedMetadata: boolean;
   sponsorblockRemove: boolean;
+  showTaskbarProgress: boolean;
+}
+
+interface RosiJobProgressEvent {
+  phase: 'download' | 'merge' | 'convert' | 'idle';
+  phasePercent: number;
+  overallPercent: number;
+  status: string;
+  details?: string;
+  indeterminate?: boolean;
+}
+
+function resolveProgressPhaseFlags(
+  activeSettings: RosiSettings,
+  advancedFormats?: { videoFormat?: string; audioFormat?: string }
+) {
+  if (
+    activeSettings.audioOnly ||
+    (activeSettings.downloadProfilesEnabled && activeSettings.downloadMode === 'audio')
+  ) {
+    return { needsMerge: false, needsConvert: activeSettings.convertEnabled };
+  }
+  const baseMerge = activeSettings.downloadProfilesEnabled
+    ? activeSettings.downloadMode === 'best-video' || activeSettings.downloadMode === 'custom'
+    : activeSettings.bestQuality || activeSettings.advancedOptions;
+  const needsMerge =
+    Boolean(advancedFormats?.videoFormat && advancedFormats?.audioFormat) || baseMerge;
+  return {
+    needsMerge,
+    needsConvert: activeSettings.convertEnabled,
+  };
+}
+
+function applyActiveDownloadProgressPhases(
+  activeSettings: RosiSettings,
+  status = 'Downloading...',
+  advancedFormats?: { videoFormat?: string; audioFormat?: string }
+) {
+  const { needsMerge, needsConvert } = resolveProgressPhaseFlags(activeSettings, advancedFormats);
+  configureProgressPhases(needsMerge, needsConvert);
+  showProgressBar(status);
 }
 
 const rosiModules = window.rosiModules || {};
@@ -484,7 +525,7 @@ function showKeyboardShortcuts() {
   const modKey = getModifierKeyName();
   showModal({
     title: 'Keyboard Shortcuts',
-    message: `${modKey}+D - Restart application\n${modKey}+F - Focus URL input field\n${modKey}+, - Open settings\n${modKey}+Enter - Submit queue URLs (when focused)`,
+    message: `${modKey}+D - Restart application\n${modKey}+F - Focus URL input field\n${modKey}+, - Open settings (macOS menu)\n${modKey}+Shift+, - Toggle settings sidebar\n${modKey}+Enter - Submit queue URLs (when focused)`,
     buttons: [{ label: 'OK', primary: true }],
   });
 }
@@ -849,6 +890,20 @@ function setProgressIndeterminate(status = 'Processing...') {
   if (details) details.textContent = '';
 }
 
+function applyJobProgress(event: RosiJobProgressEvent) {
+  if (event.phase && event.phase !== 'idle') {
+    setProgressPhase(event.phase);
+  }
+  if (event.indeterminate) {
+    setProgressIndeterminate(event.status);
+    return;
+  }
+  const displayPercent = Number.isFinite(event.overallPercent)
+    ? event.overallPercent
+    : event.phasePercent;
+  updateProgressBar(displayPercent, event.status, event.details ?? null);
+}
+
 function hideProgressBar() {
   const container = document.getElementById('progress-container');
   const bar = document.getElementById('progress-bar');
@@ -861,13 +916,6 @@ function hideProgressBar() {
     barWrapper.setAttribute('aria-valuenow', '0');
   }
   hideProgressComplete();
-}
-
-function parseYtdlpProgress(message: string) {
-  if (downloadsModule && typeof downloadsModule.parseYtdlpProgress === 'function') {
-    return downloadsModule.parseYtdlpProgress(message);
-  }
-  return null;
 }
 
 function formatBytes(bytes: number) {
@@ -1710,7 +1758,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (error) {
     logError('Failed to load settings', error);
     settings = {
-      settingsVersion: 5,
+      settingsVersion: 6,
       theme: 'system',
       showConsoleOutput: false,
       consoleCollapsed: false,
@@ -1744,6 +1792,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       embedThumbnail: false,
       embedMetadata: false,
       sponsorblockRemove: false,
+      showTaskbarProgress: true,
     };
     showModal({
       title: 'Settings Error',
@@ -1886,6 +1935,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const askDownloadLocationToggle = byId<HTMLInputElement>('askDownloadLocationToggle');
   const downloadOutputSummary = byId('downloadOutputSummary');
   const notificationsToggle = byId<HTMLInputElement>('notificationsToggle');
+  const taskbarProgressToggle = byId<HTMLInputElement>('taskbarProgressToggle');
   const checkUpdatesOnStartupToggle = byId<HTMLInputElement>('checkUpdatesOnStartupToggle');
   const checkUpdatesOnStartupLabel = byId('checkUpdatesOnStartupLabel');
   const updateChannelSelect = byId<HTMLSelectElement>('updateChannelSelect');
@@ -2140,6 +2190,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (notificationsToggle) {
       notificationsToggle.checked = settings.notifications ?? true;
+    }
+    if (taskbarProgressToggle) {
+      taskbarProgressToggle.checked = settings.showTaskbarProgress ?? true;
     }
 
     if (embedMetadataToggle) {
@@ -2814,6 +2867,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  if (taskbarProgressToggle) {
+    taskbarProgressToggle.addEventListener('change', (e) => {
+      settings.showTaskbarProgress = (e.target as HTMLInputElement).checked;
+      void persistSettings();
+    });
+  }
+
   if (embedMetadataToggle) {
     embedMetadataToggle.addEventListener('change', (e) => {
       settings.embedMetadata = (e.target as HTMLInputElement).checked;
@@ -3246,6 +3306,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       try {
         const result = await window.api.startQueue();
         if (result && result.ok) {
+          applyActiveDownloadProgressPhases(settings, 'Queue download...');
           announceQueueAction('Queue started processing.');
         } else {
           const message = result?.error?.message || 'Could not start the queue.';
@@ -3428,10 +3489,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         const videoFormat = settings.advancedOptions ? videoSelect?.value : undefined;
         const audioFormat = settings.advancedOptions ? audioSelect?.value : undefined;
         const convertFormat = settings.convertEnabled ? convertFormatSelect?.value : undefined;
-        const needsMerge = settings.bestQuality || (videoFormat && audioFormat);
-        const needsConvert = settings.convertEnabled && convertFormat;
-        configureProgressPhases(!!needsMerge, !!needsConvert);
-        showProgressBar('Starting download...');
+        applyActiveDownloadProgressPhases(settings, 'Starting download...', {
+          videoFormat,
+          audioFormat,
+        });
         const keepOriginal = settings.convertEnabled ? keepOriginalToggle?.checked : undefined;
         const startResult = await window.api.downloadVideo({
           url,
@@ -3476,32 +3537,47 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!outputEl) return;
       appendConsoleOutput(outputEl, message);
 
-      const progress = parseYtdlpProgress(message);
-      if (progress) {
-        let detailsText = '';
-        if (progress.speed && progress.eta) {
-          detailsText = `${progress.totalSize} • ${progress.speed} • ETA: ${progress.eta}`;
-        } else if (progress.totalSize) {
-          detailsText = `Size: ${progress.totalSize}`;
-        }
-        updateProgressBar(progress.percent, 'Downloading...', detailsText);
-      } else if (message.includes('[download] Destination:')) {
-        setProgressIndeterminate('Preparing download...');
-      } else if (message.includes('Merging formats')) {
-        setProgressPhase('merge');
-        setProgressIndeterminate('Merging video and audio...');
-      } else if (message.includes('Converting') || message.includes('[ffmpeg]')) {
-        setProgressPhase('convert');
-        setProgressIndeterminate('Converting...');
-      } else if (message.includes('100%')) {
-        updateProgressBar(100, 'Download complete!', '');
-      }
-
       if (message.includes('Identified file:') || message.includes('Successfully converted to')) {
         const fileMatch = message.match(/(?:Identified file:|Successfully converted to)\s*(.+)$/);
         if (fileMatch && fileMatch[1]) {
           lastDownloadedFilePath = fileMatch[1].trim();
         }
+      }
+    })
+  );
+
+  ipcCleanupFunctions.push(
+    window.api.onJobProgress((event) => {
+      const container = document.getElementById('progress-container');
+      if (container && !container.classList.contains('visible') && event.phase !== 'idle') {
+        showProgressBar(event.status);
+      }
+      if (event.phase === 'idle') {
+        return;
+      }
+      applyJobProgress(event);
+    })
+  );
+
+  ipcCleanupFunctions.push(
+    window.api.onMenuAction((action) => {
+      if (action === 'check-for-updates') {
+        void checkForUpdates();
+        return;
+      }
+      if (action === 'open-settings') {
+        const sidebar = document.getElementById('sidebar');
+        if (sidebar && !sidebar.classList.contains('open')) {
+          toggleSidebar();
+        }
+        return;
+      }
+      if (action === 'toggle-sidebar') {
+        toggleSidebar();
+        return;
+      }
+      if (action === 'show-licenses') {
+        showLicenses();
       }
     })
   );
@@ -3722,7 +3798,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
 
-    if (modifierPressed && event.key === ',') {
+    if (modifierPressed && event.shiftKey && event.key === ',') {
       event.preventDefault();
       toggleSidebar();
     }
