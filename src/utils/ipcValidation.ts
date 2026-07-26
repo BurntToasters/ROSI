@@ -312,6 +312,7 @@ function isValidSettingsKey(key: string): key is keyof Settings {
     key === 'animateBackground' ||
     key === 'flatUi' ||
     key === 'notifications' ||
+    key === 'showTaskbarProgress' ||
     key === 'denoReminderDismissed' ||
     key === 'gpuAcceleration' ||
     key === 'gpuType' ||
@@ -375,6 +376,7 @@ export function validateSettingsPatchPayload(value: unknown): ValidationResult<P
       rawKey === 'animateBackground' ||
       rawKey === 'flatUi' ||
       rawKey === 'notifications' ||
+      rawKey === 'showTaskbarProgress' ||
       rawKey === 'denoReminderDismissed' ||
       rawKey === 'gpuAcceleration' ||
       rawKey === 'bestQuality' ||
