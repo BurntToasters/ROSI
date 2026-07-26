@@ -1,11 +1,15 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  DownloadActivity,
+  DownloadCompletion,
   DownloadRequestOptions,
   DownloadStats,
   JobProgressEvent,
   MenuAction,
   NotificationRequest,
   QueueItem,
+  QueueReorderRequest,
+  QueueRequestOverrides,
   RendererApi,
   Settings,
   UpdateDownloadResult,
@@ -18,10 +22,14 @@ const api: RendererApi = {
   getChannel: () =>
     process.env.CHANNEL === 'msstore' || process.windowsStore ? 'msstore' : 'github',
   getFormats: (url: string) => ipcRenderer.invoke('getFormats', url),
-  getVideoInfo: (url: string) => ipcRenderer.invoke('get-video-info', url),
+  getVideoInfo: (url: string, playlistMode?: 'current' | 'all') =>
+    playlistMode === undefined
+      ? ipcRenderer.invoke('get-video-info', url)
+      : ipcRenderer.invoke('get-video-info', url, playlistMode),
   cancelVideoInfo: () => ipcRenderer.send('cancel-video-info'),
   selectDownloadLocation: () => ipcRenderer.invoke('select-download-location'),
   getSettings: () => ipcRenderer.invoke('get-settings'),
+  getDefaultSettings: () => ipcRenderer.invoke('get-default-settings'),
   saveSettings: (settings: Partial<Settings>) => ipcRenderer.invoke('save-settings', settings),
   resetSettings: () => ipcRenderer.send('reset-settings'),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
@@ -68,6 +76,12 @@ const api: RendererApi = {
     ipcRenderer.on('complete', listener);
     return () => ipcRenderer.removeListener('complete', listener);
   },
+  onDownloadComplete: (callback: (completion: DownloadCompletion) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, completion: DownloadCompletion) =>
+      callback(completion);
+    ipcRenderer.on('download-complete', listener);
+    return () => ipcRenderer.removeListener('download-complete', listener);
+  },
   openFileLocation: (filePath: string) => ipcRenderer.invoke('open-file-location', filePath),
   showNotification: (options: NotificationRequest) =>
     ipcRenderer.invoke('show-notification', options),
@@ -75,10 +89,24 @@ const api: RendererApi = {
   importSettings: () => ipcRenderer.invoke('import-settings'),
   getStats: () => ipcRenderer.invoke('get-stats') as Promise<DownloadStats>,
   resetStats: () => ipcRenderer.invoke('reset-stats'),
+  getDownloadActivity: () => ipcRenderer.invoke('get-download-activity'),
+  clearDownloadActivity: () => ipcRenderer.invoke('clear-download-activity'),
+  onDownloadActivityUpdate: (callback: (activity: DownloadActivity[]) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, activity: DownloadActivity[]) =>
+      callback(activity);
+    ipcRenderer.on('download-activity-update', listener);
+    return () => ipcRenderer.removeListener('download-activity-update', listener);
+  },
   logError: (message: string) => ipcRenderer.send('log-error', message),
   notifySettingsFlushed: () => ipcRenderer.send('settings-flush-complete'),
-  addToQueue: (urls: string[]) => ipcRenderer.invoke('add-to-queue', urls),
+  addToQueue: (urls: string[], options?: QueueRequestOverrides) =>
+    options === undefined
+      ? ipcRenderer.invoke('add-to-queue', urls)
+      : ipcRenderer.invoke('add-to-queue', urls, options),
   removeFromQueue: (id: string) => ipcRenderer.invoke('remove-from-queue', id),
+  retryQueueItem: (id: string) => ipcRenderer.invoke('retry-queue-item', id),
+  reorderQueueItem: (request: QueueReorderRequest) =>
+    ipcRenderer.invoke('reorder-queue-item', request),
   clearQueue: () => ipcRenderer.invoke('clear-queue'),
   getQueue: () => ipcRenderer.invoke('get-queue') as Promise<QueueItem[]>,
   startQueue: () => ipcRenderer.invoke('start-queue'),

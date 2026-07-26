@@ -41,6 +41,23 @@
         </button>
       </div>
 
+      <div class="settings-search" role="search">
+        <label for="settingsSearch">Search settings</label>
+        <input
+          id="settingsSearch"
+          type="search"
+          placeholder="Search profiles, subtitles, theme…"
+          autocomplete="off"
+          aria-describedby="settingsSearchStatus"
+        />
+        <p
+          id="settingsSearchStatus"
+          class="settings-search-status"
+          role="status"
+          aria-live="polite"
+        ></p>
+      </div>
+
       <div class="sidebar-content">
         <section class="settings-section">
           <button
@@ -131,6 +148,9 @@
               FFmpeg is bundled with ROSI. Only set this if you want to use a different FFmpeg
               installation.
             </div>
+            <button type="button" class="settings-section-reset" data-reset-section="download">
+              Reset section
+            </button>
           </div>
         </section>
 
@@ -220,6 +240,9 @@
                 aria-live="polite"
               ></p>
             </div>
+            <button type="button" class="settings-section-reset" data-reset-section="enhancements">
+              Reset section
+            </button>
           </div>
         </section>
 
@@ -288,6 +311,9 @@
                 yt-dlp cannot read, so ROSI uses Firefox cookies here.
               </div>
             </div>
+            <button type="button" class="settings-section-reset" data-reset-section="browser">
+              Reset section
+            </button>
           </div>
         </section>
 
@@ -356,6 +382,9 @@
             <p id="taskbarProgressLinuxNote" class="settings-hint hidden">
               Taskbar / Dock progress is available on Windows and macOS only.
             </p>
+            <button type="button" class="settings-section-reset" data-reset-section="interface">
+              Reset section
+            </button>
           </div>
         </section>
 
@@ -504,6 +533,10 @@
                 <line x1="12" y1="15" x2="12" y2="3" />
               </svg>
               Import Settings
+            </button>
+
+            <button type="button" class="settings-section-reset" data-reset-section="application">
+              Reset section
             </button>
           </div>
         </section>
@@ -772,6 +805,42 @@
                     <option value="opus">Opus</option>
                   </select>
                 </label>
+                <div class="preset-manager" aria-labelledby="presetManagerTitle">
+                  <div class="preset-manager-heading">
+                    <h3 id="presetManagerTitle">Saved presets</h3>
+                    <span>Reuse this setup for downloads and queues</span>
+                  </div>
+                  <div class="preset-manager-row">
+                    <label class="sr-only" for="downloadPresetSelect">Saved preset</label>
+                    <select id="downloadPresetSelect" aria-describedby="presetStatus">
+                      <option value="">No saved preset</option>
+                    </select>
+                    <button type="button" id="applyPresetBtn" class="preset-action-btn">
+                      Apply
+                    </button>
+                  </div>
+                  <div class="preset-manager-row">
+                    <label class="sr-only" for="presetNameInput">Preset name</label>
+                    <input
+                      id="presetNameInput"
+                      type="text"
+                      maxlength="40"
+                      placeholder="Preset name"
+                      autocomplete="off"
+                    />
+                    <button
+                      type="button"
+                      id="savePresetBtn"
+                      class="preset-action-btn preset-save-btn"
+                    >
+                      Save current
+                    </button>
+                    <button type="button" id="deletePresetBtn" class="preset-action-btn" disabled>
+                      Delete
+                    </button>
+                  </div>
+                  <p id="presetStatus" class="preset-status" role="status" aria-live="polite"></p>
+                </div>
               </section>
 
               <div class="download-destination" aria-live="polite">
@@ -856,6 +925,49 @@
                   <p id="preview-sub" class="preview-sub"></p>
                 </div>
               </div>
+
+              <fieldset id="playlistScope" class="playlist-scope hidden">
+                <legend>Playlist download scope</legend>
+                <div class="playlist-scope-options">
+                  <label
+                    ><input type="radio" name="playlist-scope" value="current" checked /> Current
+                    video</label
+                  >
+                  <label
+                    ><input type="radio" name="playlist-scope" value="all" /> Entire playlist</label
+                  >
+                  <label
+                    ><input type="radio" name="playlist-scope" value="range" /> Selected
+                    range</label
+                  >
+                </div>
+                <div id="playlistRangeFields" class="playlist-range-fields hidden">
+                  <label for="playlistRangeStart">From</label>
+                  <input
+                    id="playlistRangeStart"
+                    type="number"
+                    min="1"
+                    max="10000"
+                    value="1"
+                    inputmode="numeric"
+                  />
+                  <label for="playlistRangeEnd">to</label>
+                  <input
+                    id="playlistRangeEnd"
+                    type="number"
+                    min="1"
+                    max="10000"
+                    value="10"
+                    inputmode="numeric"
+                  />
+                </div>
+                <p
+                  id="playlistScopeError"
+                  class="playlist-scope-error"
+                  role="alert"
+                  aria-live="polite"
+                ></p>
+              </fieldset>
 
               <div id="progress-container" class="progress-container">
                 <div id="progress-phases" class="progress-phases">
@@ -1104,7 +1216,7 @@
             </div>
           </section>
 
-          <section id="download-history" class="download-history">
+          <section id="download-history" class="download-history visible">
             <div class="history-header">
               <button
                 type="button"
@@ -1141,7 +1253,7 @@
                       <circle cx="12" cy="12" r="10" />
                       <polyline points="12 6 12 12 16 14" />
                     </svg>
-                    Recent Downloads
+                    Activity
                   </span>
                   <span id="history-count" class="history-count">0</span>
                 </span>
@@ -1167,6 +1279,40 @@
                     d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
                   />
                 </svg>
+              </button>
+            </div>
+            <div class="activity-filters" role="group" aria-label="Filter activity">
+              <button
+                type="button"
+                class="activity-filter selected"
+                data-activity-filter="all"
+                aria-pressed="true"
+              >
+                All
+              </button>
+              <button
+                type="button"
+                class="activity-filter"
+                data-activity-filter="success"
+                aria-pressed="false"
+              >
+                Completed
+              </button>
+              <button
+                type="button"
+                class="activity-filter"
+                data-activity-filter="failed"
+                aria-pressed="false"
+              >
+                Failed
+              </button>
+              <button
+                type="button"
+                class="activity-filter"
+                data-activity-filter="cancelled"
+                aria-pressed="false"
+              >
+                Cancelled
               </button>
             </div>
             <div id="history-list" class="history-list" role="list"></div>
@@ -1353,7 +1499,7 @@
           class="wizard-progress"
           role="progressbar"
           aria-valuemin="1"
-          aria-valuemax="4"
+          aria-valuemax="5"
           aria-valuenow="1"
           aria-label="Setup progress"
         >
@@ -1408,13 +1554,46 @@
           </div>
         </div>
 
-        <!-- Step 3: Download Preferences -->
+        <!-- Step 3: Download Setup -->
         <div class="wizard-step" data-step="2">
-          <h2 class="wizard-heading">Download Preferences</h2>
-          <p class="wizard-description">
-            Standard compatible video is ready by default. Enable Download Profiles later in
-            Settings for Best video, Audio, and Custom modes.
-          </p>
+          <h2 class="wizard-heading">Set Up Downloads</h2>
+          <p class="wizard-description">Choose where files go and a starting download profile.</p>
+          <div class="wizard-options">
+            <div class="wizard-folder-choice">
+              <span>
+                <strong>Download folder</strong>
+                <small id="wizard-folder-summary">Choose a folder or ask each time</small>
+              </span>
+              <button type="button" id="wizard-choose-folder" class="wizard-inline-btn">
+                Choose…
+              </button>
+            </div>
+            <label class="wizard-toggle">
+              <input type="checkbox" id="wizard-ask-location" />
+              <span class="toggle-slider"></span>
+              <span class="wizard-toggle-text">
+                <strong>Ask where to save every time</strong>
+                <small>Show the folder picker before each download</small>
+              </span>
+            </label>
+            <fieldset class="wizard-profile-choice">
+              <legend>Default profile</legend>
+              <label
+                ><input type="radio" name="wizard-profile" value="standard" checked /> Standard
+                video</label
+              >
+              <label
+                ><input type="radio" name="wizard-profile" value="best-video" /> Best video</label
+              >
+              <label><input type="radio" name="wizard-profile" value="audio" /> Audio</label>
+            </fieldset>
+          </div>
+        </div>
+
+        <!-- Step 4: Preferences -->
+        <div class="wizard-step" data-step="3">
+          <h2 class="wizard-heading">App Preferences</h2>
+          <p class="wizard-description">Choose how ROSI keeps you informed.</p>
           <div class="wizard-options">
             <label class="wizard-toggle">
               <input type="checkbox" id="wizard-notifications" checked />
@@ -1436,7 +1615,7 @@
         </div>
 
         <!-- Finalize setup -->
-        <div class="wizard-step" data-step="3">
+        <div class="wizard-step" data-step="4">
           <div class="wizard-icon">
             <svg
               width="64"

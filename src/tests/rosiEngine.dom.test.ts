@@ -41,13 +41,14 @@ interface MockApi {
 
 function defaultSettings() {
   return {
-    settingsVersion: 6,
+    settingsVersion: 7,
     theme: 'dark',
     showConsoleOutput: false,
     consoleCollapsed: false,
     queueCollapsed: false,
     downloadProfilesEnabled: false,
     downloadMode: 'best-video',
+    downloadPresets: [],
     askDownloadLocation: false,
     advancedOptions: false,
     audioOnly: false,
@@ -99,13 +100,18 @@ function buildMockApi(overrides: Partial<MockApi> = {}): MockApi {
     downloadVideo: vi.fn(() => ok({ started: true })),
     cancelDownload: vi.fn(),
     cancelFormats: vi.fn(),
-    addToQueue: vi.fn(() => ok({ added: 1 })),
+    addToQueue: vi.fn(() => ok({ added: 1, skipped: 0 })),
     removeFromQueue: vi.fn(() => ok(undefined)),
+    retryQueueItem: vi.fn(() => ok(undefined)),
+    reorderQueueItem: vi.fn(() => ok(undefined)),
     clearQueue: vi.fn(() => ok(undefined)),
     startQueue: vi.fn(() => ok({ started: true })),
     cancelQueue: vi.fn(() => ok(undefined)),
     getStats: vi.fn(() => Promise.resolve({})),
     resetStats: vi.fn(() => ok(undefined)),
+    getDefaultSettings: vi.fn(() => ok(defaultSettings())),
+    getDownloadActivity: vi.fn(() => ok([])),
+    clearDownloadActivity: vi.fn(() => ok(undefined)),
     openExternal: vi.fn(() => ok({ opened: true })),
     openFileLocation: vi.fn(() => ok({ opened: true })),
     showNotification: vi.fn(() => ok({ shown: true })),
@@ -124,6 +130,8 @@ function buildMockApi(overrides: Partial<MockApi> = {}): MockApi {
     onJobProgress: noop,
     onMenuAction: noop,
     onComplete: noop,
+    onDownloadComplete: noop,
+    onDownloadActivityUpdate: noop,
     onQueueUpdate: noop,
     onPrepareForClose: noop,
     onUpdaterStatus: noop,
@@ -301,6 +309,46 @@ describe('rosiEngine DOM wiring', () => {
         bestQuality: false,
       })
     );
+  });
+
+  it('asks once for a destination when Ask every time is enabled', async () => {
+    const api = buildMockApi({
+      getSettings: vi.fn(() =>
+        Promise.resolve({ ...defaultSettings(), askDownloadLocation: true })
+      ) as unknown as ReturnType<typeof vi.fn>,
+      selectDownloadLocation: vi.fn(() => Promise.resolve('/tmp/queue-target')),
+    });
+    await loadEngine(api);
+
+    const queueInput = document.getElementById('queueUrlInput') as HTMLTextAreaElement;
+    queueInput.value = 'https://example.com/a\nhttps://example.com/b';
+    (document.getElementById('addToQueueBtn') as HTMLButtonElement).click();
+    await flush(30);
+
+    // One prompt for the whole batch, and the choice is sent as an override.
+    expect(api.selectDownloadLocation).toHaveBeenCalledTimes(1);
+    expect(api.addToQueue).toHaveBeenCalledWith(
+      ['https://example.com/a', 'https://example.com/b'],
+      expect.objectContaining({ outputPath: '/tmp/queue-target' })
+    );
+  });
+
+  it('queues nothing when the destination prompt is dismissed', async () => {
+    const api = buildMockApi({
+      getSettings: vi.fn(() =>
+        Promise.resolve({ ...defaultSettings(), askDownloadLocation: true })
+      ) as unknown as ReturnType<typeof vi.fn>,
+      selectDownloadLocation: vi.fn(() => Promise.resolve(null)),
+    });
+    await loadEngine(api);
+
+    const queueInput = document.getElementById('queueUrlInput') as HTMLTextAreaElement;
+    queueInput.value = 'https://example.com/a';
+    (document.getElementById('addToQueueBtn') as HTMLButtonElement).click();
+    await flush(30);
+
+    expect(api.addToQueue).not.toHaveBeenCalled();
+    expect(queueInput.value).toBe('https://example.com/a');
   });
 
   it('adds URLs to the queue via the queue input', async () => {
@@ -550,7 +598,7 @@ describe('rosiEngine DOM wiring', () => {
     (document.getElementById('previewBtn') as HTMLButtonElement).click();
     await flush(50);
 
-    expect(api.getVideoInfo).toHaveBeenCalledWith('https://youtube.com/watch?v=abc');
+    expect(api.getVideoInfo).toHaveBeenCalledWith('https://youtube.com/watch?v=abc', 'current');
     const card = document.getElementById('preview-card') as HTMLElement;
     expect(card.classList.contains('visible')).toBe(true);
     expect(document.getElementById('preview-title')?.textContent).toBe('Test Clip');
@@ -586,20 +634,80 @@ describe('rosiEngine DOM wiring', () => {
     expect(backBtn.hasAttribute('hidden')).toBe(true);
   });
 
-  it('records download history in localStorage on completion', async () => {
-    let completeCb: ((msg: string) => void) | null = null;
+  it('renders activity from the main process instead of localStorage', async () => {
+    let activityCb: ((entries: unknown[]) => void) | null = null;
     const api = buildMockApi({
-      onComplete: ((cb: (msg: string) => void) => {
-        completeCb = cb;
+      onDownloadActivityUpdate: ((cb: (entries: unknown[]) => void) => {
+        activityCb = cb;
         return () => {};
       }) as unknown as ReturnType<typeof vi.fn>,
     });
     await loadEngine(api);
-    expect(typeof completeCb).toBe('function');
-    completeCb!('✅ Download complete (no conversion).');
+    expect(api.getDownloadActivity).toHaveBeenCalled();
+    expect(document.querySelector('.history-empty')?.textContent).toContain('No downloads yet');
+
+    expect(typeof activityCb).toBe('function');
+    activityCb!([
+      {
+        id: 'a1',
+        owner: 'manual',
+        outcome: 'success',
+        statusMessage: 'Download complete.',
+        url: 'https://example.com/video',
+        request: { url: 'https://example.com/video', outputPath: '/tmp' },
+        filename: 'video.mp4',
+        sizeBytes: 2048,
+        startedAt: Date.now() - 1000,
+        completedAt: Date.now(),
+      },
+    ]);
     await flush();
-    const history = JSON.parse(localStorage.getItem('rosi-download-history') || '[]');
-    expect(history.length).toBe(1);
-    expect(history[0].status).toBe('success');
+
+    expect(document.getElementById('history-count')?.textContent).toBe('1');
+    expect(document.querySelector('.history-filename')?.textContent).toBe('video.mp4');
+    expect(localStorage.getItem('rosi-download-history')).toBeNull();
+  });
+
+  it('filters activity rows by outcome', async () => {
+    const api = buildMockApi({
+      getDownloadActivity: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          data: [
+            {
+              id: 'ok1',
+              owner: 'manual',
+              outcome: 'success',
+              statusMessage: 'done',
+              url: 'https://example.com/a',
+              request: { url: 'https://example.com/a', outputPath: '/tmp' },
+              filename: 'a.mp4',
+              startedAt: 1,
+              completedAt: 2,
+            },
+            {
+              id: 'bad1',
+              owner: 'queue',
+              outcome: 'failed',
+              statusMessage: 'failed',
+              url: 'https://example.com/b',
+              request: { url: 'https://example.com/b', outputPath: '/tmp' },
+              error: 'network unreachable',
+              startedAt: 1,
+              completedAt: 2,
+            },
+          ],
+        })
+      ) as unknown as ReturnType<typeof vi.fn>,
+    });
+    await loadEngine(api);
+    await flush(20);
+    expect(document.querySelectorAll('.history-item')).toHaveLength(2);
+
+    document.querySelector<HTMLButtonElement>('[data-activity-filter="failed"]')!.click();
+    await flush();
+    const rows = document.querySelectorAll('.history-item');
+    expect(rows).toHaveLength(1);
+    expect(document.querySelector('.history-error')?.textContent).toBe('network unreachable');
   });
 });

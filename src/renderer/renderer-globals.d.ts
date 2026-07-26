@@ -27,10 +27,16 @@ interface RosiUpdaterProgressEvent {
 interface RosiJobProgressEvent {
   phase: 'download' | 'merge' | 'convert' | 'idle';
   phasePercent: number;
+  itemOverallPercent: number;
   overallPercent: number;
+  queueItemId?: string;
   status: string;
   details?: string;
   indeterminate?: boolean;
+  downloadedBytes?: number;
+  totalBytes?: number;
+  speedBytesPerSecond?: number;
+  etaSeconds?: number;
 }
 interface RosiDownloadStats {
   totalDownloads: number;
@@ -42,15 +48,37 @@ interface RosiDownloadStats {
   firstDownloadAt: number | null;
   lastDownloadAt: number | null;
 }
+interface RosiDownloadCompletion {
+  id: string;
+  sessionId?: number;
+  owner: 'manual' | 'queue';
+  queueItemId?: string;
+  outcome: 'success' | 'failed' | 'cancelled';
+  statusMessage: string;
+  url: string;
+  profile?: 'best-video' | 'audio' | 'custom';
+  presetId?: string;
+  presetName?: string;
+  request: Record<string, unknown>;
+  filename?: string;
+  outputPath?: string;
+  sizeBytes?: number;
+  format?: string;
+  error?: string;
+  startedAt: number;
+  completedAt: number;
+}
+type RosiDownloadActivity = RosiDownloadCompletion;
 
 interface RosiRendererApi {
   restartApp: () => Promise<void>;
   getChannel: () => 'github' | 'msstore';
   getFormats: (url: string) => Promise<RosiIpcResult<string>>;
-  getVideoInfo: (url: string) => Promise<RosiIpcResult<unknown>>;
+  getVideoInfo: (url: string, playlistMode?: 'current' | 'all') => Promise<RosiIpcResult<unknown>>;
   cancelVideoInfo: () => void;
   selectDownloadLocation: () => Promise<string | null>;
   getSettings: () => Promise<unknown>;
+  getDefaultSettings: () => Promise<RosiIpcResult<unknown>>;
   saveSettings: (settings: Record<string, unknown>) => Promise<RosiIpcResult<unknown>>;
   resetSettings: () => void;
   openExternal: (url: string) => Promise<RosiIpcResult<{ opened: boolean }>>;
@@ -82,6 +110,7 @@ interface RosiRendererApi {
     ) => void
   ) => () => void;
   onComplete: (callback: (message: string) => void) => () => void;
+  onDownloadComplete: (callback: (completion: RosiDownloadCompletion) => void) => () => void;
   openFileLocation: (filePath: string) => Promise<RosiIpcResult<{ opened: boolean }>>;
   showNotification: (options: {
     title?: string;
@@ -92,10 +121,21 @@ interface RosiRendererApi {
   importSettings: () => Promise<RosiIpcResult<{ imported: boolean }>>;
   getStats: () => Promise<RosiDownloadStats>;
   resetStats: () => Promise<RosiIpcResult<void>>;
+  getDownloadActivity: () => Promise<RosiIpcResult<RosiDownloadActivity[]>>;
+  clearDownloadActivity: () => Promise<RosiIpcResult<void>>;
+  onDownloadActivityUpdate: (callback: (activity: RosiDownloadActivity[]) => void) => () => void;
   logError: (message: string) => void;
   notifySettingsFlushed: () => void;
-  addToQueue: (urls: string[]) => Promise<RosiIpcResult<{ added: number }>>;
+  addToQueue: (
+    urls: string[],
+    options?: Record<string, unknown>
+  ) => Promise<RosiIpcResult<{ added: number; skipped: number }>>;
   removeFromQueue: (id: string) => Promise<RosiIpcResult<void>>;
+  retryQueueItem: (id: string) => Promise<RosiIpcResult<void>>;
+  reorderQueueItem: (request: {
+    id: string;
+    direction: 'up' | 'down';
+  }) => Promise<RosiIpcResult<void>>;
   clearQueue: () => Promise<RosiIpcResult<void>>;
   getQueue: () => Promise<RosiQueueItem[]>;
   startQueue: () => Promise<RosiIpcResult<{ started: boolean }>>;
@@ -143,6 +183,15 @@ interface RosiQueueItem {
   id: string;
   status: 'pending' | 'downloading' | 'completed' | 'failed' | 'cancelled';
   url: string;
+  addedAt?: number;
+  startedAt?: number;
+  completedAt?: number;
+  request?: Record<string, unknown>;
+  progress?: RosiJobProgressEvent;
+  filename?: string;
+  outputPath?: string;
+  sizeBytes?: number;
+  error?: string;
 }
 
 interface RosiQueueModule {
@@ -154,11 +203,22 @@ interface RosiQueueModule {
       queueCount: HTMLElement | null;
     },
     deps: {
-      escapeHtml: (value: string) => string;
       removeFromQueue: (id: string) => Promise<unknown> | unknown;
+      retryQueueItem: (id: string) => Promise<unknown> | unknown;
+      reorderQueueItem: (id: string, direction: 'up' | 'down') => Promise<unknown> | unknown;
+      copyDiagnostics: (item: RosiQueueItem) => Promise<unknown> | unknown;
+      openFileLocation?: (filePath: string) => Promise<unknown> | unknown;
       focusQueueItemId?: string | null;
     }
   ) => void;
+  updateQueueItemProgress: (
+    item: RosiQueueItem,
+    elements: {
+      queueList: HTMLElement | null;
+      queueSection: HTMLElement | null;
+      queueCount: HTMLElement | null;
+    }
+  ) => boolean;
   resolveQueueSectionElement: (root?: Document) => HTMLElement | null;
 }
 

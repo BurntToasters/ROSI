@@ -374,7 +374,7 @@ describe('queue edge cases and error handling', () => {
       'invalid',
       'https://example.com/b',
     ]);
-    expect(result).toEqual({ ok: true, data: { added: 2 } });
+    expect(result).toEqual({ ok: true, data: { added: 2, skipped: 1 } });
   });
 
   it('rejects start-queue when no pending items', async () => {

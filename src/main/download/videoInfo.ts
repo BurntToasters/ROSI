@@ -20,7 +20,16 @@ function pickThumbnail(value: unknown): string | null {
   return typeof value === 'string' && isSafeHttpUrl(value) ? value : null;
 }
 
-export function parseVideoInfo(jsonString: string): VideoInfo | null {
+/**
+ * How many flat playlist entries a preview will pull. Entries are small, but
+ * the listing still has to finish quickly, so it stays bounded.
+ */
+export const PLAYLIST_PREVIEW_ENTRY_LIMIT = 500;
+
+export function parseVideoInfo(
+  jsonString: string,
+  entryLimit = PLAYLIST_PREVIEW_ENTRY_LIMIT
+): VideoInfo | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(jsonString);
@@ -52,6 +61,13 @@ export function parseVideoInfo(jsonString: string): VideoInfo | null {
   const title =
     pickString(data.title) ?? pickString(data.fulltitle) ?? (isPlaylist ? 'Playlist' : 'Untitled');
 
+  // Prefer the extractor's own total. Only fall back to counting entries when
+  // the listing was not truncated, otherwise the limit would be reported as if
+  // it were the real playlist length.
+  const reportedCount = pickNumber(data.playlist_count);
+  const entriesWereTruncated = entries !== null && entries.length >= entryLimit;
+  const playlistCount = reportedCount ?? (entries && !entriesWereTruncated ? entries.length : null);
+
   return {
     title,
     uploader: pickString(data.uploader) ?? pickString(data.channel) ?? pickString(data.creator),
@@ -60,7 +76,7 @@ export function parseVideoInfo(jsonString: string): VideoInfo | null {
     ext: pickString(data.ext),
     viewCount: pickNumber(data.view_count),
     isPlaylist,
-    playlistCount: pickNumber(data.playlist_count) ?? (entries ? entries.length : null),
+    playlistCount,
     webpageUrl: pickThumbnail(data.webpage_url),
   };
 }
@@ -72,7 +88,26 @@ export function cancelVideoInfo(): void {
   }
 }
 
-export function fetchVideoInfo(ytdlpPath: string, url: string): Promise<VideoInfo> {
+function resolveVideoInfoPlaylistMode(
+  url: string,
+  requestedMode?: 'current' | 'all'
+): 'current' | 'all' {
+  if (requestedMode) return requestedMode;
+  try {
+    const parsed = new URL(url);
+    return parsed.searchParams.has('list') || /\/playlist(?:\/|$)/i.test(parsed.pathname)
+      ? 'all'
+      : 'current';
+  } catch {
+    return 'current';
+  }
+}
+
+export function fetchVideoInfo(
+  ytdlpPath: string,
+  url: string,
+  playlistMode?: 'current' | 'all'
+): Promise<VideoInfo> {
   if (!isSafeHttpUrl(url)) {
     return Promise.reject('Invalid URL provided');
   }
@@ -89,9 +124,19 @@ export function fetchVideoInfo(ytdlpPath: string, url: string): Promise<VideoInf
       }
     }
 
+    const resolvedPlaylistMode = resolveVideoInfoPlaylistMode(url, playlistMode);
+    const playlistArgs =
+      resolvedPlaylistMode === 'all'
+        ? [
+            '--yes-playlist',
+            '--flat-playlist',
+            '--playlist-end',
+            String(PLAYLIST_PREVIEW_ENTRY_LIMIT),
+          ]
+        : ['--no-playlist'];
     const proc = spawnWithEnv(ytdlpPath, [
       '--dump-single-json',
-      '--no-playlist',
+      ...playlistArgs,
       '--no-warnings',
       '--skip-download',
       '--',

@@ -2,12 +2,25 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { app, dialog } from 'electron';
 import log from 'electron-log/main.js';
-import type { AudioFormat, DownloadProfile, DownloadStats, Settings } from '../types';
+import type {
+  AudioFormat,
+  DownloadPreset,
+  DownloadProfile,
+  DownloadRequestOptions,
+  DownloadStats,
+  PlaylistSelection,
+  Settings,
+} from '../types';
 import {
   ALLOWED_AUDIO_FORMATS,
   ALLOWED_BROWSERS,
   ALLOWED_CONVERT_FORMATS,
+  FORMAT_ID_PATTERN,
+  MAX_DOWNLOAD_PRESETS,
   MAX_FORMAT_COUNTS,
+  MAX_PLAYLIST_ITEM_INDEX,
+  MAX_PRESET_ID_LENGTH,
+  MAX_PRESET_NAME_LENGTH,
   MAX_SETTINGS_IMPORT_BYTES,
   CURRENT_SETTINGS_VERSION,
   SUBTITLE_LANGS_PATTERN,
@@ -27,6 +40,7 @@ const defaultSettings: Settings = {
   queueCollapsed: false,
   downloadProfilesEnabled: false,
   downloadMode: 'best-video',
+  downloadPresets: [],
   askDownloadLocation: false,
   advancedOptions: false,
   audioOnly: false,
@@ -57,8 +71,24 @@ const defaultSettings: Settings = {
   showTaskbarProgress: true,
 };
 
+function clonePlaylistSelection(
+  playlist: PlaylistSelection | undefined
+): PlaylistSelection | undefined {
+  return playlist ? { ...playlist } : undefined;
+}
+
+function cloneDownloadPreset(preset: DownloadPreset): DownloadPreset {
+  return {
+    ...preset,
+    playlist: clonePlaylistSelection(preset.playlist),
+  };
+}
+
 export function getDefaultSettings(): Settings {
-  return { ...defaultSettings };
+  return {
+    ...defaultSettings,
+    downloadPresets: defaultSettings.downloadPresets.map(cloneDownloadPreset),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -122,6 +152,173 @@ function readGpuType(value: unknown): Settings['gpuType'] {
     : defaultSettings.gpuType;
 }
 
+function sanitizePresetName(rawName: unknown, index: number, usedNames: Set<string>): string {
+  const fallback = `Preset ${index + 1}`;
+  const base =
+    typeof rawName === 'string'
+      ? rawName.trim().replace(/\s+/g, ' ').slice(0, MAX_PRESET_NAME_LENGTH) || fallback
+      : fallback;
+  let candidate = base;
+  let suffix = 2;
+  while (usedNames.has(candidate.toLowerCase())) {
+    const marker = ` (${suffix})`;
+    candidate = `${base.slice(0, Math.max(1, MAX_PRESET_NAME_LENGTH - marker.length))}${marker}`;
+    suffix += 1;
+  }
+  usedNames.add(candidate.toLowerCase());
+  return candidate;
+}
+
+function sanitizePresetId(
+  rawId: unknown,
+  name: string,
+  index: number,
+  usedIds: Set<string>
+): string {
+  const safePattern = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+  const provided = typeof rawId === 'string' ? rawId.trim() : '';
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  const fallback = `preset-${index + 1}${slug ? `-${slug}` : ''}`;
+  const base =
+    provided && provided.length <= MAX_PRESET_ID_LENGTH && safePattern.test(provided)
+      ? provided
+      : fallback.slice(0, MAX_PRESET_ID_LENGTH);
+  let candidate = base;
+  let suffix = 2;
+  while (usedIds.has(candidate)) {
+    const marker = `-${suffix}`;
+    candidate = `${base.slice(0, Math.max(1, MAX_PRESET_ID_LENGTH - marker.length))}${marker}`;
+    suffix += 1;
+  }
+  usedIds.add(candidate);
+  return candidate;
+}
+
+function sanitizePresetPlaylist(value: unknown): PlaylistSelection | undefined {
+  if (!isRecord(value)) return undefined;
+  if (value.mode === 'current' || value.mode === 'all') {
+    return { mode: value.mode };
+  }
+  if (
+    value.mode === 'range' &&
+    typeof value.start === 'number' &&
+    typeof value.end === 'number' &&
+    Number.isInteger(value.start) &&
+    Number.isInteger(value.end) &&
+    value.start >= 1 &&
+    value.end >= value.start &&
+    value.end <= MAX_PLAYLIST_ITEM_INDEX
+  ) {
+    return { mode: 'range', start: value.start, end: value.end };
+  }
+  return undefined;
+}
+
+export function sanitizeDownloadPresets(value: unknown): DownloadPreset[] {
+  if (!Array.isArray(value)) return [];
+  const presets: DownloadPreset[] = [];
+  const usedIds = new Set<string>();
+  const usedNames = new Set<string>();
+
+  for (const [index, rawPreset] of value.slice(0, MAX_DOWNLOAD_PRESETS).entries()) {
+    if (!isRecord(rawPreset)) continue;
+    const name = sanitizePresetName(rawPreset.name, index, usedNames);
+    const id = sanitizePresetId(rawPreset.id, name, index, usedIds);
+    const profile = readDownloadMode(rawPreset.profile, 'best-video');
+    const preset: DownloadPreset = { id, name, profile };
+
+    for (const key of [
+      'bestQuality',
+      'audioOnly',
+      'convertEnabled',
+      'keepOriginalAfterConvert',
+      'gpuAcceleration',
+      'writeSubtitles',
+      'embedThumbnail',
+      'embedMetadata',
+      'sponsorblockRemove',
+    ] as const) {
+      if (typeof rawPreset[key] === 'boolean') preset[key] = rawPreset[key];
+    }
+    if (
+      typeof rawPreset.audioFormat === 'string' &&
+      ALLOWED_AUDIO_FORMATS.has(rawPreset.audioFormat)
+    ) {
+      preset.audioFormat = rawPreset.audioFormat as AudioFormat;
+    }
+    if (
+      typeof rawPreset.videoFormat === 'string' &&
+      FORMAT_ID_PATTERN.test(rawPreset.videoFormat.trim())
+    ) {
+      preset.videoFormat = rawPreset.videoFormat.trim();
+    }
+    if (
+      typeof rawPreset.audioFormatId === 'string' &&
+      FORMAT_ID_PATTERN.test(rawPreset.audioFormatId.trim())
+    ) {
+      preset.audioFormatId = rawPreset.audioFormatId.trim();
+    }
+    if (
+      typeof rawPreset.convertFormat === 'string' &&
+      ALLOWED_CONVERT_FORMATS.has(rawPreset.convertFormat)
+    ) {
+      preset.convertFormat = rawPreset.convertFormat;
+    }
+    if (
+      rawPreset.gpuType === 'auto' ||
+      rawPreset.gpuType === 'nvidia' ||
+      rawPreset.gpuType === 'amd' ||
+      rawPreset.gpuType === 'intel'
+    ) {
+      preset.gpuType = rawPreset.gpuType;
+    }
+    if (typeof rawPreset.subtitleLangs === 'string') {
+      const langs = rawPreset.subtitleLangs.trim();
+      if (langs && langs.length <= 256 && SUBTITLE_LANGS_PATTERN.test(langs)) {
+        preset.subtitleLangs = langs;
+      }
+    }
+    const playlist = sanitizePresetPlaylist(rawPreset.playlist);
+    if (playlist) preset.playlist = playlist;
+    presets.push(preset);
+  }
+  return presets;
+}
+
+export function downloadPresetToRequestOptions(
+  preset: DownloadPreset
+): Partial<DownloadRequestOptions> {
+  const mapped: Partial<DownloadRequestOptions> = {
+    profileEnabled: true,
+    profile: preset.profile,
+    presetId: preset.id,
+    presetName: preset.name,
+    bestQuality: preset.bestQuality ?? preset.profile === 'best-video',
+    advancedOptions: preset.profile === 'custom',
+    audioOnly: preset.audioOnly ?? preset.profile === 'audio',
+    audioOutputFormat: preset.audioFormat,
+    videoFormat: preset.videoFormat,
+    audioFormat: preset.audioFormatId,
+    convertEnabled: preset.convertEnabled,
+    convertFormat: preset.convertFormat,
+    keepOriginal: preset.keepOriginalAfterConvert,
+    gpuAcceleration: preset.gpuAcceleration,
+    gpuType: preset.gpuType,
+    writeSubtitles: preset.writeSubtitles,
+    subtitleLangs: preset.subtitleLangs,
+    embedThumbnail: preset.embedThumbnail,
+    embedMetadata: preset.embedMetadata,
+    sponsorblockRemove: preset.sponsorblockRemove,
+    playlist: clonePlaylistSelection(preset.playlist),
+  };
+  return Object.fromEntries(
+    Object.entries(mapped).filter(([, value]) => value !== undefined)
+  ) as Partial<DownloadRequestOptions>;
+}
+
 function readBrowserChoice(value: unknown): string {
   const raw = readString(value, defaultSettings.browserChoice);
   const capped = raw.length > 64 ? raw.slice(0, 64) : raw;
@@ -169,7 +366,7 @@ function readSettingsVersion(value: unknown): number {
 
 export function migrateSettings(rawSettings: unknown): Settings {
   if (!isRecord(rawSettings)) {
-    return { ...defaultSettings };
+    return getDefaultSettings();
   }
 
   const downloadProfilesEnabled = readBoolean(
@@ -200,6 +397,7 @@ export function migrateSettings(rawSettings: unknown): Settings {
     queueCollapsed: readBoolean(rawSettings.queueCollapsed, defaultSettings.queueCollapsed),
     downloadProfilesEnabled,
     downloadMode,
+    downloadPresets: sanitizeDownloadPresets(rawSettings.downloadPresets),
     askDownloadLocation: readBoolean(
       rawSettings.askDownloadLocation,
       defaultSettings.askDownloadLocation
@@ -262,14 +460,14 @@ function normalizeSettingsVersion(settings: Settings): Settings {
 export function loadSettings(): Settings {
   try {
     if (!fs.existsSync(settingsPath)) {
-      return { ...defaultSettings };
+      return getDefaultSettings();
     }
     const raw = fs.readFileSync(settingsPath, 'utf-8');
     const loaded: unknown = JSON.parse(raw);
     return normalizeSettingsVersion(migrateSettings(loaded));
   } catch (error) {
     log.warn('Failed to load settings, using defaults:', error);
-    return { ...defaultSettings };
+    return getDefaultSettings();
   }
 }
 

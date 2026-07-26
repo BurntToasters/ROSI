@@ -6,6 +6,34 @@ function logError(context: string, error?: unknown) {
   }
 }
 
+interface RosiPlaylistSelection {
+  mode: 'current' | 'all' | 'range';
+  start?: number;
+  end?: number;
+}
+
+interface RosiDownloadPreset {
+  id: string;
+  name: string;
+  profile: 'best-video' | 'audio' | 'custom';
+  bestQuality?: boolean;
+  audioOnly?: boolean;
+  audioFormat?: string;
+  videoFormat?: string;
+  audioFormatId?: string;
+  convertEnabled?: boolean;
+  convertFormat?: string;
+  keepOriginalAfterConvert?: boolean;
+  gpuAcceleration?: boolean;
+  gpuType?: 'auto' | 'nvidia' | 'amd' | 'intel';
+  writeSubtitles?: boolean;
+  subtitleLangs?: string;
+  embedThumbnail?: boolean;
+  embedMetadata?: boolean;
+  sponsorblockRemove?: boolean;
+  playlist?: RosiPlaylistSelection;
+}
+
 interface RosiSettings {
   settingsVersion: number;
   theme: 'system' | 'light' | 'dark' | 'purple';
@@ -14,6 +42,7 @@ interface RosiSettings {
   queueCollapsed: boolean;
   downloadProfilesEnabled: boolean;
   downloadMode: 'best-video' | 'audio' | 'custom';
+  downloadPresets: RosiDownloadPreset[];
   askDownloadLocation: boolean;
   advancedOptions: boolean;
   audioOnly: boolean;
@@ -47,10 +76,16 @@ interface RosiSettings {
 interface RosiJobProgressEvent {
   phase: 'download' | 'merge' | 'convert' | 'idle';
   phasePercent: number;
+  itemOverallPercent: number;
   overallPercent: number;
+  queueItemId?: string;
   status: string;
   details?: string;
   indeterminate?: boolean;
+  downloadedBytes?: number;
+  totalBytes?: number;
+  speedBytesPerSecond?: number;
+  etaSeconds?: number;
 }
 
 function resolveProgressPhaseFlags(
@@ -115,6 +150,47 @@ function isValidUrl(string: string) {
   } catch {
     return false;
   }
+}
+
+interface ExtractedUrlSet {
+  urls: string[];
+  rejected: number;
+}
+
+function normalizeHttpUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (!isValidUrl(trimmed)) return null;
+  try {
+    const url = new URL(trimmed);
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function extractHttpUrls(rawValue: string): ExtractedUrlSet {
+  const candidates: string[] = [];
+  rawValue.split(/\r?\n/).forEach((line) => {
+    const trimmedLine = line.trim();
+    if (!trimmedLine || trimmedLine.startsWith('#')) return;
+    candidates.push(...trimmedLine.split(/\s+/).filter(Boolean));
+  });
+
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  let rejected = 0;
+  candidates.forEach((candidate) => {
+    const normalized = normalizeHttpUrl(candidate);
+    if (!normalized) {
+      rejected += 1;
+      return;
+    }
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    urls.push(normalized);
+  });
+  return { urls, rejected };
 }
 
 type ThemeName = 'system' | 'light' | 'dark' | 'purple';
@@ -525,7 +601,7 @@ function showKeyboardShortcuts() {
   const modKey = getModifierKeyName();
   showModal({
     title: 'Keyboard Shortcuts',
-    message: `${modKey}+D - Restart application\n${modKey}+F - Focus URL input field\n${modKey}+, - Open settings (macOS menu)\n${modKey}+Shift+, - Toggle settings sidebar\n${modKey}+Enter - Submit queue URLs (when focused)`,
+    message: `${modKey}+D - Restart application\n${modKey}+F - Focus URL input field\n${modKey}+, - Open settings (macOS menu)\n${modKey}+Shift+, - Toggle settings sidebar\n${modKey}+Enter - Submit queue URLs (when focused)\nAlt+↑ / Alt+↓ - Move a pending queue item (when focused)`,
     buttons: [{ label: 'OK', primary: true }],
   });
 }
@@ -926,57 +1002,96 @@ function formatBytes(bytes: number) {
 }
 
 const HISTORY_KEY = 'rosi-download-history';
-const HISTORY_MAX = 20;
 
-interface HistoryEntry {
+interface LegacyHistoryEntry {
   filename: string;
   path: string | null;
   timestamp: number;
   status: 'success' | 'failed' | 'cancelled';
 }
 
-function loadHistory(): HistoryEntry[] {
+/**
+ * Pre-4.3 downloads were tracked in localStorage. The main process is now the
+ * authoritative store, so these records are only read for display when the
+ * durable activity log is still empty.
+ */
+function loadLegacyHistory(): LegacyHistoryEntry[] {
   try {
     const data = localStorage.getItem(HISTORY_KEY);
-    return data ? (JSON.parse(data) as HistoryEntry[]) : [];
+    const parsed: unknown = data ? JSON.parse(data) : [];
+    return Array.isArray(parsed) ? (parsed as LegacyHistoryEntry[]) : [];
   } catch {
     return [];
   }
 }
 
-function saveHistory(history: HistoryEntry[]) {
+type ActivityFilter = 'all' | 'success' | 'failed' | 'cancelled';
+
+interface ActivityRow {
+  id: string;
+  outcome: 'success' | 'failed' | 'cancelled';
+  title: string;
+  subtitle: string;
+  timestamp: number;
+  url: string | null;
+  outputPath?: string;
+  error?: string;
+  request?: Record<string, unknown>;
+}
+
+let activityEntries: RosiDownloadActivity[] = [];
+let activityFilter: ActivityFilter = 'all';
+let activityReplayHandler: ((entry: RosiDownloadActivity) => void) | null = null;
+
+function hostFromUrl(url: string | null | undefined) {
+  if (!url) return '';
   try {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-  } catch (e) {
-    if (
-      e instanceof DOMException &&
-      (e.name === 'QuotaExceededError' || (e as DOMException).code === 22)
-    ) {
-      history.length = Math.max(1, Math.floor(history.length / 2));
-      try {
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-      } catch {
-        /* give up */
-      }
-    }
+    return new URL(url).hostname;
+  } catch {
+    return '';
   }
 }
 
-function addHistoryEntry(entry: {
-  filename: string;
-  path: string | null;
-  status: HistoryEntry['status'];
-}) {
-  const history = loadHistory();
-  history.unshift({
-    filename: entry.filename,
-    path: entry.path || null,
-    timestamp: Date.now(),
-    status: entry.status,
-  });
-  if (history.length > HISTORY_MAX) history.length = HISTORY_MAX;
-  saveHistory(history);
-  renderHistory();
+function describeActivityProfile(entry: RosiDownloadActivity) {
+  if (entry.presetName) return entry.presetName;
+  if (entry.profile === 'best-video') return 'Best video';
+  if (entry.profile === 'audio') return 'Audio';
+  if (entry.profile === 'custom') return 'Custom';
+  return '';
+}
+
+function toActivityRows(): ActivityRow[] {
+  if (activityEntries.length > 0) {
+    return activityEntries.map((entry) => {
+      const parts = [
+        hostFromUrl(entry.url),
+        describeActivityProfile(entry),
+        typeof entry.sizeBytes === 'number' ? formatBytes(entry.sizeBytes) : '',
+        formatRelativeTime(entry.completedAt),
+      ].filter(Boolean);
+      return {
+        id: entry.id,
+        outcome: entry.outcome,
+        title: entry.filename || hostFromUrl(entry.url) || entry.url,
+        subtitle: parts.join(' • '),
+        timestamp: entry.completedAt,
+        url: entry.url,
+        outputPath: entry.outputPath,
+        error: entry.error,
+        request: entry.request,
+      };
+    });
+  }
+
+  return loadLegacyHistory().map((entry, index) => ({
+    id: `legacy-${index}`,
+    outcome: entry.status,
+    title: entry.filename || 'Unknown file',
+    subtitle: formatRelativeTime(entry.timestamp),
+    timestamp: entry.timestamp,
+    url: null,
+    outputPath: entry.path ?? undefined,
+  }));
 }
 
 function formatRelativeTime(timestamp: number) {
@@ -992,43 +1107,69 @@ function formatRelativeTime(timestamp: number) {
   return new Date(timestamp).toLocaleDateString();
 }
 
-function escapeHtml(str: string) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+/** Opening a folder can fail (moved file, unmounted volume); surface that. */
+async function revealFileLocation(filePath: string) {
+  try {
+    const result = await window.api.openFileLocation(filePath);
+    if (!result || !result.ok) {
+      showToast(result?.error?.message || 'Could not open that file location.', {
+        type: 'warning',
+      });
+    }
+  } catch {
+    showToast('Could not open that file location.', { type: 'warning' });
+  }
 }
 
-function renderHistory() {
+function createActivityActionButton(label: string, ariaLabel: string, action: () => void) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'history-open-btn';
+  button.setAttribute('aria-label', ariaLabel);
+  button.textContent = label;
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    action();
+  });
+  return button;
+}
+
+function renderActivity() {
   const historySection = document.getElementById('download-history');
   const listEl = document.getElementById('history-list');
   const countEl = document.getElementById('history-count');
   if (!listEl || !historySection) return;
 
-  const history = loadHistory();
-  if (countEl) countEl.textContent = String(history.length);
+  const rows = toActivityRows();
+  const visibleRows =
+    activityFilter === 'all' ? rows : rows.filter((row) => row.outcome === activityFilter);
+  if (countEl) countEl.textContent = String(rows.length);
 
-  if (history.length === 0) {
-    historySection.classList.remove('visible');
-    listEl.innerHTML = '';
+  // The panel now stays mounted so the empty state remains discoverable.
+  historySection.classList.add('visible');
+  listEl.replaceChildren();
+
+  if (visibleRows.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'history-empty';
+    empty.textContent =
+      rows.length === 0
+        ? 'No downloads yet. Finished, failed, and cancelled downloads will appear here.'
+        : 'No downloads match this filter.';
+    listEl.appendChild(empty);
     return;
   }
 
-  historySection.classList.add('visible');
-  listEl.innerHTML = '';
   const fragment = document.createDocumentFragment();
-
-  history.forEach((entry) => {
+  visibleRows.forEach((row) => {
     const item = document.createElement('div');
     item.className = 'history-item';
     item.setAttribute('role', 'listitem');
 
     const statusLabel =
-      entry.status === 'success'
+      row.outcome === 'success'
         ? 'Completed'
-        : entry.status === 'cancelled'
+        : row.outcome === 'cancelled'
           ? 'Cancelled'
           : 'Failed';
 
@@ -1036,44 +1177,98 @@ function renderHistory() {
     info.className = 'history-item-info';
     const filenameEl = document.createElement('span');
     filenameEl.className = 'history-filename';
-    filenameEl.title = entry.filename;
-    filenameEl.textContent = entry.filename;
+    filenameEl.title = row.url || row.title;
+    filenameEl.textContent = row.title;
     const timeEl = document.createElement('span');
     timeEl.className = 'history-time';
-    timeEl.textContent = formatRelativeTime(entry.timestamp);
+    timeEl.textContent = row.subtitle || formatRelativeTime(row.timestamp);
     info.append(filenameEl, timeEl);
+    if (row.outcome === 'failed' && row.error) {
+      const errorEl = document.createElement('span');
+      errorEl.className = 'history-error';
+      errorEl.textContent = row.error;
+      info.appendChild(errorEl);
+    }
 
     const actions = document.createElement('div');
     actions.className = 'history-item-actions';
     const statusEl = document.createElement('span');
-    statusEl.className = `history-status ${entry.status}`;
+    statusEl.className = `history-status ${row.outcome}`;
     statusEl.textContent = statusLabel;
     actions.appendChild(statusEl);
 
-    if (entry.status === 'success' && entry.path) {
-      const filePath = entry.path;
-      const openBtn = document.createElement('button');
-      openBtn.type = 'button';
-      openBtn.className = 'history-open-btn';
-      openBtn.setAttribute('aria-label', `Open file location for ${entry.filename}`);
-      openBtn.textContent = 'Open';
-      openBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        void window.api.openFileLocation(filePath);
-      });
-      actions.appendChild(openBtn);
+    if (row.request && activityReplayHandler) {
+      const entry = activityEntries.find((candidate) => candidate.id === row.id);
+      if (entry) {
+        actions.appendChild(
+          createActivityActionButton('Download again', `Download ${row.title} again`, () => {
+            activityReplayHandler?.(entry);
+          })
+        );
+      }
+    }
+    if (row.url) {
+      const sourceUrl = row.url;
+      actions.appendChild(
+        createActivityActionButton('Copy source', `Copy source link for ${row.title}`, () => {
+          void navigator.clipboard.writeText(sourceUrl).then(
+            () => showToast('Source link copied.', { type: 'info' }),
+            () => showToast('Could not copy the source link.', { type: 'warning' })
+          );
+        })
+      );
+    }
+    if (row.outcome === 'success' && row.outputPath) {
+      const filePath = row.outputPath;
+      actions.appendChild(
+        createActivityActionButton('Open folder', `Open file location for ${row.title}`, () => {
+          void revealFileLocation(filePath);
+        })
+      );
     }
 
     item.append(info, actions);
-
     fragment.appendChild(item);
   });
   listEl.appendChild(fragment);
 }
 
-function clearHistory() {
-  saveHistory([]);
-  renderHistory();
+function setActivityEntries(entries: RosiDownloadActivity[]) {
+  activityEntries = Array.isArray(entries) ? entries : [];
+  renderActivity();
+}
+
+function setActivityFilter(filter: ActivityFilter) {
+  activityFilter = filter;
+  document.querySelectorAll<HTMLButtonElement>('.activity-filter').forEach((button) => {
+    const isSelected = button.dataset.activityFilter === filter;
+    button.classList.toggle('selected', isSelected);
+    button.setAttribute('aria-pressed', String(isSelected));
+  });
+  renderActivity();
+}
+
+async function clearActivity() {
+  try {
+    localStorage.removeItem(HISTORY_KEY);
+  } catch {
+    /* ignore */
+  }
+  if (typeof window.api.clearDownloadActivity !== 'function') {
+    setActivityEntries([]);
+    return;
+  }
+  try {
+    const result = await window.api.clearDownloadActivity();
+    if (!result || !result.ok) {
+      showToast(result?.error?.message || 'Could not clear activity.', { type: 'error' });
+      return;
+    }
+  } catch {
+    showToast('Could not clear activity.', { type: 'error' });
+    return;
+  }
+  setActivityEntries([]);
 }
 
 let isManualUpdateCheck = false;
@@ -1529,7 +1724,7 @@ function launchSetupWizard(
   persistSettingsFn: (silent?: boolean, immediate?: boolean) => Promise<boolean> | void,
   onComplete: () => void
 ) {
-  const TOTAL_STEPS = 4;
+  const TOTAL_STEPS = 5;
   let currentStep = 0;
 
   const overlay = document.getElementById('setup-wizard');
@@ -1571,6 +1766,54 @@ function launchSetupWizard(
       applyThemeFn(radio.value);
     });
   });
+
+  // Destination step: the folder is optional when asking every time.
+  let wizardChosenFolder = settings.downloadFolder?.trim() || '';
+  const wizardFolderSummary = document.getElementById('wizard-folder-summary');
+  const wizardChooseFolderBtn = document.getElementById(
+    'wizard-choose-folder'
+  ) as HTMLButtonElement | null;
+  const wizardAskLocation = document.getElementById(
+    'wizard-ask-location'
+  ) as HTMLInputElement | null;
+
+  const syncWizardFolderSummary = () => {
+    if (!wizardFolderSummary) return;
+    if (wizardAskLocation?.checked) {
+      wizardFolderSummary.textContent = 'ROSI will ask before every download';
+      return;
+    }
+    wizardFolderSummary.textContent = wizardChosenFolder || 'Choose a folder or ask each time';
+  };
+  if (wizardAskLocation) {
+    wizardAskLocation.checked = !!settings.askDownloadLocation;
+    wizardAskLocation.addEventListener('change', syncWizardFolderSummary);
+  }
+  if (wizardChooseFolderBtn) {
+    wizardChooseFolderBtn.addEventListener('click', async () => {
+      wizardChooseFolderBtn.disabled = true;
+      try {
+        const chosen = await window.api.selectDownloadLocation();
+        if (chosen) {
+          wizardChosenFolder = chosen;
+          if (wizardAskLocation) wizardAskLocation.checked = false;
+          syncWizardFolderSummary();
+        }
+      } finally {
+        wizardChooseFolderBtn.disabled = false;
+      }
+    });
+  }
+  const initialProfileValue = settings.downloadProfilesEnabled
+    ? settings.downloadMode === 'audio'
+      ? 'audio'
+      : 'best-video'
+    : 'standard';
+  const initialProfileRadio = overlayEl.querySelector<HTMLInputElement>(
+    `input[name="wizard-profile"][value="${initialProfileValue}"]`
+  );
+  if (initialProfileRadio) initialProfileRadio.checked = true;
+  syncWizardFolderSummary();
 
   function updateUI() {
     // Steps
@@ -1621,6 +1864,30 @@ function launchSetupWizard(
       applyThemeFn(settings.theme);
     }
 
+    // Destination
+    const askLocation = document.getElementById('wizard-ask-location') as HTMLInputElement | null;
+    if (askLocation) settings.askDownloadLocation = askLocation.checked;
+    if (wizardChosenFolder) settings.downloadFolder = wizardChosenFolder;
+
+    // Default profile
+    const selectedProfile = overlayEl.querySelector<HTMLInputElement>(
+      'input[name="wizard-profile"]:checked'
+    );
+    const profile = selectedProfile?.value;
+    if (profile === 'best-video' || profile === 'audio') {
+      settings.downloadProfilesEnabled = true;
+      settings.downloadMode = profile;
+      settings.bestQuality = profile === 'best-video';
+      settings.audioOnly = profile === 'audio';
+      settings.advancedOptions = false;
+      if (profile === 'audio') settings.convertEnabled = false;
+    } else {
+      settings.downloadProfilesEnabled = false;
+      settings.bestQuality = false;
+      settings.audioOnly = false;
+      settings.advancedOptions = false;
+    }
+
     // Download prefs
     const notifications = document.getElementById(
       'wizard-notifications'
@@ -1646,6 +1913,20 @@ function launchSetupWizard(
       'checkUpdatesOnStartupToggle'
     ) as HTMLInputElement | null;
     if (checkUpdatesToggle) checkUpdatesToggle.checked = settings.checkUpdatesOnStartup;
+    const askLocationToggle = document.getElementById(
+      'askDownloadLocationToggle'
+    ) as HTMLInputElement | null;
+    if (askLocationToggle) askLocationToggle.checked = settings.askDownloadLocation;
+    const profilesToggle = document.getElementById(
+      'downloadProfilesToggle'
+    ) as HTMLInputElement | null;
+    if (profilesToggle) profilesToggle.checked = settings.downloadProfilesEnabled;
+    const folderSummary = document.getElementById('downloadFolderSummary');
+    if (folderSummary) {
+      const folder = settings.downloadFolder?.trim();
+      folderSummary.textContent = folder || 'Choose a folder';
+      folderSummary.title = folder || 'Choose a folder before downloading';
+    }
 
     onComplete();
   }
@@ -1758,13 +2039,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (error) {
     logError('Failed to load settings', error);
     settings = {
-      settingsVersion: 6,
+      settingsVersion: 7,
       theme: 'system',
       showConsoleOutput: false,
       consoleCollapsed: false,
       queueCollapsed: false,
       downloadProfilesEnabled: false,
       downloadMode: 'best-video',
+      downloadPresets: [],
       askDownloadLocation: false,
       advancedOptions: false,
       audioFormat: 'mp3',
@@ -2338,8 +2620,612 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  // ── Playlist scope ──────────────────────────────────────────────────────────
+  const playlistScope = byId<HTMLElement>('playlistScope');
+  const playlistRangeFields = byId<HTMLElement>('playlistRangeFields');
+  const playlistRangeStart = byId<HTMLInputElement>('playlistRangeStart');
+  const playlistRangeEnd = byId<HTMLInputElement>('playlistRangeEnd');
+  const playlistScopeError = byId<HTMLElement>('playlistScopeError');
+  const MAX_PLAYLIST_INDEX = 10_000;
+
+  function getPlaylistMode(): 'current' | 'all' | 'range' {
+    const selected = document.querySelector<HTMLInputElement>(
+      'input[name="playlist-scope"]:checked'
+    );
+    const value = selected?.value;
+    return value === 'all' || value === 'range' ? value : 'current';
+  }
+
+  function syncPlaylistRangeVisibility() {
+    playlistRangeFields?.classList.toggle('hidden', getPlaylistMode() !== 'range');
+  }
+
+  function resetPlaylistScope() {
+    playlistScope?.classList.add('hidden');
+    if (playlistScopeError) playlistScopeError.textContent = '';
+    const currentRadio = document.querySelector<HTMLInputElement>(
+      'input[name="playlist-scope"][value="current"]'
+    );
+    if (currentRadio) currentRadio.checked = true;
+    syncPlaylistRangeVisibility();
+  }
+
+  function showPlaylistScope(itemCount: number | null) {
+    const wasHidden = !playlistScope || playlistScope.classList.contains('hidden');
+    playlistScope?.classList.remove('hidden');
+    // Only seed the range on first reveal so a typed value is never clobbered
+    // by a repeated preview of the same URL.
+    if (wasHidden && playlistRangeEnd && itemCount && itemCount > 0) {
+      playlistRangeEnd.value = String(Math.min(itemCount, MAX_PLAYLIST_INDEX));
+    }
+    syncPlaylistRangeVisibility();
+  }
+
+  /** Returns a validated typed selection, or null when the range is invalid. */
+  function resolvePlaylistSelection(): RosiPlaylistSelection | null {
+    if (!playlistScope || playlistScope.classList.contains('hidden')) {
+      return { mode: 'current' };
+    }
+    const mode = getPlaylistMode();
+    if (mode !== 'range') {
+      if (playlistScopeError) playlistScopeError.textContent = '';
+      return { mode };
+    }
+    const start = Number(playlistRangeStart?.value);
+    const end = Number(playlistRangeEnd?.value);
+    if (
+      !Number.isInteger(start) ||
+      !Number.isInteger(end) ||
+      start < 1 ||
+      end < start ||
+      end > MAX_PLAYLIST_INDEX
+    ) {
+      const message = `Enter a playlist range using whole numbers from 1 to ${MAX_PLAYLIST_INDEX}, with the first value no larger than the second.`;
+      if (playlistScopeError) playlistScopeError.textContent = message;
+      showToast(message, { type: 'warning' });
+      return null;
+    }
+    if (playlistScopeError) playlistScopeError.textContent = '';
+    return { mode: 'range', start, end };
+  }
+
+  document.querySelectorAll<HTMLInputElement>('input[name="playlist-scope"]').forEach((radio) => {
+    radio.addEventListener('change', () => {
+      syncPlaylistRangeVisibility();
+      if (playlistScopeError) playlistScopeError.textContent = '';
+    });
+  });
+  [playlistRangeStart, playlistRangeEnd].forEach((input) => {
+    input?.addEventListener('input', () => {
+      if (playlistScopeError) playlistScopeError.textContent = '';
+    });
+  });
+  resetPlaylistScope();
+
+  // ── Preview cache and debounce ──────────────────────────────────────────────
+  // Declared ahead of the URL wiring because the first syncPrimaryActionState()
+  // call happens during initialization.
+  const PREVIEW_CACHE_MAX = 20;
+  const PREVIEW_CACHE_TTL_MS = 10 * 60 * 1000;
+  const PREVIEW_DEBOUNCE_MS = 450;
+  const previewCache = new Map<string, { info: RosiVideoInfo; storedAt: number }>();
+  let previewDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let previewRequestToken = 0;
+
+  function readPreviewCache(url: string): RosiVideoInfo | null {
+    const cached = previewCache.get(url);
+    if (!cached) return null;
+    if (Date.now() - cached.storedAt > PREVIEW_CACHE_TTL_MS) {
+      previewCache.delete(url);
+      return null;
+    }
+    return cached.info;
+  }
+
+  function writePreviewCache(url: string, info: RosiVideoInfo) {
+    previewCache.set(url, { info, storedAt: Date.now() });
+    while (previewCache.size > PREVIEW_CACHE_MAX) {
+      const oldestKey = previewCache.keys().next().value;
+      if (typeof oldestKey !== 'string') break;
+      previewCache.delete(oldestKey);
+    }
+  }
+
+  function looksLikePlaylistUrl(url: string) {
+    try {
+      const parsed = new URL(url);
+      return parsed.searchParams.has('list') || /\/playlist(?:\/|$)/i.test(parsed.pathname);
+    } catch {
+      return false;
+    }
+  }
+
+  // Remembered because setButtonLoading(false) restores the button's original
+  // markup, which would otherwise discard the label set during a request.
+  let previewButtonLabel = 'Preview';
+
+  function setPreviewButtonLabel(label: string) {
+    previewButtonLabel = label;
+    if (!previewBtn || previewBtn.classList.contains('loading')) return;
+    const textNodes = Array.from(previewBtn.childNodes).filter(
+      (node) => node.nodeType === Node.TEXT_NODE && (node.textContent || '').trim().length > 0
+    );
+    const target = textNodes[textNodes.length - 1];
+    if (target) target.textContent = ` ${label}`;
+  }
+
+  function restorePreviewButtonLabel() {
+    setPreviewButtonLabel(previewButtonLabel);
+  }
+
+  function cancelScheduledPreview() {
+    if (previewDebounceTimer) {
+      clearTimeout(previewDebounceTimer);
+      previewDebounceTimer = null;
+    }
+    previewRequestToken += 1;
+    setPreviewButtonLabel('Preview');
+  }
+
+  function applyPreviewResult(url: string, info: RosiVideoInfo) {
+    lastPreviewUrl = url;
+    renderVideoPreview(info);
+    if (info.isPlaylist) {
+      showPlaylistScope(info.playlistCount);
+    } else {
+      resetPlaylistScope();
+    }
+    setPreviewButtonLabel('Refresh');
+  }
+
+  /** Auto-preview is best effort: failures stay silent until asked manually. */
+  function schedulePreview(url: string) {
+    if (previewDebounceTimer) clearTimeout(previewDebounceTimer);
+    const cached = readPreviewCache(url);
+    if (cached) {
+      applyPreviewResult(url, cached);
+      return;
+    }
+    previewDebounceTimer = setTimeout(() => {
+      previewDebounceTimer = null;
+      void runVideoPreview(true);
+    }, PREVIEW_DEBOUNCE_MS);
+  }
+
+  // ── Saved presets ───────────────────────────────────────────────────────────
+  const MAX_PRESETS = 20;
+  const downloadPresetSelect = byId<HTMLSelectElement>('downloadPresetSelect');
+  const applyPresetBtn = byId<HTMLButtonElement>('applyPresetBtn');
+  const presetNameInput = byId<HTMLInputElement>('presetNameInput');
+  const savePresetBtn = byId<HTMLButtonElement>('savePresetBtn');
+  const deletePresetBtn = byId<HTMLButtonElement>('deletePresetBtn');
+  const presetStatus = byId<HTMLElement>('presetStatus');
+
+  function getPresets(): RosiDownloadPreset[] {
+    return Array.isArray(settings.downloadPresets) ? settings.downloadPresets : [];
+  }
+
+  function getSelectedPreset(): RosiDownloadPreset | null {
+    const id = downloadPresetSelect?.value;
+    if (!id) return null;
+    return getPresets().find((preset) => preset.id === id) ?? null;
+  }
+
+  function setPresetStatus(message: string) {
+    if (presetStatus) presetStatus.textContent = message;
+  }
+
+  function renderPresetOptions(selectedId = downloadPresetSelect?.value ?? '') {
+    if (!downloadPresetSelect) return;
+    const presets = getPresets();
+    downloadPresetSelect.replaceChildren();
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = presets.length === 0 ? 'No saved presets' : 'Use current settings';
+    downloadPresetSelect.appendChild(placeholder);
+    presets.forEach((preset) => {
+      const option = document.createElement('option');
+      option.value = preset.id;
+      option.textContent = preset.name;
+      downloadPresetSelect.appendChild(option);
+    });
+    downloadPresetSelect.value = presets.some((preset) => preset.id === selectedId)
+      ? selectedId
+      : '';
+    downloadPresetSelect.disabled = presets.length === 0;
+    if (applyPresetBtn) applyPresetBtn.disabled = !downloadPresetSelect.value;
+    if (deletePresetBtn) deletePresetBtn.disabled = !downloadPresetSelect.value;
+  }
+
+  function createPresetId(name: string) {
+    const slug = name
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40);
+    const base = slug || 'preset';
+    const existing = new Set(getPresets().map((preset) => preset.id));
+    let candidate = base;
+    let suffix = 2;
+    while (existing.has(candidate)) {
+      candidate = `${base}-${suffix}`;
+      suffix += 1;
+    }
+    return candidate;
+  }
+
+  /** Snapshot only the safe, user-visible download options. */
+  function buildPresetFromCurrentSettings(id: string, name: string): RosiDownloadPreset {
+    const preset: RosiDownloadPreset = {
+      id,
+      name,
+      profile: settings.downloadProfilesEnabled ? settings.downloadMode : 'best-video',
+      bestQuality: settings.bestQuality,
+      audioOnly: settings.audioOnly,
+      audioFormat: settings.audioFormat,
+      convertEnabled: settings.convertEnabled,
+      convertFormat: settings.convertFormat,
+      keepOriginalAfterConvert: settings.keepOriginalAfterConvert,
+      gpuAcceleration: settings.gpuAcceleration,
+      gpuType: settings.gpuType,
+      writeSubtitles: settings.writeSubtitles,
+      subtitleLangs: settings.subtitleLangs,
+      embedThumbnail: settings.embedThumbnail,
+      embedMetadata: settings.embedMetadata,
+      sponsorblockRemove: settings.sponsorblockRemove,
+    };
+    const playlist = resolvePlaylistSelection();
+    if (playlist && playlist.mode !== 'current') preset.playlist = playlist;
+    return preset;
+  }
+
+  function applyPresetToSettings(preset: RosiDownloadPreset) {
+    settings.downloadProfilesEnabled = true;
+    applyDownloadProfile(preset.profile);
+    if (typeof preset.bestQuality === 'boolean') settings.bestQuality = preset.bestQuality;
+    if (typeof preset.audioOnly === 'boolean') settings.audioOnly = preset.audioOnly;
+    if (preset.audioFormat) settings.audioFormat = preset.audioFormat;
+    if (typeof preset.convertEnabled === 'boolean') settings.convertEnabled = preset.convertEnabled;
+    if (preset.convertFormat) settings.convertFormat = preset.convertFormat;
+    if (typeof preset.keepOriginalAfterConvert === 'boolean') {
+      settings.keepOriginalAfterConvert = preset.keepOriginalAfterConvert;
+    }
+    if (typeof preset.gpuAcceleration === 'boolean') {
+      settings.gpuAcceleration = preset.gpuAcceleration;
+    }
+    if (preset.gpuType) settings.gpuType = preset.gpuType;
+    if (typeof preset.writeSubtitles === 'boolean') settings.writeSubtitles = preset.writeSubtitles;
+    if (preset.subtitleLangs) settings.subtitleLangs = preset.subtitleLangs;
+    if (typeof preset.embedThumbnail === 'boolean') settings.embedThumbnail = preset.embedThumbnail;
+    if (typeof preset.embedMetadata === 'boolean') settings.embedMetadata = preset.embedMetadata;
+    if (typeof preset.sponsorblockRemove === 'boolean') {
+      settings.sponsorblockRemove = preset.sponsorblockRemove;
+    }
+    updateUIFromSettings();
+  }
+
+  /** Per-job overrides sent with queue additions. */
+  function buildQueueRequestOverrides(outputPath?: string): Record<string, unknown> | undefined {
+    const overrides: Record<string, unknown> = {};
+    if (outputPath) overrides.outputPath = outputPath;
+    const preset = getSelectedPreset();
+    if (preset) {
+      overrides.presetId = preset.id;
+      overrides.presetName = preset.name;
+    }
+    const playlist = resolvePlaylistSelection();
+    if (playlist && playlist.mode !== 'current') overrides.playlist = playlist;
+    return Object.keys(overrides).length > 0 ? overrides : undefined;
+  }
+
+  if (downloadPresetSelect) {
+    downloadPresetSelect.addEventListener('change', () => {
+      if (applyPresetBtn) applyPresetBtn.disabled = !downloadPresetSelect.value;
+      if (deletePresetBtn) deletePresetBtn.disabled = !downloadPresetSelect.value;
+      const preset = getSelectedPreset();
+      setPresetStatus(preset ? `${preset.name} selected for the next download.` : '');
+    });
+  }
+  if (applyPresetBtn) {
+    applyPresetBtn.addEventListener('click', () => {
+      const preset = getSelectedPreset();
+      if (!preset) return;
+      applyPresetToSettings(preset);
+      void persistSettings(true, true);
+      setPresetStatus(`Applied ${preset.name}.`);
+    });
+  }
+  if (savePresetBtn) {
+    savePresetBtn.addEventListener('click', async () => {
+      const name = presetNameInput?.value.trim() ?? '';
+      if (!name) {
+        setPresetStatus('Enter a name before saving a preset.');
+        presetNameInput?.focus();
+        return;
+      }
+      const presets = getPresets();
+      const existingIndex = presets.findIndex(
+        (preset) => preset.name.toLowerCase() === name.toLowerCase()
+      );
+      if (existingIndex === -1 && presets.length >= MAX_PRESETS) {
+        setPresetStatus(`Preset limit reached (${MAX_PRESETS}). Delete one first.`);
+        return;
+      }
+      const id =
+        existingIndex >= 0
+          ? (presets[existingIndex] as RosiDownloadPreset).id
+          : createPresetId(name);
+      const preset = buildPresetFromCurrentSettings(id, name);
+      const nextPresets = [...presets];
+      if (existingIndex >= 0) {
+        nextPresets[existingIndex] = preset;
+      } else {
+        nextPresets.push(preset);
+      }
+      settings.downloadPresets = nextPresets;
+      const saved = await persistSettings(true, true);
+      renderPresetOptions(saved ? id : downloadPresetSelect?.value);
+      if (saved) {
+        if (presetNameInput) presetNameInput.value = '';
+        setPresetStatus(`Saved ${preset.name}.`);
+      } else {
+        setPresetStatus('Could not save the preset.');
+      }
+    });
+  }
+  if (deletePresetBtn) {
+    deletePresetBtn.addEventListener('click', async () => {
+      const preset = getSelectedPreset();
+      if (!preset) return;
+      settings.downloadPresets = getPresets().filter((candidate) => candidate.id !== preset.id);
+      const saved = await persistSettings(true, true);
+      renderPresetOptions('');
+      setPresetStatus(saved ? `Deleted ${preset.name}.` : 'Could not delete the preset.');
+    });
+  }
+  renderPresetOptions();
+
+  // ── Settings search and per-section reset ───────────────────────────────────
+  const settingsSearchInput = byId<HTMLInputElement>('settingsSearch');
+  const settingsSearchStatus = byId<HTMLElement>('settingsSearchStatus');
+  const settingsSections = Array.from(document.querySelectorAll<HTMLElement>('.settings-section'));
+  let collapseStateBeforeSearch: boolean[] | null = null;
+
+  function applySettingsSearch(rawQuery: string) {
+    const query = rawQuery.trim().toLowerCase();
+    if (!query) {
+      settingsSections.forEach((section, index) => {
+        section.classList.remove('search-hidden');
+        section.querySelectorAll<HTMLElement>('.search-hidden').forEach((child) => {
+          child.classList.remove('search-hidden');
+        });
+        // Restore the collapse state the user had before searching.
+        if (collapseStateBeforeSearch) {
+          section.classList.toggle('collapsed', collapseStateBeforeSearch[index] === true);
+          const header = section.querySelector<HTMLElement>('.settings-section-header');
+          header?.setAttribute('aria-expanded', String(collapseStateBeforeSearch[index] !== true));
+        }
+      });
+      collapseStateBeforeSearch = null;
+      if (settingsSearchStatus) settingsSearchStatus.textContent = '';
+      return;
+    }
+
+    if (!collapseStateBeforeSearch) {
+      collapseStateBeforeSearch = settingsSections.map((section) =>
+        section.classList.contains('collapsed')
+      );
+    }
+
+    let matches = 0;
+    settingsSections.forEach((section) => {
+      const controls = Array.from(
+        section.querySelectorAll<HTMLElement>(
+          '.toggle-switch, .select-label, .settings-btn, .settings-link-btn, .sub-option, .preset-manager, .toggle-row'
+        )
+      ).filter(
+        (control) =>
+          !control.closest('.sub-option, .toggle-row') ||
+          control.matches('.sub-option, .toggle-row')
+      );
+      let sectionMatches = false;
+      controls.forEach((control) => {
+        const isMatch = (control.textContent || '').toLowerCase().includes(query);
+        control.classList.toggle('search-hidden', !isMatch);
+        if (isMatch) sectionMatches = true;
+      });
+      const title = (
+        section.querySelector('.settings-section-title')?.textContent || ''
+      ).toLowerCase();
+      if (title.includes(query)) {
+        sectionMatches = true;
+        controls.forEach((control) => control.classList.remove('search-hidden'));
+      }
+      section.classList.toggle('search-hidden', !sectionMatches);
+      if (sectionMatches) {
+        matches += 1;
+        section.classList.remove('collapsed');
+        section
+          .querySelector<HTMLElement>('.settings-section-header')
+          ?.setAttribute('aria-expanded', 'true');
+      }
+    });
+
+    if (settingsSearchStatus) {
+      settingsSearchStatus.textContent =
+        matches === 0
+          ? 'No settings match your search.'
+          : `${matches} section${matches === 1 ? '' : 's'} match your search.`;
+    }
+  }
+
+  if (settingsSearchInput) {
+    settingsSearchInput.addEventListener('input', () => {
+      applySettingsSearch(settingsSearchInput.value);
+    });
+
+    // Clear a stale filter when the sidebar closes, so reopening Settings never
+    // shows a partially hidden list the user has forgotten about.
+    const sidebarEl = document.getElementById('sidebar');
+    if (sidebarEl && typeof MutationObserver === 'function') {
+      let sidebarWasOpen = sidebarEl.classList.contains('open');
+      const sidebarObserver = new MutationObserver(() => {
+        const isOpen = sidebarEl.classList.contains('open');
+        if (sidebarWasOpen && !isOpen && settingsSearchInput.value) {
+          settingsSearchInput.value = '';
+          applySettingsSearch('');
+        }
+        sidebarWasOpen = isOpen;
+      });
+      sidebarObserver.observe(sidebarEl, { attributes: true, attributeFilter: ['class'] });
+    }
+    settingsSearchInput.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || !settingsSearchInput.value) return;
+      event.stopPropagation();
+      settingsSearchInput.value = '';
+      applySettingsSearch('');
+    });
+  }
+
+  const SECTION_RESET_KEYS: Record<string, Array<keyof RosiSettings>> = {
+    download: [
+      'downloadProfilesEnabled',
+      'downloadMode',
+      'bestQuality',
+      'audioOnly',
+      'advancedOptions',
+      'audioFormat',
+      'convertEnabled',
+      'convertFormat',
+      'keepOriginalAfterConvert',
+      'gpuAcceleration',
+      'gpuType',
+      'ffmpegPath',
+    ],
+    enhancements: [
+      'embedMetadata',
+      'embedThumbnail',
+      'sponsorblockRemove',
+      'writeSubtitles',
+      'subtitleLangs',
+    ],
+    browser: ['hookBrowser', 'browserChoice'],
+    interface: [
+      'showConsoleOutput',
+      'consoleCollapsed',
+      'animateBackground',
+      'theme',
+      'flatUi',
+      'notifications',
+      'showTaskbarProgress',
+    ],
+    application: ['checkUpdatesOnStartup', 'updateChannel'],
+  };
+
+  let defaultSettingsCache: RosiSettings | null = null;
+  async function loadDefaultSettings(): Promise<RosiSettings | null> {
+    if (defaultSettingsCache) return defaultSettingsCache;
+    if (typeof window.api.getDefaultSettings !== 'function') return null;
+    try {
+      const result = await window.api.getDefaultSettings();
+      if (result && result.ok) {
+        defaultSettingsCache = result.data as RosiSettings;
+        return defaultSettingsCache;
+      }
+    } catch {
+      /* fall through */
+    }
+    return null;
+  }
+
+  document.querySelectorAll<HTMLButtonElement>('.settings-section-reset').forEach((button) => {
+    button.addEventListener('click', async (event) => {
+      // Keep the click from bubbling into the section collapse handler.
+      event.stopPropagation();
+      const sectionName = button.dataset.resetSection ?? '';
+      const keys = SECTION_RESET_KEYS[sectionName];
+      if (!keys) return;
+      const defaults = await loadDefaultSettings();
+      if (!defaults) {
+        showToast('Could not load default settings.', { type: 'error' });
+        return;
+      }
+      const settingsRecord = settings as unknown as Record<string, unknown>;
+      const defaultsRecord = defaults as unknown as Record<string, unknown>;
+      keys.forEach((key) => {
+        settingsRecord[key] = defaultsRecord[key];
+      });
+      updateUIFromSettings();
+      applyTheme(settings.theme ?? 'system');
+      const saved = await persistSettings(true, true);
+      showToast(saved ? 'Section restored to defaults.' : 'Could not save the restored section.', {
+        type: saved ? 'success' : 'error',
+      });
+    });
+  });
+
+  // ── Activity replay ─────────────────────────────────────────────────────────
+  async function replayActivityDownload(entry: RosiDownloadActivity) {
+    if (isDownloading) {
+      showToast('Wait for the current download to finish first.', { type: 'warning' });
+      return;
+    }
+    const request = { ...(entry.request || {}) } as Record<string, unknown>;
+    const outputPath =
+      typeof request.outputPath === 'string' && request.outputPath.trim()
+        ? request.outputPath
+        : settings.downloadFolder?.trim() || (await window.api.selectDownloadLocation());
+    if (!outputPath) return;
+    request.outputPath = outputPath;
+
+    isDownloading = true;
+    if (outputEl) outputEl.textContent = '';
+    downloadAbort = () => {
+      isDownloading = false;
+      setButtonLoading(downloadBtn, false);
+      syncPrimaryActionState();
+    };
+    setButtonLoading(downloadBtn, true, () => {
+      window.api.cancelDownload();
+      downloadAbort?.();
+      hideProgressBar();
+    });
+    applyActiveDownloadProgressPhases(settings, 'Starting download...');
+    try {
+      const result = await window.api.downloadVideo(request);
+      if (!result || result.ok !== true) {
+        isDownloading = false;
+        setButtonLoading(downloadBtn, false);
+        syncPrimaryActionState();
+        hideProgressBar();
+        showToast(result?.error?.message || 'Could not start that download again.', {
+          type: 'error',
+        });
+      }
+    } catch (error) {
+      logError('Failed to replay download', error);
+      isDownloading = false;
+      setButtonLoading(downloadBtn, false);
+      syncPrimaryActionState();
+      hideProgressBar();
+      showToast('Could not start that download again.', { type: 'error' });
+    }
+  }
+
   let hasUrlValidationIntent = false;
   let lastPreviewUrl: string | null = null;
+  let pendingBatchUrls: string[] = [];
+
+  function setDownloadButtonLabel(label: string) {
+    if (!downloadBtn) return;
+    const textSpan = downloadBtn.querySelector('span');
+    if (textSpan) {
+      textSpan.textContent = label;
+    } else {
+      downloadBtn.textContent = label;
+    }
+  }
+
   function syncPrimaryActionState() {
     const hasInput = !!urlInput;
     const hasPrimaryButton = !!downloadBtn;
@@ -2347,7 +3233,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const raw = urlInput.value || '';
     const trimmed = raw.trim();
     const hasValue = trimmed.length > 0;
-    const validUrl = hasValue && isValidUrl(trimmed);
+    const extracted = extractHttpUrls(raw);
+    pendingBatchUrls = extracted.urls.length > 1 ? extracted.urls : [];
+    const isBatch = pendingBatchUrls.length > 1;
+    const validUrl = hasValue && (isBatch || isValidUrl(trimmed));
     const showInvalid = hasUrlValidationIntent && hasValue && !validUrl;
 
     if (urlInputContainer) {
@@ -2357,6 +3246,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (downloadCard) {
       downloadCard.classList.toggle('is-ready', validUrl);
+      downloadCard.classList.toggle('is-batch', isBatch);
     }
     if (showInvalid) {
       urlInput.setAttribute('aria-invalid', 'true');
@@ -2366,7 +3256,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else {
       urlInput.removeAttribute('aria-invalid');
       if (urlValidationMessage) {
-        urlValidationMessage.textContent = '';
+        urlValidationMessage.textContent = isBatch
+          ? `${pendingBatchUrls.length} links detected. They will be added to the queue.`
+          : '';
       }
     }
 
@@ -2374,14 +3266,80 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!isLoading) {
       downloadBtn.disabled = !validUrl;
       downloadBtn.classList.toggle('is-disabled', !validUrl);
+      setDownloadButtonLabel(isBatch ? `Add ${pendingBatchUrls.length} to Queue` : 'Download');
     }
 
     if (previewBtn && !previewBtn.classList.contains('loading')) {
-      previewBtn.disabled = !validUrl;
+      previewBtn.disabled = !validUrl || isBatch;
     }
-    if (trimmed !== lastPreviewUrl) {
+    if (isBatch || trimmed !== lastPreviewUrl) {
       hideVideoPreview();
       lastPreviewUrl = null;
+      resetPlaylistScope();
+    }
+    if (!isBatch && validUrl) {
+      schedulePreview(trimmed);
+    } else {
+      cancelScheduledPreview();
+    }
+  }
+
+  /**
+   * With "Ask every time" enabled, prompt once for the whole batch rather than
+   * per item, so a queue run is never interrupted by folder pickers.
+   */
+  async function resolveQueueDestination(): Promise<{ outputPath?: string; cancelled: boolean }> {
+    if (!settings.askDownloadLocation) return { cancelled: false };
+    try {
+      const chosen = await window.api.selectDownloadLocation();
+      if (!chosen) return { cancelled: true };
+      return { outputPath: chosen, cancelled: false };
+    } catch (error) {
+      logError('Could not open the folder picker for the queue', error);
+      return { cancelled: true };
+    }
+  }
+
+  async function addUrlsToQueue(urls: string[], rejected = 0) {
+    // Guard here as well as in the button handler: the folder prompt below is
+    // awaited, and without the lock a second click could queue the batch twice.
+    if (queueActionLocks > 0) return false;
+    const endQueueAction = beginQueueAction();
+    try {
+      const destination = await resolveQueueDestination();
+      if (destination.cancelled) {
+        setQueueStatusMessage('Nothing was queued because no folder was chosen.');
+        return false;
+      }
+      // Omit the second argument entirely when there is nothing to override.
+      const overrides = buildQueueRequestOverrides(destination.outputPath);
+      const result = overrides
+        ? await window.api.addToQueue(urls, overrides)
+        : await window.api.addToQueue(urls);
+      if (result && result.ok) {
+        const parts = [
+          queueMessageForCount(
+            result.data.added,
+            'Added 1 link to the queue.',
+            'Added {count} links to the queue.'
+          ),
+        ];
+        if (result.data.skipped > 0) parts.push(`${result.data.skipped} already queued.`);
+        if (rejected > 0) parts.push(`${rejected} ignored as invalid.`);
+        announceQueueAction(parts.join(' '));
+        return true;
+      }
+      const message = result?.error?.message || 'Could not add links to the queue.';
+      setQueueStatusMessage(message);
+      showToast(message, { type: 'error' });
+      return false;
+    } catch {
+      const message = 'Could not add links to the queue.';
+      setQueueStatusMessage(message);
+      showToast(message, { type: 'error' });
+      return false;
+    } finally {
+      endQueueAction();
     }
   }
 
@@ -2410,8 +3368,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     urlInput.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return;
       e.preventDefault();
-      const trimmed = urlInput.value.trim();
-      if (trimmed && isValidUrl(trimmed) && downloadBtn && !downloadBtn.disabled) {
+      if (downloadBtn && !downloadBtn.disabled) {
         downloadBtn.click();
       } else {
         hasUrlValidationIntent = true;
@@ -2426,7 +3383,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       try {
         const text = await navigator.clipboard.readText();
         if (text && text.trim()) {
-          urlInput.value = text.trim();
+          const { urls } = extractHttpUrls(text);
+          urlInput.value = urls.length > 1 ? urls.join('\n') : (urls[0] ?? text.trim());
           urlInput.dispatchEvent(new Event('input'));
           urlInput.focus();
           hasUrlValidationIntent = true;
@@ -2454,25 +3412,42 @@ document.addEventListener('DOMContentLoaded', async () => {
       downloadCard.classList.remove('drag-over');
       const dt = dragEvent.dataTransfer;
       const text = dt ? dt.getData('text/uri-list') || dt.getData('text/plain') : '';
-      if (text && isValidUrl(text.trim()) && urlInput) {
-        urlInput.value = text.trim();
+      const { urls } = extractHttpUrls(text);
+      if (urls.length > 0 && urlInput) {
+        urlInput.value = urls.length > 1 ? urls.join('\n') : (urls[0] as string);
         urlInput.dispatchEvent(new Event('input'));
         hasUrlValidationIntent = true;
         syncPrimaryActionState();
       } else if (text) {
-        showToast('Dropped content is not a valid URL.', { type: 'warning' });
+        showToast('Dropped content did not contain a valid http or https link.', {
+          type: 'warning',
+        });
       }
     });
   }
 
-  async function runVideoPreview() {
+  async function runVideoPreview(auto = false) {
     if (!urlInput || !previewBtn) return;
     const url = urlInput.value.trim();
     if (!url || !isValidUrl(url)) {
-      showToast('Enter a valid URL first.', { type: 'warning' });
+      if (!auto) showToast('Enter a valid URL first.', { type: 'warning' });
       return;
     }
-    if (isFetchingPreview) return;
+    const cached = readPreviewCache(url);
+    if (cached && auto) {
+      applyPreviewResult(url, cached);
+      return;
+    }
+    if (isFetchingPreview) {
+      if (auto) return;
+      // Supersede the in-flight lookup so its cleanup cannot clear the loading
+      // state we are about to set.
+      window.api.cancelVideoInfo();
+      previewAbort?.();
+    }
+    // Stale in-flight replies are ignored via this generation token.
+    previewRequestToken += 1;
+    const requestToken = previewRequestToken;
     isFetchingPreview = true;
 
     const card = document.getElementById('preview-card');
@@ -2496,34 +3471,50 @@ document.addEventListener('DOMContentLoaded', async () => {
     );
 
     try {
-      const result = await window.api.getVideoInfo(url);
-      if (wasCancelled) return;
+      const result = await window.api.getVideoInfo(
+        url,
+        looksLikePlaylistUrl(url) ? 'all' : 'current'
+      );
+      if (wasCancelled || requestToken !== previewRequestToken) return;
       if (!result || result.ok !== true) {
         const message = result?.error?.message || 'Could not load preview.';
         if (typeof message === 'string' && message.toLowerCase().includes('cancel')) return;
         hideVideoPreview();
-        showToast(`Could not load preview. ${message}`, { type: 'error' });
+        if (auto) {
+          setPreviewButtonLabel('Retry preview');
+        } else {
+          showToast(`Could not load preview. ${message}`, { type: 'error' });
+        }
         return;
       }
-      lastPreviewUrl = url;
-      renderVideoPreview(result.data as RosiVideoInfo);
+      const info = result.data as RosiVideoInfo;
+      writePreviewCache(url, info);
+      applyPreviewResult(url, info);
     } catch (e) {
-      if (!wasCancelled) {
+      if (!wasCancelled && requestToken === previewRequestToken) {
         hideVideoPreview();
-        showToast('Could not load preview.', { type: 'error' });
+        if (auto) {
+          setPreviewButtonLabel('Retry preview');
+        } else {
+          showToast('Could not load preview.', { type: 'error' });
+        }
         logError('Video preview failed', e);
       }
     } finally {
       if (!wasCancelled) {
         isFetchingPreview = false;
         setButtonLoading(previewBtn, false);
+        restorePreviewButtonLabel();
       }
     }
   }
 
+  const runManualVideoPreview = () => {
+    void runVideoPreview(false);
+  };
   if (previewBtn) {
-    previewBtn._originalClick = runVideoPreview;
-    previewBtn.onclick = runVideoPreview;
+    previewBtn._originalClick = runManualVideoPreview;
+    previewBtn.onclick = runManualVideoPreview;
   }
   if (previewCloseBtn) {
     previewCloseBtn.addEventListener('click', () => {
@@ -2533,7 +3524,34 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  renderHistory();
+  renderActivity();
+
+  document.querySelectorAll<HTMLButtonElement>('.activity-filter').forEach((button) => {
+    button.addEventListener('click', () => {
+      const filter = button.dataset.activityFilter;
+      if (
+        filter === 'all' ||
+        filter === 'success' ||
+        filter === 'failed' ||
+        filter === 'cancelled'
+      ) {
+        setActivityFilter(filter);
+      }
+    });
+  });
+
+  activityReplayHandler = (entry) => {
+    void replayActivityDownload(entry);
+  };
+
+  if (typeof window.api.getDownloadActivity === 'function') {
+    window.api
+      .getDownloadActivity()
+      .then((result) => {
+        if (result && result.ok) setActivityEntries(result.data);
+      })
+      .catch(() => {});
+  }
 
   if (historyToggle) {
     const historySection = document.getElementById('download-history');
@@ -2578,16 +3596,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     clearHistoryBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       showModal({
-        title: 'Clear History',
-        message: 'Clear all download history?',
+        title: 'Clear Activity',
+        message: 'Clear the recorded download activity?',
         buttons: [
           { label: 'Cancel' },
           {
             label: 'Clear',
             danger: true,
             action: () => {
-              clearHistory();
-              showToast('Download history cleared.', { type: 'info' });
+              void clearActivity().then(() => {
+                showToast('Download activity cleared.', { type: 'info' });
+              });
             },
           },
         ],
@@ -3116,8 +4135,74 @@ document.addEventListener('DOMContentLoaded', async () => {
         queue,
         { queueList, queueSection, queueCount },
         {
-          escapeHtml,
           focusQueueItemId,
+          retryQueueItem: async (id: string) => {
+            if (typeof window.api.retryQueueItem !== 'function') return;
+            focusQueueItemId = id;
+            const endQueueAction = beginQueueAction();
+            try {
+              const result = await window.api.retryQueueItem(id);
+              if (!result || !result.ok) {
+                focusQueueItemId = null;
+                const message = result?.error?.message || 'Could not retry the queue item.';
+                setQueueStatusMessage(message);
+                showToast(message, { type: 'error' });
+              } else {
+                // A running queue picks the item up on its own; otherwise the
+                // user still has to start it.
+                const queueIsRunning = currentQueue.some((item) => item.status === 'downloading');
+                announceQueueAction(
+                  queueIsRunning
+                    ? 'Queued the item again. It will run after the current download.'
+                    : 'Queued the item again. Start the queue to run it.'
+                );
+              }
+            } catch {
+              focusQueueItemId = null;
+              const message = 'Could not retry the queue item.';
+              setQueueStatusMessage(message);
+              showToast(message, { type: 'error' });
+            } finally {
+              endQueueAction();
+            }
+          },
+          reorderQueueItem: async (id: string, direction: 'up' | 'down') => {
+            if (typeof window.api.reorderQueueItem !== 'function') return;
+            focusQueueItemId = id;
+            const endQueueAction = beginQueueAction();
+            try {
+              const result = await window.api.reorderQueueItem({ id, direction });
+              if (!result || !result.ok) {
+                focusQueueItemId = null;
+                const message = result?.error?.message || 'Could not reorder the queue item.';
+                setQueueStatusMessage(message);
+              } else {
+                setQueueStatusMessage(`Moved item ${direction} in the queue.`);
+              }
+            } catch {
+              focusQueueItemId = null;
+              setQueueStatusMessage('Could not reorder the queue item.');
+            } finally {
+              endQueueAction();
+            }
+          },
+          copyDiagnostics: async (item: RosiQueueItem) => {
+            const diagnostics = [
+              `URL: ${item.url}`,
+              `Status: ${item.status}`,
+              item.filename ? `File: ${item.filename}` : '',
+              item.error ? `Error: ${item.error}` : '',
+            ]
+              .filter(Boolean)
+              .join('\n');
+            try {
+              await navigator.clipboard.writeText(diagnostics);
+              setQueueStatusMessage('Copied diagnostics to the clipboard.');
+            } catch {
+              showToast('Could not copy diagnostics to the clipboard.', { type: 'warning' });
+            }
+          },
+          openFileLocation: (filePath: string) => revealFileLocation(filePath),
           removeFromQueue: async (id: string) => {
             const removeIndex = currentQueue.findIndex((item) => item.id === id);
             const nextFocusId =
@@ -3155,6 +4240,28 @@ document.addEventListener('DOMContentLoaded', async () => {
       );
       focusQueueItemId = null;
     }
+  }
+
+  /**
+   * Attach transient per-item progress to the matching queue row. Progress is
+   * never persisted; a later queue-update broadcast replaces it wholesale.
+   */
+  function applyQueueItemProgress(event: RosiJobProgressEvent) {
+    if (!event.queueItemId) return;
+    const target = currentQueue.find((item) => item.id === event.queueItemId);
+    if (!target) return;
+    if (event.phase === 'idle') {
+      delete target.progress;
+    } else {
+      target.progress = event;
+    }
+    // Patch the single active row; only fall back to a full render if the row
+    // is missing, so frequent progress ticks cannot steal focus.
+    const patched =
+      queueModule && typeof queueModule.updateQueueItemProgress === 'function'
+        ? queueModule.updateQueueItemProgress(target, { queueList, queueSection, queueCount })
+        : false;
+    if (!patched) renderQueue(currentQueue);
   }
 
   let queueStatusTimer: ReturnType<typeof setTimeout> | null = null;
@@ -3265,10 +4372,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       queueUrlInput.classList.remove('drag-over');
       const dt = dragEvent.dataTransfer;
       const text = dt ? dt.getData('text/uri-list') || dt.getData('text/plain') : '';
-      if (text.trim()) {
+      const { urls } = extractHttpUrls(text);
+      const dropped = urls.length > 0 ? urls.join('\n') : '';
+      if (dropped) {
         const existing = queueUrlInput.value.trim();
-        queueUrlInput.value = existing ? `${existing}\n${text.trim()}` : text.trim();
+        queueUrlInput.value = existing ? `${existing}\n${dropped}` : dropped;
         queueUrlInput.dispatchEvent(new Event('input'));
+      } else if (text.trim()) {
+        showToast('Dropped content did not contain a valid http or https link.', {
+          type: 'warning',
+        });
       }
     });
 
@@ -3281,33 +4394,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         showToast(message, { type: 'warning' });
         return;
       }
-      const endQueueAction = beginQueueAction();
-      try {
-        const urls = raw
-          .split(/\r?\n+/)
-          .map((u) => u.trim())
-          .filter((u) => u.length > 0);
-        const result = await window.api.addToQueue(urls);
-        if (result && result.ok) {
-          queueUrlInput.value = '';
-          const message = queueMessageForCount(
-            result.data.added,
-            'Added 1 URL to the queue.',
-            'Added {count} URLs to the queue.'
-          );
-          announceQueueAction(message);
-        } else {
-          const message = result?.error?.message || 'Could not add URLs to the queue.';
-          setQueueStatusMessage(message);
-          showToast(message, { type: 'error' });
-        }
-      } catch {
-        const message = 'Could not add URLs to the queue.';
+      const { urls, rejected } = extractHttpUrls(raw);
+      if (urls.length === 0) {
+        const message = 'No valid http or https links were found.';
         setQueueStatusMessage(message);
-        showToast(message, { type: 'error' });
-      } finally {
-        endQueueAction();
+        showToast(message, { type: 'warning' });
+        return;
       }
+      const added = await addUrlsToQueue(urls, rejected);
+      if (added) queueUrlInput.value = '';
     });
   }
 
@@ -3430,6 +4525,20 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
+        // Multiple links go to the queue instead of the single-download path.
+        const batch = extractHttpUrls(url);
+        if (batch.urls.length > 1) {
+          isDownloading = false;
+          const added = await addUrlsToQueue(batch.urls, batch.rejected);
+          if (added && urlInput) {
+            urlInput.value = '';
+            hasUrlValidationIntent = false;
+            updateUrlButtons();
+          }
+          syncPrimaryActionState();
+          return;
+        }
+
         // Validate URL format
         if (!isValidUrl(url.trim())) {
           isDownloading = false;
@@ -3506,14 +4615,25 @@ document.addEventListener('DOMContentLoaded', async () => {
           audioFormat,
         });
         const keepOriginal = settings.convertEnabled ? keepOriginalToggle?.checked : undefined;
+        const playlist = resolvePlaylistSelection();
+        if (!playlist) {
+          isDownloading = false;
+          setButtonLoading(downloadBtn, false);
+          syncPrimaryActionState();
+          hideProgressBar();
+          return;
+        }
+        const activePreset = getSelectedPreset();
         const startResult = await window.api.downloadVideo({
-          url,
+          url: url.trim(),
           videoFormat,
           audioFormat,
           outputPath: savePath,
           convertFormat,
           keepOriginal,
           ffmpegPath: settings.ffmpegPath,
+          playlist,
+          ...(activePreset ? { presetId: activePreset.id, presetName: activePreset.name } : {}),
         });
         if (!startResult || startResult.ok !== true) {
           isDownloading = false;
@@ -3564,6 +4684,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (container && !container.classList.contains('visible') && event.phase !== 'idle') {
         showProgressBar(event.status);
       }
+      applyQueueItemProgress(event);
       if (event.phase === 'idle') {
         return;
       }
@@ -3625,15 +4746,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           hideProgressBar();
         }, 2000);
 
-        const filename = lastDownloadedFilePath
-          ? (lastDownloadedFilePath.split(/[/\\]/).pop() ?? 'Unknown file')
-          : 'Unknown file';
-        addHistoryEntry({
-          filename,
-          path: lastDownloadedFilePath,
-          status: isSuccess ? 'success' : isCancelled ? 'cancelled' : 'failed',
-        });
-
+        // Activity records now come from the main process via download-complete.
         const restoreDefaultDownloadButton = () => {
           setButtonLoading(downloadBtn, false);
           syncPrimaryActionState();
@@ -3667,6 +4780,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     })
   );
+
+  if (typeof window.api.onDownloadActivityUpdate === 'function') {
+    ipcCleanupFunctions.push(
+      window.api.onDownloadActivityUpdate((activity) => {
+        setActivityEntries(activity);
+      })
+    );
+  }
 
   ipcCleanupFunctions.push(
     window.api.onQueueUpdate((queue) => {
@@ -3707,6 +4828,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     .catch(() => {});
 
   window.addEventListener('beforeunload', () => {
+    cancelScheduledPreview();
     ipcCleanupFunctions.forEach((cleanup) => {
       if (typeof cleanup === 'function') {
         try {
