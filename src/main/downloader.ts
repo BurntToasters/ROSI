@@ -82,6 +82,7 @@ function safeSend(sender: Electron.WebContents, channel: string, message: unknow
   }
 }
 
+/** Console log lines for the download panel; structured UI uses `job-progress` via JobProgressReporter. */
 function sendProgress(session: DownloadSession | null, message: string) {
   if (!session || !shouldEmitTerminalEvent(session.lifecycle)) return;
   if (!isActiveSession(session)) return;

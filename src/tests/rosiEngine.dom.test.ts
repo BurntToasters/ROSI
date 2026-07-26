@@ -88,6 +88,7 @@ function buildMockApi(overrides: Partial<MockApi> = {}): MockApi {
     saveSettings: vi.fn((s: unknown) => ok(s)),
     resetSettings: vi.fn(),
     getAppVersion: vi.fn(() => Promise.resolve('4.1.0')),
+    getAppPlatform: vi.fn(() => Promise.resolve('darwin' as NodeJS.Platform)),
     isPackaged: vi.fn(() => Promise.resolve(false)),
     checkDenoInstalled: vi.fn(() => Promise.resolve(true)),
     getQueue: vi.fn(() => Promise.resolve([])),

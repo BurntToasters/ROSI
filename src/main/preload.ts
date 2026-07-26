@@ -29,6 +29,7 @@ const api: RendererApi = {
   cancelDownload: () => ipcRenderer.send('cancel-download'),
   cancelFormats: () => ipcRenderer.send('cancel-formats'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  getAppPlatform: () => ipcRenderer.invoke('get-app-platform'),
   checkDenoInstalled: () => ipcRenderer.invoke('check-deno-installed'),
   installDeno: () => ipcRenderer.invoke('install-deno'),
   detectGpu: () => ipcRenderer.invoke('detect-gpu'),

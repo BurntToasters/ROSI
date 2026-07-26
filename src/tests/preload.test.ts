@@ -91,6 +91,7 @@ describe('preload api contract', () => {
         'downloadUpdate',
         'downloadVideo',
         'exportSettings',
+        'getAppPlatform',
         'getAppVersion',
         'getChannel',
         'getFormats',
@@ -142,6 +143,7 @@ describe('preload api contract', () => {
     await expectInvokeCall(api, 'openExternal', 'open-external', ['https://rosie.run']);
     await expectInvokeCall(api, 'downloadVideo', 'download-video', [downloadOptions]);
     await expectInvokeCall(api, 'getAppVersion', 'get-app-version');
+    await expectInvokeCall(api, 'getAppPlatform', 'get-app-platform');
     await expectInvokeCall(api, 'checkDenoInstalled', 'check-deno-installed');
     await expectInvokeCall(api, 'installDeno', 'install-deno');
     await expectInvokeCall(api, 'detectGpu', 'detect-gpu');
