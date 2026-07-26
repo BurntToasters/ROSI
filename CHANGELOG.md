@@ -1,13 +1,13 @@
-<!-- > [!NOTE]
-> 🅱️ This is a Beta build. -->
+> [!NOTE]
+> 🅱️ This is a Beta build.
 
 # ⬇️ Downloads
 
-| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                    | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                                                                    |
-| :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **EXE:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-Windows-arm64.exe) | **[Universal DMG](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-MacOS-universal.dmg)**    | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-Linux-arm64.AppImage) |
-| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div>      | **[Universal ZIP](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-MacOS-universal.zip)**    | **DEB:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-Linux-arm64.deb)                 |
-|                                                                                                                                                                                                      |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-Linux-aarch64.rpm)              |
+| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                  | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS     | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                                                                                  |
+| :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **EXE:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0-beta.1/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0-beta.1/ROSI-Windows-arm64.exe) | **[Universal DMG](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0-beta.1/ROSI-MacOS-universal.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0-beta.1/ROSI-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0-beta.1/ROSI-Linux-arm64.AppImage) |
+| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div>                    | **[Universal ZIP](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0-beta.1/ROSI-MacOS-universal.zip)** | **DEB:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0-beta.1/ROSI-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0-beta.1/ROSI-Linux-arm64.deb)                 |
+|                                                                                                                                                                                                                    |                                                                                                                     | **RPM:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0-beta.1/ROSI-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0-beta.1/ROSI-Linux-aarch64.rpm)              |
 
 > [!IMPORTANT]
 > The `.sig` files in this repo are NOT normal GPG signatures — they are for ROSI's built-in updater to verify the integrity of updates before downloading and installing.
@@ -18,9 +18,21 @@
 
 ---
 
+## Changes in `v4.3.0-beta.1:`
+
+- **macOS:** Added a native application menu (About, Settings, Check for Updates, Edit, View, Window, Help) with actions wired into the existing UI.
+- **Progress:** yt-dlp and FFmpeg now report structured progress for more accurate in-app percentages, including merge and conversion phases.
+- **Taskbar / Dock:** Download and conversion progress appears in the Windows taskbar and macOS Dock; queue runs show an overall percent across items.
+- **Settings:** New **Taskbar / Dock progress** toggle (settings schema v6).
+
 ## Changes in `v4.2.1:`
 
 - **PKG:** Updated packages.
+
+### FULL CHANGELOG:
+
+<details>
+  <summary>ℹ️ Click here to see the full change-log for v4!</summary>
 
 ## Changes in `v4.2.0:`
 
@@ -52,11 +64,6 @@
 - **UI:** Added explicit `type="button"` to all button elements for HTML robustness.
 - **Testing:** Cleaned up ESLint configuration to suppress `no-unsafe-*` noise in test files while keeping full strictness on production code.
 - **PKG:** Updated packages.
-
-### FULL CHANGELOG:
-
-<details>
-  <summary>ℹ️ Click here to see the full change-log for v4!</summary>
 
 ## Changes in `v4.1.0:`
 

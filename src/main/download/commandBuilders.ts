@@ -9,6 +9,7 @@ import {
   MAX_ERROR_BUFFER,
   SUBTITLE_LANGS_PATTERN,
 } from '../constants';
+import { parseFfmpegDurationFromProbe } from '../../utils/downloadJobProgress';
 
 const VALID_FORMAT_ID = FORMAT_ID_PATTERN;
 const CODEC_PROBE_TIMEOUT_MS = 30_000;
@@ -17,6 +18,7 @@ export { ALLOWED_BROWSERS };
 export interface SourceCodecs {
   video?: string;
   audio?: string;
+  durationSeconds?: number | null;
 }
 
 export function probeMediaCodecs(ffmpegCommand: string, inputPath: string): Promise<SourceCodecs> {
@@ -37,6 +39,7 @@ export function probeMediaCodecs(ffmpegCommand: string, inputPath: string): Prom
       const audioMatch = stderr.match(/Stream #\d+:\d+.*: Audio: (\w+)/);
       if (videoMatch?.[1]) codecs.video = videoMatch[1];
       if (audioMatch?.[1]) codecs.audio = audioMatch[1];
+      codecs.durationSeconds = parseFfmpegDurationFromProbe(stderr);
       return codecs;
     };
 
@@ -108,7 +111,18 @@ export function buildFfmpegArgs(
     const canCopyAudio =
       (targetFormat === 'm4a' && (srcAudio === 'aac' || srcAudio === 'mp4a')) ||
       (targetFormat === 'mp3' && srcAudio === 'mp3');
-    return ['-i', inputPath, '-vn', '-c:a', canCopyAudio ? 'copy' : targetCodec, '-y', outputPath];
+    return [
+      '-progress',
+      'pipe:1',
+      '-nostats',
+      '-i',
+      inputPath,
+      '-vn',
+      '-c:a',
+      canCopyAudio ? 'copy' : targetCodec,
+      '-y',
+      outputPath,
+    ];
   }
 
   const srcVideo = srcCodecs?.video?.toLowerCase();
@@ -119,6 +133,9 @@ export function buildFfmpegArgs(
     srcCodecs && srcAudio && CONTAINER_COMPATIBLE_AUDIO.has(srcAudio) ? 'copy' : 'aac';
 
   return [
+    '-progress',
+    'pipe:1',
+    '-nostats',
     '-i',
     inputPath,
     '-c:v',
@@ -173,6 +190,10 @@ export function buildYtdlpArgs({
     '--progress',
     '--progress-delta',
     '1',
+    '--progress-template',
+    'download:%(progress)j',
+    '--progress-template',
+    'postprocess:%(progress)j',
     '-f',
     settings.bestQuality ? 'bestvideo+bestaudio/best' : 'best[ext=mp4]/best[ext=webm]/best',
     '--',
