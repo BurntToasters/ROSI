@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { updateMetainfo } = require('../../build-scripts/update-metainfo.js');
+const { updateMetainfo, updateSplash } = require('../../build-scripts/update-metainfo.js');
 
 function makeTempRepo() {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rosi-metainfo-'));
@@ -85,5 +85,16 @@ describe('update-metainfo helper', () => {
     expect(metainfo).toContain(
       '<releases>\n    <release version="4.1.6" date="2026-07-04"/>\n    <release version="4.1.5" date="2026-07-03"/>'
     );
+  });
+
+  it('updates splash.html version via updateSplash', () => {
+    const repoRoot = makeTempRepo();
+    tempDirs.push(repoRoot);
+    writeRepoFiles(repoRoot, '4.1.6', '    <release version="4.1.5" date="2026-07-03"/>');
+
+    updateSplash({ repoRoot, version: '4.1.6' });
+
+    const splash = fs.readFileSync(path.join(repoRoot, 'src', 'renderer', 'splash.html'), 'utf8');
+    expect(splash).toContain('id="version-display">v4.1.6</div>');
   });
 });

@@ -299,6 +299,58 @@ describe('command builders', () => {
     expect(result.statusMessages).toContain('📹 Using formats: video=137, audio=140');
   });
 
+  describe('playlist scope', () => {
+    const url = 'https://example.com/watch?v=abc&list=PL123';
+    const build = (playlist?: {
+      mode: 'current' | 'all' | 'range';
+      start?: number;
+      end?: number;
+    }) =>
+      buildYtdlpArgs({
+        normalizedDownloadDir: '/tmp/downloads',
+        url,
+        settings: createSettings(),
+        options: { url, outputPath: '/tmp/downloads', ...(playlist ? { playlist } : {}) },
+        ffmpegLocation: null,
+      });
+
+    it('defaults to the single video when no selection is given', () => {
+      const args = build().args;
+      expect(args).toContain('--no-playlist');
+      expect(args).not.toContain('--yes-playlist');
+      expect(args.filter((arg) => arg === '--no-playlist')).toHaveLength(1);
+    });
+
+    it('honours the current-video selection', () => {
+      const args = build({ mode: 'current' }).args;
+      expect(args).toContain('--no-playlist');
+      expect(args).not.toContain('--yes-playlist');
+    });
+
+    it('downloads the entire playlist when requested', () => {
+      const args = build({ mode: 'all' }).args;
+      expect(args).toContain('--yes-playlist');
+      expect(args).not.toContain('--no-playlist');
+      expect(args).not.toContain('--playlist-items');
+    });
+
+    it('maps a validated range to --playlist-items before the URL separator', () => {
+      const args = build({ mode: 'range', start: 2, end: 5 }).args;
+      expect(args).toContain('--yes-playlist');
+      const itemsIndex = args.indexOf('--playlist-items');
+      expect(itemsIndex).toBeGreaterThan(-1);
+      expect(args[itemsIndex + 1]).toBe('2-5');
+      expect(itemsIndex).toBeLessThan(args.indexOf('--'));
+      expect(args[args.length - 1]).toBe(url);
+    });
+
+    it('falls back to the single video for out-of-bounds ranges', () => {
+      expect(build({ mode: 'range', start: 5, end: 2 }).args).toContain('--no-playlist');
+      expect(build({ mode: 'range', start: 0, end: 3 }).args).toContain('--no-playlist');
+      expect(build({ mode: 'range', start: 1, end: 999_999 }).args).toContain('--no-playlist');
+    });
+  });
+
   it('places optional flags before the URL separator, not after it', () => {
     const url = 'https://example.com/video';
     const result = buildYtdlpArgs({

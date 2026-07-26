@@ -39,6 +39,9 @@ describe('packaging and desktop contracts', () => {
     expect(splash).toMatch(/<html lang="en">/);
     expect(splash).toMatch(/Content-Security-Policy/);
     expect(splash).toMatch(/<title>Loading ROSI<\/title>/);
+    expect(splash).toMatch(/theme-init\.js/);
+    expect(splash).toMatch(/css\/01-base\.css/);
+    expect(splash).toMatch(/css\/splash\.css/);
   });
 
   it('keeps AppStream launchable aligned with the desktop entry', () => {

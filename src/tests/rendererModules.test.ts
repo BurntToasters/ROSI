@@ -60,18 +60,44 @@ type RosiModules = {
   };
   queue?: {
     renderQueue: (
-      queue: Array<{ id: string; status: string; url: string }>,
+      queue: Array<{ id: string; status: string; url: string; error?: string }>,
       elements: {
         queueList: HTMLElement | null;
         queueSection: HTMLElement | null;
         queueCount: HTMLElement | null;
       },
       deps: {
-        escapeHtml: (value: string) => string;
         removeFromQueue: (id: string) => unknown;
+        retryQueueItem: (id: string) => unknown;
+        reorderQueueItem: (id: string, direction: 'up' | 'down') => unknown;
+        copyDiagnostics: (item: { id: string; status: string; url: string }) => unknown;
+        openFileLocation?: (filePath: string) => unknown;
         focusQueueItemId?: string | null;
       }
     ) => void;
+    updateQueueItemProgress: (
+      item: {
+        id: string;
+        status: string;
+        url: string;
+        progress?: {
+          phase: string;
+          phasePercent: number;
+          itemOverallPercent: number;
+          overallPercent: number;
+          status: string;
+          details?: string;
+          indeterminate?: boolean;
+          speedBytesPerSecond?: number;
+          etaSeconds?: number;
+        };
+      },
+      elements: {
+        queueList: HTMLElement | null;
+        queueSection: HTMLElement | null;
+        queueCount: HTMLElement | null;
+      }
+    ) => boolean;
     resolveQueueSectionElement: (root?: Document) => HTMLElement | null;
   };
   settings?: {
@@ -210,6 +236,17 @@ describe('renderer modules', () => {
   });
 
   describe('queue module', () => {
+    const queueDeps = (
+      overrides: Partial<Parameters<NonNullable<RosiModules['queue']>['renderQueue']>[2]> = {}
+    ) => ({
+      removeFromQueue: vi.fn(),
+      retryQueueItem: vi.fn(),
+      reorderQueueItem: vi.fn(),
+      copyDiagnostics: vi.fn(),
+      openFileLocation: vi.fn(),
+      ...overrides,
+    });
+
     beforeEach(() => {
       document.body.innerHTML =
         '<section id="queueSection"><div id="queue-list"></div><span id="queue-count"></span></section>';
@@ -233,7 +270,7 @@ describe('renderer modules', () => {
           queueSection,
           queueCount: document.getElementById('queue-count'),
         },
-        { escapeHtml: (value) => value, removeFromQueue: vi.fn() }
+        queueDeps()
       );
 
       expect(queueSection.classList.contains('has-items')).toBe(false);
@@ -243,10 +280,8 @@ describe('renderer modules', () => {
     });
 
     it('does not allow crafted URL content to inject markup in renderQueue output', () => {
-      // Intentionally pass a permissive escaper to prove the sink no longer
-      // depends on escaping correctness: renderQueue now builds DOM nodes and
-      // assigns untrusted values via textContent/title, so markup cannot inject.
-      const escapeHtml = (value: string) => value;
+      // renderQueue builds DOM nodes and assigns untrusted values via
+      // textContent/title, so crafted markup cannot inject.
       const maliciousUrl = 'https://example.com/"><img src=x onerror=alert(1)>';
       modules().queue!.renderQueue(
         [{ id: 'q_xss', status: 'pending', url: maliciousUrl }],
@@ -255,7 +290,7 @@ describe('renderer modules', () => {
           queueSection: document.getElementById('queueSection'),
           queueCount: document.getElementById('queue-count'),
         },
-        { escapeHtml, removeFromQueue: vi.fn() }
+        queueDeps()
       );
 
       const queueList = document.getElementById('queue-list')!;
@@ -267,11 +302,11 @@ describe('renderer modules', () => {
         expect(node.getAttribute('onerror')).toBeNull();
         expect(node.getAttribute('onmouseover')).toBeNull();
       });
-      const urlEl = queueList.querySelector('.queue-item-url')!;
-      expect(urlEl.textContent).toContain('example.com');
+      const titleEl = queueList.querySelector('.queue-item-title')!;
+      expect(titleEl.textContent).toContain('example.com');
       // The full raw URL is preserved verbatim as the title's text value
       // (stored as data, never parsed as HTML).
-      expect(urlEl.getAttribute('title')).toBe(maliciousUrl);
+      expect(titleEl.getAttribute('title')).toBe(maliciousUrl);
     });
 
     it('removes pending queue items through the remove button', async () => {
@@ -283,13 +318,123 @@ describe('renderer modules', () => {
           queueSection: document.getElementById('queueSection'),
           queueCount: document.getElementById('queue-count'),
         },
-        { escapeHtml: (value) => value, removeFromQueue }
+        queueDeps({ removeFromQueue })
       );
 
       const removeBtn = document.querySelector<HTMLButtonElement>('.queue-item-remove');
       expect(removeBtn).not.toBeNull();
       removeBtn!.click();
       expect(removeFromQueue).toHaveBeenCalledWith('q1');
+    });
+
+    it('offers retry and diagnostics for failed queue items', () => {
+      const retryQueueItem = vi.fn().mockResolvedValue(undefined);
+      const copyDiagnostics = vi.fn().mockResolvedValue(undefined);
+      modules().queue!.renderQueue(
+        [
+          {
+            id: 'q_failed',
+            status: 'failed',
+            url: 'https://example.com/video',
+            error: 'yt-dlp exited with code 1',
+          },
+        ],
+        {
+          queueList: document.getElementById('queue-list'),
+          queueSection: document.getElementById('queueSection'),
+          queueCount: document.getElementById('queue-count'),
+        },
+        queueDeps({ retryQueueItem, copyDiagnostics })
+      );
+
+      document.querySelector<HTMLButtonElement>('.queue-item-retry')!.click();
+      expect(retryQueueItem).toHaveBeenCalledWith('q_failed');
+      document.querySelector<HTMLButtonElement>('.queue-item-copy')!.click();
+      expect(copyDiagnostics).toHaveBeenCalled();
+      expect(document.querySelector('.queue-item-details')?.textContent).toContain(
+        'yt-dlp exited with code 1'
+      );
+    });
+
+    it('patches active-item progress in place without rebuilding the row', () => {
+      const elements = {
+        queueList: document.getElementById('queue-list'),
+        queueSection: document.getElementById('queueSection'),
+        queueCount: document.getElementById('queue-count'),
+      };
+      const item = {
+        id: 'q_active',
+        status: 'downloading',
+        url: 'https://example.com/video',
+      };
+      modules().queue!.renderQueue([item], elements, queueDeps());
+      const rowBefore = document.querySelector('.queue-item[data-queue-id="q_active"]');
+
+      const patched = modules().queue!.updateQueueItemProgress(
+        {
+          ...item,
+          progress: {
+            phase: 'download',
+            phasePercent: 42,
+            itemOverallPercent: 42,
+            overallPercent: 21,
+            status: 'Downloading...',
+            speedBytesPerSecond: 1_048_576,
+            etaSeconds: 65,
+          },
+        },
+        elements
+      );
+
+      expect(patched).toBe(true);
+      // Same DOM node: the row was patched, not re-created.
+      expect(document.querySelector('.queue-item[data-queue-id="q_active"]')).toBe(rowBefore);
+      expect(document.querySelector('.queue-item-progress-bar')?.getAttribute('style')).toContain(
+        '42%'
+      );
+      const details = document.querySelector('.queue-item-progress-details')?.textContent ?? '';
+      expect(details).toContain('/s');
+      expect(details).toContain('ETA 1:05');
+      expect(document.querySelectorAll('.queue-item-progress')).toHaveLength(1);
+    });
+
+    it('reports when there is no row to patch', () => {
+      const elements = {
+        queueList: document.getElementById('queue-list'),
+        queueSection: document.getElementById('queueSection'),
+        queueCount: document.getElementById('queue-count'),
+      };
+      modules().queue!.renderQueue([], elements, queueDeps());
+      expect(
+        modules().queue!.updateQueueItemProgress(
+          { id: 'q_missing', status: 'downloading', url: 'https://example.com/x' },
+          elements
+        )
+      ).toBe(false);
+    });
+
+    it('reorders pending queue items and disables unavailable directions', () => {
+      const reorderQueueItem = vi.fn().mockResolvedValue(undefined);
+      modules().queue!.renderQueue(
+        [
+          { id: 'q1', status: 'pending', url: 'https://example.com/a' },
+          { id: 'q2', status: 'pending', url: 'https://example.com/b' },
+        ],
+        {
+          queueList: document.getElementById('queue-list'),
+          queueSection: document.getElementById('queueSection'),
+          queueCount: document.getElementById('queue-count'),
+        },
+        queueDeps({ reorderQueueItem })
+      );
+
+      const upButtons = document.querySelectorAll<HTMLButtonElement>('.queue-item-move-up');
+      const downButtons = document.querySelectorAll<HTMLButtonElement>('.queue-item-move-down');
+      expect(upButtons[0]!.disabled).toBe(true);
+      expect(downButtons[1]!.disabled).toBe(true);
+
+      downButtons[0]!.click();
+      expect(reorderQueueItem).toHaveBeenCalledWith('q1', 'down');
     });
   });
 

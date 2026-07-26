@@ -25,6 +25,11 @@ export const ALLOWED_BROWSERS = new Set([
   'whale',
 ]);
 export const MAX_QUEUE_SIZE = 500;
+export const MAX_DOWNLOAD_PRESETS = 20;
+export const MAX_PRESET_NAME_LENGTH = 40;
+export const MAX_PRESET_ID_LENGTH = 64;
+export const MAX_PLAYLIST_ITEM_INDEX = 10_000;
+export const MAX_DOWNLOAD_ACTIVITY = 100;
 export const MAX_FORMAT_COUNTS = 10_000;
 export const MAX_SETTINGS_IMPORT_BYTES = 1_048_576;
-export const CURRENT_SETTINGS_VERSION = 6;
+export const CURRENT_SETTINGS_VERSION = 7;
