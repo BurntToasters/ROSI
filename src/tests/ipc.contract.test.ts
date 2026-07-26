@@ -34,6 +34,8 @@ describe('IPC channel contracts', () => {
     expect(rendererEventChannels.sort()).toEqual(
       [
         'complete',
+        'job-progress',
+        'menu-action',
         'prepare-for-close',
         'progress',
         'queue-update',

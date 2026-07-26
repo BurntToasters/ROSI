@@ -18,6 +18,7 @@
   type RosiWindow = Window & typeof globalThis & { rosiModules?: DownloadsModules };
 
   function parseYtdlpProgress(message: string): ParsedYtdlpProgress | null {
+    // Keep in sync with src/utils/downloadJobProgress.ts (canonical for main process).
     const progressMatch = message.match(
       /\[download\]\s+(\d+\.?\d*)%\s+of\s+~?(\S+)\s+at\s+(\S+)\s+ETA\s+(\S+)/
     );

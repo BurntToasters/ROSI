@@ -24,6 +24,14 @@ interface RosiUpdaterProgressEvent {
   transferred: number;
   total: number;
 }
+interface RosiJobProgressEvent {
+  phase: 'download' | 'merge' | 'convert' | 'idle';
+  phasePercent: number;
+  overallPercent: number;
+  status: string;
+  details?: string;
+  indeterminate?: boolean;
+}
 interface RosiDownloadStats {
   totalDownloads: number;
   successfulDownloads: number;
@@ -66,6 +74,12 @@ interface RosiRendererApi {
   onUpdaterStatus: (callback: (data: RosiUpdaterStatusEvent) => void) => () => void;
   onUpdaterProgress: (callback: (data: RosiUpdaterProgressEvent) => void) => () => void;
   onProgress: (callback: (message: string) => void) => () => void;
+  onJobProgress: (callback: (data: RosiJobProgressEvent) => void) => () => void;
+  onMenuAction: (
+    callback: (
+      action: 'check-for-updates' | 'open-settings' | 'show-licenses' | 'toggle-sidebar'
+    ) => void
+  ) => () => void;
   onComplete: (callback: (message: string) => void) => () => void;
   openFileLocation: (filePath: string) => Promise<RosiIpcResult<{ opened: boolean }>>;
   showNotification: (options: {

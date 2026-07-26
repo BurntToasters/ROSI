@@ -18,6 +18,12 @@ import {
   resolveVideoEncoder,
   probeMediaCodecs,
 } from './download/commandBuilders';
+import { JobProgressReporter, summarizeYtdlpJsonForConsole } from './download/jobProgressReporter';
+import {
+  createFfmpegProgressParseState,
+  parseFfmpegProgressChunk,
+  resolveJobProgressPlanFromSettings,
+} from '../utils/downloadJobProgress';
 import { isSafeHttpUrl } from '../utils/validation';
 import { isMac } from './platform';
 import {
@@ -41,12 +47,14 @@ import type {
   DownloadOutcome,
   FormatsProcess,
   Settings,
+  QueueDownloadProgress,
 } from '../types';
 
 let activeDownloadSession: DownloadSession | null = null;
 let downloadSessionOwner: DownloadSessionOwner | null = null;
 let downloadSessionCounter = 0;
 let formatsProcess: FormatsProcess | null = null;
+let activeProgressReporter: JobProgressReporter | null = null;
 
 export function getDownloadSessionOwner(): DownloadSessionOwner | null {
   return downloadSessionOwner;
@@ -78,6 +86,40 @@ function sendProgress(session: DownloadSession | null, message: string) {
   if (!session || !shouldEmitTerminalEvent(session.lifecycle)) return;
   if (!isActiveSession(session)) return;
   safeSend(session.sender, 'progress', message);
+}
+
+function handleYtdlpOutputLines(
+  session: DownloadSession,
+  reporter: JobProgressReporter,
+  chunk: string,
+  isStderr: boolean
+) {
+  const lines = chunk.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    if (trimmed.startsWith('{')) {
+      reporter.handleYtdlpOutputLine(session, trimmed);
+      try {
+        const parsed = JSON.parse(trimmed) as Parameters<typeof summarizeYtdlpJsonForConsole>[0];
+        const summary = summarizeYtdlpJsonForConsole(parsed);
+        if (summary) sendProgress(session, summary);
+      } catch {
+        // ignore invalid json
+      }
+      continue;
+    }
+
+    const handled = reporter.handleYtdlpOutputLine(session, trimmed);
+    if (handled) continue;
+
+    if (isStderr) {
+      sendProgress(session, `[yt-dlp stderr] ${trimmed}`);
+    } else {
+      sendProgress(session, trimmed);
+    }
+  }
 }
 
 interface CompletionMeta {
@@ -125,6 +167,11 @@ function completeSession(
 
   activeDownloadSession = null;
   downloadSessionOwner = null;
+  if (activeProgressReporter) {
+    activeProgressReporter.emitIdle(session);
+    activeProgressReporter.clearTaskbar();
+    activeProgressReporter = null;
+  }
 }
 
 function killProcess(proc: ChildProcess | null, label: string) {
@@ -161,6 +208,10 @@ export function cancelActiveSession(notify = true) {
   session.lifecycle = markTerminalEventEmitted(session.lifecycle);
   activeDownloadSession = null;
   downloadSessionOwner = null;
+  if (activeProgressReporter) {
+    activeProgressReporter.clearTaskbar();
+    activeProgressReporter = null;
+  }
 }
 
 export function killAllProcesses() {
@@ -184,6 +235,10 @@ export function killAllProcesses() {
   session.lifecycle = markTerminalEventEmitted(session.lifecycle);
   activeDownloadSession = null;
   downloadSessionOwner = null;
+  if (activeProgressReporter) {
+    activeProgressReporter.clearTaskbar();
+    activeProgressReporter = null;
+  }
 }
 
 export function fetchFormats(ytdlpPath: string, url: string): Promise<string> {
@@ -271,7 +326,8 @@ async function runConversion(
   downloadedFilePath: string,
   effectiveSettings: Settings,
   ffmpegCommand: string,
-  mainWindow: Electron.BrowserWindow | null
+  mainWindow: Electron.BrowserWindow | null,
+  progressReporter: JobProgressReporter | null
 ) {
   sendProgress(session, '⏳ Checking if conversion is needed...');
   try {
@@ -323,6 +379,8 @@ async function runConversion(
     const srcCodecs = await probeMediaCodecs(ffmpegCommand, inputPath);
     const videoEncoder = await resolveVideoEncoder(effectiveSettings);
 
+    progressReporter?.emitConvertProgress(session, 0, 'Converting...');
+
     const ffmpegArgs = buildFfmpegArgs(
       inputPath,
       outputPath,
@@ -342,6 +400,8 @@ async function runConversion(
     });
     session.ffmpegProcess = ffProc;
 
+    const ffmpegProgressState = createFfmpegProgressParseState(srcCodecs.durationSeconds ?? null);
+
     const conversionTimeout = setTimeout(() => {
       if (!isActiveSession(session) || !ffProc || ffProc.killed) return;
       sendProgress(session, '❌ Conversion timed out after 10 minutes.');
@@ -351,11 +411,15 @@ async function runConversion(
 
     ffProc.stdout?.on('data', (data: Buffer) => {
       if (!isActiveSession(session)) return;
-      sendProgress(session, `[ffmpeg] ${data.toString().trim()}`);
+      const percent = parseFfmpegProgressChunk(ffmpegProgressState, data.toString());
+      if (percent !== null) {
+        progressReporter?.emitConvertProgress(session, percent, 'Converting...');
+      }
     });
     ffProc.stderr?.on('data', (data: Buffer) => {
       if (!isActiveSession(session)) return;
-      sendProgress(session, `[ffmpeg] ${data.toString().trim()}`);
+      const text = data.toString().trim();
+      if (text) sendProgress(session, `[ffmpeg] ${text}`);
     });
 
     ffProc.on('close', (ffmpegCode) => {
@@ -372,6 +436,7 @@ async function runConversion(
       }
 
       if (ffExitType === 'success') {
+        progressReporter?.emitConvertProgress(session, 100, 'Conversion complete');
         sendProgress(session, `🎉 Successfully converted to ${outputPath}`);
         const shouldDelete = !effectiveSettings.keepOriginalAfterConvert;
         const pathsDiffer = isWindows
@@ -455,7 +520,8 @@ export function startDownload(
   options: DownloadRequestOptions,
   mainWindow: Electron.BrowserWindow | null,
   onComplete?: (statusMessage: string, outcome?: DownloadOutcome) => void,
-  owner: DownloadSessionOwner = 'manual'
+  owner: DownloadSessionOwner = 'manual',
+  queueProgress: QueueDownloadProgress | null = null
 ) {
   if (activeDownloadSession && downloadSessionOwner !== owner) {
     throw new Error('Download session already active with a different owner.');
@@ -473,6 +539,10 @@ export function startDownload(
     ytdlpProcess: null,
     ffmpegProcess: null,
     onComplete,
+    queueProgress,
+    jobPhase: 'download',
+    ytdlpPostprocess: false,
+    ytdlpDownloadFinished: false,
   };
   activeDownloadSession = session;
   downloadSessionOwner = owner;
@@ -547,6 +617,23 @@ export function startDownload(
     });
     statusMessages.forEach((message) => sendProgress(session, message));
 
+    const progressPlan = resolveJobProgressPlanFromSettings({
+      downloadProfilesEnabled: effectiveSettings.downloadProfilesEnabled,
+      downloadMode: effectiveSettings.downloadMode,
+      bestQuality: effectiveSettings.bestQuality,
+      audioOnly: effectiveSettings.audioOnly,
+      advancedOptions: effectiveSettings.advancedOptions,
+      convertEnabled: effectiveSettings.convertEnabled,
+    });
+    const progressReporter = new JobProgressReporter(
+      mainWindow,
+      progressPlan,
+      queueProgress,
+      effectiveSettings.showTaskbarProgress
+    );
+    activeProgressReporter = progressReporter;
+    progressReporter.emitPhaseIndeterminate(session, 'download', 'Starting download...');
+
     sendProgress(session, `🚀 Starting download: ${url}`);
     sendProgress(session, `   Command: ${ytdlpBinary} ${ytdlpArgs.join(' ')}`);
     const ytProc = spawnWithEnv(ytdlpPath, ytdlpArgs, {
@@ -567,7 +654,7 @@ export function startDownload(
         downloadOutputData = downloadOutputData.slice(-MAX_OUTPUT_BUFFER / 2);
       }
       downloadOutputData += message;
-      sendProgress(session, message.trim());
+      handleYtdlpOutputLines(session, progressReporter, message, false);
     });
 
     ytProc.stderr?.on('data', (data: Buffer) => {
@@ -576,7 +663,7 @@ export function startDownload(
       if (downloadErrorData.length < MAX_ERROR_BUFFER) {
         downloadErrorData += message;
       }
-      sendProgress(session, `[yt-dlp stderr] ${message.trim()}`);
+      handleYtdlpOutputLines(session, progressReporter, message, true);
     });
 
     ytProc.on('close', (code) => {
@@ -674,10 +761,12 @@ export function startDownload(
           downloadedFilePath,
           effectiveSettings,
           ffmpegCommand,
-          mainWindow
+          mainWindow,
+          progressReporter
         );
       } else {
         sendProgress(session, 'ℹ️ Conversion not enabled for this download.');
+        progressReporter.emitDownloadComplete(session);
         const ext = path.extname(downloadedFilePath).replace('.', '').toLowerCase() || undefined;
         completeSession(session, '✅ Download complete (no conversion).', 'success', {
           format: ext,
