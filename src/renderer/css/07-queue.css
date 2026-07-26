@@ -247,8 +247,43 @@
 
 .queue-item-status {
   flex-shrink: 0;
-  width: 20px;
-  text-align: center;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-full);
+  background: var(--text-muted);
+}
+
+.queue-pending .queue-item-status {
+  background: var(--text-muted);
+}
+
+.queue-downloading .queue-item-status {
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+  animation: queueStatusPulse 1.2s ease-in-out infinite;
+}
+
+.queue-completed .queue-item-status {
+  background: var(--success);
+}
+
+.queue-failed .queue-item-status {
+  background: var(--danger);
+}
+
+.queue-cancelled .queue-item-status {
+  background: var(--text-muted);
+  opacity: 0.55;
+}
+
+@keyframes queueStatusPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
 }
 
 .queue-item-url {
@@ -305,64 +340,4 @@
 
 .queue-cancelled .queue-item-url {
   color: var(--text-muted);
-}
-
-.wizard-overlay {
-  position: fixed;
-  inset: 0;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(8px);
-  z-index: 2000;
-}
-
-.wizard-overlay.active {
-  display: flex;
-}
-
-.wizard-card {
-  width: 90%;
-  max-width: 520px;
-  background: color-mix(in srgb, var(--surface-1) 32%, transparent);
-  backdrop-filter: blur(var(--blur-lg));
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: var(--radius-xl);
-  box-shadow:
-    var(--shadow-lg),
-    0 16px 48px rgba(0, 0, 0, 0.4);
-  padding: var(--spacing-2xl) var(--spacing-xl) var(--spacing-xl);
-  display: flex;
-  flex-direction: column;
-  animation: cardEntrance 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-.wizard-progress {
-  height: 3px;
-  background: var(--surface-3);
-  border-radius: 2px;
-  margin-bottom: var(--spacing-xl);
-  overflow: hidden;
-}
-
-.wizard-progress-bar {
-  height: 100%;
-  width: 25%;
-  background: var(--accent);
-  border-radius: 2px;
-  transition: width var(--transition-normal);
-}
-
-.wizard-step {
-  display: none;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  min-height: 280px;
-}
-
-.wizard-step.active {
-  display: flex;
-  animation: wizardFadeIn 0.3s ease both;
 }

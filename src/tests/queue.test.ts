@@ -112,6 +112,7 @@ const {
     }),
     getVersion: vi.fn(() => '4.0.0'),
     getAppPath: vi.fn(() => process.cwd()),
+    setAboutPanelOptions: vi.fn(),
   };
 
   return {
@@ -172,6 +173,10 @@ vi.mock('electron', () => ({
     }
     on = vi.fn();
     show = vi.fn();
+  },
+  Menu: {
+    setApplicationMenu: vi.fn(),
+    buildFromTemplate: vi.fn(() => ({})),
   },
 }));
 

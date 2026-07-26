@@ -58,6 +58,7 @@ interface RosiRendererApi {
   cancelDownload: () => void;
   cancelFormats: () => void;
   getAppVersion: () => Promise<string>;
+  getAppPlatform: () => Promise<NodeJS.Platform>;
   checkDenoInstalled: () => Promise<boolean>;
   installDeno: () => Promise<{
     success?: boolean;

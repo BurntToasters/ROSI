@@ -57,6 +57,8 @@ function isPathWithinBase(resolvedPath: string, basePath: string): boolean {
 }
 
 function isAllowedDownloadBase(resolvedPath: string): boolean {
+  // macOS/Linux: home plus known external mount roots. Windows: any absolute path
+  // outside blocked system directories (broader by design for drive-letter layouts).
   const homeDir = os.homedir();
   if (homeDir && isPathWithinBase(resolvedPath, homeDir)) {
     return true;

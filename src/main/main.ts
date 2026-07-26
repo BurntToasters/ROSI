@@ -138,6 +138,13 @@ function createSplashWindow() {
     ...(process.platform === 'darwin' ? { roundedCorners: true } : {}),
   });
   void splashWindow.loadFile(path.join(__dirname, '..', '..', 'src', 'renderer', 'splash.html'));
+  splashWindow.webContents.once('did-finish-load', () => {
+    if (!splashWindow || splashWindow.isDestroyed()) return;
+    const versionLiteral = JSON.stringify(app.getVersion());
+    void splashWindow.webContents.executeJavaScript(
+      `(function(){var el=document.getElementById('version-display');if(el)el.textContent='v'+${versionLiteral};})()`
+    );
+  });
   splashWindow.center();
   setTimeout(() => {
     if (splashWindow && !splashWindow.isDestroyed()) {
@@ -219,6 +226,7 @@ async function runRendererSmokeChecks(windowRef: BrowserWindow): Promise<string[
             bubbles: true,
             metaKey: isMac,
             ctrlKey: !isMac,
+            shiftKey: true,
           })
         );
         await wait(150);
@@ -477,7 +485,7 @@ void app.whenReady().then(async () => {
     return;
   }
 
-  if (!isSmokeRun) {
+  if (isPackaged && !isSmokeRun && !process.env.VITEST) {
     createSplashWindow();
   }
   verifyBundledFfmpeg();
@@ -500,29 +508,18 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   appQuitting = true;
+  stopActiveDownloadsAndQueue();
   flushQueueOnShutdown();
-  try {
-    killAllProcesses();
-  } catch (error) {
-    log.error('Error killing processes on quit:', error);
-  }
-  try {
-    cancelFormats();
-  } catch (error) {
-    log.error('Error cancelling formats on quit:', error);
-  }
-  try {
-    cancelVideoInfo();
-  } catch (error) {
-    log.error('Error cancelling video info on quit:', error);
-  }
 });
 
 if (!process.windowsStore) {
   setupAutoUpdater(getMainWindow, loadSettings);
 }
 
-ipcMain.on('log-error', (_, message) => {
+ipcMain.on('log-error', (event, message) => {
+  if (!assertMainWindowSender(event)) {
+    return;
+  }
   if (typeof message === 'string') {
     const truncated = message.length > 2000 ? message.slice(0, 2000) + '...(truncated)' : message;
     log.error(`[renderer] ${truncated}`);
@@ -545,6 +542,7 @@ ipcMain.on('settings-flush-complete', (event) => {
 });
 
 ipcMain.handle('get-app-version', () => app.getVersion());
+ipcMain.handle('get-app-platform', () => process.platform);
 ipcMain.handle('is-packaged', () => isPackaged);
 if (!process.windowsStore) {
   ipcMain.handle('check-for-updates', () => checkForUpdates(isPackaged, loadSettings));

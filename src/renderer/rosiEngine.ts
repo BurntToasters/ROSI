@@ -1836,6 +1836,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  try {
+    const platform = await window.api.getAppPlatform();
+    const taskbarSetting = document.getElementById('taskbarProgressSetting');
+    const taskbarLinuxNote = document.getElementById('taskbarProgressLinuxNote');
+    if (platform === 'linux') {
+      taskbarSetting?.setAttribute('hidden', '');
+      taskbarLinuxNote?.classList.remove('hidden');
+    }
+  } catch (e) {
+    logError('Could not resolve app platform for settings UI', e);
+  }
+
   if (window.api.getChannel() !== 'msstore') {
     try {
       setupAutoUpdater();
@@ -3639,7 +3651,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             lastDownloadedFilePath = null;
           }, 8000);
         } else if (isSuccess) {
-          downloadBtn.innerHTML = `✅ Download Complete!`;
+          downloadBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span>Download complete</span>`;
           downloadBtn.disabled = false;
           setTimeout(() => {
             restoreDefaultDownloadButton();

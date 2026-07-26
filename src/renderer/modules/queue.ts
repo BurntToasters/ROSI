@@ -38,14 +38,6 @@
     cancelled: 'Cancelled',
   };
 
-  const STATUS_ICONS: Record<QueueStatus, string> = {
-    pending: '⏸️',
-    downloading: '⏳',
-    completed: '✅',
-    failed: '❌',
-    cancelled: '⏹️',
-  };
-
   function resolveQueueSectionElement(root?: Document) {
     const doc = root ?? document;
     return doc.getElementById('queueSection') || doc.getElementById('queue-section');
@@ -87,7 +79,6 @@
       el.setAttribute('role', 'listitem');
       el.dataset.queueId = item.id;
       const statusLabel = STATUS_LABELS[item.status];
-      const statusIcon = STATUS_ICONS[item.status];
 
       let urlDisplay: string;
       try {
@@ -102,7 +93,6 @@
       const statusEl = document.createElement('span');
       statusEl.className = 'queue-item-status';
       statusEl.setAttribute('aria-hidden', 'true');
-      statusEl.textContent = statusIcon;
 
       const srEl = document.createElement('span');
       srEl.className = 'sr-only';

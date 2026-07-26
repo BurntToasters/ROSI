@@ -149,6 +149,7 @@ const {
     getVersion: vi.fn(() => '4.0.0-beta.2'),
     getAppPath: vi.fn(() => process.cwd()),
     isReady: vi.fn(() => true),
+    setAboutPanelOptions: vi.fn(),
   };
 
   return {
@@ -247,6 +248,10 @@ vi.mock('electron', () => ({
     on = notificationOnMock;
     once = notificationOnceMock;
     show = notificationShowMock;
+  },
+  Menu: {
+    setApplicationMenu: vi.fn(),
+    buildFromTemplate: vi.fn(() => ({})),
   },
 }));
 
@@ -397,7 +402,21 @@ async function initializeMainModule(options?: { beforeImport?: (userDataDir: str
   fs.writeFileSync(ytdlpFixturePath, '');
   vi.resetModules();
   await import('../main/main');
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await appMock.whenReady.mock.results.at(-1)?.value;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await waitForPrimaryWindowReady();
+}
+
+async function waitForPrimaryWindowReady() {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      getPrimaryWindow();
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw new Error('Primary window not ready after module init');
 }
 
 type MockFn = ReturnType<typeof vi.fn>;
@@ -716,6 +735,7 @@ describe('main process IPC wiring and queue behavior', () => {
 
   it('handles settings and utility IPC requests', async () => {
     expect(await handleHandlers['get-app-version']!()).toBe('4.0.0-beta.2');
+    expect(await handleHandlers['get-app-platform']!()).toBe(process.platform);
     expect(await handleHandlers['is-packaged']!()).toBe(true);
     expect(await handleHandlers['get-settings']!(authorizedEvent)).toEqual(
       expect.objectContaining({ convertFormat: 'mp4' })
@@ -791,9 +811,10 @@ describe('main process IPC wiring and queue behavior', () => {
   it('handles renderer logs and main window navigation events', async () => {
     const mainWindow = getPrimaryWindow();
 
-    onHandlers['log-error']!({}, 'x'.repeat(2105));
-    onHandlers['log-error']!({}, 'short');
-    onHandlers['log-error']!({}, 123);
+    onHandlers['log-error']!(authorizedEvent, 'x'.repeat(2105));
+    onHandlers['log-error']!(authorizedEvent, 'short');
+    onHandlers['log-error']!(authorizedEvent, 123);
+    onHandlers['log-error']!({ sender: { id: 99999 } }, 'ignored');
 
     const openHandler = mainWindow.webContents.setWindowOpenHandler.mock.calls[0]![0] as (input: {
       url: string;
