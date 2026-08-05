@@ -222,7 +222,10 @@ vi.mock('../main/downloader', () => ({
   canStartDownload: vi.fn(() => true),
 }));
 
-vi.mock('../main/constants', () => ({
+// Keep the real constants (ipcValidation and main both read many of them) and
+// override only the values this suite needs to control.
+vi.mock('../main/constants', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../main/constants')>()),
   SPLASH_SHOW_DELAY_MS: 0,
   SPLASH_FADE_DELAY_MS: 0,
   MAX_QUEUE_SIZE: 500,
