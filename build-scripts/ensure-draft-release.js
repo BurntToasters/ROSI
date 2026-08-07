@@ -1,6 +1,11 @@
+const fs = require('fs');
 const https = require('https');
+const path = require('path');
 
 require('dotenv').config();
+
+const REPOSITORY_ROOT = path.resolve(__dirname, '..');
+const CHANGELOG_PATH = path.join(REPOSITORY_ROOT, 'CHANGELOG.md');
 
 const GH_TOKEN = process.env.GH_TOKEN;
 const REPO_OWNER = 'BurntToasters';
@@ -27,6 +32,41 @@ const IS_PRERELEASE = VERSION.includes('beta') || VERSION.includes('alpha');
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function readChangelogReleaseBody(changelogPath = CHANGELOG_PATH) {
+  let body;
+  try {
+    body = fs.readFileSync(changelogPath, 'utf8');
+  } catch (error) {
+    throw new Error(
+      'CHANGELOG.md is required for GitHub release notes: ' +
+        (error && error.message ? error.message : String(error))
+    );
+  }
+  if (!body.trim()) {
+    throw new Error('CHANGELOG.md is empty; refusing to set blank release notes.');
+  }
+  return body;
+}
+
+async function syncReleaseNotesBody(release, body) {
+  if (!release || typeof release.id !== 'number') {
+    throw new Error('Cannot sync release notes without a GitHub release id.');
+  }
+  const updated = await githubRequestWithRetry(
+    'PATCH',
+    '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases/' + release.id,
+    { body }
+  );
+  console.log(
+    '   Synced CHANGELOG.md into release notes (' +
+      body.length +
+      ' chars) for ' +
+      (release.name || TAG_NAME) +
+      '.'
+  );
+  return updated;
 }
 
 function isRetryableGithubError(error) {
@@ -180,6 +220,7 @@ async function findExistingRelease() {
 
 async function ensureDraftRelease() {
   console.log('Ensuring draft release exists for ' + TAG_NAME + '...');
+  const body = readChangelogReleaseBody();
 
   const existing = await findExistingRelease();
   if (existing) {
@@ -190,9 +231,9 @@ async function ensureDraftRelease() {
         existing.id +
         ', ' +
         (existing.assets ? existing.assets.length : 0) +
-        ' assets) - skipping create.'
+        ' assets) - refreshing release notes.'
     );
-    return existing;
+    return syncReleaseNotesBody(existing, body);
   }
 
   console.log('   No release found. Creating draft...');
@@ -205,12 +246,17 @@ async function ensureDraftRelease() {
         // tag = "v" + version, name defaults to the version, draft:true.
         tag_name: TAG_NAME,
         name: VERSION,
+        body,
         draft: true,
         prerelease: IS_PRERELEASE,
       }
     );
     console.log(
-      '   Created draft release: ' + (release.name || TAG_NAME) + ' (id ' + release.id + ')'
+      '   Created draft release: ' +
+        (release.name || TAG_NAME) +
+        ' (id ' +
+        release.id +
+        ') with CHANGELOG.md release notes.'
     );
     return release;
   } catch (error) {
@@ -221,7 +267,7 @@ async function ensureDraftRelease() {
       const afterRetry = await findExistingRelease();
       if (afterRetry) {
         console.log('   Found existing draft after retry: id ' + afterRetry.id);
-        return afterRetry;
+        return syncReleaseNotesBody(afterRetry, body);
       }
     }
     throw error;
