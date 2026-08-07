@@ -41,7 +41,8 @@ function readChangelogReleaseBody(changelogPath = CHANGELOG_PATH) {
   } catch (error) {
     throw new Error(
       'CHANGELOG.md is required for GitHub release notes: ' +
-        (error && error.message ? error.message : String(error))
+        (error && error.message ? error.message : String(error)),
+      { cause: error }
     );
   }
   if (!body.trim()) {
