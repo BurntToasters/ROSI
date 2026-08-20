@@ -587,11 +587,23 @@ function hideModal(modal: HTMLElement, action: (() => void) | null | undefined) 
     if (!isModalActive) {
       displayNextModal();
     }
-    if (!isModalActive) {
+    const wizardActive = document.getElementById('setup-wizard')?.classList.contains('active');
+    const licensesActive = document
+      .getElementById('licenses-overlay')
+      ?.classList.contains('active');
+    if (!isModalActive && !wizardActive && !licensesActive) {
       setMainContentInert(false);
     }
     if (!isModalActive && previousFocus instanceof HTMLElement) {
-      previousFocus.focus();
+      // Prefer returning focus to the wizard when skip/confirm was opened from it.
+      if (wizardActive) {
+        const wizard = document.getElementById('setup-wizard');
+        if (wizard instanceof HTMLElement) {
+          focusFirstElement(wizard);
+        }
+      } else {
+        previousFocus.focus();
+      }
       previousFocus = null;
     }
   }, 200);
@@ -2015,6 +2027,8 @@ function launchSetupWizard(
 
   wizardFocusinHandler = (e: FocusEvent) => {
     if (!overlayEl.classList.contains('active')) return;
+    // Skip/confirm modals sit above the wizard; do not steal focus back.
+    if (isModalActive) return;
     const target = e.target;
     if (target instanceof Node && overlayEl.contains(target)) return;
     if (!focusFirstElement(overlayEl) && typeof overlayEl.focus === 'function') {
@@ -2154,14 +2168,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   let persistDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let persistGeneration = 0;
 
   async function persistSettings(silent = false, immediate = false): Promise<boolean> {
     if (persistDebounceTimer) clearTimeout(persistDebounceTimer);
     const executeSave = async (resolve: (value: boolean) => void) => {
+      const generation = ++persistGeneration;
       try {
         const result = await window.api.saveSettings(
           settings as unknown as Parameters<typeof window.api.saveSettings>[0]
         );
+        // A newer save started while this one was in flight — do not clobber
+        // live prefs (including presets) with the older snapshot.
+        if (generation !== persistGeneration) {
+          resolve(true);
+          return;
+        }
         if (!result || result.ok !== true) {
           if (!silent) {
             const message = result?.error?.message || 'Could not save settings.';
@@ -2173,6 +2195,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         settings = result.data as RosiSettings;
         resolve(true);
       } catch {
+        if (generation !== persistGeneration) {
+          resolve(true);
+          return;
+        }
         if (!silent) {
           showSettingsSaveError('Could not save settings due to an unexpected error.');
         }
@@ -2783,6 +2809,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (previewDebounceTimer) clearTimeout(previewDebounceTimer);
     const cached = readPreviewCache(url);
     if (cached) {
+      // Cache hits still bump the token so an older in-flight fetch cannot repaint.
+      previewRequestToken += 1;
       applyPreviewResult(url, cached);
       return;
     }
@@ -2854,8 +2882,31 @@ document.addEventListener('DOMContentLoaded', async () => {
     return candidate;
   }
 
+  function readAdvancedFormatSelections(): { videoFormat?: string; audioFormat?: string } {
+    if (!settings.advancedOptions) return {};
+    const videoSelect = document.getElementById('videoFormat') as HTMLSelectElement | null;
+    const audioSelect = document.getElementById('audioFormat') as HTMLSelectElement | null;
+    const videoFormat = videoSelect?.value.trim() || undefined;
+    const audioFormat = audioSelect?.value.trim() || undefined;
+    return { videoFormat, audioFormat };
+  }
+
+  function applyFormatIdToSelect(selectId: string, formatId: string | undefined) {
+    if (!formatId) return;
+    const select = document.getElementById(selectId) as HTMLSelectElement | null;
+    if (!select) return;
+    if (![...select.options].some((option) => option.value === formatId)) {
+      const option = document.createElement('option');
+      option.value = formatId;
+      option.textContent = `ID: ${formatId}`;
+      select.appendChild(option);
+    }
+    select.value = formatId;
+  }
+
   /** Snapshot only the safe, user-visible download options. */
   function buildPresetFromCurrentSettings(id: string, name: string): RosiDownloadPreset {
+    const formats = readAdvancedFormatSelections();
     const preset: RosiDownloadPreset = {
       id,
       name,
@@ -2874,9 +2925,64 @@ document.addEventListener('DOMContentLoaded', async () => {
       embedMetadata: settings.embedMetadata,
       sponsorblockRemove: settings.sponsorblockRemove,
     };
+    if (formats.videoFormat) preset.videoFormat = formats.videoFormat;
+    if (formats.audioFormat) preset.audioFormatId = formats.audioFormat;
     const playlist = resolvePlaylistSelection();
     if (playlist && playlist.mode !== 'current') preset.playlist = playlist;
     return preset;
+  }
+
+  function applyPlaylistSelectionToRadios(playlist: RosiPlaylistSelection | undefined) {
+    const mode = playlist?.mode === 'all' || playlist?.mode === 'range' ? playlist.mode : 'current';
+    const radio = document.querySelector<HTMLInputElement>(
+      `input[name="playlist-scope"][value="${mode}"]`
+    );
+    if (radio) radio.checked = true;
+    if (mode === 'range') {
+      if (playlistRangeStart && typeof playlist?.start === 'number') {
+        playlistRangeStart.value = String(playlist.start);
+      }
+      if (playlistRangeEnd && typeof playlist?.end === 'number') {
+        playlistRangeEnd.value = String(playlist.end);
+      }
+    }
+    // All/Range presets only work when the scope UI is visible; otherwise
+    // resolvePlaylistSelection() invents "current" and stomps the preset.
+    if (mode === 'all' || mode === 'range') {
+      playlistScope?.classList.remove('hidden');
+    }
+    syncPlaylistRangeVisibility();
+    if (playlistScopeError) playlistScopeError.textContent = '';
+  }
+
+  function isPlaylistScopeVisible() {
+    return !!(playlistScope && !playlistScope.classList.contains('hidden'));
+  }
+
+  /** On-screen download options that must beat a selected preset's stored values. */
+  function buildOnScreenPresetOverrides(): Record<string, unknown> {
+    const overrides: Record<string, unknown> = {
+      profileEnabled: settings.downloadProfilesEnabled,
+      profile: settings.downloadMode,
+      bestQuality: settings.bestQuality,
+      audioOnly: settings.audioOnly,
+      advancedOptions: settings.advancedOptions,
+      convertEnabled: settings.convertEnabled,
+      convertFormat: settings.convertFormat,
+      keepOriginal: settings.keepOriginalAfterConvert,
+      gpuAcceleration: settings.gpuAcceleration,
+      gpuType: settings.gpuType,
+      writeSubtitles: settings.writeSubtitles,
+      subtitleLangs: settings.subtitleLangs,
+      embedThumbnail: settings.embedThumbnail,
+      embedMetadata: settings.embedMetadata,
+      sponsorblockRemove: settings.sponsorblockRemove,
+      audioOutputFormat: settings.audioFormat,
+    };
+    const formats = readAdvancedFormatSelections();
+    if (formats.videoFormat) overrides.videoFormat = formats.videoFormat;
+    if (formats.audioFormat) overrides.audioFormat = formats.audioFormat;
+    return overrides;
   }
 
   function applyPresetToSettings(preset: RosiDownloadPreset) {
@@ -2902,20 +3008,44 @@ document.addEventListener('DOMContentLoaded', async () => {
       settings.sponsorblockRemove = preset.sponsorblockRemove;
     }
     updateUIFromSettings();
+    applyFormatIdToSelect('videoFormat', preset.videoFormat);
+    applyFormatIdToSelect('audioFormat', preset.audioFormatId);
+    applyPlaylistSelectionToRadios(preset.playlist);
   }
 
-  /** Per-job overrides sent with queue additions. */
-  function buildQueueRequestOverrides(outputPath?: string): Record<string, unknown> | undefined {
+  /**
+   * Per-job overrides sent with queue additions.
+   * Returns `{ ok: false }` when the visible playlist range is invalid so nothing is queued.
+   * When playlist radios are visible, their value (including Current) always wins over a
+   * selected preset. When the scope UI is still hidden, playlist is omitted so a preset
+   * saved as All/Range can apply. Other on-screen settings are always sent with a preset
+   * so convert/GPU/profile toggles cannot be silently overwritten.
+   */
+  function buildQueueRequestOverrides(
+    outputPath?: string
+  ): { ok: false } | { ok: true; overrides?: Record<string, unknown> } {
+    const scopeVisible = isPlaylistScopeVisible();
+    const playlist = resolvePlaylistSelection();
+    if (scopeVisible && !playlist) return { ok: false };
+
     const overrides: Record<string, unknown> = {};
     if (outputPath) overrides.outputPath = outputPath;
+    const formats = readAdvancedFormatSelections();
+    if (formats.videoFormat) overrides.videoFormat = formats.videoFormat;
+    if (formats.audioFormat) overrides.audioFormat = formats.audioFormat;
     const preset = getSelectedPreset();
     if (preset) {
       overrides.presetId = preset.id;
       overrides.presetName = preset.name;
+      Object.assign(overrides, buildOnScreenPresetOverrides());
+      if (scopeVisible && playlist) overrides.playlist = playlist;
+    } else if (scopeVisible && playlist && playlist.mode !== 'current') {
+      overrides.playlist = playlist;
     }
-    const playlist = resolvePlaylistSelection();
-    if (playlist && playlist.mode !== 'current') overrides.playlist = playlist;
-    return Object.keys(overrides).length > 0 ? overrides : undefined;
+    return {
+      ok: true,
+      overrides: Object.keys(overrides).length > 0 ? overrides : undefined,
+    };
   }
 
   if (downloadPresetSelect) {
@@ -3001,9 +3131,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         // Restore the collapse state the user had before searching.
         if (collapseStateBeforeSearch) {
-          section.classList.toggle('collapsed', collapseStateBeforeSearch[index] === true);
+          const wasCollapsed = collapseStateBeforeSearch[index] === true;
+          section.classList.toggle('collapsed', wasCollapsed);
           const header = section.querySelector<HTMLElement>('.settings-section-header');
-          header?.setAttribute('aria-expanded', String(collapseStateBeforeSearch[index] !== true));
+          header?.setAttribute('aria-expanded', String(!wasCollapsed));
+          const sectionBody = section.querySelector<HTMLElement>('.settings-section-body');
+          if (sectionBody) sectionBody.inert = wasCollapsed;
         }
       });
       collapseStateBeforeSearch = null;
@@ -3045,6 +3178,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (sectionMatches) {
         matches += 1;
         section.classList.remove('collapsed');
+        const sectionBody = section.querySelector<HTMLElement>('.settings-section-body');
+        if (sectionBody) sectionBody.inert = false;
         section
           .querySelector<HTMLElement>('.settings-section-header')
           ?.setAttribute('aria-expanded', 'true');
@@ -3171,6 +3306,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
     const request = { ...(entry.request || {}) } as Record<string, unknown>;
+    if (typeof request.url !== 'string' || !request.url.trim()) request.url = entry.url;
     const outputPath =
       typeof request.outputPath === 'string' && request.outputPath.trim()
         ? request.outputPath
@@ -3273,13 +3409,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       previewBtn.disabled = !validUrl || isBatch;
     }
     if (isBatch || trimmed !== lastPreviewUrl) {
+      // Invalidate in-flight preview for the previous URL before scheduling the next.
+      cancelScheduledPreview();
       hideVideoPreview();
       lastPreviewUrl = null;
       resetPlaylistScope();
     }
     if (!isBatch && validUrl) {
       schedulePreview(trimmed);
-    } else {
+    } else if (isBatch) {
       cancelScheduledPreview();
     }
   }
@@ -3311,10 +3449,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         setQueueStatusMessage('Nothing was queued because no folder was chosen.');
         return false;
       }
+      // Main snapshots from disk. Flush the 300ms settings debounce so convert,
+      // GPU, and profile toggles made just before Queue are what get stored.
+      const saved = await persistSettings(true, true);
+      if (!saved) {
+        const message = 'Could not save download settings. Please try again.';
+        setQueueStatusMessage(message);
+        showToast(message, { type: 'error' });
+        return false;
+      }
+      const built = buildQueueRequestOverrides(destination.outputPath);
+      if (!built.ok) {
+        setQueueStatusMessage('Fix the playlist range before adding to the queue.');
+        return false;
+      }
       // Omit the second argument entirely when there is nothing to override.
-      const overrides = buildQueueRequestOverrides(destination.outputPath);
-      const result = overrides
-        ? await window.api.addToQueue(urls, overrides)
+      const result = built.overrides
+        ? await window.api.addToQueue(urls, built.overrides)
         : await window.api.addToQueue(urls);
       if (result && result.ok) {
         const parts = [
@@ -3384,7 +3535,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         const text = await navigator.clipboard.readText();
         if (text && text.trim()) {
           const { urls } = extractHttpUrls(text);
-          urlInput.value = urls.length > 1 ? urls.join('\n') : (urls[0] ?? text.trim());
+          // Single-line #url strips newlines; join with spaces so Add N still detects batches.
+          urlInput.value = urls.length > 1 ? urls.join(' ') : (urls[0] ?? text.trim());
           urlInput.dispatchEvent(new Event('input'));
           urlInput.focus();
           hasUrlValidationIntent = true;
@@ -3414,7 +3566,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const text = dt ? dt.getData('text/uri-list') || dt.getData('text/plain') : '';
       const { urls } = extractHttpUrls(text);
       if (urls.length > 0 && urlInput) {
-        urlInput.value = urls.length > 1 ? urls.join('\n') : (urls[0] as string);
+        urlInput.value = urls.length > 1 ? urls.join(' ') : (urls[0] as string);
         urlInput.dispatchEvent(new Event('input'));
         hasUrlValidationIntent = true;
         syncPrimaryActionState();
@@ -3519,6 +3671,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (previewCloseBtn) {
     previewCloseBtn.addEventListener('click', () => {
       if (window.api.cancelVideoInfo) window.api.cancelVideoInfo();
+      cancelScheduledPreview();
+      previewAbort?.();
       hideVideoPreview();
       lastPreviewUrl = null;
     });
@@ -4607,16 +4761,18 @@ document.addEventListener('DOMContentLoaded', async () => {
           hideProgressBar();
         });
 
-        const videoFormat = settings.advancedOptions ? videoSelect?.value : undefined;
-        const audioFormat = settings.advancedOptions ? audioSelect?.value : undefined;
-        const convertFormat = settings.convertEnabled ? convertFormatSelect?.value : undefined;
+        const { videoFormat, audioFormat } = readAdvancedFormatSelections();
+        const convertFormat = settings.convertEnabled
+          ? convertFormatSelect?.value.trim() || undefined
+          : undefined;
         applyActiveDownloadProgressPhases(settings, 'Starting download...', {
           videoFormat,
           audioFormat,
         });
         const keepOriginal = settings.convertEnabled ? keepOriginalToggle?.checked : undefined;
+        const scopeVisible = isPlaylistScopeVisible();
         const playlist = resolvePlaylistSelection();
-        if (!playlist) {
+        if (scopeVisible && !playlist) {
           isDownloading = false;
           setButtonLoading(downloadBtn, false);
           syncPrimaryActionState();
@@ -4632,8 +4788,15 @@ document.addEventListener('DOMContentLoaded', async () => {
           convertFormat,
           keepOriginal,
           ffmpegPath: settings.ffmpegPath,
-          playlist,
-          ...(activePreset ? { presetId: activePreset.id, presetName: activePreset.name } : {}),
+          // When radios are hidden, omit playlist so a selected preset's All/Range applies.
+          ...(scopeVisible && playlist ? { playlist } : {}),
+          ...(activePreset
+            ? {
+                presetId: activePreset.id,
+                presetName: activePreset.name,
+                ...buildOnScreenPresetOverrides(),
+              }
+            : {}),
         });
         if (!startResult || startResult.ok !== true) {
           isDownloading = false;
@@ -4800,6 +4963,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       settings = importedSettings;
       try {
         updateUIFromSettings();
+        renderPresetOptions();
         applyTheme(settings.theme ?? 'system');
         localStorage.setItem('rosi-flat-ui', settings.flatUi ? 'true' : 'false');
       } catch (e) {
