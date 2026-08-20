@@ -17,7 +17,7 @@
   justify-content: center;
   background: var(--overlay-bg-heavy);
   backdrop-filter: blur(var(--blur-md));
-  z-index: var(--z-modal);
+  z-index: var(--z-wizard);
 }
 
 .wizard-overlay.active {

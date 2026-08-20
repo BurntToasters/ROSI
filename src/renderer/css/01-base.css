@@ -201,7 +201,8 @@
 
   --z-sidebar-overlay: 998;
   --z-sidebar: 999;
-  --z-modal: 1000;
+  --z-wizard: 1000;
+  --z-modal: 1010;
   --z-update-banner: 100;
 
   --sidebar-width: 320px;

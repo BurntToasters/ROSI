@@ -261,15 +261,19 @@ vi.mock('../main/platform', () => ({
   verifyBundledFfmpeg: vi.fn(),
 }));
 
-vi.mock('../main/settings', () => ({
-  loadSettings: loadSettingsMock,
-  saveSettings: saveSettingsMock,
-  getDefaultSettings: vi.fn(() => ({})),
-  loadStats: vi.fn(() => ({ totalDownloads: 0 })),
-  resetStats: resetStatsMock,
-  exportSettingsToFile: exportSettingsToFileMock,
-  importSettingsFromFile: importSettingsFromFileMock,
-}));
+vi.mock('../main/settings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../main/settings')>();
+  return {
+    loadSettings: loadSettingsMock,
+    saveSettings: saveSettingsMock,
+    getDefaultSettings: vi.fn(() => ({})),
+    loadStats: vi.fn(() => ({ totalDownloads: 0 })),
+    resetStats: resetStatsMock,
+    exportSettingsToFile: exportSettingsToFileMock,
+    importSettingsFromFile: importSettingsFromFileMock,
+    downloadPresetToRequestOptions: actual.downloadPresetToRequestOptions,
+  };
+});
 
 vi.mock('../main/updater', () => ({
   setupAutoUpdater: vi.fn(),
@@ -566,6 +570,38 @@ describe('main process IPC wiring and queue behavior', () => {
 
     const queue = (await handleHandlers['get-queue']!(authorizedEvent)) as unknown[];
     expect(queue).toHaveLength(1);
+  });
+
+  it('lets an explicit current playlist override a preset saved as all', async () => {
+    const outputPath = path.join(os.homedir(), 'Downloads');
+    loadSettingsMock.mockReturnValueOnce({
+      convertEnabled: false,
+      convertFormat: 'mp4',
+      keepOriginalAfterConvert: true,
+      ffmpegPath: '',
+      downloadFolder: outputPath,
+      downloadPresets: [
+        {
+          id: 'p-all',
+          name: 'Whole playlist',
+          profile: 'best-video',
+          playlist: { mode: 'all' },
+        },
+      ],
+    });
+
+    const added = await handleHandlers['add-to-queue']!(
+      authorizedEvent,
+      ['https://example.com/watch'],
+      { presetId: 'p-all', playlist: { mode: 'current' }, outputPath }
+    );
+    expect(added).toEqual({ ok: true, data: { added: 1, skipped: 0 } });
+
+    const queue = (await handleHandlers['get-queue']!(authorizedEvent)) as Array<{
+      request?: { playlist?: { mode: string }; presetId?: string };
+    }>;
+    expect(queue[0]?.request?.presetId).toBe('p-all');
+    expect(queue[0]?.request?.playlist).toEqual({ mode: 'current' });
   });
 
   it('retries terminal queue items and refuses others', async () => {
