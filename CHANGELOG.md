@@ -52,44 +52,6 @@
 - **PKG:** Updated packages.
 - **Testing:** Added coverage for queue retry, diagnostics, reordering, per-item progress updates, playlist arguments, saved presets, the activity list, and taskbar progress on Windows / macOS / Linux.
 
-## Changes in `v4.3.0-beta.3:`
-
-- **Security Update:** Updated `undici` to `6.28.0` to fix `CVE-2026-13697`.
-- **PKG:** Updated packages.
-
-## Changes in `v4.3.0-beta.2:`
-
-- **NEW - Queue recovery:** Failed and cancelled queue items now show the reason inline with **Retry** / **Requeue** and **Copy details** actions, so a single bad link no longer forces you to rebuild the queue.
-- **NEW - Per-item queue progress:** The active queue row shows its own phase, percentage, speed, and ETA. The main bar still reports overall queue progress.
-- **NEW - Queue reordering:** Pending items can be moved with **Up** / **Down** buttons or `Alt`+`ArrowUp` / `Alt`+`ArrowDown`. Active and finished items stay put.
-- **NEW - Smart multi-link intake:** Pasting or dropping several links is detected everywhere. The main button switches to **Add N to Queue**, and links are deduplicated with a summary of what was added, skipped, or ignored.
-- **NEW - Playlist scope:** When a preview detects a playlist you can download the current video, the entire playlist, or a numbered range.
-- **NEW - Saved presets:** Name and reuse a download setup (profile, conversion, GPU, subtitles, metadata, SponsorBlock, playlist scope) and apply it to direct downloads or queued items. Up to 20 presets.
-- **NEW - Activity center:** Recent Downloads is now **Activity**, stored by the app rather than the browser cache. Rows show source, profile, size, and failure reason, with **Download again**, **Copy source**, **Open folder**, status filters, and a real empty state.
-- **NEW - Automatic previews:** Metadata loads on its own shortly after a valid link is entered, with results cached briefly. The button becomes **Refresh**, or **Retry preview** if lookup fails.
-- **NEW - Searchable settings:** The sidebar has a search field that filters settings and expands matching sections, plus a **Reset section** action for each group.
-- **Setup:** First-run setup now covers the download folder, "ask every time", and a starting profile, so the first download no longer stops to ask.
-- **Queue:** With **Ask every time** enabled, adding links now prompts once for the whole batch instead of using the saved folder, and nothing is queued if you dismiss the picker.
-- **Preview:** Playlist previews read up to 500 entries and no longer report the listing limit as the playlist length when the real total is unavailable.
-- **Settings:** Settings schema migrated to version `7` for saved presets.
-- **Splash:** Loading screen now follows your saved theme tokens, improved contrast on status text, and shows the live app version at runtime.
-- **UI / a11y:** Toast dismiss buttons, wizard toggles, and modal placeholders were polished for keyboard focus and cleaner first paint.
-- **Queue:** Status indicators use theme-colored dots instead of emoji for clearer light/dark/purple rendering.
-- **Linux:** Taskbar / Dock progress setting is hidden with a note that the feature is Windows and macOS only.
-- **Lifecycle:** Quitting on Windows and Linux now stops active downloads and the queue the same way as closing the window on macOS.
-- **Testing:** Added coverage for queue retry, diagnostics, reordering, per-item progress updates, playlist arguments, saved presets, and the activity list.
-
-## Changes in `v4.3.0-beta.1:`
-
-- **macOS:** Added a native application menu (About, Settings, Check for Updates, Edit, View, Window, Help) with actions wired into the existing UI.
-- **Progress:** yt-dlp and FFmpeg now report structured progress for more accurate in-app percentages, including merge and conversion phases.
-- **Taskbar / Dock:** Download and conversion progress appears in the Windows taskbar and macOS Dock; queue runs show an overall percent across items.
-- **Settings:** New **Taskbar / Dock progress** toggle (settings schema v6).
-
-## Changes in `v4.2.1:`
-
-- **PKG:** Updated packages.
-
 ### FULL CHANGELOG:
 
 <details>
