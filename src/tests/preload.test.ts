@@ -86,13 +86,17 @@ describe('preload api contract', () => {
         'cancelVideoInfo',
         'checkDenoInstalled',
         'checkForUpdates',
+        'clearDownloadActivity',
         'clearQueue',
         'detectGpu',
         'downloadUpdate',
         'downloadVideo',
         'exportSettings',
+        'getAppPlatform',
         'getAppVersion',
         'getChannel',
+        'getDefaultSettings',
+        'getDownloadActivity',
         'getFormats',
         'getQueue',
         'getSettings',
@@ -104,6 +108,10 @@ describe('preload api contract', () => {
         'isPackaged',
         'logError',
         'notifySettingsFlushed',
+        'onDownloadActivityUpdate',
+        'onDownloadComplete',
+        'onJobProgress',
+        'onMenuAction',
         'onComplete',
         'onPrepareForClose',
         'onProgress',
@@ -114,9 +122,11 @@ describe('preload api contract', () => {
         'openExternal',
         'openFileLocation',
         'removeFromQueue',
+        'reorderQueueItem',
         'resetSettings',
         'resetStats',
         'restartApp',
+        'retryQueueItem',
         'saveSettings',
         'selectDownloadLocation',
         'showNotification',
@@ -140,6 +150,7 @@ describe('preload api contract', () => {
     await expectInvokeCall(api, 'openExternal', 'open-external', ['https://rosie.run']);
     await expectInvokeCall(api, 'downloadVideo', 'download-video', [downloadOptions]);
     await expectInvokeCall(api, 'getAppVersion', 'get-app-version');
+    await expectInvokeCall(api, 'getAppPlatform', 'get-app-platform');
     await expectInvokeCall(api, 'checkDenoInstalled', 'check-deno-installed');
     await expectInvokeCall(api, 'installDeno', 'install-deno');
     await expectInvokeCall(api, 'detectGpu', 'detect-gpu');
@@ -158,6 +169,35 @@ describe('preload api contract', () => {
     await expectInvokeCall(api, 'getQueue', 'get-queue');
     await expectInvokeCall(api, 'startQueue', 'start-queue');
     await expectInvokeCall(api, 'cancelQueue', 'cancel-queue');
+    await expectInvokeCall(api, 'getDefaultSettings', 'get-default-settings');
+    await expectInvokeCall(api, 'getDownloadActivity', 'get-download-activity');
+    await expectInvokeCall(api, 'clearDownloadActivity', 'clear-download-activity');
+    await expectInvokeCall(api, 'retryQueueItem', 'retry-queue-item', ['q_1']);
+    await expectInvokeCall(api, 'reorderQueueItem', 'reorder-queue-item', [
+      { id: 'q_1', direction: 'up' },
+    ]);
+  });
+
+  it('forwards optional arguments only when provided', async () => {
+    const api = getExposedApi();
+
+    invokeMock.mockClear();
+    await getApiMethod(api, 'getVideoInfo')('https://example.com');
+    expect(invokeMock).toHaveBeenCalledWith('get-video-info', 'https://example.com');
+
+    invokeMock.mockClear();
+    await getApiMethod(api, 'getVideoInfo')('https://example.com', 'all');
+    expect(invokeMock).toHaveBeenCalledWith('get-video-info', 'https://example.com', 'all');
+
+    invokeMock.mockClear();
+    await getApiMethod(api, 'addToQueue')(['https://example.com/a']);
+    expect(invokeMock).toHaveBeenCalledWith('add-to-queue', ['https://example.com/a']);
+
+    invokeMock.mockClear();
+    await getApiMethod(api, 'addToQueue')(['https://example.com/a'], { presetId: 'p1' });
+    expect(invokeMock).toHaveBeenCalledWith('add-to-queue', ['https://example.com/a'], {
+      presetId: 'p1',
+    });
   });
 
   it('maps send-based methods to the correct IPC channels', () => {
@@ -204,8 +244,20 @@ describe('preload api contract', () => {
     validateSubscription('onUpdaterProgress', 'updater-progress', { percent: 50 });
     validateSubscription('onSettingsImported', 'settings-imported', { imported: true });
     validateSubscription('onProgress', 'progress', 'line');
+    validateSubscription('onJobProgress', 'job-progress', {
+      phase: 'download',
+      phasePercent: 10,
+      overallPercent: 7,
+      status: 'Downloading...',
+    });
+    validateSubscription('onMenuAction', 'menu-action', 'open-settings');
     validateSubscription('onComplete', 'complete', 'done');
     validateSubscription('onQueueUpdate', 'queue-update', [{ id: 'q_1' }]);
+    validateSubscription('onDownloadComplete', 'download-complete', {
+      id: 'c1',
+      outcome: 'success',
+    });
+    validateSubscription('onDownloadActivityUpdate', 'download-activity-update', [{ id: 'a1' }]);
 
     onMock.mockClear();
     removeListenerMock.mockClear();

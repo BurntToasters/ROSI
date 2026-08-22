@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
+import { randomUUID } from 'crypto';
 import sanitize from 'sanitize-filename';
 import { dialog } from 'electron';
 import log from 'electron-log/main.js';
@@ -11,13 +12,19 @@ import {
   isWindows,
 } from './platform';
 import { killChildProcess } from './processKill';
-import { loadSettings, recordDownload } from './settings';
+import { downloadPresetToRequestOptions, loadSettings, recordDownload } from './settings';
 import {
   buildFfmpegArgs,
   buildYtdlpArgs,
   resolveVideoEncoder,
   probeMediaCodecs,
 } from './download/commandBuilders';
+import { JobProgressReporter, summarizeYtdlpJsonForConsole } from './download/jobProgressReporter';
+import {
+  createFfmpegProgressParseState,
+  parseFfmpegProgressChunk,
+  resolveJobProgressPlanFromSettings,
+} from '../utils/downloadJobProgress';
 import { isSafeHttpUrl } from '../utils/validation';
 import { isMac } from './platform';
 import {
@@ -39,14 +46,17 @@ import type {
   DownloadSessionOwner,
   DownloadRequestOptions,
   DownloadOutcome,
+  DownloadCompletion,
   FormatsProcess,
   Settings,
+  QueueDownloadProgress,
 } from '../types';
 
 let activeDownloadSession: DownloadSession | null = null;
 let downloadSessionOwner: DownloadSessionOwner | null = null;
 let downloadSessionCounter = 0;
 let formatsProcess: FormatsProcess | null = null;
+let activeProgressReporter: JobProgressReporter | null = null;
 
 export function getDownloadSessionOwner(): DownloadSessionOwner | null {
   return downloadSessionOwner;
@@ -74,22 +84,186 @@ function safeSend(sender: Electron.WebContents, channel: string, message: unknow
   }
 }
 
+/** Console log lines for the download panel; structured UI uses `job-progress` via JobProgressReporter. */
 function sendProgress(session: DownloadSession | null, message: string) {
   if (!session || !shouldEmitTerminalEvent(session.lifecycle)) return;
   if (!isActiveSession(session)) return;
   safeSend(session.sender, 'progress', message);
 }
 
+function handleYtdlpOutputLines(
+  session: DownloadSession,
+  reporter: JobProgressReporter,
+  chunk: string,
+  isStderr: boolean
+) {
+  const lines = chunk.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    if (trimmed.startsWith('{')) {
+      reporter.handleYtdlpOutputLine(session, trimmed);
+      try {
+        const parsed = JSON.parse(trimmed) as Parameters<typeof summarizeYtdlpJsonForConsole>[0];
+        const summary = summarizeYtdlpJsonForConsole(parsed);
+        if (summary) sendProgress(session, summary);
+      } catch {
+        // ignore invalid json
+      }
+      continue;
+    }
+
+    const handled = reporter.handleYtdlpOutputLine(session, trimmed);
+    if (handled) continue;
+
+    if (isStderr) {
+      sendProgress(session, `[yt-dlp stderr] ${trimmed}`);
+    } else {
+      sendProgress(session, trimmed);
+    }
+  }
+}
+
+function resolvePresetRequestOptions(
+  settings: Settings,
+  options: DownloadRequestOptions
+): DownloadRequestOptions {
+  const presets = Array.isArray(settings.downloadPresets) ? settings.downloadPresets : [];
+  const preset = options.presetId
+    ? presets.find((candidate) => candidate.id === options.presetId)
+    : undefined;
+  if (!preset) return options;
+  const definedOptions = Object.fromEntries(
+    Object.entries(options).filter(([, value]) => value !== undefined)
+  ) as DownloadRequestOptions;
+  return {
+    ...downloadPresetToRequestOptions(preset),
+    ...definedOptions,
+    presetName: options.presetName ?? preset.name,
+  } as DownloadRequestOptions;
+}
+
+function applyRequestToSettings(settings: Settings, options: DownloadRequestOptions): Settings {
+  const effective: Settings = {
+    ...settings,
+    downloadPresets: Array.isArray(settings.downloadPresets)
+      ? settings.downloadPresets.map((preset) => ({
+          ...preset,
+          playlist: preset.playlist ? { ...preset.playlist } : undefined,
+        }))
+      : [],
+  };
+
+  if (typeof options.profileEnabled === 'boolean') {
+    effective.downloadProfilesEnabled = options.profileEnabled;
+  }
+  if (options.profile) {
+    effective.downloadMode = options.profile;
+    if (options.profileEnabled === undefined) effective.downloadProfilesEnabled = true;
+  }
+  if (effective.downloadProfilesEnabled) {
+    effective.advancedOptions = effective.downloadMode === 'custom';
+    effective.audioOnly = effective.downloadMode === 'audio';
+    effective.bestQuality = effective.downloadMode === 'best-video';
+  } else if (options.profileEnabled === false) {
+    effective.advancedOptions = false;
+    effective.audioOnly = false;
+    effective.bestQuality = false;
+  }
+
+  if (typeof options.advancedOptions === 'boolean') {
+    effective.advancedOptions = options.advancedOptions;
+  }
+  if (typeof options.audioOnly === 'boolean') effective.audioOnly = options.audioOnly;
+  if (typeof options.bestQuality === 'boolean') effective.bestQuality = options.bestQuality;
+  if (options.audioOutputFormat) effective.audioFormat = options.audioOutputFormat;
+
+  if (typeof options.convertEnabled === 'boolean') {
+    effective.convertEnabled = options.convertEnabled;
+  }
+  if (options.convertFormat !== undefined) {
+    if (options.convertFormat.trim() !== '') {
+      effective.convertFormat = options.convertFormat;
+      if (options.convertEnabled === undefined) effective.convertEnabled = true;
+    } else if (options.convertEnabled === undefined) {
+      effective.convertEnabled = false;
+    }
+  }
+  if (typeof options.keepOriginal === 'boolean') {
+    effective.keepOriginalAfterConvert = options.keepOriginal;
+  }
+
+  if (typeof options.hookBrowser === 'boolean') effective.hookBrowser = options.hookBrowser;
+  if (options.browserChoice) effective.browserChoice = options.browserChoice;
+  if (typeof options.gpuAcceleration === 'boolean') {
+    effective.gpuAcceleration = options.gpuAcceleration;
+  }
+  if (options.gpuType) effective.gpuType = options.gpuType;
+  if (typeof options.writeSubtitles === 'boolean') {
+    effective.writeSubtitles = options.writeSubtitles;
+  }
+  if (options.subtitleLangs) effective.subtitleLangs = options.subtitleLangs;
+  if (typeof options.embedThumbnail === 'boolean') {
+    effective.embedThumbnail = options.embedThumbnail;
+  }
+  if (typeof options.embedMetadata === 'boolean') {
+    effective.embedMetadata = options.embedMetadata;
+  }
+  if (typeof options.sponsorblockRemove === 'boolean') {
+    effective.sponsorblockRemove = options.sponsorblockRemove;
+  }
+  if (options.ffmpegPath !== undefined) effective.ffmpegPath = options.ffmpegPath;
+  return effective;
+}
+
+function buildResolvedRequestSnapshot(
+  options: DownloadRequestOptions,
+  effectiveSettings: Settings
+): DownloadRequestOptions {
+  return {
+    url: options.url.trim(),
+    outputPath: options.outputPath,
+    ffmpegPath: options.ffmpegPath || effectiveSettings.ffmpegPath || undefined,
+    convertEnabled: effectiveSettings.convertEnabled,
+    convertFormat: effectiveSettings.convertFormat,
+    keepOriginal: effectiveSettings.keepOriginalAfterConvert,
+    videoFormat: options.videoFormat,
+    audioFormat: options.audioFormat,
+    playlist: options.playlist ? { ...options.playlist } : { mode: 'current' },
+    profileEnabled: effectiveSettings.downloadProfilesEnabled,
+    profile: effectiveSettings.downloadMode,
+    presetId: options.presetId,
+    presetName: options.presetName,
+    bestQuality: effectiveSettings.bestQuality,
+    advancedOptions: effectiveSettings.advancedOptions,
+    audioOnly: effectiveSettings.audioOnly,
+    audioOutputFormat: effectiveSettings.audioFormat,
+    hookBrowser: effectiveSettings.hookBrowser,
+    browserChoice: effectiveSettings.browserChoice,
+    gpuAcceleration: effectiveSettings.gpuAcceleration,
+    gpuType: effectiveSettings.gpuType,
+    writeSubtitles: effectiveSettings.writeSubtitles,
+    subtitleLangs: effectiveSettings.subtitleLangs,
+    embedThumbnail: effectiveSettings.embedThumbnail,
+    embedMetadata: effectiveSettings.embedMetadata,
+    sponsorblockRemove: effectiveSettings.sponsorblockRemove,
+  };
+}
+
 interface CompletionMeta {
   format?: string;
   bytes?: number;
+  filePath?: string;
+  error?: string;
   progressMessage?: string | null;
+  emitLegacyComplete?: boolean;
 }
 
 function statFileSize(filePath: string): number | undefined {
   try {
     const stat = fs.statSync(filePath);
-    return stat.isFile() && stat.size > 0 ? stat.size : undefined;
+    return stat.isFile() && stat.size >= 0 ? stat.size : undefined;
   } catch {
     return undefined;
   }
@@ -104,27 +278,76 @@ function completeSession(
   if (!session || !isActiveSession(session)) return;
   if (!shouldEmitTerminalEvent(session.lifecycle)) return;
   session.lifecycle = markTerminalEventEmitted(session.lifecycle);
+
+  const completedAt = Date.now();
+  const finalPath = meta.filePath ? path.resolve(meta.filePath) : undefined;
+  const sizeBytes = meta.bytes ?? (finalPath ? statFileSize(finalPath) : undefined);
+  const completion: DownloadCompletion = {
+    id: session.completionId,
+    sessionId: session.id,
+    owner: session.owner,
+    queueItemId: session.queueProgress?.queueItemId,
+    outcome,
+    statusMessage,
+    url: session.request.url,
+    profile: session.request.profile,
+    presetId: session.request.presetId,
+    presetName: session.request.presetName,
+    request: {
+      ...session.request,
+      playlist: session.request.playlist ? { ...session.request.playlist } : undefined,
+    },
+    filename: finalPath ? path.basename(finalPath) : undefined,
+    outputPath: finalPath,
+    sizeBytes,
+    format: meta.format,
+    error: outcome === 'failed' ? (meta.error ?? statusMessage) : undefined,
+    startedAt: session.startedAt,
+    completedAt,
+  };
+
   if (meta.progressMessage) {
     safeSend(session.sender, 'progress', meta.progressMessage);
   }
-  safeSend(session.sender, 'complete', statusMessage);
+  if (meta.emitLegacyComplete !== false) {
+    safeSend(session.sender, 'complete', statusMessage);
+  }
+  safeSend(session.sender, 'download-complete', completion);
+
+  if (typeof session.onDownloadComplete === 'function') {
+    try {
+      session.onDownloadComplete(completion);
+    } catch (error) {
+      log.error('Error in structured download completion callback:', error);
+    }
+  }
 
   if (typeof session.onComplete === 'function') {
     try {
       session.onComplete(statusMessage, outcome);
     } catch (error) {
-      log.error('Error in download completion callback:', error);
+      log.error(
+        meta.emitLegacyComplete === false && outcome === 'cancelled'
+          ? 'Error in download cancellation callback:'
+          : 'Error in download completion callback:',
+        error
+      );
     }
   }
 
   if (outcome === 'success') {
-    recordDownload('success', meta.format, meta.bytes);
+    recordDownload('success', meta.format, sizeBytes);
   } else {
     recordDownload(outcome);
   }
 
   activeDownloadSession = null;
   downloadSessionOwner = null;
+  if (activeProgressReporter) {
+    activeProgressReporter.emitIdle(session);
+    activeProgressReporter.clearTaskbar();
+    activeProgressReporter = null;
+  }
 }
 
 function killProcess(proc: ChildProcess | null, label: string) {
@@ -142,25 +365,11 @@ export function cancelActiveSession(notify = true) {
 
   if (!isActiveSession(session)) return;
 
-  if (notify || session.owner === 'manual') {
-    completeSession(session, '⏹️ Cancelled.', 'cancelled', {
-      progressMessage: '⏹️ Download/Conversion cancelled by user.',
-    });
-    return;
-  }
-
-  if (typeof session.onComplete === 'function') {
-    try {
-      session.onComplete('⏹️ Cancelled.', 'cancelled');
-    } catch (error) {
-      log.error('Error in download cancellation callback:', error);
-    }
-  }
-
-  recordDownload('cancelled');
-  session.lifecycle = markTerminalEventEmitted(session.lifecycle);
-  activeDownloadSession = null;
-  downloadSessionOwner = null;
+  completeSession(session, '⏹️ Cancelled.', 'cancelled', {
+    progressMessage:
+      notify || session.owner === 'manual' ? '⏹️ Download/Conversion cancelled by user.' : null,
+    emitLegacyComplete: notify || session.owner === 'manual',
+  });
 }
 
 export function killAllProcesses() {
@@ -171,19 +380,9 @@ export function killAllProcesses() {
   killProcess(session.ffmpegProcess, 'ffmpeg');
   session.ytdlpProcess = null;
   session.ffmpegProcess = null;
-
-  if (typeof session.onComplete === 'function') {
-    try {
-      session.onComplete('⏹️ Cancelled.', 'cancelled');
-    } catch (error) {
-      log.error('Error in download cancellation callback:', error);
-    }
-  }
-
-  recordDownload('cancelled');
-  session.lifecycle = markTerminalEventEmitted(session.lifecycle);
-  activeDownloadSession = null;
-  downloadSessionOwner = null;
+  completeSession(session, '⏹️ Cancelled.', 'cancelled', {
+    emitLegacyComplete: false,
+  });
 }
 
 export function fetchFormats(ytdlpPath: string, url: string): Promise<string> {
@@ -271,7 +470,8 @@ async function runConversion(
   downloadedFilePath: string,
   effectiveSettings: Settings,
   ffmpegCommand: string,
-  mainWindow: Electron.BrowserWindow | null
+  mainWindow: Electron.BrowserWindow | null,
+  progressReporter: JobProgressReporter | null
 ) {
   sendProgress(session, '⏳ Checking if conversion is needed...');
   try {
@@ -310,6 +510,7 @@ async function runConversion(
       completeSession(session, `✅ Done (Already ${targetFormat.toUpperCase()}).`, 'success', {
         format: targetFormat,
         bytes: statFileSize(inputPath),
+        filePath: inputPath,
       });
       return;
     }
@@ -322,6 +523,8 @@ async function runConversion(
 
     const srcCodecs = await probeMediaCodecs(ffmpegCommand, inputPath);
     const videoEncoder = await resolveVideoEncoder(effectiveSettings);
+
+    progressReporter?.emitConvertProgress(session, 0, 'Converting...');
 
     const ffmpegArgs = buildFfmpegArgs(
       inputPath,
@@ -342,6 +545,8 @@ async function runConversion(
     });
     session.ffmpegProcess = ffProc;
 
+    const ffmpegProgressState = createFfmpegProgressParseState(srcCodecs.durationSeconds ?? null);
+
     const conversionTimeout = setTimeout(() => {
       if (!isActiveSession(session) || !ffProc || ffProc.killed) return;
       sendProgress(session, '❌ Conversion timed out after 10 minutes.');
@@ -351,11 +556,15 @@ async function runConversion(
 
     ffProc.stdout?.on('data', (data: Buffer) => {
       if (!isActiveSession(session)) return;
-      sendProgress(session, `[ffmpeg] ${data.toString().trim()}`);
+      const percent = parseFfmpegProgressChunk(ffmpegProgressState, data.toString());
+      if (percent !== null) {
+        progressReporter?.emitConvertProgress(session, percent, 'Converting...');
+      }
     });
     ffProc.stderr?.on('data', (data: Buffer) => {
       if (!isActiveSession(session)) return;
-      sendProgress(session, `[ffmpeg] ${data.toString().trim()}`);
+      const text = data.toString().trim();
+      if (text) sendProgress(session, `[ffmpeg] ${text}`);
     });
 
     ffProc.on('close', (ffmpegCode) => {
@@ -372,6 +581,7 @@ async function runConversion(
       }
 
       if (ffExitType === 'success') {
+        progressReporter?.emitConvertProgress(session, 100, 'Conversion complete');
         sendProgress(session, `🎉 Successfully converted to ${outputPath}`);
         const shouldDelete = !effectiveSettings.keepOriginalAfterConvert;
         const pathsDiffer = isWindows
@@ -399,6 +609,7 @@ async function runConversion(
         completeSession(session, '🎬 Conversion complete.', 'success', {
           format: targetFormat,
           bytes: statFileSize(outputPath),
+          filePath: outputPath,
         });
       } else {
         sendProgress(
@@ -454,8 +665,10 @@ export function startDownload(
   sender: Electron.WebContents,
   options: DownloadRequestOptions,
   mainWindow: Electron.BrowserWindow | null,
-  onComplete?: (statusMessage: string, outcome?: DownloadOutcome) => void,
-  owner: DownloadSessionOwner = 'manual'
+  onComplete?: (statusMessage: string, outcome: DownloadOutcome) => void,
+  owner: DownloadSessionOwner = 'manual',
+  queueProgress: QueueDownloadProgress | null = null,
+  onDownloadComplete?: (completion: DownloadCompletion) => void
 ) {
   if (activeDownloadSession && downloadSessionOwner !== owner) {
     throw new Error('Download session already active with a different owner.');
@@ -464,38 +677,37 @@ export function startDownload(
     cancelActiveSession(false);
   }
 
+  const settings = loadSettings();
+  const requestOptions = resolvePresetRequestOptions(settings, options);
+  const effectiveSettings = applyRequestToSettings(settings, requestOptions);
+  const requestSnapshot = buildResolvedRequestSnapshot(requestOptions, effectiveSettings);
+
   downloadSessionCounter += 1;
   const session: DownloadSession = {
     id: downloadSessionCounter,
+    completionId: randomUUID(),
+    startedAt: Date.now(),
+    request: requestSnapshot,
     sender,
     owner,
     lifecycle: createDownloadLifecycleState(),
     ytdlpProcess: null,
     ffmpegProcess: null,
     onComplete,
+    onDownloadComplete,
+    queueProgress,
+    jobPhase: 'download',
+    ytdlpPostprocess: false,
+    ytdlpDownloadFinished: false,
   };
   activeDownloadSession = session;
   downloadSessionOwner = owner;
 
-  const settings = loadSettings();
-  const effectiveSettings: Settings = { ...settings };
-  const ffmpegCommand = getEffectiveFfmpegPath(options.ffmpegPath || settings.ffmpegPath);
-  const ffmpegLocation = resolveFfmpegLocationForYtdlp(options.ffmpegPath || settings.ffmpegPath);
-
-  if (options.convertFormat !== undefined) {
-    if (typeof options.convertFormat === 'string' && options.convertFormat.trim() !== '') {
-      effectiveSettings.convertFormat = options.convertFormat;
-      effectiveSettings.convertEnabled = true;
-    } else {
-      effectiveSettings.convertEnabled = false;
-    }
-  }
-  if (typeof options.keepOriginal === 'boolean') {
-    effectiveSettings.keepOriginalAfterConvert = options.keepOriginal;
-  }
-
-  const url = options.url;
-  const downloadDir = options.outputPath;
+  const requestedFfmpegPath = requestOptions.ffmpegPath || settings.ffmpegPath;
+  const ffmpegCommand = getEffectiveFfmpegPath(requestedFfmpegPath);
+  const ffmpegLocation = resolveFfmpegLocationForYtdlp(requestedFfmpegPath);
+  const url = requestOptions.url;
+  const downloadDir = requestOptions.outputPath;
 
   if (!isSafeHttpUrl(url)) {
     sendProgress(session, '⚠️ Invalid or missing URL.');
@@ -515,6 +727,7 @@ export function startDownload(
 
   try {
     const normalizedDownloadDir = path.resolve(downloadDir);
+    session.request.outputPath = normalizedDownloadDir;
     if (!fs.existsSync(normalizedDownloadDir)) {
       sendProgress(session, `📂 Creating directory: ${normalizedDownloadDir}`);
       fs.mkdirSync(normalizedDownloadDir, { recursive: true });
@@ -541,11 +754,28 @@ export function startDownload(
       normalizedDownloadDir,
       url,
       settings: effectiveSettings,
-      options,
+      options: requestOptions,
       ffmpegLocation,
       pathOutputFile,
     });
     statusMessages.forEach((message) => sendProgress(session, message));
+
+    const progressPlan = resolveJobProgressPlanFromSettings({
+      downloadProfilesEnabled: effectiveSettings.downloadProfilesEnabled,
+      downloadMode: effectiveSettings.downloadMode,
+      bestQuality: effectiveSettings.bestQuality,
+      audioOnly: effectiveSettings.audioOnly,
+      advancedOptions: effectiveSettings.advancedOptions,
+      convertEnabled: effectiveSettings.convertEnabled,
+    });
+    const progressReporter = new JobProgressReporter(
+      mainWindow,
+      progressPlan,
+      queueProgress,
+      effectiveSettings.showTaskbarProgress
+    );
+    activeProgressReporter = progressReporter;
+    progressReporter.emitPhaseIndeterminate(session, 'download', 'Starting download...');
 
     sendProgress(session, `🚀 Starting download: ${url}`);
     sendProgress(session, `   Command: ${ytdlpBinary} ${ytdlpArgs.join(' ')}`);
@@ -567,7 +797,7 @@ export function startDownload(
         downloadOutputData = downloadOutputData.slice(-MAX_OUTPUT_BUFFER / 2);
       }
       downloadOutputData += message;
-      sendProgress(session, message.trim());
+      handleYtdlpOutputLines(session, progressReporter, message, false);
     });
 
     ytProc.stderr?.on('data', (data: Buffer) => {
@@ -576,7 +806,7 @@ export function startDownload(
       if (downloadErrorData.length < MAX_ERROR_BUFFER) {
         downloadErrorData += message;
       }
-      sendProgress(session, `[yt-dlp stderr] ${message.trim()}`);
+      handleYtdlpOutputLines(session, progressReporter, message, true);
     });
 
     ytProc.on('close', (code) => {
@@ -674,14 +904,17 @@ export function startDownload(
           downloadedFilePath,
           effectiveSettings,
           ffmpegCommand,
-          mainWindow
+          mainWindow,
+          progressReporter
         );
       } else {
         sendProgress(session, 'ℹ️ Conversion not enabled for this download.');
+        progressReporter.emitDownloadComplete(session);
         const ext = path.extname(downloadedFilePath).replace('.', '').toLowerCase() || undefined;
         completeSession(session, '✅ Download complete (no conversion).', 'success', {
           format: ext,
           bytes: statFileSize(downloadedFilePath),
+          filePath: downloadedFilePath,
         });
       }
     });

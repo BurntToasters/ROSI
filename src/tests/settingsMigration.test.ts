@@ -48,6 +48,7 @@ describe('settings migration', () => {
     expect(migrated.updateChannel).toBe('beta');
     expect(migrated.gpuType).toBe('nvidia');
     expect(migrated.flatUi).toBe(true);
+    expect(migrated.showTaskbarProgress).toBe(true);
     expect(migrated.settingsVersion).toBe(CURRENT_SETTINGS_VERSION);
   });
 

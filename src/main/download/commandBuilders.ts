@@ -7,8 +7,10 @@ import {
   ALLOWED_BROWSERS,
   FORMAT_ID_PATTERN,
   MAX_ERROR_BUFFER,
+  MAX_PLAYLIST_ITEM_INDEX,
   SUBTITLE_LANGS_PATTERN,
 } from '../constants';
+import { parseFfmpegDurationFromProbe } from '../../utils/downloadJobProgress';
 
 const VALID_FORMAT_ID = FORMAT_ID_PATTERN;
 const CODEC_PROBE_TIMEOUT_MS = 30_000;
@@ -17,6 +19,7 @@ export { ALLOWED_BROWSERS };
 export interface SourceCodecs {
   video?: string;
   audio?: string;
+  durationSeconds?: number | null;
 }
 
 export function probeMediaCodecs(ffmpegCommand: string, inputPath: string): Promise<SourceCodecs> {
@@ -37,6 +40,7 @@ export function probeMediaCodecs(ffmpegCommand: string, inputPath: string): Prom
       const audioMatch = stderr.match(/Stream #\d+:\d+.*: Audio: (\w+)/);
       if (videoMatch?.[1]) codecs.video = videoMatch[1];
       if (audioMatch?.[1]) codecs.audio = audioMatch[1];
+      codecs.durationSeconds = parseFfmpegDurationFromProbe(stderr);
       return codecs;
     };
 
@@ -108,7 +112,18 @@ export function buildFfmpegArgs(
     const canCopyAudio =
       (targetFormat === 'm4a' && (srcAudio === 'aac' || srcAudio === 'mp4a')) ||
       (targetFormat === 'mp3' && srcAudio === 'mp3');
-    return ['-i', inputPath, '-vn', '-c:a', canCopyAudio ? 'copy' : targetCodec, '-y', outputPath];
+    return [
+      '-progress',
+      'pipe:1',
+      '-nostats',
+      '-i',
+      inputPath,
+      '-vn',
+      '-c:a',
+      canCopyAudio ? 'copy' : targetCodec,
+      '-y',
+      outputPath,
+    ];
   }
 
   const srcVideo = srcCodecs?.video?.toLowerCase();
@@ -119,6 +134,9 @@ export function buildFfmpegArgs(
     srcCodecs && srcAudio && CONTAINER_COMPATIBLE_AUDIO.has(srcAudio) ? 'copy' : 'aac';
 
   return [
+    '-progress',
+    'pipe:1',
+    '-nostats',
     '-i',
     inputPath,
     '-c:v',
@@ -155,6 +173,27 @@ function insertBeforeUrlSeparator(args: string[], ...items: string[]): void {
   args.splice(separatorIndex, 0, ...items);
 }
 
+function buildPlaylistArgs(options: DownloadRequestOptions): string[] {
+  const selection = options.playlist;
+  if (!selection || selection.mode === 'current') {
+    return ['--no-playlist'];
+  }
+  if (selection.mode === 'all') {
+    return ['--yes-playlist'];
+  }
+  const { start, end } = selection;
+  if (
+    Number.isInteger(start) &&
+    Number.isInteger(end) &&
+    (start as number) >= 1 &&
+    (end as number) >= (start as number) &&
+    (end as number) <= MAX_PLAYLIST_ITEM_INDEX
+  ) {
+    return ['--yes-playlist', '--playlist-items', `${start as number}-${end as number}`];
+  }
+  return ['--no-playlist'];
+}
+
 export function buildYtdlpArgs({
   normalizedDownloadDir,
   url,
@@ -163,18 +202,41 @@ export function buildYtdlpArgs({
   ffmpegLocation,
   pathOutputFile,
 }: BuildYtdlpArgsInput): BuildYtdlpArgsResult {
+  const configuredProfile = settings.downloadProfilesEnabled ? settings.downloadMode : null;
+  const requestProfile = options.profileEnabled === false ? null : options.profile;
+  const profile = requestProfile ?? configuredProfile;
+  let bestQuality = settings.bestQuality;
+  let audioOnly = settings.audioOnly;
+
+  if (profile === 'best-video') {
+    bestQuality = true;
+    audioOnly = false;
+  } else if (profile === 'audio') {
+    bestQuality = false;
+    audioOnly = true;
+  } else if (profile === 'custom') {
+    bestQuality = false;
+    audioOnly = false;
+  }
+  if (typeof options.bestQuality === 'boolean') bestQuality = options.bestQuality;
+  if (typeof options.audioOnly === 'boolean') audioOnly = options.audioOnly;
+
   const args = [
     '-P',
     normalizedDownloadDir,
-    '--no-playlist',
+    ...buildPlaylistArgs(options),
     '--print',
     'after_move:filepath',
     '--newline',
     '--progress',
     '--progress-delta',
     '1',
+    '--progress-template',
+    'download:%(progress)j',
+    '--progress-template',
+    'postprocess:%(progress)j',
     '-f',
-    settings.bestQuality ? 'bestvideo+bestaudio/best' : 'best[ext=mp4]/best[ext=webm]/best',
+    bestQuality ? 'bestvideo+bestaudio/best' : 'best[ext=mp4]/best[ext=webm]/best',
     '--',
     url,
   ];
@@ -204,41 +266,44 @@ export function buildYtdlpArgs({
     statusMessages.push(`🎵 Using audio format: ${audioFmt}`);
   }
 
-  if (settings.audioOnly && !validVideo && !validAudio) {
+  if (audioOnly && !validVideo && !validAudio) {
     args.splice(formatFlagIndex, 2);
-    const audioOutputFmt = ALLOWED_AUDIO_FORMATS.has(settings.audioFormat)
-      ? settings.audioFormat
+    const requestedAudioFormat = options.audioOutputFormat ?? settings.audioFormat;
+    const audioOutputFmt = ALLOWED_AUDIO_FORMATS.has(requestedAudioFormat)
+      ? requestedAudioFormat
       : 'mp3';
     insertBeforeUrlSeparator(args, '-x', '--audio-format', audioOutputFmt, '--audio-quality', '0');
     statusMessages.push(`🎵 Audio-only mode enabled (${audioOutputFmt.toUpperCase()})`);
   }
 
-  if (settings.hookBrowser && settings.browserChoice) {
-    const normalized = settings.browserChoice.toLowerCase();
+  const hookBrowser = options.hookBrowser ?? settings.hookBrowser;
+  const browserChoice = options.browserChoice ?? settings.browserChoice;
+  if (hookBrowser && browserChoice) {
+    const normalized = browserChoice.toLowerCase();
     if (ALLOWED_BROWSERS.has(normalized)) {
       insertBeforeUrlSeparator(args, '--cookies-from-browser', normalized);
     }
   }
 
-  if (settings.writeSubtitles) {
-    const langs = SUBTITLE_LANGS_PATTERN.test(settings.subtitleLangs)
-      ? settings.subtitleLangs
-      : 'en';
+  const writeSubtitles = options.writeSubtitles ?? settings.writeSubtitles;
+  if (writeSubtitles) {
+    const requestedLangs = options.subtitleLangs ?? settings.subtitleLangs;
+    const langs = SUBTITLE_LANGS_PATTERN.test(requestedLangs) ? requestedLangs : 'en';
     insertBeforeUrlSeparator(args, '--write-subs', '--embed-subs', '--sub-langs', langs);
     statusMessages.push(`💬 Subtitles enabled (${langs})`);
   }
 
-  if (settings.embedThumbnail) {
+  if (options.embedThumbnail ?? settings.embedThumbnail) {
     insertBeforeUrlSeparator(args, '--embed-thumbnail');
     statusMessages.push('🖼️ Embedding thumbnail');
   }
 
-  if (settings.embedMetadata) {
+  if (options.embedMetadata ?? settings.embedMetadata) {
     insertBeforeUrlSeparator(args, '--embed-metadata');
     statusMessages.push('🏷️ Embedding metadata');
   }
 
-  if (settings.sponsorblockRemove) {
+  if (options.sponsorblockRemove ?? settings.sponsorblockRemove) {
     insertBeforeUrlSeparator(args, '--sponsorblock-remove', 'default');
     statusMessages.push('⏭️ SponsorBlock: removing segments');
   }

@@ -14,6 +14,8 @@ vi.mock('../main/platform', () => ({
   spawnWithEnv: spawnWithEnvMock,
 }));
 
+const withFfmpegProgress = (...args: string[]) => ['-progress', 'pipe:1', '-nostats', ...args];
+
 vi.mock('electron-log/main.js', () => ({
   default: { warn: vi.fn(), error: vi.fn() },
 }));
@@ -92,6 +94,7 @@ describe('command builders', () => {
     await expect(probeMediaCodecs('ffmpeg', '/tmp/input.mkv')).resolves.toEqual({
       video: 'h264',
       audio: 'aac',
+      durationSeconds: null,
     });
     expect(spawnWithEnvMock).toHaveBeenCalledWith(
       'ffmpeg',
@@ -105,13 +108,16 @@ describe('command builders', () => {
 
     await expect(probeMediaCodecs('ffmpeg', '/tmp/input.webm')).resolves.toEqual({
       video: 'vp9',
+      durationSeconds: null,
     });
   });
 
   it('probeMediaCodecs returns empty object when stderr has no stream info', async () => {
     createProbeProc(['ffmpeg version 6.0\n']);
 
-    await expect(probeMediaCodecs('ffmpeg', '/tmp/input.mp4')).resolves.toEqual({});
+    await expect(probeMediaCodecs('ffmpeg', '/tmp/input.mp4')).resolves.toEqual({
+      durationSeconds: null,
+    });
   });
 
   it('probeMediaCodecs returns empty object when spawn errors', async () => {
@@ -141,7 +147,7 @@ describe('command builders', () => {
     proc.stderr.emit('data', '  Stream #0:0: Video: h264 (High), yuv420p\n');
     await vi.advanceTimersByTimeAsync(30_000);
 
-    await expect(pending).resolves.toEqual({ video: 'h264' });
+    await expect(pending).resolves.toEqual({ video: 'h264', durationSeconds: null });
     expect(proc.kill).toHaveBeenCalledWith('SIGKILL');
     vi.useRealTimers();
   });
@@ -185,28 +191,34 @@ describe('command builders', () => {
 
   it('builds ffmpeg args for audio extraction', () => {
     const args = buildFfmpegArgs('input.mp4', 'output.mp3', 'mp3', 'copy');
-    expect(args).toEqual(['-i', 'input.mp4', '-vn', '-c:a', 'libmp3lame', '-y', 'output.mp3']);
+    expect(args).toEqual(
+      withFfmpegProgress('-i', 'input.mp4', '-vn', '-c:a', 'libmp3lame', '-y', 'output.mp3')
+    );
   });
 
   it('builds ffmpeg args for m4a audio extraction', () => {
     const args = buildFfmpegArgs('input.mp4', 'output.m4a', 'm4a', 'copy');
-    expect(args).toEqual(['-i', 'input.mp4', '-vn', '-c:a', 'aac', '-y', 'output.m4a']);
+    expect(args).toEqual(
+      withFfmpegProgress('-i', 'input.mp4', '-vn', '-c:a', 'aac', '-y', 'output.m4a')
+    );
   });
 
   it('builds ffmpeg args for video conversion', () => {
     const args = buildFfmpegArgs('input.webm', 'output.mp4', 'mp4', 'h264_nvenc');
-    expect(args).toEqual([
-      '-i',
-      'input.webm',
-      '-c:v',
-      'h264_nvenc',
-      '-c:a',
-      'aac',
-      '-movflags',
-      '+faststart',
-      '-y',
-      'output.mp4',
-    ]);
+    expect(args).toEqual(
+      withFfmpegProgress(
+        '-i',
+        'input.webm',
+        '-c:v',
+        'h264_nvenc',
+        '-c:a',
+        'aac',
+        '-movflags',
+        '+faststart',
+        '-y',
+        'output.mp4'
+      )
+    );
   });
 
   it('copies a container-compatible video stream instead of re-encoding', () => {
@@ -214,18 +226,20 @@ describe('command builders', () => {
       video: 'h264',
       audio: 'aac',
     });
-    expect(args).toEqual([
-      '-i',
-      'input.mkv',
-      '-c:v',
-      'copy',
-      '-c:a',
-      'copy',
-      '-movflags',
-      '+faststart',
-      '-y',
-      'output.mp4',
-    ]);
+    expect(args).toEqual(
+      withFfmpegProgress(
+        '-i',
+        'input.mkv',
+        '-c:v',
+        'copy',
+        '-c:a',
+        'copy',
+        '-movflags',
+        '+faststart',
+        '-y',
+        'output.mp4'
+      )
+    );
   });
 
   it('re-encodes an incompatible video stream with the chosen encoder', () => {
@@ -233,28 +247,34 @@ describe('command builders', () => {
       video: 'vp9',
       audio: 'opus',
     });
-    expect(args).toEqual([
-      '-i',
-      'input.webm',
-      '-c:v',
-      'h264_nvenc',
-      '-c:a',
-      'aac',
-      '-movflags',
-      '+faststart',
-      '-y',
-      'output.mp4',
-    ]);
+    expect(args).toEqual(
+      withFfmpegProgress(
+        '-i',
+        'input.webm',
+        '-c:v',
+        'h264_nvenc',
+        '-c:a',
+        'aac',
+        '-movflags',
+        '+faststart',
+        '-y',
+        'output.mp4'
+      )
+    );
   });
 
   it('copies already-aac audio when extracting to m4a', () => {
     const args = buildFfmpegArgs('input.mp4', 'output.m4a', 'm4a', 'copy', { audio: 'aac' });
-    expect(args).toEqual(['-i', 'input.mp4', '-vn', '-c:a', 'copy', '-y', 'output.m4a']);
+    expect(args).toEqual(
+      withFfmpegProgress('-i', 'input.mp4', '-vn', '-c:a', 'copy', '-y', 'output.m4a')
+    );
   });
 
   it('re-encodes non-aac audio when extracting to m4a', () => {
     const args = buildFfmpegArgs('input.webm', 'output.m4a', 'm4a', 'copy', { audio: 'opus' });
-    expect(args).toEqual(['-i', 'input.webm', '-vn', '-c:a', 'aac', '-y', 'output.m4a']);
+    expect(args).toEqual(
+      withFfmpegProgress('-i', 'input.webm', '-vn', '-c:a', 'aac', '-y', 'output.m4a')
+    );
   });
 
   it('builds yt-dlp args for selected audio/video formats', () => {
@@ -277,6 +297,58 @@ describe('command builders', () => {
     expect(result.args).toContain('firefox');
     expect(result.args).toContain('137+140');
     expect(result.statusMessages).toContain('📹 Using formats: video=137, audio=140');
+  });
+
+  describe('playlist scope', () => {
+    const url = 'https://example.com/watch?v=abc&list=PL123';
+    const build = (playlist?: {
+      mode: 'current' | 'all' | 'range';
+      start?: number;
+      end?: number;
+    }) =>
+      buildYtdlpArgs({
+        normalizedDownloadDir: '/tmp/downloads',
+        url,
+        settings: createSettings(),
+        options: { url, outputPath: '/tmp/downloads', ...(playlist ? { playlist } : {}) },
+        ffmpegLocation: null,
+      });
+
+    it('defaults to the single video when no selection is given', () => {
+      const args = build().args;
+      expect(args).toContain('--no-playlist');
+      expect(args).not.toContain('--yes-playlist');
+      expect(args.filter((arg) => arg === '--no-playlist')).toHaveLength(1);
+    });
+
+    it('honours the current-video selection', () => {
+      const args = build({ mode: 'current' }).args;
+      expect(args).toContain('--no-playlist');
+      expect(args).not.toContain('--yes-playlist');
+    });
+
+    it('downloads the entire playlist when requested', () => {
+      const args = build({ mode: 'all' }).args;
+      expect(args).toContain('--yes-playlist');
+      expect(args).not.toContain('--no-playlist');
+      expect(args).not.toContain('--playlist-items');
+    });
+
+    it('maps a validated range to --playlist-items before the URL separator', () => {
+      const args = build({ mode: 'range', start: 2, end: 5 }).args;
+      expect(args).toContain('--yes-playlist');
+      const itemsIndex = args.indexOf('--playlist-items');
+      expect(itemsIndex).toBeGreaterThan(-1);
+      expect(args[itemsIndex + 1]).toBe('2-5');
+      expect(itemsIndex).toBeLessThan(args.indexOf('--'));
+      expect(args[args.length - 1]).toBe(url);
+    });
+
+    it('falls back to the single video for out-of-bounds ranges', () => {
+      expect(build({ mode: 'range', start: 5, end: 2 }).args).toContain('--no-playlist');
+      expect(build({ mode: 'range', start: 0, end: 3 }).args).toContain('--no-playlist');
+      expect(build({ mode: 'range', start: 1, end: 999_999 }).args).toContain('--no-playlist');
+    });
   });
 
   it('places optional flags before the URL separator, not after it', () => {

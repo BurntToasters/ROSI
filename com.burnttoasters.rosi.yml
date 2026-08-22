@@ -42,8 +42,8 @@ modules:
         npm_config_cache: /run/build/rosi/flatpak-node/npm-cache
         HUSKY: '0'
     build-commands:
-      # Install dependencies
-      - npm install --legacy-peer-deps
+      # Install dependencies from lockfile only (no floating resolves)
+      - npm ci --legacy-peer-deps
 
       # Build the application
       - npm run compile

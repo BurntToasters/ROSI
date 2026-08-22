@@ -34,9 +34,21 @@ const thresholds = {
   'src/main/download/videoInfo.ts': { lines: 70, statements: 70, branches: 60, functions: 70 },
   'src/main/preload.ts': { lines: 90, statements: 90, branches: 90, functions: 90 },
   'src/main/processKill.ts': { lines: 90, statements: 90, branches: 85, functions: 55 },
+  'src/main/taskbarProgress.ts': { lines: 95, statements: 95, branches: 90, functions: 95 },
+  'src/main/constants.ts': { lines: 95, statements: 95, branches: 95, functions: 95 },
+  'src/main/gpu.ts': { lines: 90, statements: 88, branches: 72, functions: 95 },
+  'src/main/deno.ts': { lines: 85, statements: 82, branches: 58, functions: 95 },
+  'src/main/appMenu.ts': { lines: 55, statements: 50, branches: 35, functions: 25 },
+  'src/main/download/jobProgressReporter.ts': {
+    lines: 48,
+    statements: 48,
+    branches: 35,
+    functions: 80,
+  },
   'src/utils/ipcValidation.ts': { lines: 85, statements: 85, branches: 85, functions: 88 },
   'src/utils/validation.ts': { lines: 85, statements: 82, branches: 72, functions: 90 },
   'src/utils/downloadLifecycle.ts': { lines: 95, statements: 95, branches: 95, functions: 95 },
+  'src/utils/downloadJobProgress.ts': { lines: 85, statements: 82, branches: 70, functions: 95 },
 };
 
 const METRICS = ['lines', 'statements', 'branches', 'functions'];
