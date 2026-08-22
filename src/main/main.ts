@@ -12,6 +12,7 @@ import {
   resetStats,
   exportSettingsToFile,
   importSettingsFromFile,
+  downloadPresetToRequestOptions,
 } from './settings';
 import {
   setupAutoUpdater,
@@ -43,9 +44,25 @@ import {
   validateNotificationPayload,
   validateSettingsPatchPayload,
   validateDownloadPath,
+  validateQueueItemIdPayload,
+  validateQueueReorderPayload,
 } from '../utils/ipcValidation';
-import { SPLASH_SHOW_DELAY_MS, SPLASH_FADE_DELAY_MS, MAX_QUEUE_SIZE } from './constants';
-import type { DownloadRequestOptions, DownloadOutcome, QueueItem } from '../types';
+import {
+  SPLASH_SHOW_DELAY_MS,
+  SPLASH_FADE_DELAY_MS,
+  MAX_DOWNLOAD_ACTIVITY,
+  MAX_QUEUE_SIZE,
+} from './constants';
+import { installDarwinApplicationMenu } from './appMenu';
+import type {
+  DownloadActivity,
+  DownloadCompletion,
+  DownloadRequestOptions,
+  DownloadOutcome,
+  QueueItem,
+  QueueRequestOverrides,
+  Settings,
+} from '../types';
 
 log.initialize();
 
@@ -137,6 +154,13 @@ function createSplashWindow() {
     ...(process.platform === 'darwin' ? { roundedCorners: true } : {}),
   });
   void splashWindow.loadFile(path.join(__dirname, '..', '..', 'src', 'renderer', 'splash.html'));
+  splashWindow.webContents.once('did-finish-load', () => {
+    if (!splashWindow || splashWindow.isDestroyed()) return;
+    const versionLiteral = JSON.stringify(app.getVersion());
+    void splashWindow.webContents.executeJavaScript(
+      `(function(){var el=document.getElementById('version-display');if(el)el.textContent='v'+${versionLiteral};})()`
+    );
+  });
   splashWindow.center();
   setTimeout(() => {
     if (splashWindow && !splashWindow.isDestroyed()) {
@@ -172,7 +196,9 @@ async function runRendererSmokeChecks(windowRef: BrowserWindow): Promise<string[
         const wizardOverlay = document.getElementById('setup-wizard');
         if (wizardOverlay && wizardOverlay.classList.contains('active')) {
           const wizardNext = document.getElementById('wizard-next');
-          for (let i = 0; i < 5 && wizardOverlay.classList.contains('active'); i++) {
+          // Bound comfortably above the wizard's step count so adding a step
+          // does not leave the smoke run one click short.
+          for (let i = 0; i < 10 && wizardOverlay.classList.contains('active'); i++) {
             if (wizardNext) wizardNext.click();
             await wait(100);
           }
@@ -218,6 +244,7 @@ async function runRendererSmokeChecks(windowRef: BrowserWindow): Promise<string[
             bubbles: true,
             metaKey: isMac,
             ctrlKey: !isMac,
+            shiftKey: true,
           })
         );
         await wait(150);
@@ -404,7 +431,12 @@ function createWindow() {
   mainWindow.setMenuBarVisibility(isDev);
   mainWindow.setAutoHideMenuBar(!isDev);
 
-  if (!isDev) {
+  if (process.platform === 'darwin') {
+    installDarwinApplicationMenu({
+      getMainWindow: () => mainWindow,
+      isMsStore: process.env.CHANNEL === 'msstore' || Boolean(process.windowsStore),
+    });
+  } else if (!isDev) {
     mainWindow.removeMenu();
   }
 
@@ -471,7 +503,7 @@ void app.whenReady().then(async () => {
     return;
   }
 
-  if (!isSmokeRun) {
+  if (isPackaged && !isSmokeRun && !process.env.VITEST) {
     createSplashWindow();
   }
   verifyBundledFfmpeg();
@@ -494,29 +526,18 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   appQuitting = true;
+  stopActiveDownloadsAndQueue();
   flushQueueOnShutdown();
-  try {
-    killAllProcesses();
-  } catch (error) {
-    log.error('Error killing processes on quit:', error);
-  }
-  try {
-    cancelFormats();
-  } catch (error) {
-    log.error('Error cancelling formats on quit:', error);
-  }
-  try {
-    cancelVideoInfo();
-  } catch (error) {
-    log.error('Error cancelling video info on quit:', error);
-  }
 });
 
 if (!process.windowsStore) {
   setupAutoUpdater(getMainWindow, loadSettings);
 }
 
-ipcMain.on('log-error', (_, message) => {
+ipcMain.on('log-error', (event, message) => {
+  if (!assertMainWindowSender(event)) {
+    return;
+  }
   if (typeof message === 'string') {
     const truncated = message.length > 2000 ? message.slice(0, 2000) + '...(truncated)' : message;
     log.error(`[renderer] ${truncated}`);
@@ -539,6 +560,7 @@ ipcMain.on('settings-flush-complete', (event) => {
 });
 
 ipcMain.handle('get-app-version', () => app.getVersion());
+ipcMain.handle('get-app-platform', () => process.platform);
 ipcMain.handle('is-packaged', () => isPackaged);
 if (!process.windowsStore) {
   ipcMain.handle('check-for-updates', () => checkForUpdates(isPackaged, loadSettings));
@@ -582,6 +604,12 @@ ipcMain.handle('get-settings', (event) => {
     return getDefaultSettings();
   }
   return loadSettings();
+});
+ipcMain.handle('get-default-settings', (event) => {
+  if (!assertMainWindowSender(event)) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
+  return okResult(getDefaultSettings());
 });
 ipcMain.handle('save-settings', (event, data) => {
   if (!assertMainWindowSender(event)) {
@@ -703,16 +731,19 @@ ipcMain.on('cancel-formats', (event) => {
   cancelFormats();
 });
 
-ipcMain.handle('get-video-info', async (event, url) => {
+ipcMain.handle('get-video-info', async (event, url, playlistMode) => {
   if (!assertMainWindowSender(event)) {
     return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
   }
   if (typeof url !== 'string' || !isSafeHttpUrl(url)) {
     return errorResult('INVALID_URL', 'Invalid URL provided.');
   }
+  if (playlistMode !== undefined && playlistMode !== 'current' && playlistMode !== 'all') {
+    return errorResult('VALIDATION_ERROR', 'Playlist preview mode must be current or all.');
+  }
 
   try {
-    const info = await fetchVideoInfo(getYtdlpPath(), url);
+    const info = await fetchVideoInfo(getYtdlpPath(), url.trim(), playlistMode);
     return okResult(info);
   } catch (error) {
     const message =
@@ -754,7 +785,9 @@ ipcMain.handle('download-video', (event, options) => {
       validation.data as DownloadRequestOptions,
       mainWindow,
       undefined,
-      'manual'
+      'manual',
+      null,
+      (completion) => recordDownloadActivity(completion)
     );
     return okResult({ started: true });
   } catch (error) {
@@ -915,6 +948,205 @@ ipcMain.handle('reset-stats', (event) => {
   return okResult(undefined);
 });
 
+const activityPath = path.join(app.getPath('userData'), 'download-activity.json');
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function cloneDownloadRequest(request: DownloadRequestOptions): DownloadRequestOptions {
+  return {
+    ...request,
+    playlist: request.playlist ? { ...request.playlist } : undefined,
+  };
+}
+
+function normalizeStoredRequest(
+  value: unknown,
+  authoritativeUrl?: string
+): DownloadRequestOptions | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  const candidate = {
+    ...value,
+    ...(authoritativeUrl ? { url: authoritativeUrl } : {}),
+  };
+  let validation = validateDownloadRequestPayload(candidate);
+  if (!validation.ok && value.ffmpegPath !== undefined) {
+    validation = validateDownloadRequestPayload({ ...candidate, ffmpegPath: undefined });
+  }
+  return validation.ok ? validation.data : undefined;
+}
+
+function normalizeActivityRecord(value: unknown): DownloadActivity | null {
+  if (!isPlainRecord(value)) return null;
+  const id = typeof value.id === 'string' ? value.id.trim() : '';
+  const outcome = value.outcome;
+  const owner = value.owner;
+  const url = typeof value.url === 'string' ? normalizeQueueUrl(value.url) : null;
+  const request = normalizeStoredRequest(value.request, url ?? undefined);
+  if (
+    !id ||
+    id.length > 128 ||
+    (outcome !== 'success' && outcome !== 'failed' && outcome !== 'cancelled') ||
+    (owner !== 'manual' && owner !== 'queue') ||
+    !url ||
+    !request
+  ) {
+    return null;
+  }
+
+  const startedAt =
+    typeof value.startedAt === 'number' && Number.isFinite(value.startedAt) && value.startedAt > 0
+      ? value.startedAt
+      : Date.now();
+  const completedAt =
+    typeof value.completedAt === 'number' &&
+    Number.isFinite(value.completedAt) &&
+    value.completedAt >= startedAt
+      ? value.completedAt
+      : startedAt;
+  const statusMessage =
+    typeof value.statusMessage === 'string'
+      ? value.statusMessage.slice(0, 2000)
+      : outcome === 'success'
+        ? 'Download completed.'
+        : outcome === 'cancelled'
+          ? 'Download cancelled.'
+          : 'Download failed.';
+
+  let outputPath: string | undefined;
+  if (typeof value.outputPath === 'string') {
+    const pathValidation = validateFileLocationPayload(value.outputPath);
+    if (pathValidation.ok) outputPath = pathValidation.data;
+  }
+  const filename =
+    typeof value.filename === 'string' && value.filename.trim()
+      ? value.filename.trim().slice(0, 1024)
+      : outputPath
+        ? path.basename(outputPath)
+        : undefined;
+  const sizeBytes =
+    typeof value.sizeBytes === 'number' && Number.isFinite(value.sizeBytes) && value.sizeBytes >= 0
+      ? value.sizeBytes
+      : undefined;
+
+  return {
+    id,
+    sessionId:
+      typeof value.sessionId === 'number' && Number.isInteger(value.sessionId)
+        ? value.sessionId
+        : undefined,
+    owner,
+    queueItemId:
+      typeof value.queueItemId === 'string' ? value.queueItemId.slice(0, 128) : undefined,
+    outcome,
+    statusMessage,
+    url,
+    profile:
+      value.profile === 'best-video' || value.profile === 'audio' || value.profile === 'custom'
+        ? value.profile
+        : request.profile,
+    presetId: typeof value.presetId === 'string' ? value.presetId.slice(0, 64) : request.presetId,
+    presetName:
+      typeof value.presetName === 'string' ? value.presetName.slice(0, 40) : request.presetName,
+    request,
+    filename,
+    outputPath,
+    sizeBytes,
+    format:
+      typeof value.format === 'string' && value.format.length <= 32 ? value.format : undefined,
+    error:
+      outcome === 'failed' && typeof value.error === 'string'
+        ? value.error.slice(0, 2000)
+        : outcome === 'failed'
+          ? statusMessage
+          : undefined,
+    startedAt,
+    completedAt,
+  };
+}
+
+function loadDownloadActivity(): DownloadActivity[] {
+  try {
+    if (!fs.existsSync(activityPath)) return [];
+    const parsed: unknown = JSON.parse(fs.readFileSync(activityPath, 'utf-8'));
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map(normalizeActivityRecord)
+      .filter((entry): entry is DownloadActivity => entry !== null)
+      .slice(0, MAX_DOWNLOAD_ACTIVITY);
+  } catch (error) {
+    log.warn('Failed to load download activity:', error);
+    return [];
+  }
+}
+
+let downloadActivity: DownloadActivity[] = loadDownloadActivity();
+
+function cloneDownloadActivity(): DownloadActivity[] {
+  return downloadActivity.map((entry) => ({
+    ...entry,
+    request: cloneDownloadRequest(entry.request),
+  }));
+}
+
+function persistDownloadActivity(): boolean {
+  const tempPath = `${activityPath}.tmp`;
+  try {
+    const dir = path.dirname(activityPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(tempPath, JSON.stringify(downloadActivity, null, 2), {
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
+    fs.renameSync(tempPath, activityPath);
+    return true;
+  } catch (error) {
+    try {
+      if (fs.existsSync(tempPath)) fs.rmSync(tempPath, { force: true });
+    } catch {}
+    log.error('Failed to persist download activity:', error);
+    return false;
+  }
+}
+
+function broadcastDownloadActivity(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('download-activity-update', cloneDownloadActivity());
+  }
+}
+
+function recordDownloadActivity(completion: DownloadCompletion): void {
+  if (downloadActivity.some((entry) => entry.id === completion.id)) return;
+  const normalized = normalizeActivityRecord(completion);
+  if (!normalized) {
+    log.warn('Ignoring invalid structured download completion metadata.');
+    return;
+  }
+  downloadActivity = [normalized, ...downloadActivity].slice(0, MAX_DOWNLOAD_ACTIVITY);
+  persistDownloadActivity();
+  broadcastDownloadActivity();
+}
+
+ipcMain.handle('get-download-activity', (event) => {
+  if (!assertMainWindowSender(event)) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
+  return okResult(cloneDownloadActivity());
+});
+
+ipcMain.handle('clear-download-activity', (event) => {
+  if (!assertMainWindowSender(event)) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
+  downloadActivity = [];
+  if (!persistDownloadActivity()) {
+    return errorResult('INTERNAL_ERROR', 'Failed to clear download activity.');
+  }
+  broadcastDownloadActivity();
+  return okResult(undefined);
+});
+
 let downloadQueue: QueueItem[] = [];
 let isQueueRunning = false;
 let queueCancelled = false;
@@ -924,24 +1156,103 @@ let queueProcessingLock = false;
 const queuePath = path.join(app.getPath('userData'), 'download-queue.json');
 const queueBackupPath = path.join(app.getPath('userData'), 'download-queue.backup.json');
 
+function normalizeQueueUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (!isSafeHttpUrl(trimmed)) return null;
+  try {
+    const parsed = new URL(trimmed);
+    parsed.hash = '';
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function generateQueueId(): string {
+  return `q_${randomUUID()}`;
+}
+
+function normalizeQueueItem(value: unknown, usedIds: Set<string>): QueueItem | null {
+  if (!isPlainRecord(value) || typeof value.url !== 'string') return null;
+  const url = normalizeQueueUrl(value.url);
+  if (!url) return null;
+
+  const rawId = typeof value.id === 'string' ? value.id.trim() : '';
+  let id = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(rawId) ? rawId : generateQueueId();
+  while (usedIds.has(id)) id = generateQueueId();
+  usedIds.add(id);
+
+  const rawStatus = value.status;
+  const restoredStatus =
+    rawStatus === 'pending' ||
+    rawStatus === 'completed' ||
+    rawStatus === 'failed' ||
+    rawStatus === 'cancelled'
+      ? rawStatus
+      : 'pending';
+  const status = rawStatus === 'downloading' ? 'pending' : restoredStatus;
+  const addedAt =
+    typeof value.addedAt === 'number' && Number.isFinite(value.addedAt) && value.addedAt > 0
+      ? value.addedAt
+      : Date.now();
+  const item: QueueItem = { id, url, status, addedAt };
+  const request = normalizeStoredRequest(value.request, url);
+  if (request) item.request = request;
+
+  if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+    if (
+      typeof value.startedAt === 'number' &&
+      Number.isFinite(value.startedAt) &&
+      value.startedAt > 0
+    ) {
+      item.startedAt = value.startedAt;
+    }
+    if (
+      typeof value.completedAt === 'number' &&
+      Number.isFinite(value.completedAt) &&
+      value.completedAt > 0
+    ) {
+      item.completedAt = value.completedAt;
+    }
+    if (typeof value.filename === 'string' && value.filename.trim()) {
+      item.filename = value.filename.trim().slice(0, 1024);
+    }
+    if (typeof value.outputPath === 'string') {
+      const outputValidation = validateFileLocationPayload(value.outputPath);
+      if (outputValidation.ok) item.outputPath = outputValidation.data;
+    }
+    if (
+      typeof value.sizeBytes === 'number' &&
+      Number.isFinite(value.sizeBytes) &&
+      value.sizeBytes >= 0
+    ) {
+      item.sizeBytes = value.sizeBytes;
+    }
+    if (status === 'failed' && typeof value.error === 'string') {
+      item.error = value.error.slice(0, 2000);
+    }
+  }
+  return item;
+}
+
 function readQueueFromDisk(filePath: string): QueueItem[] | null {
   try {
     if (!fs.existsSync(filePath)) return null;
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    const parsed: unknown = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
     if (!Array.isArray(parsed)) return null;
-    return parsed
-      .filter(
-        (item: unknown): item is QueueItem =>
-          item !== null &&
-          typeof item === 'object' &&
-          typeof (item as QueueItem).id === 'string' &&
-          typeof (item as QueueItem).url === 'string'
-      )
-      .map((item: QueueItem) => ({
-        ...item,
-        status: item.status === 'downloading' ? ('pending' as const) : item.status,
-      }));
+    const usedIds = new Set<string>();
+    const nonterminalUrls = new Set<string>();
+    const normalized: QueueItem[] = [];
+    for (const rawItem of parsed.slice(0, MAX_QUEUE_SIZE)) {
+      const item = normalizeQueueItem(rawItem, usedIds);
+      if (!item) continue;
+      if (item.status === 'pending' || item.status === 'downloading') {
+        if (nonterminalUrls.has(item.url)) continue;
+        nonterminalUrls.add(item.url);
+      }
+      normalized.push(item);
+    }
+    return normalized;
   } catch {
     return null;
   }
@@ -949,9 +1260,7 @@ function readQueueFromDisk(filePath: string): QueueItem[] | null {
 
 function loadPersistedQueue(): QueueItem[] {
   const queueFromPrimary = readQueueFromDisk(queuePath);
-  if (queueFromPrimary) {
-    return queueFromPrimary;
-  }
+  if (queueFromPrimary) return queueFromPrimary;
   const queueFromBackup = readQueueFromDisk(queueBackupPath);
   if (queueFromBackup) {
     log.warn('Primary queue file could not be read. Restoring queue from backup.');
@@ -968,12 +1277,14 @@ function persistQueue(): void {
     const dir = path.dirname(queuePath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const serialized = JSON.stringify(downloadQueue, null, 2);
-    fs.writeFileSync(tempPath, serialized, 'utf-8');
-    if (fs.existsSync(queuePath)) {
-      fs.copyFileSync(queuePath, queueBackupPath);
+    fs.writeFileSync(tempPath, serialized, { encoding: 'utf-8', mode: 0o600 });
+    if (fs.existsSync(queuePath)) fs.copyFileSync(queuePath, queueBackupPath);
+    try {
+      fs.renameSync(tempPath, queuePath);
+    } catch {
       fs.rmSync(queuePath, { force: true });
+      fs.renameSync(tempPath, queuePath);
     }
-    fs.renameSync(tempPath, queuePath);
     fs.copyFileSync(queuePath, queueBackupPath);
   } catch (error) {
     try {
@@ -985,14 +1296,8 @@ function persistQueue(): void {
 
 downloadQueue = loadPersistedQueue();
 
-function generateQueueId(): string {
-  return `q_${randomUUID()}`;
-}
-
 function schedulePersistQueue(): void {
-  if (persistQueueTimer) {
-    clearTimeout(persistQueueTimer);
-  }
+  if (persistQueueTimer) clearTimeout(persistQueueTimer);
   persistQueueTimer = setTimeout(() => {
     persistQueueTimer = null;
     persistQueue();
@@ -1032,6 +1337,132 @@ function broadcastQueue() {
   schedulePersistQueue();
 }
 
+function resolveQueueOutputPath(settings: Settings): string {
+  const configured = settings.downloadFolder?.trim();
+  if (configured) {
+    const validation = validateDownloadPath(configured);
+    if (validation.ok && validation.data) return validation.data;
+  }
+  return app.getPath('downloads');
+}
+
+function requestFromSettings(url: string, settings: Settings): DownloadRequestOptions {
+  return {
+    url,
+    outputPath: resolveQueueOutputPath(settings),
+    ffmpegPath: settings.ffmpegPath || undefined,
+    convertEnabled: settings.convertEnabled,
+    convertFormat: settings.convertFormat,
+    keepOriginal: settings.keepOriginalAfterConvert,
+    playlist: { mode: 'current' },
+    profileEnabled: settings.downloadProfilesEnabled,
+    profile: settings.downloadMode,
+    bestQuality: settings.bestQuality,
+    advancedOptions: settings.advancedOptions,
+    audioOnly: settings.audioOnly,
+    audioOutputFormat: settings.audioFormat,
+    hookBrowser: settings.hookBrowser,
+    browserChoice: settings.browserChoice,
+    gpuAcceleration: settings.gpuAcceleration,
+    gpuType: settings.gpuType,
+    writeSubtitles: settings.writeSubtitles,
+    subtitleLangs: settings.subtitleLangs,
+    embedThumbnail: settings.embedThumbnail,
+    embedMetadata: settings.embedMetadata,
+    sponsorblockRemove: settings.sponsorblockRemove,
+  };
+}
+
+function buildQueueRequest(
+  url: string,
+  settings: Settings,
+  overrides?: QueueRequestOverrides
+): ReturnType<typeof validateDownloadRequestPayload> {
+  const presets = Array.isArray(settings.downloadPresets) ? settings.downloadPresets : [];
+  const requestedPresetId =
+    overrides && typeof overrides.presetId === 'string' ? overrides.presetId.trim() : undefined;
+  const preset = requestedPresetId
+    ? presets.find((candidate) => candidate.id === requestedPresetId)
+    : undefined;
+  const presetOptions = preset ? downloadPresetToRequestOptions(preset) : {};
+  const definedOverrides = overrides
+    ? (Object.fromEntries(
+        Object.entries(overrides).filter(([, value]) => value !== undefined)
+      ) as QueueRequestOverrides)
+    : undefined;
+  const candidate = {
+    ...requestFromSettings(url, settings),
+    ...presetOptions,
+    ...(definedOverrides ?? {}),
+    url,
+  } as DownloadRequestOptions;
+  // Always validate: a snapshot that cannot be re-validated later would be
+  // silently discarded on reload and would never reach the activity log.
+  return validateDownloadRequestPayload(candidate);
+}
+
+function resolveQueueRequest(item: QueueItem): DownloadRequestOptions | null {
+  const stored = normalizeStoredRequest(item.request, item.url);
+  if (stored) return stored;
+  const settings = loadSettings();
+  const validated = buildQueueRequest(item.url, settings);
+  if (validated.ok) return validated.data;
+  // Settings-derived values can sit outside the strict download-path allow-list
+  // (an unusual system Downloads location, for example). Those are already
+  // validated when saved, and startDownload still enforces that the finished
+  // file stays inside the target directory, so run rather than fail here.
+  log.warn(`Running queued ${item.url} from unvalidated settings-derived options.`);
+  return requestFromSettings(item.url, settings);
+}
+
+function clearQueueAttemptMetadata(item: QueueItem): void {
+  delete item.startedAt;
+  delete item.completedAt;
+  delete item.progress;
+  delete item.filename;
+  delete item.outputPath;
+  delete item.sizeBytes;
+  delete item.error;
+}
+
+function createSyntheticQueueCompletion(
+  item: QueueItem,
+  request: DownloadRequestOptions,
+  outcome: DownloadOutcome,
+  statusMessage: string,
+  error?: string
+): DownloadCompletion {
+  const completedAt = Date.now();
+  return {
+    id: randomUUID(),
+    owner: 'queue',
+    queueItemId: item.id,
+    outcome,
+    statusMessage,
+    url: item.url,
+    profile: request.profile,
+    presetId: request.presetId,
+    presetName: request.presetName,
+    request: cloneDownloadRequest(request),
+    error: outcome === 'failed' ? (error ?? statusMessage) : undefined,
+    startedAt: item.startedAt ?? completedAt,
+    completedAt,
+  };
+}
+
+function applyQueueCompletion(item: QueueItem, completion: DownloadCompletion): void {
+  item.status = completion.outcome === 'success' ? 'completed' : completion.outcome;
+  item.request = cloneDownloadRequest(completion.request);
+  item.completedAt = completion.completedAt;
+  delete item.progress;
+  item.filename = completion.filename;
+  item.outputPath = completion.outputPath;
+  item.sizeBytes = completion.sizeBytes;
+  item.error =
+    completion.outcome === 'failed' ? (completion.error ?? completion.statusMessage) : undefined;
+  recordDownloadActivity(completion);
+}
+
 async function processQueue() {
   if (!isQueueRunning || queueProcessingLock) return;
   queueProcessingLock = true;
@@ -1046,56 +1477,72 @@ async function processQueue() {
       return;
     }
 
+    clearQueueAttemptMetadata(nextItem);
     nextItem.status = 'downloading';
+    nextItem.startedAt = Date.now();
     queueActiveItemId = nextItem.id;
     broadcastQueue();
 
     await new Promise<void>((resolve) => {
+      const options = resolveQueueRequest(nextItem);
+      if (!options) {
+        const fallback = requestFromSettings(nextItem.url, loadSettings());
+        const completion = createSyntheticQueueCompletion(
+          nextItem,
+          fallback,
+          'failed',
+          'Failed to restore the queued download request.'
+        );
+        applyQueueCompletion(nextItem, completion);
+        queueActiveItemId = null;
+        broadcastQueue();
+        resolve();
+        return;
+      }
+      nextItem.request = cloneDownloadRequest(options);
+
       if (!mainWindow || mainWindow.isDestroyed()) {
-        nextItem.status = 'failed';
-        nextItem.error = 'Window closed';
+        const completion = createSyntheticQueueCompletion(
+          nextItem,
+          options,
+          'failed',
+          'Window closed'
+        );
+        applyQueueCompletion(nextItem, completion);
         queueActiveItemId = null;
         broadcastQueue();
         resolve();
         return;
       }
 
-      const settings = loadSettings();
-      let outputPath = app.getPath('downloads');
-      const rawFolder = settings.downloadFolder?.trim();
-      if (rawFolder) {
-        const folderValidation = validateDownloadPath(rawFolder);
-        if (folderValidation.ok && folderValidation.data) {
-          outputPath = folderValidation.data;
-        }
-      }
-      const options: DownloadRequestOptions = {
-        url: nextItem.url,
-        outputPath,
-        ffmpegPath: settings.ffmpegPath || undefined,
-        convertFormat: settings.convertEnabled ? settings.convertFormat : undefined,
-        keepOriginal: settings.convertEnabled ? settings.keepOriginalAfterConvert : undefined,
+      const completedItems = downloadQueue.filter(
+        (item) =>
+          item.status === 'completed' || item.status === 'failed' || item.status === 'cancelled'
+      ).length;
+      const queueProgress = {
+        completedItems,
+        queueTotal: downloadQueue.length,
+        queueItemId: nextItem.id,
       };
 
       let settled = false;
-      const completeListener = (statusMessage: string, outcome?: DownloadOutcome) => {
+      const finish = (completion: DownloadCompletion) => {
         if (settled) return;
         settled = true;
-
-        if (outcome === 'cancelled') {
-          nextItem.status = 'cancelled';
-          nextItem.error = undefined;
-        } else if (outcome === 'success') {
-          nextItem.status = 'completed';
-          nextItem.error = undefined;
-        } else {
-          nextItem.status = 'failed';
-          nextItem.error = statusMessage;
+        // Always resolve: a failure while recording the outcome must not stall
+        // the rest of the queue.
+        try {
+          applyQueueCompletion(nextItem, completion);
+        } catch (error) {
+          log.error('Failed to apply queue completion:', error);
+        } finally {
+          queueActiveItemId = null;
+          broadcastQueue();
+          resolve();
         }
-
-        queueActiveItemId = null;
-        broadcastQueue();
-        resolve();
+      };
+      const completeListener = (statusMessage: string, outcome: DownloadOutcome = 'failed') => {
+        finish(createSyntheticQueueCompletion(nextItem, options, outcome, statusMessage));
       };
 
       try {
@@ -1105,11 +1552,22 @@ async function processQueue() {
           options,
           mainWindow,
           completeListener,
-          'queue'
+          'queue',
+          queueProgress,
+          finish
         );
       } catch (error) {
-        nextItem.status = 'failed';
-        nextItem.error = (error as Error).message;
+        if (settled) return;
+        settled = true;
+        const message = error instanceof Error ? error.message : 'Failed to start queue download.';
+        const completion = createSyntheticQueueCompletion(
+          nextItem,
+          options,
+          'failed',
+          message,
+          message
+        );
+        applyQueueCompletion(nextItem, completion);
         queueActiveItemId = null;
         broadcastQueue();
         resolve();
@@ -1117,52 +1575,155 @@ async function processQueue() {
     });
   } finally {
     queueProcessingLock = false;
-    if (isQueueRunning && !queueCancelled) {
-      void processQueue();
-    }
+    if (isQueueRunning && !queueCancelled) void processQueue();
   }
 }
 
-ipcMain.handle('add-to-queue', (event, urls) => {
+ipcMain.handle('add-to-queue', (event, urls, requestOverrides) => {
   if (!assertMainWindowSender(event)) {
     return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
   }
   if (!Array.isArray(urls)) {
     return errorResult('VALIDATION_ERROR', 'URLs must be an array.');
   }
-  const validUrls = urls.filter((u): u is string => typeof u === 'string' && isSafeHttpUrl(u));
-  if (validUrls.length === 0) {
+  if (requestOverrides !== undefined && !isPlainRecord(requestOverrides)) {
+    return errorResult('VALIDATION_ERROR', 'Queue request options must be an object.');
+  }
+
+  const settings = loadSettings();
+  const nonterminalUrls = new Set(
+    downloadQueue
+      .filter((item) => item.status === 'pending' || item.status === 'downloading')
+      .map((item) => item.url)
+  );
+  const batchUrls = new Set<string>();
+  const pendingItems: QueueItem[] = [];
+  let validUrlCount = 0;
+  let skipped = 0;
+
+  for (const rawUrl of urls) {
+    if (typeof rawUrl !== 'string') {
+      skipped += 1;
+      continue;
+    }
+    const url = normalizeQueueUrl(rawUrl);
+    if (!url) {
+      skipped += 1;
+      continue;
+    }
+    validUrlCount += 1;
+    if (nonterminalUrls.has(url) || batchUrls.has(url)) {
+      skipped += 1;
+      continue;
+    }
+    const requestValidation = buildQueueRequest(
+      url,
+      settings,
+      requestOverrides as QueueRequestOverrides | undefined
+    );
+    if (!requestValidation.ok && requestOverrides !== undefined) {
+      // The caller supplied the offending values, so surface the problem.
+      return errorResult(
+        requestValidation.error.code,
+        requestValidation.error.message,
+        requestValidation.error.details
+      );
+    }
+    if (!requestValidation.ok) {
+      // Derived purely from saved settings: keep the item queued and let it
+      // resolve from settings at run time instead of storing a bad snapshot.
+      log.warn(`Queued ${url} without a request snapshot: ${requestValidation.error.message}`);
+    }
+    batchUrls.add(url);
+    pendingItems.push({
+      id: generateQueueId(),
+      url,
+      status: 'pending',
+      addedAt: Date.now(),
+      ...(requestValidation.ok ? { request: requestValidation.data } : {}),
+    });
+  }
+
+  if (validUrlCount === 0) {
     return errorResult('VALIDATION_ERROR', 'No valid URLs provided.');
   }
-  if (downloadQueue.length + validUrls.length > MAX_QUEUE_SIZE) {
+  if (downloadQueue.length + pendingItems.length > MAX_QUEUE_SIZE) {
     return errorResult('VALIDATION_ERROR', `Queue limit reached (max ${MAX_QUEUE_SIZE} items).`);
   }
-  const newItems: QueueItem[] = validUrls.map((url) => ({
-    id: generateQueueId(),
-    url,
-    status: 'pending' as const,
-    addedAt: Date.now(),
-  }));
-  downloadQueue.push(...newItems);
-  broadcastQueue();
-  return okResult({ added: validUrls.length });
+  if (pendingItems.length > 0) {
+    downloadQueue.push(...pendingItems);
+    broadcastQueue();
+  }
+  return okResult({ added: pendingItems.length, skipped });
 });
 
 ipcMain.handle('remove-from-queue', (event, id) => {
   if (!assertMainWindowSender(event)) {
     return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
   }
-  if (typeof id !== 'string') {
-    return errorResult('VALIDATION_ERROR', 'Queue item ID must be a string.');
+  const idValidation = validateQueueItemIdPayload(id);
+  if (!idValidation.ok) {
+    return errorResult(idValidation.error.code, idValidation.error.message);
   }
-  const idx = downloadQueue.findIndex((item) => item.id === id);
-  if (idx === -1) return errorResult('NOT_AVAILABLE', 'Queue item not found.');
-  const item = downloadQueue[idx];
+  const index = downloadQueue.findIndex((item) => item.id === idValidation.data);
+  if (index === -1) return errorResult('NOT_AVAILABLE', 'Queue item not found.');
+  const item = downloadQueue[index];
   if (!item) return errorResult('NOT_AVAILABLE', 'Queue item not found.');
   if (item.status === 'downloading') {
     return errorResult('VALIDATION_ERROR', 'Cannot remove an actively downloading item.');
   }
-  downloadQueue.splice(idx, 1);
+  downloadQueue.splice(index, 1);
+  broadcastQueue();
+  return okResult(undefined);
+});
+
+ipcMain.handle('retry-queue-item', (event, id) => {
+  if (!assertMainWindowSender(event)) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
+  const idValidation = validateQueueItemIdPayload(id);
+  if (!idValidation.ok) {
+    return errorResult(idValidation.error.code, idValidation.error.message);
+  }
+  const item = downloadQueue.find((candidate) => candidate.id === idValidation.data);
+  if (!item) return errorResult('NOT_AVAILABLE', 'Queue item not found.');
+  if (item.status !== 'failed' && item.status !== 'cancelled') {
+    return errorResult('VALIDATION_ERROR', 'Only failed or cancelled queue items can be retried.');
+  }
+  clearQueueAttemptMetadata(item);
+  item.status = 'pending';
+  broadcastQueue();
+  return okResult(undefined);
+});
+
+ipcMain.handle('reorder-queue-item', (event, payload) => {
+  if (!assertMainWindowSender(event)) {
+    return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
+  }
+  const validation = validateQueueReorderPayload(payload);
+  if (!validation.ok) {
+    return errorResult(validation.error.code, validation.error.message);
+  }
+  const itemIndex = downloadQueue.findIndex((item) => item.id === validation.data.id);
+  if (itemIndex === -1) return errorResult('NOT_AVAILABLE', 'Queue item not found.');
+  const item = downloadQueue[itemIndex];
+  if (!item || item.status !== 'pending') {
+    return errorResult('VALIDATION_ERROR', 'Only pending queue items can be reordered.');
+  }
+
+  const pendingIndexes = downloadQueue
+    .map((candidate, index) => (candidate.status === 'pending' ? index : -1))
+    .filter((index) => index >= 0);
+  const position = pendingIndexes.indexOf(itemIndex);
+  const destinationPosition = validation.data.direction === 'up' ? position - 1 : position + 1;
+  const destinationIndex = pendingIndexes[destinationPosition];
+  if (destinationIndex === undefined) {
+    return errorResult('NOT_AVAILABLE', `Queue item cannot move ${validation.data.direction}.`);
+  }
+  const destination = downloadQueue[destinationIndex];
+  if (!destination) return errorResult('NOT_AVAILABLE', 'Queue destination not found.');
+  downloadQueue[itemIndex] = destination;
+  downloadQueue[destinationIndex] = item;
   broadcastQueue();
   return okResult(undefined);
 });
@@ -1184,6 +1745,8 @@ ipcMain.handle('clear-queue', (event) => {
 
 ipcMain.handle('get-queue', (event) => {
   if (!assertMainWindowSender(event)) {
+    // Deliberately an error rather than an empty array: an unauthorized read of
+    // the queue should be visible, not silently answered with a plausible value.
     return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
   }
   return downloadQueue;
@@ -1193,8 +1756,7 @@ ipcMain.handle('start-queue', (event) => {
   if (!assertMainWindowSender(event)) {
     return errorResult('VALIDATION_ERROR', 'Unauthorized sender.');
   }
-  const pending = downloadQueue.filter((item) => item.status === 'pending');
-  if (pending.length === 0) {
+  if (!downloadQueue.some((item) => item.status === 'pending')) {
     return errorResult('NOT_AVAILABLE', 'No pending items in queue.');
   }
   if (isQueueRunning) {
@@ -1216,15 +1778,20 @@ ipcMain.handle('cancel-queue', (event) => {
   try {
     queueCancelled = true;
     isQueueRunning = false;
-    if (queueActiveItemId) {
-      cancelActiveSession(true);
-      queueActiveItemId = null;
+    if (queueActiveItemId) cancelActiveSession(true);
+
+    for (const item of downloadQueue) {
+      if (item.status !== 'pending' && item.status !== 'downloading') continue;
+      const request = resolveQueueRequest(item) ?? requestFromSettings(item.url, loadSettings());
+      const completion = createSyntheticQueueCompletion(
+        item,
+        request,
+        'cancelled',
+        '⏹️ Cancelled.'
+      );
+      applyQueueCompletion(item, completion);
     }
-    downloadQueue.forEach((item) => {
-      if (item.status === 'pending' || item.status === 'downloading') {
-        item.status = 'cancelled';
-      }
-    });
+    queueActiveItemId = null;
     broadcastQueue();
     return okResult(undefined);
   } catch (error) {

@@ -5,9 +5,9 @@
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                    | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                                                                    |
 | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **EXE:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-Windows-arm64.exe) | **[Universal DMG](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-MacOS-universal.dmg)**    | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-Linux-arm64.AppImage) |
-| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div>      | **[Universal ZIP](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-MacOS-universal.zip)**    | **DEB:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-Linux-arm64.deb)                 |
-|                                                                                                                                                                                                      |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.2.1/ROSI-Linux-aarch64.rpm)              |
+| **EXE:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0/ROSI-Windows-arm64.exe) | **[Universal DMG](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0/ROSI-MacOS-universal.dmg)**    | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0/ROSI-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0/ROSI-Linux-arm64.AppImage) |
+| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div>      | **[Universal ZIP](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0/ROSI-MacOS-universal.zip)**    | **DEB:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0/ROSI-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0/ROSI-Linux-arm64.deb)                 |
+|                                                                                                                                                                                                      |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0/ROSI-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.0/ROSI-Linux-aarch64.rpm)              |
 
 > [!IMPORTANT]
 > The `.sig` files in this repo are NOT normal GPG signatures — they are for ROSI's built-in updater to verify the integrity of updates before downloading and installing.
@@ -18,9 +18,44 @@
 
 ---
 
-## Changes in `v4.2.1:`
+## Changes in `v4.3.0:`
 
+- **NEW - Queue recovery:** Failed and cancelled queue items now show the reason inline with **Retry** / **Requeue** and **Copy details** actions, so a single bad link no longer forces you to rebuild the queue.
+- **NEW - Per-item queue progress:** The active queue row shows its own phase, percentage, speed, and ETA. The main bar still reports overall queue progress.
+- **NEW - Queue reordering:** Pending items can be moved with **Up** / **Down** buttons or `Alt`+`ArrowUp` / `Alt`+`ArrowDown`. Active and finished items stay put.
+- **NEW - Smart multi-link intake:** Pasting or dropping several links is detected everywhere. The main button switches to **Add N to Queue**, and links are deduplicated with a summary of what was added, skipped, or ignored.
+- **NEW - Playlist scope:** When a preview detects a playlist you can download the current video, the entire playlist, or a numbered range.
+- **NEW - Saved presets:** Name and reuse a download setup (profile, conversion, GPU, subtitles, metadata, SponsorBlock, playlist scope) and apply it to direct downloads or queued items. Up to 20 presets.
+- **NEW - Activity center:** Recent Downloads is now **Activity**, stored by the app rather than the browser cache. Rows show source, profile, size, and failure reason, with **Download again**, **Copy source**, **Open folder**, status filters, and a real empty state.
+- **NEW - Automatic previews:** Metadata loads on its own shortly after a valid link is entered, with results cached briefly. The button becomes **Refresh**, or **Retry preview** if lookup fails.
+- **NEW - Searchable settings:** The sidebar has a search field that filters settings and expands matching sections, plus a **Reset section** action for each group.
+- **Setup:** First-run setup now covers the download folder, "ask every time", and a starting profile, so the first download no longer stops to ask.
+- **Queue:** With **Ask every time** enabled, adding links now prompts once for the whole batch instead of using the saved folder, and nothing is queued if you dismiss the picker.
+- **Preview:** Playlist previews read up to 500 entries and no longer report the listing limit as the playlist length when the real total is unavailable.
+- **macOS:** Added a native application menu (About, Settings, Check for Updates, Edit, View, Window, Help) with actions wired into the existing UI.
+- **Progress:** yt-dlp and FFmpeg now report structured progress for more accurate in-app percentages, including merge and conversion phases.
+- **Taskbar / Dock:** Download and conversion progress appears in the Windows taskbar and macOS Dock; queue runs show an overall percent across items.
+- **Queue:** Queueing with a saved preset now keeps the on-screen playlist radios (including Current), so a preset saved as All or Range cannot expand the job behind your back.
+- **Queue:** Custom format IDs from the advanced pickers are stored on queued items, and settings are flushed before queueing so a convert/GPU change is not lost to the save debounce.
+- **Presets:** Saving a custom preset now stores the selected video/audio format IDs and restores them when the preset is applied.
+- **Presets:** Applying a preset now restores its playlist scope onto the radios (and shows the range fields when needed).
+- **Presets:** Selecting a preset with All/Range no longer gets stomped by a hidden “Current” default; on-screen convert/GPU/profile toggles also win over the preset while it is selected.
+- **UX:** Skip-setup dialog stacks above the wizard; multi-link paste into the download field uses spaces so “Add N to Queue” still works; auto-preview invalidates in-flight results when the URL changes.
+- **Settings:** Settings schema migrated to version `7` for saved presets. New **Taskbar / Dock progress** toggle (schema v6).
+- **Splash:** Loading screen now follows your saved theme tokens, improved contrast on status text, and shows the live app version at runtime.
+- **UI / a11y:** Toast dismiss buttons, wizard toggles, and modal placeholders were polished for keyboard focus and cleaner first paint.
+- **Queue:** Status indicators use theme-colored dots instead of emoji for clearer light/dark/purple rendering.
+- **Linux:** Taskbar / Dock progress setting is hidden with a note that the feature is Windows and macOS only.
+- **Lifecycle:** Quitting on Windows and Linux now stops active downloads and the queue the same way as closing the window on macOS.
+- **Security:** Updated `undici` to `6.28.0` / `7.29.0` (`CVE-2026-13697` and related advisories) and `js-yaml` to `4.3.1`.
+- **Electron:** Updated to `v43.4.0`.
 - **PKG:** Updated packages.
+- **Testing:** Added coverage for queue retry, diagnostics, reordering, per-item progress updates, playlist arguments, saved presets, the activity list, and taskbar progress on Windows / macOS / Linux.
+
+### FULL CHANGELOG:
+
+<details>
+  <summary>ℹ️ Click here to see the full change-log for v4!</summary>
 
 ## Changes in `v4.2.0:`
 
@@ -52,11 +87,6 @@
 - **UI:** Added explicit `type="button"` to all button elements for HTML robustness.
 - **Testing:** Cleaned up ESLint configuration to suppress `no-unsafe-*` noise in test files while keeping full strictness on production code.
 - **PKG:** Updated packages.
-
-### FULL CHANGELOG:
-
-<details>
-  <summary>ℹ️ Click here to see the full change-log for v4!</summary>
 
 ## Changes in `v4.1.0:`
 

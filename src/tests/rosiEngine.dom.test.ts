@@ -41,13 +41,14 @@ interface MockApi {
 
 function defaultSettings() {
   return {
-    settingsVersion: 5,
+    settingsVersion: 7,
     theme: 'dark',
     showConsoleOutput: false,
     consoleCollapsed: false,
     queueCollapsed: false,
     downloadProfilesEnabled: false,
     downloadMode: 'best-video',
+    downloadPresets: [],
     askDownloadLocation: false,
     advancedOptions: false,
     audioOnly: false,
@@ -75,6 +76,7 @@ function defaultSettings() {
     embedThumbnail: false,
     embedMetadata: false,
     sponsorblockRemove: false,
+    showTaskbarProgress: true,
   };
 }
 
@@ -87,6 +89,7 @@ function buildMockApi(overrides: Partial<MockApi> = {}): MockApi {
     saveSettings: vi.fn((s: unknown) => ok(s)),
     resetSettings: vi.fn(),
     getAppVersion: vi.fn(() => Promise.resolve('4.1.0')),
+    getAppPlatform: vi.fn(() => Promise.resolve('darwin' as NodeJS.Platform)),
     isPackaged: vi.fn(() => Promise.resolve(false)),
     checkDenoInstalled: vi.fn(() => Promise.resolve(true)),
     getQueue: vi.fn(() => Promise.resolve([])),
@@ -97,13 +100,18 @@ function buildMockApi(overrides: Partial<MockApi> = {}): MockApi {
     downloadVideo: vi.fn(() => ok({ started: true })),
     cancelDownload: vi.fn(),
     cancelFormats: vi.fn(),
-    addToQueue: vi.fn(() => ok({ added: 1 })),
+    addToQueue: vi.fn(() => ok({ added: 1, skipped: 0 })),
     removeFromQueue: vi.fn(() => ok(undefined)),
+    retryQueueItem: vi.fn(() => ok(undefined)),
+    reorderQueueItem: vi.fn(() => ok(undefined)),
     clearQueue: vi.fn(() => ok(undefined)),
     startQueue: vi.fn(() => ok({ started: true })),
     cancelQueue: vi.fn(() => ok(undefined)),
     getStats: vi.fn(() => Promise.resolve({})),
     resetStats: vi.fn(() => ok(undefined)),
+    getDefaultSettings: vi.fn(() => ok(defaultSettings())),
+    getDownloadActivity: vi.fn(() => ok([])),
+    clearDownloadActivity: vi.fn(() => ok(undefined)),
     openExternal: vi.fn(() => ok({ opened: true })),
     openFileLocation: vi.fn(() => ok({ opened: true })),
     showNotification: vi.fn(() => ok({ shown: true })),
@@ -119,7 +127,11 @@ function buildMockApi(overrides: Partial<MockApi> = {}): MockApi {
     installDeno: vi.fn(() => Promise.resolve({ success: true })),
     detectGpu: vi.fn(() => Promise.resolve({ nvidia: false, amd: false, intel: false })),
     onProgress: noop,
+    onJobProgress: noop,
+    onMenuAction: noop,
     onComplete: noop,
+    onDownloadComplete: noop,
+    onDownloadActivityUpdate: noop,
     onQueueUpdate: noop,
     onPrepareForClose: noop,
     onUpdaterStatus: noop,
@@ -299,6 +311,46 @@ describe('rosiEngine DOM wiring', () => {
     );
   });
 
+  it('asks once for a destination when Ask every time is enabled', async () => {
+    const api = buildMockApi({
+      getSettings: vi.fn(() =>
+        Promise.resolve({ ...defaultSettings(), askDownloadLocation: true })
+      ) as unknown as ReturnType<typeof vi.fn>,
+      selectDownloadLocation: vi.fn(() => Promise.resolve('/tmp/queue-target')),
+    });
+    await loadEngine(api);
+
+    const queueInput = document.getElementById('queueUrlInput') as HTMLTextAreaElement;
+    queueInput.value = 'https://example.com/a\nhttps://example.com/b';
+    (document.getElementById('addToQueueBtn') as HTMLButtonElement).click();
+    await flush(30);
+
+    // One prompt for the whole batch, and the choice is sent as an override.
+    expect(api.selectDownloadLocation).toHaveBeenCalledTimes(1);
+    expect(api.addToQueue).toHaveBeenCalledWith(
+      ['https://example.com/a', 'https://example.com/b'],
+      expect.objectContaining({ outputPath: '/tmp/queue-target' })
+    );
+  });
+
+  it('queues nothing when the destination prompt is dismissed', async () => {
+    const api = buildMockApi({
+      getSettings: vi.fn(() =>
+        Promise.resolve({ ...defaultSettings(), askDownloadLocation: true })
+      ) as unknown as ReturnType<typeof vi.fn>,
+      selectDownloadLocation: vi.fn(() => Promise.resolve(null)),
+    });
+    await loadEngine(api);
+
+    const queueInput = document.getElementById('queueUrlInput') as HTMLTextAreaElement;
+    queueInput.value = 'https://example.com/a';
+    (document.getElementById('addToQueueBtn') as HTMLButtonElement).click();
+    await flush(30);
+
+    expect(api.addToQueue).not.toHaveBeenCalled();
+    expect(queueInput.value).toBe('https://example.com/a');
+  });
+
   it('adds URLs to the queue via the queue input', async () => {
     const api = buildMockApi();
     await loadEngine(api);
@@ -307,6 +359,280 @@ describe('rosiEngine DOM wiring', () => {
     (document.getElementById('addToQueueBtn') as HTMLButtonElement).click();
     await flush();
     expect(api.addToQueue).toHaveBeenCalledWith(['https://example.com/a', 'https://example.com/b']);
+  });
+
+  it('sends playlist current with a selected preset so All/Range presets cannot override the radios', async () => {
+    const api = buildMockApi({
+      getSettings: vi.fn(() =>
+        Promise.resolve({
+          ...defaultSettings(),
+          downloadPresets: [
+            {
+              id: 'p-all',
+              name: 'Whole playlist',
+              profile: 'best-video',
+              playlist: { mode: 'all' },
+            },
+          ],
+        })
+      ) as unknown as ReturnType<typeof vi.fn>,
+    });
+    await loadEngine(api);
+
+    const presetSelect = document.getElementById('downloadPresetSelect') as HTMLSelectElement;
+    presetSelect.value = 'p-all';
+    presetSelect.dispatchEvent(new Event('change', { bubbles: true }));
+
+    // Radios only count once the playlist scope UI is visible (after a playlist preview).
+    document.getElementById('playlistScope')?.classList.remove('hidden');
+    const currentRadio = document.querySelector(
+      'input[name="playlist-scope"][value="current"]'
+    ) as HTMLInputElement;
+    currentRadio.checked = true;
+
+    const queueInput = document.getElementById('queueUrlInput') as HTMLTextAreaElement;
+    queueInput.value = 'https://example.com/watch';
+    (document.getElementById('addToQueueBtn') as HTMLButtonElement).click();
+    await flush();
+
+    expect(api.addToQueue).toHaveBeenCalledWith(
+      ['https://example.com/watch'],
+      expect.objectContaining({
+        presetId: 'p-all',
+        playlist: { mode: 'current' },
+      })
+    );
+  });
+
+  it('flushes settings and sends custom format IDs when queueing in advanced mode', async () => {
+    const api = buildMockApi({
+      getSettings: vi.fn(() =>
+        Promise.resolve({
+          ...defaultSettings(),
+          downloadProfilesEnabled: true,
+          downloadMode: 'custom',
+          advancedOptions: true,
+        })
+      ) as unknown as ReturnType<typeof vi.fn>,
+    });
+    await loadEngine(api);
+
+    const videoSelect = document.getElementById('videoFormat') as HTMLSelectElement;
+    const audioSelect = document.getElementById('audioFormat') as HTMLSelectElement;
+    videoSelect.appendChild(new Option('137', '137'));
+    audioSelect.appendChild(new Option('140', '140'));
+    videoSelect.value = '137';
+    audioSelect.value = '140';
+
+    const queueInput = document.getElementById('queueUrlInput') as HTMLTextAreaElement;
+    queueInput.value = 'https://example.com/watch';
+    (document.getElementById('addToQueueBtn') as HTMLButtonElement).click();
+    await flush();
+
+    expect(api.saveSettings).toHaveBeenCalled();
+    expect(api.addToQueue).toHaveBeenCalledWith(
+      ['https://example.com/watch'],
+      expect.objectContaining({
+        videoFormat: '137',
+        audioFormat: '140',
+      })
+    );
+  });
+
+  it('does not queue when settings cannot be saved', async () => {
+    const api = buildMockApi({
+      saveSettings: vi.fn(() =>
+        Promise.resolve({ ok: false, error: { message: 'disk full' } })
+      ) as unknown as ReturnType<typeof vi.fn>,
+    });
+    await loadEngine(api);
+    const queueInput = document.getElementById('queueUrlInput') as HTMLTextAreaElement;
+    queueInput.value = 'https://example.com/watch';
+    (document.getElementById('addToQueueBtn') as HTMLButtonElement).click();
+    await flush();
+    expect(api.addToQueue).not.toHaveBeenCalled();
+  });
+
+  it('saves custom format IDs on a preset', async () => {
+    const api = buildMockApi({
+      getSettings: vi.fn(() =>
+        Promise.resolve({
+          ...defaultSettings(),
+          downloadProfilesEnabled: true,
+          downloadMode: 'custom',
+          advancedOptions: true,
+        })
+      ) as unknown as ReturnType<typeof vi.fn>,
+    });
+    await loadEngine(api);
+
+    const videoSelect = document.getElementById('videoFormat') as HTMLSelectElement;
+    const audioSelect = document.getElementById('audioFormat') as HTMLSelectElement;
+    videoSelect.appendChild(new Option('137', '137'));
+    audioSelect.appendChild(new Option('140', '140'));
+    videoSelect.value = '137';
+    audioSelect.value = '140';
+
+    (document.getElementById('presetNameInput') as HTMLInputElement).value = 'Custom 1080';
+    (document.getElementById('savePresetBtn') as HTMLButtonElement).click();
+    await flush();
+
+    expect(api.saveSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        downloadPresets: [
+          expect.objectContaining({
+            name: 'Custom 1080',
+            videoFormat: '137',
+            audioFormatId: '140',
+          }),
+        ],
+      })
+    );
+  });
+
+  it('applies a playlist preset onto the radios', async () => {
+    const api = buildMockApi({
+      getSettings: vi.fn(() =>
+        Promise.resolve({
+          ...defaultSettings(),
+          downloadPresets: [
+            {
+              id: 'p-range',
+              name: 'Range 2-5',
+              profile: 'best-video',
+              playlist: { mode: 'range', start: 2, end: 5 },
+            },
+          ],
+        })
+      ) as unknown as ReturnType<typeof vi.fn>,
+    });
+    await loadEngine(api);
+
+    const presetSelect = document.getElementById('downloadPresetSelect') as HTMLSelectElement;
+    presetSelect.value = 'p-range';
+    presetSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    (document.getElementById('applyPresetBtn') as HTMLButtonElement).click();
+    await flush();
+
+    expect(
+      (
+        document.querySelector(
+          'input[name="playlist-scope"][value="range"]'
+        ) as HTMLInputElement | null
+      )?.checked
+    ).toBe(true);
+    expect((document.getElementById('playlistRangeStart') as HTMLInputElement).value).toBe('2');
+    expect((document.getElementById('playlistRangeEnd') as HTMLInputElement).value).toBe('5');
+    expect(document.getElementById('playlistScope')?.classList.contains('hidden')).toBe(false);
+  });
+
+  it('keeps a selected All playlist preset when radios are still hidden', async () => {
+    const api = buildMockApi({
+      getSettings: vi.fn(() =>
+        Promise.resolve({
+          ...defaultSettings(),
+          downloadPresets: [
+            {
+              id: 'p-all',
+              name: 'Whole playlist',
+              profile: 'best-video',
+              playlist: { mode: 'all' },
+            },
+          ],
+        })
+      ) as unknown as ReturnType<typeof vi.fn>,
+    });
+    await loadEngine(api);
+
+    const presetSelect = document.getElementById('downloadPresetSelect') as HTMLSelectElement;
+    presetSelect.value = 'p-all';
+    presetSelect.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(document.getElementById('playlistScope')?.classList.contains('hidden')).toBe(true);
+
+    const queueInput = document.getElementById('queueUrlInput') as HTMLTextAreaElement;
+    queueInput.value = 'https://example.com/watch';
+    (document.getElementById('addToQueueBtn') as HTMLButtonElement).click();
+    await flush();
+
+    expect(api.addToQueue).toHaveBeenCalledWith(
+      ['https://example.com/watch'],
+      expect.objectContaining({
+        presetId: 'p-all',
+        convertEnabled: false,
+      })
+    );
+    const overrides = (api.addToQueue as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as
+      Record<string, unknown> | undefined;
+    expect(overrides?.playlist).toBeUndefined();
+  });
+
+  it('detects multi-link paste into the download field using spaces', async () => {
+    const api = buildMockApi();
+    await loadEngine(api);
+    const urlInput = document.getElementById('url') as HTMLInputElement;
+    urlInput.value = 'https://example.com/a https://example.com/b';
+    urlInput.dispatchEvent(new Event('input', { bubbles: true }));
+    await flush();
+    expect(document.querySelector('.download-card')?.classList.contains('is-batch')).toBe(true);
+    expect(document.getElementById('downloadBtn')?.textContent).toContain('Add 2 to Queue');
+  });
+
+  it('filters settings sections by search text', async () => {
+    const api = buildMockApi();
+    await loadEngine(api);
+    const search = document.getElementById('settingsSearch') as HTMLInputElement;
+    search.value = 'gpu acceleration';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(
+      document.getElementById('gpuAccelerationLabel')?.classList.contains('search-hidden')
+    ).toBe(false);
+    expect(
+      document
+        .getElementById('gpuAccelerationLabel')
+        ?.closest('.settings-section')
+        ?.classList.contains('search-hidden')
+    ).toBe(false);
+    expect(document.querySelectorAll('.settings-section.search-hidden').length).toBeGreaterThan(0);
+  });
+
+  it('replays activity using the entry url when the stored request omitted it', async () => {
+    let activityCb: ((entries: unknown[]) => void) | null = null;
+    const api = buildMockApi({
+      onDownloadActivityUpdate: ((cb: (entries: unknown[]) => void) => {
+        activityCb = cb;
+        return () => {};
+      }) as unknown as ReturnType<typeof vi.fn>,
+    });
+    await loadEngine(api);
+    activityCb!([
+      {
+        id: 'a-replay',
+        owner: 'manual',
+        outcome: 'success',
+        statusMessage: 'Download complete.',
+        url: 'https://example.com/again',
+        request: { outputPath: '/tmp/rosi' },
+        filename: 'again.mp4',
+        startedAt: Date.now() - 1000,
+        completedAt: Date.now(),
+      },
+    ]);
+    await flush();
+
+    const replayBtn = Array.from(document.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Download again'
+    );
+    expect(replayBtn).toBeTruthy();
+    replayBtn!.click();
+    await flush();
+
+    expect(api.downloadVideo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: 'https://example.com/again',
+        outputPath: '/tmp/rosi',
+      })
+    );
   });
 
   it('adds queue URLs with Ctrl+Enter from the queue textarea', async () => {
@@ -546,7 +872,7 @@ describe('rosiEngine DOM wiring', () => {
     (document.getElementById('previewBtn') as HTMLButtonElement).click();
     await flush(50);
 
-    expect(api.getVideoInfo).toHaveBeenCalledWith('https://youtube.com/watch?v=abc');
+    expect(api.getVideoInfo).toHaveBeenCalledWith('https://youtube.com/watch?v=abc', 'current');
     const card = document.getElementById('preview-card') as HTMLElement;
     expect(card.classList.contains('visible')).toBe(true);
     expect(document.getElementById('preview-title')?.textContent).toBe('Test Clip');
@@ -582,20 +908,80 @@ describe('rosiEngine DOM wiring', () => {
     expect(backBtn.hasAttribute('hidden')).toBe(true);
   });
 
-  it('records download history in localStorage on completion', async () => {
-    let completeCb: ((msg: string) => void) | null = null;
+  it('renders activity from the main process instead of localStorage', async () => {
+    let activityCb: ((entries: unknown[]) => void) | null = null;
     const api = buildMockApi({
-      onComplete: ((cb: (msg: string) => void) => {
-        completeCb = cb;
+      onDownloadActivityUpdate: ((cb: (entries: unknown[]) => void) => {
+        activityCb = cb;
         return () => {};
       }) as unknown as ReturnType<typeof vi.fn>,
     });
     await loadEngine(api);
-    expect(typeof completeCb).toBe('function');
-    completeCb!('✅ Download complete (no conversion).');
+    expect(api.getDownloadActivity).toHaveBeenCalled();
+    expect(document.querySelector('.history-empty')?.textContent).toContain('No downloads yet');
+
+    expect(typeof activityCb).toBe('function');
+    activityCb!([
+      {
+        id: 'a1',
+        owner: 'manual',
+        outcome: 'success',
+        statusMessage: 'Download complete.',
+        url: 'https://example.com/video',
+        request: { url: 'https://example.com/video', outputPath: '/tmp' },
+        filename: 'video.mp4',
+        sizeBytes: 2048,
+        startedAt: Date.now() - 1000,
+        completedAt: Date.now(),
+      },
+    ]);
     await flush();
-    const history = JSON.parse(localStorage.getItem('rosi-download-history') || '[]');
-    expect(history.length).toBe(1);
-    expect(history[0].status).toBe('success');
+
+    expect(document.getElementById('history-count')?.textContent).toBe('1');
+    expect(document.querySelector('.history-filename')?.textContent).toBe('video.mp4');
+    expect(localStorage.getItem('rosi-download-history')).toBeNull();
+  });
+
+  it('filters activity rows by outcome', async () => {
+    const api = buildMockApi({
+      getDownloadActivity: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          data: [
+            {
+              id: 'ok1',
+              owner: 'manual',
+              outcome: 'success',
+              statusMessage: 'done',
+              url: 'https://example.com/a',
+              request: { url: 'https://example.com/a', outputPath: '/tmp' },
+              filename: 'a.mp4',
+              startedAt: 1,
+              completedAt: 2,
+            },
+            {
+              id: 'bad1',
+              owner: 'queue',
+              outcome: 'failed',
+              statusMessage: 'failed',
+              url: 'https://example.com/b',
+              request: { url: 'https://example.com/b', outputPath: '/tmp' },
+              error: 'network unreachable',
+              startedAt: 1,
+              completedAt: 2,
+            },
+          ],
+        })
+      ) as unknown as ReturnType<typeof vi.fn>,
+    });
+    await loadEngine(api);
+    await flush(20);
+    expect(document.querySelectorAll('.history-item')).toHaveLength(2);
+
+    document.querySelector<HTMLButtonElement>('[data-activity-filter="failed"]')!.click();
+    await flush();
+    const rows = document.querySelectorAll('.history-item');
+    expect(rows).toHaveLength(1);
+    expect(document.querySelector('.history-error')?.textContent).toBe('network unreachable');
   });
 });

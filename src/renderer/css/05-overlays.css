@@ -1,3 +1,8 @@
+.modal-overlay:not(.active) .modal-box h3,
+.modal-overlay:not(.active) .modal-message {
+  visibility: hidden;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -369,6 +374,14 @@
 .toast-dismiss:hover {
   color: var(--text-primary);
   background: var(--surface-3);
+}
+
+.toast-dismiss:focus-visible {
+  outline: none;
+  color: var(--text-primary);
+  box-shadow:
+    0 0 0 2px var(--accent-subtle),
+    0 0 0 4px var(--accent);
 }
 
 .toast-warning {

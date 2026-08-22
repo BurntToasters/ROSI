@@ -120,6 +120,7 @@
       typeof message === 'string' ? message : message == null ? '' : String(message);
 
     const dismissBtn = document.createElement('button');
+    dismissBtn.type = 'button';
     dismissBtn.className = 'toast-dismiss';
     dismissBtn.setAttribute('aria-label', 'Dismiss');
     dismissBtn.innerHTML =
