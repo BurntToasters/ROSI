@@ -1,16 +1,14 @@
 const fs = require('fs');
-const https = require('https');
 const path = require('path');
 
 require('dotenv').config();
+const { assertGitHubCliAuthenticated, githubApi } = require('./github-cli');
 
 const REPOSITORY_ROOT = path.resolve(__dirname, '..');
 const CHANGELOG_PATH = path.join(REPOSITORY_ROOT, 'CHANGELOG.md');
 
-const GH_TOKEN = process.env.GH_TOKEN;
 const REPO_OWNER = 'BurntToasters';
 const REPO_NAME = 'ROSI';
-const GH_REQUEST_TIMEOUT_MS = Number.parseInt(process.env.GH_REQUEST_TIMEOUT_MS || '30000', 10);
 const GH_REQUEST_RETRIES = Number.parseInt(process.env.GH_REQUEST_RETRIES || '3', 10);
 const GH_REQUEST_RETRY_DELAY_MS = Number.parseInt(
   process.env.GH_REQUEST_RETRY_DELAY_MS || '1500',
@@ -95,77 +93,7 @@ function isRetryableGithubError(error) {
 }
 
 function githubRequest(method, endpoint, body) {
-  return new Promise((resolve, reject) => {
-    const options = {
-      hostname: 'api.github.com',
-      path: endpoint,
-      method: method,
-      headers: {
-        Authorization: 'Bearer ' + GH_TOKEN,
-        'User-Agent': 'ROSI-Release-Script',
-        Accept: 'application/vnd.github.v3+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-    };
-
-    if (body) {
-      options.headers['Content-Type'] = 'application/json';
-    }
-
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.setEncoding('utf8');
-      res.on('data', (chunk) => (data += chunk));
-      res.on('aborted', () => {
-        const err = new Error('GitHub API response aborted for ' + method + ' ' + endpoint);
-        err.code = 'ECONNRESET';
-        reject(err);
-      });
-      res.on('end', () => {
-        const statusCode = res.statusCode || 0;
-        try {
-          if (statusCode >= 200 && statusCode < 300) {
-            resolve(data ? JSON.parse(data) : {});
-          } else {
-            const json = data ? JSON.parse(data) : {};
-            const err = new Error(
-              'GitHub API error ' +
-                statusCode +
-                ' for ' +
-                method +
-                ' ' +
-                endpoint +
-                ': ' +
-                (json.message || data || 'unknown error')
-            );
-            err.statusCode = statusCode;
-            reject(err);
-          }
-        } catch (e) {
-          const err = new Error(
-            'GitHub API invalid JSON for ' + method + ' ' + endpoint + ': ' + e.message
-          );
-          err.statusCode = statusCode;
-          reject(err);
-        }
-      });
-    });
-
-    req.setTimeout(GH_REQUEST_TIMEOUT_MS, () => {
-      const err = new Error(
-        'GitHub API timeout after ' + GH_REQUEST_TIMEOUT_MS + 'ms for ' + method + ' ' + endpoint
-      );
-      err.code = 'ETIMEDOUT';
-      req.destroy(err);
-    });
-
-    req.on('error', reject);
-
-    if (body) {
-      req.write(JSON.stringify(body));
-    }
-    req.end();
-  });
+  return Promise.resolve(githubApi(method, endpoint, body));
 }
 
 async function githubRequestWithRetry(method, endpoint, body) {
@@ -322,16 +250,7 @@ async function waitForDraftRelease() {
 }
 
 async function main() {
-  if (!GH_TOKEN) {
-    if (WAIT_MODE) {
-      console.warn('⚠ WARN: GH_TOKEN not set - cannot check for the draft release. Skipping wait.');
-    } else {
-      console.warn('⚠ WARN: GH_TOKEN not set - cannot pre-create draft release. Skipping.');
-      console.warn('   (electron-builder will create the draft itself, but the duplicate-draft');
-      console.warn('    race may reoccur without a pre-created draft.)');
-    }
-    return;
-  }
+  assertGitHubCliAuthenticated();
 
   if (WAIT_MODE) {
     await waitForDraftRelease();
