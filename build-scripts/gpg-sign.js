@@ -2,17 +2,16 @@ const { execSync, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const https = require('https');
+const { getReleaseUploadFiles } = require('./release-upload-policy');
+const { assertGitHubCliAuthenticated, githubApi, uploadReleaseAsset } = require('./github-cli');
 
 // Environment variables are loaded via the `dotenv -e .env --` prefix in npm scripts.
 
 const RELEASE_DIR = path.join(__dirname, '..', 'release');
 const GPG_KEY_ID = process.env.GPG_KEY_ID;
 const GPG_PASSPHRASE = process.env.GPG_PASSPHRASE;
-const GH_TOKEN = process.env.GH_TOKEN;
 const REPO_OWNER = 'BurntToasters';
 const REPO_NAME = 'ROSI';
-const GH_REQUEST_TIMEOUT_MS = Number.parseInt(process.env.GH_REQUEST_TIMEOUT_MS || '30000', 10);
 const GH_REQUEST_RETRIES = Number.parseInt(process.env.GH_REQUEST_RETRIES || '3', 10);
 const GH_REQUEST_RETRY_DELAY_MS = Number.parseInt(
   process.env.GH_REQUEST_RETRY_DELAY_MS || '1500',
@@ -190,77 +189,7 @@ function isRetryableGithubError(error) {
 }
 
 function githubRequest(method, endpoint, body) {
-  return new Promise((resolve, reject) => {
-    const options = {
-      hostname: 'api.github.com',
-      path: endpoint,
-      method: method,
-      headers: {
-        Authorization: 'Bearer ' + GH_TOKEN,
-        'User-Agent': 'ROSI-Release-Script',
-        Accept: 'application/vnd.github.v3+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-    };
-
-    if (body) {
-      options.headers['Content-Type'] = 'application/json';
-    }
-
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.setEncoding('utf8');
-      res.on('data', (chunk) => (data += chunk));
-      res.on('aborted', () => {
-        const err = new Error('GitHub API response aborted for ' + method + ' ' + endpoint);
-        err.code = 'ECONNRESET';
-        reject(err);
-      });
-      res.on('end', () => {
-        const statusCode = res.statusCode || 0;
-        try {
-          if (statusCode >= 200 && statusCode < 300) {
-            resolve(data ? JSON.parse(data) : {});
-          } else {
-            const json = data ? JSON.parse(data) : {};
-            const err = new Error(
-              'GitHub API error ' +
-                statusCode +
-                ' for ' +
-                method +
-                ' ' +
-                endpoint +
-                ': ' +
-                (json.message || data || 'unknown error')
-            );
-            err.statusCode = statusCode;
-            reject(err);
-          }
-        } catch (e) {
-          const err = new Error(
-            'GitHub API invalid JSON for ' + method + ' ' + endpoint + ': ' + e.message
-          );
-          err.statusCode = statusCode;
-          reject(err);
-        }
-      });
-    });
-
-    req.setTimeout(GH_REQUEST_TIMEOUT_MS, () => {
-      const err = new Error(
-        'GitHub API timeout after ' + GH_REQUEST_TIMEOUT_MS + 'ms for ' + method + ' ' + endpoint
-      );
-      err.code = 'ETIMEDOUT';
-      req.destroy(err);
-    });
-
-    req.on('error', reject);
-
-    if (body) {
-      req.write(JSON.stringify(body));
-    }
-    req.end();
-  });
+  return Promise.resolve(githubApi(method, endpoint, body));
 }
 
 async function githubRequestWithRetry(method, endpoint, body) {
@@ -292,52 +221,6 @@ async function githubRequestWithRetry(method, endpoint, body) {
   }
 }
 
-function uploadToRelease(uploadUrl, filePath) {
-  return new Promise((resolve, reject) => {
-    const fileName = path.basename(filePath);
-    const fileContent = fs.readFileSync(filePath);
-    const contentType =
-      fileName.endsWith('.asc') || fileName.endsWith('.txt')
-        ? 'text/plain'
-        : 'application/octet-stream';
-
-    const url = new URL(uploadUrl.replace('{?name,label}', ''));
-    url.searchParams.set('name', fileName);
-
-    const options = {
-      hostname: url.hostname,
-      path: url.pathname + url.search,
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer ' + GH_TOKEN,
-        'User-Agent': 'ROSI-Release-Script',
-        Accept: 'application/vnd.github.v3+json',
-        'Content-Type': contentType,
-        'Content-Length': fileContent.length,
-      },
-    };
-
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', (chunk) => (data += chunk));
-      res.on('end', () => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(JSON.parse(data));
-        } else if (res.statusCode === 422) {
-          console.log('   ⚠ ' + fileName + ' already exists, skipping');
-          resolve(null);
-        } else {
-          reject(new Error('Upload failed ' + res.statusCode + ': ' + data));
-        }
-      });
-    });
-
-    req.on('error', reject);
-    req.write(fileContent);
-    req.end();
-  });
-}
-
 async function getOrCreateRelease() {
   console.log('\nLooking for release: ' + TAG_NAME);
 
@@ -352,36 +235,31 @@ async function getOrCreateRelease() {
     if (error.statusCode === 404) {
       console.log('   Tag not published, searching draft releases...');
     } else {
-      console.log('   Could not fetch release by tag: ' + error.message);
-      console.log('   Searching draft releases...');
+      throw error;
     }
 
-    try {
-      const releases = await githubRequestWithRetry(
-        'GET',
-        '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases?per_page=100'
-      );
+    const releases = await githubRequestWithRetry(
+      'GET',
+      '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases?per_page=100'
+    );
 
-      if (!Array.isArray(releases)) {
-        throw new Error('Unexpected releases payload type', { cause: error });
-      }
+    if (!Array.isArray(releases)) {
+      throw new Error('Unexpected releases payload type', { cause: error });
+    }
 
-      const matchingReleases = releases.filter(function (r) {
-        return r.tag_name === TAG_NAME;
+    const matchingReleases = releases.filter(function (r) {
+      return r.tag_name === TAG_NAME;
+    });
+
+    if (matchingReleases.length > 0) {
+      matchingReleases.sort(function (a, b) {
+        return b.assets.length - a.assets.length;
       });
-
-      if (matchingReleases.length > 0) {
-        matchingReleases.sort(function (a, b) {
-          return b.assets.length - a.assets.length;
-        });
-        const release = matchingReleases[0];
-        console.log(
-          '   Found draft release: ' + release.name + ' (' + release.assets.length + ' assets)'
-        );
-        return release;
-      }
-    } catch (listError) {
-      console.log('   Could not list releases: ' + listError.message);
+      const release = matchingReleases[0];
+      console.log(
+        '   Found draft release: ' + release.name + ' (' + release.assets.length + ' assets)'
+      );
+      return release;
     }
 
     console.log('   Creating draft release for ' + TAG_NAME + '...');
@@ -427,6 +305,13 @@ async function uploadSignatures(release, filesToUpload) {
   if (!release || !release.upload_url) {
     throw new Error('No release found for tag ' + TAG_NAME + ', cannot upload signatures');
   }
+  if (!release.draft && process.env.ALLOW_ASSET_REPLACE !== 'true') {
+    throw new Error(
+      'Refusing to upload assets to published release ' +
+        TAG_NAME +
+        '. Set ALLOW_ASSET_REPLACE=true to override.'
+    );
+  }
 
   console.log('\nUploading to GitHub release...');
   const uploadFailures = [];
@@ -438,10 +323,8 @@ async function uploadSignatures(release, filesToUpload) {
     process.stdout.write('   Uploading: ' + fileName + '... ');
 
     try {
-      const result = await uploadToRelease(release.upload_url, filePath);
-      if (result) {
-        console.log('✓');
-      }
+      uploadReleaseAsset(REPO_OWNER + '/' + REPO_NAME, release.tag_name || TAG_NAME, filePath);
+      console.log('✓');
     } catch (error) {
       console.log('✗ ' + error.message);
       uploadFailures.push(fileName + ': ' + error.message);
@@ -460,6 +343,7 @@ async function main() {
   let uploadFailed = false;
 
   console.log('═'.repeat(60));
+  assertGitHubCliAuthenticated();
   console.log('GPG Sign & Upload - ROSI ' + VERSION);
   console.log('Platform: ' + platform);
   if (TARGET_ARCH) {
@@ -482,10 +366,6 @@ async function main() {
     console.warn('\n⚠ WARN: GPG_KEY_ID not set - will use default key');
   } else {
     console.log('\nGPG Key: ' + GPG_KEY_ID);
-  }
-
-  if (!GH_TOKEN) {
-    console.warn('⚠ WARN: GH_TOKEN not set - signatures will not be uploaded to GitHub');
   }
 
   const files = getFilesToSign();
@@ -520,19 +400,20 @@ async function main() {
     );
   }
 
-  const filesToUpload = [...signatureFiles, checksumFile];
+  const releaseEntries = fs
+    .readdirSync(RELEASE_DIR)
+    .filter((name) => fs.statSync(path.join(RELEASE_DIR, name)).isFile());
+  const filesToUpload = getReleaseUploadFiles(releaseEntries, RELEASE_DIR);
 
   console.log('\nFiles queued for upload:');
   filesToUpload.forEach((f) => console.log('   • ' + path.basename(f)));
 
-  if (GH_TOKEN) {
-    try {
-      const release = await getOrCreateRelease();
-      await uploadSignatures(release, filesToUpload);
-    } catch (error) {
-      console.error('\n✗ ERROR: GitHub upload failed:', error.message);
-      uploadFailed = true;
-    }
+  try {
+    const release = await getOrCreateRelease();
+    await uploadSignatures(release, filesToUpload);
+  } catch (error) {
+    console.error('\n✗ ERROR: GitHub upload failed:', error.message);
+    uploadFailed = true;
   }
 
   console.log('\n' + '═'.repeat(60));
@@ -544,10 +425,6 @@ async function main() {
     .readdirSync(RELEASE_DIR)
     .filter((f) => f.endsWith('.asc') || f.startsWith('SHA256SUMS'));
   generatedFiles.forEach((f) => console.log('   • ' + f));
-
-  if (!GH_TOKEN) {
-    console.log('\n💡 TIP: To auto-upload, add GH_TOKEN to your .env file');
-  }
 
   if (uploadFailed) {
     process.exitCode = 1;
