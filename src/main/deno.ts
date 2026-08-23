@@ -9,7 +9,33 @@ import {
   MAX_OUTPUT_BUFFER,
   MAX_ERROR_BUFFER,
 } from './constants';
-import { spawnWithEnv, isWindows } from './platform';
+import { spawnWithEnv, isMac, isWindows } from './platform';
+
+interface DenoInstallerCommand {
+  command: string;
+  args: string[];
+}
+
+export function getDenoInstallerCommand(platform: NodeJS.Platform): DenoInstallerCommand | null {
+  if (platform === 'win32') {
+    return {
+      command: 'winget.exe',
+      args: [
+        'install',
+        '--exact',
+        '--id',
+        'DenoLand.Deno',
+        '--accept-package-agreements',
+        '--accept-source-agreements',
+        '--silent',
+      ],
+    };
+  }
+  if (platform === 'darwin') {
+    return { command: 'brew', args: ['install', 'deno'] };
+  }
+  return null;
+}
 
 function getDenoSearchPaths(): string[] {
   if (isWindows) {
@@ -76,8 +102,7 @@ export async function installDeno(
     buttons: ['Install', 'Cancel'],
     defaultId: 0,
     cancelId: 1,
-    message:
-      'This will download and run the Deno installer from deno.land. Do you want to continue?',
+    message: 'This will install Deno through your system package manager. Do you want to continue?',
   };
   const confirm = parentWindow
     ? await dialog.showMessageBox(parentWindow, confirmOptions)
@@ -87,24 +112,17 @@ export async function installDeno(
     return { cancelled: true };
   }
 
+  const installer = getDenoInstallerCommand(isWindows ? 'win32' : isMac ? 'darwin' : 'linux');
+  if (!installer) {
+    return {
+      success: false,
+      error:
+        'Automatic Deno installation is unavailable on this platform. Use the official installation instructions at https://docs.deno.com/runtime/getting_started/installation/.',
+    };
+  }
+
   return new Promise((resolve) => {
-    let installCmd: string;
-    let installArgs: string[];
-
-    if (isWindows) {
-      installCmd = 'powershell.exe';
-      installArgs = [
-        '-ExecutionPolicy',
-        'Bypass',
-        '-Command',
-        'irm https://deno.land/install.ps1 | iex',
-      ];
-    } else {
-      installCmd = 'sh';
-      installArgs = ['-c', 'curl -fsSL https://deno.land/install.sh | sh'];
-    }
-
-    const proc = spawnWithEnv(installCmd, installArgs);
+    const proc = spawnWithEnv(installer.command, installer.args);
     let output = '';
     let error = '';
     let settled = false;
