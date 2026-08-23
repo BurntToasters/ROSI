@@ -1700,7 +1700,7 @@ async function checkDenoInstallation(settings: RosiSettings, persist: () => void
                   (error instanceof Error ? error.message : 'Unknown error');
                 showModal({
                   title: 'Installation Failed',
-                  message: `Failed to install Deno automatically.\n\nPlease install manually:\nMac/Linux: curl -fsSL https://deno.land/install.sh | sh\nWindows: irm https://deno.land/install.ps1 | iex\n\nError: ${errMsg}`,
+                  message: `Failed to install Deno automatically.\n\nUse the official Deno installation instructions.\n\nError: ${errMsg}`,
                   buttons: [
                     {
                       label: 'Open Deno Website',

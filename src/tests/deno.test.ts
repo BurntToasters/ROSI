@@ -37,7 +37,8 @@ vi.mock('electron', () => ({
 }));
 
 vi.mock('../main/platform', () => ({
-  isWindows: process.platform === 'win32',
+  isWindows: false,
+  isMac: true,
   buildEnhancedPath: () => process.env.PATH || '',
   spawnWithEnv: (...args: unknown[]) => spawnMock(...args),
 }));
@@ -49,7 +50,7 @@ vi.mock('electron-log/main.js', () => ({
   },
 }));
 
-import { checkDenoInstalled, installDeno } from '../main/deno';
+import { checkDenoInstalled, getDenoInstallerCommand, installDeno } from '../main/deno';
 
 function createProc() {
   const proc = new EventEmitter() as EventEmitter & {
@@ -140,6 +141,26 @@ describe('deno helpers', () => {
     expect(result).toEqual({ cancelled: true });
   });
 
+  it('uses package managers without shell-evaluated installer scripts', () => {
+    expect(getDenoInstallerCommand('darwin')).toEqual({
+      command: 'brew',
+      args: ['install', 'deno'],
+    });
+    expect(getDenoInstallerCommand('win32')).toEqual({
+      command: 'winget.exe',
+      args: [
+        'install',
+        '--exact',
+        '--id',
+        'DenoLand.Deno',
+        '--accept-package-agreements',
+        '--accept-source-agreements',
+        '--silent',
+      ],
+    });
+    expect(getDenoInstallerCommand('linux')).toBeNull();
+  });
+
   it('shows install dialog without parent window when none is available', async () => {
     showMessageBoxMock.mockResolvedValue({ response: 1 });
     await installDeno(null);
@@ -176,6 +197,7 @@ describe('deno helpers', () => {
       success: true,
       output: 'install complete',
     });
+    expect(spawnMock).toHaveBeenCalledWith('brew', ['install', 'deno']);
     proc.emit('error', new Error('late error'));
     expect(logErrorMock).not.toHaveBeenCalled();
   });
