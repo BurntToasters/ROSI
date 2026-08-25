@@ -141,18 +141,15 @@ function copyReleaseAssets(releaseDir = RELEASE_DIR, destination) {
 
 function run({ releaseDir = RELEASE_DIR, env = process.env, version = readPackageVersion() } = {}) {
   cleanReleaseArtifacts(releaseDir);
-
-  let destination = getAfterPackLocation(env);
-  let skippedBetaMirror = false;
-  if (destination && shouldSkipBetaMirror(env, version)) {
-    skippedBetaMirror = true;
+  if (shouldSkipBetaMirror(env, version)) {
     console.warn(
       `beta version ${version}; skipping AFTER_PACK_LOC mirror (set OVERRIDE_BETA_MIRROR_SKIP=1 to force).`
     );
-    destination = '';
+    return { mirrored: false, destination: null, skippedBetaMirror: true };
   }
+  const destination = getAfterPackLocation(env);
   if (!destination) {
-    return { mirrored: false, destination: null, skippedBetaMirror };
+    return { mirrored: false, destination: null, skippedBetaMirror: false };
   }
 
   const copiedEntries = copyReleaseAssets(releaseDir, destination);
@@ -164,23 +161,31 @@ function run({ releaseDir = RELEASE_DIR, env = process.env, version = readPackag
   };
 }
 
+function finalizeReleaseAssets({
+  releaseDir = RELEASE_DIR,
+  env = process.env,
+  version = readPackageVersion(),
+} = {}) {
+  const result = run({ releaseDir, env, version });
+  if (result.mirrored) {
+    console.log(
+      `Mirrored and verified ${result.copiedEntries} cleaned release entries to: ${result.destination}`
+    );
+  } else if (result.skippedBetaMirror) {
+    console.warn(
+      `WARNING: Cleaned release assets without mirroring (beta version ${version}; set OVERRIDE_BETA_MIRROR_SKIP=1 to force).`
+    );
+  } else {
+    console.warn(
+      'WARNING: Cleaned release assets, but AFTER_PACK_LOC is not set; mirror intentionally skipped.'
+    );
+  }
+  return result;
+}
+
 if (require.main === module) {
   try {
-    const version = readPackageVersion();
-    const result = run({ version });
-    if (result.mirrored) {
-      console.log(
-        `Mirrored and verified ${result.copiedEntries} cleaned release entries to: ${result.destination}`
-      );
-    } else if (result.skippedBetaMirror) {
-      console.warn(
-        `WARNING: Cleaned release assets without mirroring (beta version ${version}; set OVERRIDE_BETA_MIRROR_SKIP=1 to force).`
-      );
-    } else {
-      console.warn(
-        'WARNING: Cleaned release assets, but AFTER_PACK_LOC is not set; mirror intentionally skipped.'
-      );
-    }
+    finalizeReleaseAssets();
   } catch (error) {
     const message = error && error.message ? error.message : String(error);
     console.error(`Failed to finalize release assets: ${message}`);
@@ -206,4 +211,5 @@ module.exports = {
   verifyCopiedPath,
   copyReleaseAssets,
   run,
+  finalizeReleaseAssets,
 };
