@@ -30,13 +30,24 @@ async function requestGracefulAppShutdown() {
   // WDIO's embedded provider terminates only the top-level app process. On
   // Windows that can orphan WebView2 children long enough to lock the isolated
   // profile. Ask Tauri to exit first, after this WebDriver command responds.
-  await activeBrowser.execute(() => {
-    window.setTimeout(() => {
-      void window.__TAURI__.core
-        .invoke("plugin:process|exit", { code: 0 })
-        .catch(() => {});
-    }, 50);
-  });
+  try {
+    await activeBrowser.execute(() => {
+      window.setTimeout(() => {
+        void window.__TAURI__.core
+          .invoke("plugin:process|exit", { code: 0 })
+          .catch(() => {});
+      }, 250);
+    });
+  } catch (error) {
+    // The app can exit before the reply is flushed (seen on WebKitGTK).
+    if (!/UND_ERR_SOCKET|ECONNREFUSED|ECONNRESET/.test(String(error))) {
+      throw error;
+    }
+  }
+  // Exiting takes the embedded WebDriver server with it, so there is no
+  // session left to delete.
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  activeBrowser.sessionId = undefined;
 }
 
 export const config = {

@@ -18,6 +18,13 @@ import {
   verifyUpdaterSignatures,
 } from "./updater-signature-verifier.js";
 import { resolveUpdaterTargets } from "./gpg-sign.js";
+import {
+  LEGACY_FEED_FILES,
+  assertLegacyFeedAssets,
+  assertLegacySourceRelease,
+  readLegacyFeedConfig,
+  validateLegacyFeed,
+} from "./legacy-v4-feed.js";
 
 const require = createRequire(import.meta.url);
 const {
@@ -154,6 +161,8 @@ export function requiredDraftAssetNames(options = {}) {
       ...requiredDraftChecksumNames({ requireLinuxAarch64 }),
       ...requiredDraftStableManifestNames({ requireLinuxAarch64 }),
       ...requiredDraftBetaManifestNames({ requireLinuxAarch64 }),
+      // ROSI 4 reads these from the newest release (npm run release:legacy-v4-feed).
+      ...LEGACY_FEED_FILES,
     ]),
   ).sort();
 }
@@ -555,7 +564,29 @@ async function main() {
     });
     manifests.push({ manifest, name: asset.name });
   }
+  const { sourceTag } = readLegacyFeedConfig(root);
+  const legacyFeed = {};
+  for (const name of LEGACY_FEED_FILES) {
+    const asset = listedAssets.find((item) => item?.name === name);
+    legacyFeed[name] = githubApiRaw(
+      "GET",
+      `/repos/${repoOwner}/${repoName}/releases/assets/${asset.id}`,
+    );
+    validateLegacyFeed({ name, text: legacyFeed[name], sourceTag });
+  }
   if (process.argv.includes("--verify-artifacts")) {
+    const source = assertLegacySourceRelease(
+      githubApi(
+        "GET",
+        `/repos/${repoOwner}/${repoName}/releases/tags/${sourceTag}`,
+      ),
+      sourceTag,
+    );
+    assertLegacyFeedAssets({
+      feed: legacyFeed,
+      sourceTag,
+      assets: source.assets,
+    });
     await verifyDraftUpdaterArtifacts({
       repoOwner,
       repoName,
@@ -564,7 +595,7 @@ async function main() {
     });
   }
   console.log(
-    `verify-draft: ok (${tag}, draft, HEAD ${headCommit.slice(0, 12)}, ${assets.length} assets, prerelease=${isPrereleaseVersion(version)})`,
+    `verify-draft: ok (${tag}, draft, HEAD ${headCommit.slice(0, 12)}, ${assets.length} assets, prerelease=${isPrereleaseVersion(version)}, ROSI 4 feed -> ${sourceTag})`,
   );
 }
 

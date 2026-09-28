@@ -28,7 +28,7 @@ test("package.json scripts define cargo safe update test and policy check", () =
   const scripts = readPackageJsonScripts();
   assert.equal(
     scripts["test:cargo-safe-update"],
-    "node --test scripts/cargo-safe-update.test.mjs scripts/check-cargo-update-policy.test.mjs scripts/test-all.test.js scripts/run-release.test.js scripts/github-cli.test.cjs scripts/release-branch-protection.test.cjs scripts/release-licenses.test.mjs scripts/npm-dev-audit.test.cjs scripts/generate-cargo-licenses.test.mjs scripts/check-rustsec-ignore-policy.test.mjs",
+    "node --test scripts/cargo-safe-update.test.mjs scripts/check-cargo-update-policy.test.mjs scripts/test-all.test.js scripts/run-release.test.js scripts/github-cli.test.cjs scripts/release-branch-protection.test.cjs scripts/release-licenses.test.mjs scripts/npm-dev-audit.test.cjs scripts/generate-cargo-licenses.test.mjs scripts/check-rustsec-ignore-policy.test.mjs scripts/legacy-v4-feed.test.mjs",
   );
   assert.equal(
     scripts["check:cargo-update-policy"],

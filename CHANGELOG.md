@@ -25,7 +25,8 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 
 - **NEW - Tauri V2:** ROSI moved from Electron to Tauri V2 with a Rust backend. Installers and memory use are much smaller, and the app now uses the system webview.
 - **NEW - Update channels:** The in-app updater now uses signed Tauri updater manifests with separate stable and beta channels (Settings > Update channel).
-- **Breaking:** ROSI 5 is a clean break from v4. The app identifier is now `run.rosie.rosi`, so settings, queue, stats, and activity start fresh, and v4 cannot auto-update to v5. Install v5 manually.
+- **Breaking:** ROSI 5 is a new app. The app identifier is now `run.rosie.rosi`, and v4 cannot auto-update to v5. Install v5 manually.
+- **NEW - v4 import:** On its first launch, ROSI 5 imports your ROSI 4 settings, queue, lifetime stats, and download activity. Values ROSI 5 does not accept fall back to defaults, and the ROSI 4 files are left untouched.
 - **Breaking - macOS:** ROSI 5 requires macOS 26 or later, matching the bundled FFmpeg build.
 - **Breaking - Linux:** Linux ARM64 builds are paused; Linux x64 ships as AppImage, DEB, RPM, and Flatpak.
 - **Packaging:** Bundled helpers are now named `rosi-yt-dlp`, `rosi-ffmpeg`, and `rosi-ffprobe` so Linux packages never collide with distro `yt-dlp` / `ffmpeg` files.

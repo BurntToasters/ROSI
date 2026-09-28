@@ -38,7 +38,10 @@ export function e2eSettings({ downloadFolder, ffmpegPath = "" }) {
   };
 }
 
-export function createE2eProfile({ ffmpegPath = "" } = {}) {
+export function createE2eProfile({
+  ffmpegPath = "",
+  seedSettings = true,
+} = {}) {
   const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), "rosi-e2e-"));
   const home = path.join(profileDir, "home");
   const dataDir = path.join(profileDir, "app-data");
@@ -48,10 +51,14 @@ export function createE2eProfile({ ffmpegPath = "" } = {}) {
   for (const dir of [home, dataDir, downloads]) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  fs.writeFileSync(
-    path.join(dataDir, "settings.json"),
-    `${JSON.stringify(e2eSettings({ downloadFolder: downloads, ffmpegPath }), null, 2)}\n`,
-  );
+  // Without a ROSI 5 settings.json the app treats the profile as a first
+  // launch and imports ROSI 4 data if it finds any.
+  if (seedSettings) {
+    fs.writeFileSync(
+      path.join(dataDir, "settings.json"),
+      `${JSON.stringify(e2eSettings({ downloadFolder: downloads, ffmpegPath }), null, 2)}\n`,
+    );
+  }
   const env = {
     ROSI_E2E: "1",
     ROSI_E2E_DATA_DIR: dataDir,
@@ -68,6 +75,13 @@ export function createE2eProfile({ ffmpegPath = "" } = {}) {
     fs.mkdirSync(webview2, { recursive: true });
     env.WEBVIEW2_USER_DATA_FOLDER = webview2;
     env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = E2E_WEBVIEW2_BROWSER_ARGS;
+    // %APPDATA% comes from the shell API, so a temp USERPROFILE cannot hide
+    // the developer's real ROSI 4 folder; E2E builds honor this override.
+    env.ROSI_E2E_LEGACY_V4_DIR = path.join(
+      profileDir,
+      "legacy-appdata",
+      "rosi",
+    );
   }
   // Linux: point the XDG Downloads folder outside HOME (like a data disk) so
   // the suite checks that the OS-configured folder is accepted there.

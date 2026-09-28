@@ -5,6 +5,12 @@
 - Windows 10/11 x64 or ARM64
 - PowerShell 7.x
 - Visual Studio 2022 or 2026 Build Tools with the C++ workload (x64 and ARM64)
+  and the "C++ Clang Compiler for Windows" component
+  (`Microsoft.VisualStudio.Component.VC.Llvm.Clang`). `ring` (via the
+  updater's TLS stack) needs clang to build for `aarch64-pc-windows-msvc`.
+  Build from a VS developer shell (`npm run win-compiler:arm64` or
+  `win-compiler:x64`), which puts that clang on `PATH`; a plain PowerShell
+  window does not.
 - Node.js `^22.22.2 || ^24.15.0 || >=26` (`engines.node` in package.json)
 - Rust (rustup)
 - Azure Artifact Signing: once per release VM, as Administrator, run
@@ -123,6 +129,28 @@ Stable releases reject this override.
 
 Windows creates the draft release (`release:draft`); macOS and Linux wait for it
 (`release:wait-draft`).
+
+## ROSI 4 update feed
+
+ROSI 4's electron-updater reads `latest.yml`, `latest-mac.yml`,
+`latest-linux.yml`, and `latest-linux-arm64.yml` from the newest GitHub
+release, beta or stable. Without them, v4 users see update errors, so every v5
+release must carry them. `release:win:continue` runs
+`npm run release:legacy-v4-feed` right after `release:draft`. It copies the
+feed files of the v4 release named in `legacy-v4-feed.json` (`sourceTag`),
+rewrites every download URL to `../<sourceTag>/<file>` so it resolves to that
+v4 release, and uploads them to the draft. `release:verify:draft` fails if any
+of the four files is missing or points elsewhere, and `release:publish` checks
+that every referenced v4 file exists with the listed size.
+
+- Check without uploading: `npm run release:legacy-v4-feed -- --dry-run --check-urls`.
+- When a new v4 release (such as the v4-to-v5 bridge) ships, set `sourceTag` to
+  it and refresh the current latest v5 release:
+  `npm run release:legacy-v4-feed -- --release vX.Y.Z --allow-published`. This
+  replaces only the four feed files.
+- Publish any v4 release made after v5 is live with "Set as the latest
+  release" turned off. Otherwise `/releases/latest` points at v4 and ROSI 5's
+  own updater endpoints break.
 
 Flatpak packaging exports the exact clean `HEAD` tree (plus the verified Linux
 FFmpeg binaries, which are never committed) into an ignored staging directory.

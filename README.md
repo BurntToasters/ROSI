@@ -21,9 +21,10 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) and [build-setup.md](build-setup.md).
 ROSI 5 moves from Electron to Tauri V2 with a Rust backend. It uses the system
 webview, so installers and memory use are much smaller.
 
-- ROSI 5 is a clean break from v4: the app identifier is now `run.rosie.rosi`,
-  so settings, queue, stats, and activity start fresh, and v4 cannot auto-update
-  to v5.
+- ROSI 5 is a new app: the app identifier is now `run.rosie.rosi`, and v4
+  cannot auto-update to v5. On its first launch, ROSI 5 imports v4's settings,
+  queue, lifetime stats, and download activity if it finds them, and leaves
+  the v4 files untouched.
 - The in-app updater has **stable** and **beta** channels (Settings > Update
   channel). `auto` follows the installed version.
 - Linux ships x64 AppImage, DEB, RPM, and a sideloaded Flatpak. Linux ARM64

@@ -10,6 +10,7 @@ mod downloader;
 mod fs_util;
 mod gpu;
 mod ipc;
+mod legacy;
 mod logging;
 mod media_info;
 mod platform;
@@ -112,6 +113,8 @@ fn main() {
             if repaired_gdk_backend {
                 logging::info("No X display for the AppImage's forced X11 backend; using Wayland.");
             }
+            // Before anything reads settings, the queue, or stats.
+            legacy::import_on_first_launch(app.handle());
             if report_missing_ytdlp(app.handle()) {
                 return Ok(());
             }

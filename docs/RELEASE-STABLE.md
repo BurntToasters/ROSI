@@ -176,8 +176,9 @@ npm run release:verify:draft
 ```
 
 This must pass against the complete stable draft. Resolve duplicate drafts,
-missing signatures, incorrect manifest URLs, or a wrong target commit instead
-of overriding the verifier.
+missing signatures, incorrect manifest URLs, a missing or misdirected ROSI 4
+update feed (see build-setup.md), or a wrong target commit instead of
+overriding the verifier.
 
 ## 8. Publish, then verify the live feed
 

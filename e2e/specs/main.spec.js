@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { browser, $ } from "@wdio/globals";
+import { snapshotDir } from "../helpers/legacy-v4.js";
 
 const env = process.env;
 const DOWNLOADS = env.ROSI_E2E_DOWNLOADS;
@@ -180,6 +181,29 @@ describe("ROSI main window", () => {
     const versionText = await $("#versionLink").getText();
     assert.equal(versionText, `v${version}`);
     record("launch", { version, platform, channel, visibility });
+  });
+
+  it("leaves ROSI 4 data alone when ROSI 5 settings exist", async () => {
+    const seed = JSON.parse(env.ROSI_E2E_LEGACY_V4 || "{}");
+    assert.ok(seed.dir, "ROSI_E2E_LEGACY_V4 is not set");
+    assert.equal(
+      fs.existsSync(path.join(DATA_DIR, "legacy-v4-import.json")),
+      false,
+      "import ran over existing ROSI 5 settings",
+    );
+    const settings = await api("getSettings");
+    assert.equal(settings.theme, "system");
+    assert.equal(settings.updateChannel, "auto");
+    assert.equal(
+      path.resolve(settings.downloadFolder),
+      path.resolve(DOWNLOADS),
+    );
+    assert.equal((await api("getStats")).totalDownloads, 0);
+    assert.deepEqual(await api("getQueue"), []);
+    assert.deepEqual(snapshotDir(seed.dir), seed.snapshot, "ROSI 4 changed");
+    record("legacy-v4-preserve", {
+      covers: ["overwrites-v5", "mutates-v4"],
+    });
   });
 
   it("opens and closes the settings sidebar", async () => {
