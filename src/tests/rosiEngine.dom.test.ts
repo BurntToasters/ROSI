@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as ts from 'typescript';
 
 const REPO = path.resolve(__dirname, '..', '..');
-const RENDERER = path.join(REPO, 'src', 'renderer');
+const RENDERER = path.join(REPO, 'src');
 const ENGINE_TS = path.join(RENDERER, 'rosiEngine.ts');
 const INDEX_HTML = path.join(RENDERER, 'index.html');
 const MODULE_FILES = ['ui', 'downloads', 'queue', 'settings', 'updates'];
@@ -31,7 +31,7 @@ const engineSource = transpile(fs.readFileSync(ENGINE_TS, 'utf-8'));
 const bodyHtml = (() => {
   const html = fs.readFileSync(INDEX_HTML, 'utf-8');
   const match = html.match(/<body>([\s\S]*?)<\/body>/i);
-  const inner = match ? match[1] : '';
+  const inner = match?.[1] ?? '';
   return inner.replace(/<script[\s\S]*?<\/script>/gi, '');
 })();
 
@@ -182,7 +182,7 @@ async function loadEngine(api: MockApi) {
     removeListener: () => {},
   });
   // Load the renderer modules first (they attach to window.rosiModules), then
-  // the engine — mirroring index.html's script order.
+  // the engine, mirroring index.html's script order.
   for (const src of moduleSources) {
     (0, eval)(src);
   }
@@ -692,9 +692,8 @@ describe('rosiEngine DOM wiring', () => {
   });
 
   it('renders queue updates pushed from the main process', async () => {
-    let queueUpdateCb:
-      | ((queue: Array<{ id: string; status: string; url: string; addedAt: number }>) => void)
-      | null = null;
+    let queueUpdateCb = null as
+      ((queue: Array<{ id: string; status: string; url: string; addedAt: number }>) => void) | null;
     const api = buildMockApi({
       onQueueUpdate: ((cb: typeof queueUpdateCb) => {
         queueUpdateCb = cb;
@@ -718,7 +717,7 @@ describe('rosiEngine DOM wiring', () => {
   });
 
   it('persists settings and notifies the main process before close', async () => {
-    let prepareForCloseCb: (() => Promise<void>) | null = null;
+    let prepareForCloseCb = null as (() => Promise<void>) | null;
     const api = buildMockApi({
       onPrepareForClose: ((cb: () => Promise<void>) => {
         prepareForCloseCb = cb;
@@ -735,7 +734,8 @@ describe('rosiEngine DOM wiring', () => {
   });
 
   it('refreshes the visible theme when settings are imported', async () => {
-    let settingsImportedCb: ((settings: ReturnType<typeof defaultSettings>) => void) | null = null;
+    let settingsImportedCb = null as
+      ((settings: ReturnType<typeof defaultSettings>) => void) | null;
     const api = buildMockApi({
       onSettingsImported: ((cb: typeof settingsImportedCb) => {
         settingsImportedCb = cb;

@@ -1038,76 +1038,16 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 # Application framework and runtime
 
-> This section is maintained by hand. The `licenses.json` produced by
-> `license-checker --production` only covers ROSI's runtime npm
-> dependencies and **cannot** capture Electron (a devDependency that is shipped
-> at runtime), Chromium, Node.js, or the bundled native binaries. Those are
-> enumerated here.
+## Tauri
 
-## Electron
+License: MIT OR Apache-2.0
+Link: https://github.com/tauri-apps/tauri
 
-License: MIT
-Copyright (c) Electron contributors
-Copyright (c) 2013-present GitHub Inc.
-Link: https://github.com/electron/electron/blob/main/LICENSE
-
-ROSI is built on Electron, which is redistributed in every ROSI build. Electron
-bundles Chromium and Node.js (see below).
-
-```
-The MIT License (MIT)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software is furnished to do so,
-subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-```
-
-## Chromium
-
-License: BSD-3-Clause (plus a large set of bundled third-party components with
-their own licenses).
-Link: https://chromium.googlesource.com/chromium/src/+/refs/heads/main/LICENSE
-
-The complete, version-specific Chromium credits/license set for the Electron
-release ROSI ships is published with each Electron release as
-`LICENSES.chromium.html`. See the Electron release that matches this build at
-https://github.com/electron/electron/releases.
-
-### Chromium bundled FFmpeg (libffmpeg) — LGPL-2.1
-
-Electron's Chromium ships an LGPL-2.1 build of FFmpeg (`libffmpeg`), which is
-**distinct** from the standalone GPL FFmpeg ROSI bundles for conversion (see the
-FFmpeg entry above and `ffmpeg/SOURCE_OFFER.txt`). In compliance with LGPL-2.1,
-the corresponding source for Electron's `libffmpeg` is available from the
-matching Electron release (Electron publishes FFmpeg source/relink material with
-its release artifacts) and from the upstream FFmpeg project at
-https://git.ffmpeg.org/ffmpeg.git. License text:
-https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
-
-## Node.js
-
-License: MIT (Node.js core), plus incorporated components under their own
-licenses (OpenSSL — Apache-2.0; ICU — Unicode license; libuv — MIT; zlib — zlib
-license; and others).
-Link: https://github.com/nodejs/node/blob/main/LICENSE
-
-Node.js is bundled inside Electron and redistributed with ROSI. The full,
-version-specific Node.js license (including all incorporated components) is in
-the `LICENSE` file of the matching Node.js release at
-https://github.com/nodejs/node/releases.
+ROSI is built with Tauri V2 and uses the operating system webview (WebView2 on
+Windows, WKWebView on macOS, WebKitGTK on Linux); no browser engine is bundled.
+The complete, version-specific license notices for every Rust crate compiled
+into ROSI (including Tauri and its plugins) are generated at build time and shown
+in the app under **Licenses > Rust Crate Dependencies**.
 
 ---
 
@@ -1115,12 +1055,12 @@ https://github.com/nodejs/node/releases.
 
 ROSI ships the official yt-dlp standalone binaries (`assets/yt-dlp*`). yt-dlp
 itself is released into the public domain under The Unlicense, but the standalone
-binary statically bundles additional components — including GPL/LGPL-licensed
-code (e.g. mutagen, GPL-2.0) and a Python interpreter — whose notices are listed
+binary statically bundles additional components (including GPL/LGPL-licensed
+code such as mutagen, GPL-2.0, and a Python interpreter) whose notices are listed
 in the yt-dlp / Python sections above.
 
 A consolidated notice and a written source offer for the GPL/LGPL components
-bundled inside the yt-dlp binary are shipped alongside the binary at
-`assets/YT-DLP-NOTICES.txt`. The complete corresponding source is available from
+bundled inside the yt-dlp binary are shipped with the app at
+`yt-dlp/YT-DLP-NOTICES.txt`. The complete corresponding source is available from
 the yt-dlp project (https://github.com/yt-dlp/yt-dlp) and the respective upstream
 component projects.

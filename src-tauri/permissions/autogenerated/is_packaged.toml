@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-is-packaged"
+description = "Enables the is_packaged command without any pre-configured scope."
+commands.allow = ["is_packaged"]
+
+[[permission]]
+identifier = "deny-is-packaged"
+description = "Denies the is_packaged command without any pre-configured scope."
+commands.deny = ["is_packaged"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-app-platform"
+description = "Enables the get_app_platform command without any pre-configured scope."
+commands.allow = ["get_app_platform"]
+
+[[permission]]
+identifier = "deny-get-app-platform"
+description = "Denies the get_app_platform command without any pre-configured scope."
+commands.deny = ["get_app_platform"]

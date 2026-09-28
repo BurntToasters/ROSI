@@ -1,22 +1,44 @@
-<!-- > [!NOTE]
-> 🅱️ This is a Beta build. -->
+> [!NOTE]
+> 🅱️ This is a Beta build.
 
 # ⬇️ Downloads
 
-| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                    | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux                                                                                                    |
-| :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **EXE:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.2/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.2/ROSI-Windows-arm64.exe) | **[Universal DMG](https://github.com/BurntToasters/ROSI/releases/download/v4.3.2/ROSI-MacOS-universal.dmg)**    | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.2/ROSI-Linux-x86_64.AppImage) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.2/ROSI-Linux-arm64.AppImage) |
-| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div>      | **[Universal ZIP](https://github.com/BurntToasters/ROSI/releases/download/v4.3.2/ROSI-MacOS-universal.zip)**    | **DEB:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.2/ROSI-Linux-amd64.deb) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.2/ROSI-Linux-arm64.deb)                 |
-|                                                                                                                                                                                                      |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.2/ROSI-Linux-x86_64.rpm) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v4.3.2/ROSI-Linux-aarch64.rpm)              |
+| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux |
+| :-- | :-- | :-- |
+| **EXE: [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-MacOS-universal.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-Linux-x64.AppImage) |
+| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div> | **[Universal ZIP](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-MacOS-universal.zip)** | **DEB:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-Linux-x64.deb) |
+| | | **RPM:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-Linux-x64.rpm) |
+| | | **Flatpak:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-Linux-x64.flatpak) |
+
+> macOS downloads require macOS 26 or later.
 
 > [!IMPORTANT]
-> The `.sig` files in this repo are NOT normal GPG signatures — they are for ROSI's built-in updater to verify the integrity of updates before downloading and installing.
->
+> The `.sig` files in this repo are NOT normal GPG signatures. They are for Tauri V2's updater to verify the integrity of updates before downloading and installing.
 > The `.asc` files are my normal GPG signatures which you can verify using my GPG Public Key: https://tuxedo.rosie.run/GPG/BurntToasters_0xF2FBC20F_public.asc
+> ⚠️ Linux ARM64 AppImage/DEB/RPM are published only when that release is built for ARM64; Flatpak stays x64.
 
 ### ℹ️ Enjoying ROSI? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
 
----
+ROSI! A cross platform yt-dlp GUI built on Tauri V2!
+
+## Changes in `v5.0.0-beta.1:`
+
+- **NEW - Tauri V2:** ROSI moved from Electron to Tauri V2 with a Rust backend. Installers and memory use are much smaller, and the app now uses the system webview.
+- **NEW - Update channels:** The in-app updater now uses signed Tauri updater manifests with separate stable and beta channels (Settings > Update channel).
+- **Breaking:** ROSI 5 is a clean break from v4. The app identifier is now `run.rosie.rosi`, so settings, queue, stats, and activity start fresh, and v4 cannot auto-update to v5. Install v5 manually.
+- **Breaking - macOS:** ROSI 5 requires macOS 26 or later, matching the bundled FFmpeg build.
+- **Breaking - Linux:** Linux ARM64 builds are paused; Linux x64 ships as AppImage, DEB, RPM, and Flatpak.
+- **Packaging:** Bundled helpers are now named `rosi-yt-dlp`, `rosi-ffmpeg`, and `rosi-ffprobe` so Linux packages never collide with distro `yt-dlp` / `ffmpeg` files.
+- **Licenses:** The licenses view now also lists every compiled Rust crate and shows the exact bundled yt-dlp and FFmpeg notices.
+- **Windows:** Dragging a link from the browser onto the download card or queue works again, and F5, Ctrl+R, Ctrl+P, and the page right-click menu no longer reload or print the app mid-download.
+- **Windows:** Titles and file names in non-Latin scripts stay intact on systems that use a legacy code page, and installing an update now stops active downloads and saves the queue first.
+- **Linux:** Downloads work on systems that mount `/tmp` with `noexec`, and RPM in-app updates from a beta to its stable release are no longer refused as a downgrade.
+- **Flatpak:** Download folders chosen outside Downloads, Videos, and Music are accepted, and **Open folder** can select the file in the host file manager.
+- **Windows / Linux:** The window fits smaller screens (such as 1366x768 laptops at 125% scaling), `Ctrl+,` opens settings, and `Ctrl+Shift+,` toggles the sidebar on every keyboard layout.
+- **Windows:** Deno installed with the in-app **Install** button is found without signing out.
+- **Linux:** The Deno reminder links to the official install instructions instead of offering an automatic install that Linux does not support.
+- **Linux:** The AppImage starts on Wayland sessions without XWayland, and a Downloads, Videos, or Music folder that `user-dirs.dirs` places outside your home folder (such as on a data disk) is accepted as a download location.
+- **Settings:** The cookie browser selection no longer shows blank after a restart.
 
 ## Changes in `v4.3.2:`
 

@@ -3,7 +3,7 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 function readRendererFile(relativePath: string) {
-  const filePath = path.join(process.cwd(), 'src', 'renderer', relativePath);
+  const filePath = path.join(process.cwd(), 'src', relativePath);
   return fs.readFileSync(filePath, 'utf8');
 }
 
@@ -11,7 +11,7 @@ describe('renderer wiring and accessibility contracts', () => {
   it('keeps renderer module sources in TypeScript', () => {
     const moduleFiles = ['ui.ts', 'downloads.ts', 'queue.ts', 'settings.ts', 'updates.ts'];
     moduleFiles.forEach((fileName) => {
-      const filePath = path.join(process.cwd(), 'src', 'renderer', 'modules', fileName);
+      const filePath = path.join(process.cwd(), 'src', 'modules', fileName);
       expect(fs.existsSync(filePath)).toBe(true);
     });
   });
@@ -125,7 +125,9 @@ describe('renderer wiring and accessibility contracts', () => {
       /primary: true,\s*\n\s*action: \(\) => \{\s*\n\s*void window\.api\.openExternal\('https:\/\/rosie\.run\/support'\)/
     );
 
-    expect(readRendererFile('licenses-iframe.html')).toMatch(/<html lang="en">/);
+    expect(
+      fs.readFileSync(path.join(process.cwd(), 'public', 'licenses-iframe.html'), 'utf8')
+    ).toMatch(/<html lang="en">/);
     expect(uiModule).toMatch(/setAttribute\('aria-label', cancelLabel\)/);
     expect(engine).toMatch(/'Cancel format check'/);
     expect(engine).toMatch(/'Cancel preview'/);
