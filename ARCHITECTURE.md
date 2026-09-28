@@ -18,6 +18,7 @@ split into focused modules:
 | --------------------- | ---------------------------------------------------------------------------------- |
 | `validation.rs`       | Security boundary: URL safety (no private/loopback hosts), path allow-lists, IPC payloads |
 | `settings.rs`         | Settings model, lenient migration/sanitization, import/export                      |
+| `legacy.rs`           | First-launch import of ROSI 4 data from `<config dir>/rosi`                        |
 | `downloader.rs`       | Single active download session: yt-dlp, optional FFmpeg conversion, cancellation   |
 | `queue.rs`            | Persistent queue (`download-queue.json` + backup) and its sequential runner        |
 | `command_builders.rs` | yt-dlp / FFmpeg argument builders and codec probing                                |
@@ -36,6 +37,14 @@ Electron IPC used, so the renderer contract is unchanged.
 Persisted state lives in the Tauri app data directory for `run.rosie.rosi`
 (`settings.json`, `download-queue.json`, `download-activity.json`,
 `download-stats.json`, `logs/rosi.log`).
+
+When that directory has no `settings.json`, `legacy.rs` looks for ROSI 4's
+Electron `userData` folder (`%APPDATA%\rosi`, `~/Library/Application
+Support/rosi`, or `$XDG_CONFIG_HOME/rosi`; also the Microsoft Store package
+folder on Windows). It copies the queue, stats, and activity files, then
+settings last, so an interrupted import retries on the next launch. The
+normal loaders validate everything, and the result is recorded in
+`legacy-v4-import.json`. ROSI 4's files are never modified.
 
 ## Frontend (`src/`)
 

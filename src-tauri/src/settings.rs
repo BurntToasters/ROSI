@@ -488,6 +488,11 @@ pub fn save_all(settings: &Settings) -> Result<(), String> {
     write_unlocked(settings)
 }
 
+/// Validate a ROSI 4 settings object and save it as the ROSI 5 settings.
+pub fn import_legacy(raw: &Value) -> Result<(), String> {
+    save_all(&normalized(migrate_settings(raw)))
+}
+
 fn show_save_error(message: &str) {
     if let Some(app) = crate::app_state::app() {
         app.dialog()

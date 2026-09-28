@@ -14,12 +14,19 @@ import {
   sha256,
   startMediaServer,
 } from "../e2e/helpers/media-server.js";
+import {
+  LEGACY_IMPORT_FAILURE_MODES,
+  seedLegacyV4Data,
+} from "../e2e/helpers/legacy-v4.js";
 
 import { usesWindowsCmdShell } from "./npm-safe-update.mjs";
 
 const ARTIFACT_DIR = path.join(REPO_ROOT, "e2e", "artifacts");
 const EXPECTED_SCENARIOS = [
+  "legacy-v4-import",
+  "legacy-v4-corrupt-settings",
   "launch",
+  "legacy-v4-preserve",
   "settings-sidebar",
   "settings-persistence",
   "url-safety",
@@ -440,31 +447,69 @@ async function main() {
     }
   }
   const server = await startMediaServer(routes);
-  const resultsPath = path.join(profile.profileDir, "results.json");
   const startedAt = new Date().toISOString();
+  const sharedEnv = {
+    // Hardening check: point only the app at a temp dir such as a noexec
+    // tmpfs, while the profile stays on an exec-capable filesystem.
+    ...(process.env.ROSI_E2E_APP_TMPDIR
+      ? { TMPDIR: process.env.ROSI_E2E_APP_TMPDIR }
+      : {}),
+    ROSI_E2E_BINARY: e2eBinaryPath(),
+    ROSI_E2E_MEDIA_URL: server.baseUrl,
+    ROSI_E2E_FIXTURES: JSON.stringify(fixtures),
+    ROSI_E2E_HAS_FFMPEG: ffmpeg ? "1" : "0",
+    ROSI_E2E_FFPROBE: ffmpeg ? (companionFfprobe(ffmpeg.binary) ?? "") : "",
+  };
+  const runPass = (pass, env) =>
+    runAsync(npxCommand(), ["wdio", "run", "e2e/wdio.conf.js"], {
+      env: {
+        ...pass.profile.env,
+        ...sharedEnv,
+        ROSI_E2E_DOWNLOADS: pass.profile.downloads,
+        ROSI_E2E_XDG_DOWNLOADS: pass.profile.xdgDownloads,
+        ROSI_E2E_PROFILE: pass.profile.profileDir,
+        ROSI_E2E_RESULTS: pass.resultsPath,
+        ...env,
+      },
+    });
+
+  // Fresh ROSI 5 profiles with ROSI 4 data beside them, each a separate app
+  // launch because the import only runs before the first settings file.
+  // ROSI_E2E_ONLY runs one ad-hoc spec, so it skips these passes.
+  const legacyPasses = process.env.ROSI_E2E_ONLY
+    ? []
+    : ["import", "corrupt-settings"].map((legacyCase) => {
+        const legacyProfile = createE2eProfile({ seedSettings: false });
+        return {
+          legacyCase,
+          profile: legacyProfile,
+          seed: seedLegacyV4Data(legacyProfile, {
+            corruptSettings: legacyCase === "corrupt-settings",
+          }),
+          resultsPath: path.join(legacyProfile.profileDir, "results.json"),
+        };
+      });
+  const mainPass = {
+    profile,
+    // The main profile already has ROSI 5 settings, so this ROSI 4 folder
+    // must be ignored.
+    seed: seedLegacyV4Data(profile),
+    resultsPath: path.join(profile.profileDir, "results.json"),
+  };
   let failure = null;
   try {
-    await runAsync(npxCommand(), ["wdio", "run", "e2e/wdio.conf.js"], {
-      env: {
-        ...profile.env,
-        // Hardening check: point only the app at a temp dir such as a noexec
-        // tmpfs, while the profile stays on an exec-capable filesystem.
-        ...(process.env.ROSI_E2E_APP_TMPDIR
-          ? { TMPDIR: process.env.ROSI_E2E_APP_TMPDIR }
-          : {}),
-        ROSI_E2E_BINARY: e2eBinaryPath(),
-        // ROSI_E2E_ONLY runs a single ad-hoc spec while debugging; the full
-        // gate always runs main.spec.js and requires every scenario.
-        ROSI_E2E_SPECS: process.env.ROSI_E2E_ONLY ?? "./specs/main.spec.js",
-        ROSI_E2E_DOWNLOADS: profile.downloads,
-        ROSI_E2E_XDG_DOWNLOADS: profile.xdgDownloads,
-        ROSI_E2E_PROFILE: profile.profileDir,
-        ROSI_E2E_MEDIA_URL: server.baseUrl,
-        ROSI_E2E_FIXTURES: JSON.stringify(fixtures),
-        ROSI_E2E_HAS_FFMPEG: ffmpeg ? "1" : "0",
-        ROSI_E2E_FFPROBE: ffmpeg ? (companionFfprobe(ffmpeg.binary) ?? "") : "",
-        ROSI_E2E_RESULTS: resultsPath,
-      },
+    for (const pass of legacyPasses) {
+      await runPass(pass, {
+        ROSI_E2E_SPECS: "./specs/legacy-import.spec.js",
+        ROSI_E2E_LEGACY_CASE: pass.legacyCase,
+        ROSI_E2E_LEGACY_V4: JSON.stringify(pass.seed),
+      });
+    }
+    await runPass(mainPass, {
+      // ROSI_E2E_ONLY runs a single ad-hoc spec while debugging; the full
+      // gate always runs main.spec.js and requires every scenario.
+      ROSI_E2E_SPECS: process.env.ROSI_E2E_ONLY ?? "./specs/main.spec.js",
+      ROSI_E2E_LEGACY_V4: JSON.stringify(mainPass.seed),
     });
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error);
@@ -472,15 +517,38 @@ async function main() {
     await server.close();
   }
 
-  const scenarios = fs.existsSync(resultsPath)
-    ? JSON.parse(fs.readFileSync(resultsPath, "utf8"))
-    : [];
+  const readResults = (file) =>
+    fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
+  const readLogTail = (pass, lines) => {
+    const file = path.join(pass.profile.dataDir, "logs", "rosi.log");
+    return fs.existsSync(file)
+      ? fs.readFileSync(file, "utf8").split(/\r?\n/).slice(-lines)
+      : [];
+  };
+  const scenarios = [...legacyPasses, mainPass].flatMap((pass) =>
+    readResults(pass.resultsPath),
+  );
   const seen = new Set(scenarios.map((scenario) => scenario.name));
   const missing = EXPECTED_SCENARIOS.filter((name) => !seen.has(name));
+  const legacyImportCoverage = Object.fromEntries(
+    Object.entries(LEGACY_IMPORT_FAILURE_MODES).map(([id, description]) => [
+      id,
+      {
+        description,
+        coveredBy: scenarios
+          .filter((scenario) => scenario.covers?.includes(id))
+          .map((scenario) => scenario.name),
+      },
+    ]),
+  );
+  const uncovered = process.env.ROSI_E2E_ONLY
+    ? []
+    : Object.entries(legacyImportCoverage)
+        .filter(([, mode]) => mode.coveredBy.length === 0)
+        .map(([id]) => id);
   const packageJson = JSON.parse(
     fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
   );
-  const logFile = path.join(profile.dataDir, "logs", "rosi.log");
   const evidence = writeEvidence({
     app: "ROSI",
     version: packageJson.version,
@@ -497,18 +565,28 @@ async function main() {
     fixtures,
     scenarios,
     missingScenarios: missing,
+    legacyImportCoverage,
+    uncoveredLegacyImportFailureModes: uncovered,
     failure,
-    passed: !failure && missing.length === 0,
+    passed: !failure && missing.length === 0 && uncovered.length === 0,
     mediaRequests: server.requests.length,
-    appLogTail: fs.existsSync(logFile)
-      ? fs.readFileSync(logFile, "utf8").split(/\r?\n/).slice(-40)
-      : [],
+    legacyPassLogTails: Object.fromEntries(
+      legacyPasses.map((pass) => [pass.legacyCase, readLogTail(pass, 15)]),
+    ),
+    appLogTail: readLogTail(mainPass, 40),
   });
-  cleanupProfile(profile.profileDir);
+  for (const pass of [...legacyPasses, mainPass]) {
+    cleanupProfile(pass.profile.profileDir);
+  }
   if (failure) throw new Error(`${failure} (evidence: ${evidence})`);
   if (missing.length > 0) {
     throw new Error(
       `E2E scenarios did not report: ${missing.join(", ")} (evidence: ${evidence})`,
+    );
+  }
+  if (uncovered.length > 0) {
+    throw new Error(
+      `ROSI 4 import failure modes without a covering scenario: ${uncovered.join(", ")} (evidence: ${evidence})`,
     );
   }
 }
