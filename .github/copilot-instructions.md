@@ -34,7 +34,7 @@ Keep commit messages brief and informative.
 Use these BCLS-derived categories when applicable:
 
 - `PKG` - dependencies and packages.
-- `Electron` - Electron changes.
+- `Tauri` - Tauri or Rust backend changes.
 - `Tauri` - Tauri changes.
 - `TypeScript` - TypeScript changes.
 - `Codebase` - refactoring, cleanup, scripts, or internal changes.

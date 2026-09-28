@@ -1,0 +1,26 @@
+{
+  "build": {
+    "beforeBuildCommand": "npx vite build --mode e2e"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "capabilities": [
+        "default",
+        "splash",
+        {
+          "identifier": "e2e",
+          "description": "WebDriver ACL for unpackaged E2E builds. Production tauri.conf.json does not enable this capability.",
+          "windows": ["main"],
+          "permissions": [
+            "wdio-webdriver:default",
+            "wdio:default",
+            "process:allow-exit",
+            "core:window:allow-close",
+            "core:window:allow-set-size"
+          ]
+        }
+      ]
+    }
+  }
+}

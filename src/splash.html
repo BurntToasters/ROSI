@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Loading ROSI</title>
+    <script src="/theme-init.js"></script>
+    <link rel="stylesheet" href="css/01-base.css" />
+    <link rel="stylesheet" href="css/splash.css" />
+  </head>
+  <body class="splash-screen">
+    <div class="splash-container">
+      <div class="logo-wrapper">
+        <div class="logo-glow"></div>
+        <div class="logo-ring"></div>
+        <div class="logo-ring-2"></div>
+        <img src="/app.png" class="logo" alt="ROSI Logo" />
+      </div>
+      <h1 class="app-title">ROSI</h1>
+      <p class="app-subtitle">Starting up...</p>
+      <div class="loading-container">
+        <div class="loading-track"></div>
+        <div class="loading-label">Loading</div>
+      </div>
+    </div>
+    <div class="version" id="version-display"></div>
+    <script src="/splash-init.js"></script>
+    <script type="module" src="./splash.ts"></script>
+  </body>
+</html>

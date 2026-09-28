@@ -53,5 +53,5 @@ resources/ffmpeg/
 - Use **GPL builds** (not LGPL) for x264/x265 support
 - Use **static builds** (not shared) for easier bundling
 - Ensure binaries have execute permissions on macOS/Linux (`chmod +x`)
-- Verify binaries before a build with `npm run ffmpeg:check:all`
-- License text and GPLv2 written source offer ship with the app at `ffmpeg/LICENSE.txt` and `ffmpeg/SOURCE_OFFER.txt`
+- Verify binaries before a build with `npm run ffmpeg:check:all`; `npm run prepare:sidecars` re-verifies them before packaging
+- License text and GPLv2 written source offer ship with the app under the bundle resources at `ffmpeg/LICENSE.txt` and `ffmpeg/SOURCE_OFFER.txt`

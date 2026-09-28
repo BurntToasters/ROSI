@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-distribution-channel"
+description = "Enables the get_distribution_channel command without any pre-configured scope."
+commands.allow = ["get_distribution_channel"]
+
+[[permission]]
+identifier = "deny-get-distribution-channel"
+description = "Denies the get_distribution_channel command without any pre-configured scope."
+commands.deny = ["get_distribution_channel"]

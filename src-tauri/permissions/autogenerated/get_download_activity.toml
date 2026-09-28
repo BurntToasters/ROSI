@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-download-activity"
+description = "Enables the get_download_activity command without any pre-configured scope."
+commands.allow = ["get_download_activity"]
+
+[[permission]]
+identifier = "deny-get-download-activity"
+description = "Denies the get_download_activity command without any pre-configured scope."
+commands.deny = ["get_download_activity"]

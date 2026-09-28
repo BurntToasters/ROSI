@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=ROSI
+Comment=Cross-platform GUI for yt-dlp video downloading
+Exec=rosi
+Icon=run.rosie.rosi
+Categories=Utility;AudioVideo;Network;
+Terminal=false
+StartupNotify=true
+StartupWMClass=rosi
+Keywords=video;download;yt-dlp;youtube;converter;ffmpeg;
