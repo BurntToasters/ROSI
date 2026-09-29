@@ -162,7 +162,7 @@
     "prettier": "^3.8.1",
     "typescript": "^6.0.2",
     "typescript-eslint": "^8.59.2",
-    "vitest": "^4.0.16"
+    "vitest": "^5.0.2"
   },
   "dependencies": {
     "@noble/hashes": "2.4.0",
