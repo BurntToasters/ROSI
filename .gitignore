@@ -62,3 +62,6 @@ resources/ffmpeg/**/ffplay.exe
 
 # Test scratch dirs
 .tmp-*/
+
+# Bridge E2E evidence (e2e/bridge/run.js)
+e2e/artifacts/

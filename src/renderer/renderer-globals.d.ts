@@ -18,6 +18,17 @@ interface RosiUpdaterStatusEvent {
   isBeta?: boolean;
   message?: string;
 }
+type RosiV5BridgeOffer =
+  | {
+      status: 'v5-available';
+      mode: 'install' | 'notice';
+      version: string;
+      isBeta: boolean;
+      downloadPage: string;
+    }
+  | { status: 'v5-unsupported'; version: string; message: string; downloadPage: string };
+type RosiV5BridgeActionResult =
+  { ok: true; version?: string } | { ok: false; cancelled?: boolean; message: string };
 interface RosiUpdaterProgressEvent {
   percent: number;
   bytesPerSecond: number;
@@ -100,6 +111,16 @@ interface RosiRendererApi {
   downloadUpdate: () => Promise<{ success?: boolean; cancelled?: boolean; error?: string }>;
   cancelUpdateDownload: () => void;
   installUpdate: () => void;
+  checkV5Bridge: () => Promise<RosiV5BridgeOffer | null>;
+  downloadV5Bridge: () => Promise<RosiV5BridgeActionResult>;
+  cancelV5BridgeDownload: () => void;
+  installV5Bridge: () => Promise<RosiV5BridgeActionResult>;
+  getV5BridgeFailure: () => Promise<{
+    reason?: string;
+    detail?: string;
+    version?: string;
+    downloadPage: string;
+  } | null>;
   onUpdaterStatus: (callback: (data: RosiUpdaterStatusEvent) => void) => () => void;
   onUpdaterProgress: (callback: (data: RosiUpdaterProgressEvent) => void) => () => void;
   onProgress: (callback: (message: string) => void) => () => void;

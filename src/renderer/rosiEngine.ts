@@ -1376,6 +1376,131 @@ async function checkForUpdates() {
 
 let updaterCleanupFunctions: Array<() => void> = [];
 
+// ROSI 5 bridge: offered only after the ROSI 4 check finds nothing newer.
+let v5BridgeBusy = false;
+let v5BridgeOffered = false;
+
+async function offerV5Bridge(wasManualCheck: boolean): Promise<boolean> {
+  if (v5BridgeBusy || (v5BridgeOffered && !wasManualCheck)) return false;
+  let offer: RosiV5BridgeOffer | null = null;
+  try {
+    offer = await window.api.checkV5Bridge();
+  } catch (error) {
+    logError('ROSI 5 check failed', error);
+  }
+  if (!offer) return false;
+  v5BridgeOffered = true;
+  const openPage = () => void window.api.openExternal(offer.downloadPage);
+
+  if (offer.status === 'v5-unsupported') {
+    showModal({
+      title: `ROSI ${offer.version} is available`,
+      message: `${offer.message}\n\nROSI 4 keeps working on this system.`,
+      buttons: [
+        { label: 'Learn More', action: openPage },
+        { label: 'OK', primary: true },
+      ],
+      priority: wasManualCheck,
+    });
+    return true;
+  }
+  if (offer.mode === 'notice') {
+    showModal({
+      title: `ROSI ${offer.version} is available`,
+      message:
+        'ROSI 5 is a new app that is installed separately on Linux. Download it from the releases page. On first launch it imports your ROSI 4 settings, queue, and stats.',
+      buttons: [{ label: 'Open Downloads', primary: true, action: openPage }, { label: 'Later' }],
+      priority: wasManualCheck,
+    });
+    return true;
+  }
+  showModal({
+    title: offer.isBeta
+      ? `ROSI ${offer.version} beta is available`
+      : `ROSI ${offer.version} is available`,
+    message:
+      "ROSI 5 replaces ROSI 4. ROSI will download ROSI 5, check its signature, install it, remove ROSI 4, and open ROSI 5. Your settings, queue, and stats come with you, and ROSI 4's own files stay on disk.\n\nUpgrade now?",
+    buttons: [
+      { label: 'Upgrade to ROSI 5', primary: true, action: () => void runV5Bridge(offer.version) },
+      { label: 'Later' },
+    ],
+    priority: wasManualCheck,
+  });
+  return true;
+}
+
+async function runV5Bridge(version: string) {
+  if (v5BridgeBusy) return;
+  v5BridgeBusy = true;
+  showUpdateBanner();
+  const text = document.getElementById('update-banner-text');
+  if (text) text.textContent = `Downloading ROSI ${version}…`;
+  try {
+    const downloaded = await window.api.downloadV5Bridge();
+    hideUpdateBanner();
+    if (!downloaded.ok) {
+      showModal({
+        title: downloaded.cancelled ? 'Download Cancelled' : 'ROSI 5 Download Failed',
+        message: downloaded.cancelled
+          ? 'The ROSI 5 download was cancelled.'
+          : `${downloaded.message}\n\nROSI 4 was not changed.`,
+        buttons: [{ label: 'OK', primary: true }],
+        priority: true,
+      });
+      return;
+    }
+    showModal({
+      title: 'Ready to Install ROSI 5',
+      message: `ROSI ${version} was downloaded and verified.\n\nROSI 4 will close, ROSI 5 will be installed, and ROSI 5 will open when it is done. If anything fails, ROSI 4 reopens unchanged.`,
+      buttons: [
+        {
+          label: 'Install and Restart',
+          primary: true,
+          action: async () => {
+            const started = await window.api.installV5Bridge();
+            if (!started.ok) {
+              showModal({
+                title: 'Could Not Start the Upgrade',
+                message: `${started.message}\n\nROSI 4 was not changed.`,
+                buttons: [{ label: 'OK', primary: true }],
+                priority: true,
+              });
+            }
+          },
+        },
+        { label: 'Later' },
+      ],
+      priority: true,
+    });
+  } catch (error) {
+    hideUpdateBanner();
+    logError('ROSI 5 upgrade failed', error);
+  } finally {
+    v5BridgeBusy = false;
+  }
+}
+
+async function reportV5BridgeFailure() {
+  try {
+    const failure = await window.api.getV5BridgeFailure();
+    if (!failure) return;
+    showModal({
+      title: 'The ROSI 5 Upgrade Did Not Finish',
+      message: `ROSI 4 is still installed and your settings are unchanged.\n\n${failure.detail || failure.reason || 'Unknown error.'}\n\nYou can try again from Settings > Check for Updates, or install ROSI 5 from the releases page.`,
+      buttons: [
+        {
+          label: 'Open Downloads',
+          action: () => void window.api.openExternal(failure.downloadPage),
+        },
+        { label: 'OK', primary: true },
+      ],
+      priority: true,
+    });
+  } catch (error) {
+    logError('Could not read the last ROSI 5 upgrade result', error);
+  }
+}
+
 function showUpdateBanner() {
   const banner = document.getElementById('update-banner');
   const bar = document.getElementById('update-banner-bar') as HTMLElement | null;
@@ -1407,7 +1532,8 @@ function setupAutoUpdater() {
   const cancelBtn = document.getElementById('update-banner-cancel');
   if (cancelBtn) {
     cancelBtn.addEventListener('click', () => {
-      window.api.cancelUpdateDownload();
+      if (v5BridgeBusy) window.api.cancelV5BridgeDownload();
+      else window.api.cancelUpdateDownload();
     });
   }
 
@@ -1451,14 +1577,15 @@ function setupAutoUpdater() {
         }
 
         case 'not-available':
-          if (wasManualCheck) {
+          void offerV5Bridge(wasManualCheck).then((offered) => {
+            if (offered || !wasManualCheck) return;
             showModal({
               title: 'ROSI is up to date!',
               message: `You are running the latest version (v${data.version}).`,
               buttons: [{ label: 'OK', primary: true }],
               priority: true,
             });
-          }
+          });
           break;
 
         case 'error':
@@ -5007,6 +5134,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function checkUpdatesOnStartup() {
     const channel = window.api.getChannel();
     if (channel === 'msstore') return;
+    void reportV5BridgeFailure();
     if (!settings.checkUpdatesOnStartup) return;
 
     try {
