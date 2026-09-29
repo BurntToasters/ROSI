@@ -33,13 +33,16 @@ describe('IPC channel contracts', () => {
   const jobProgressReporter = readRepoFile('src/main/download/jobProgressReporter.ts');
   const updater = readRepoFile('src/main/updater.ts');
   const downloader = readRepoFile('src/main/downloader.ts');
-  const mainSources = [main, appMenu, jobProgressReporter, updater, downloader].join('\n');
+  const bridgeIpc = readRepoFile('src/main/v5bridge/ipc.ts');
+  const mainSources = [main, appMenu, jobProgressReporter, updater, downloader, bridgeIpc].join(
+    '\n'
+  );
 
   const invokeChannels = extractQuotedCalls(preload, /ipcRenderer\.invoke\('([^']+)'/g);
   const sendChannels = extractQuotedCalls(preload, /ipcRenderer\.send\('([^']+)'/g);
   const rendererEventChannels = extractQuotedCalls(preload, /ipcRenderer\.on\('([^']+)'/g);
-  const mainHandlers = extractQuotedCalls(main, /ipcMain\.handle\('([^']+)'/g);
-  const mainEvents = extractQuotedCalls(main, /ipcMain\.on\('([^']+)'/g);
+  const mainHandlers = extractQuotedCalls(`${main}\n${bridgeIpc}`, /ipcMain\.handle\('([^']+)'/g);
+  const mainEvents = extractQuotedCalls(`${main}\n${bridgeIpc}`, /ipcMain\.on\('([^']+)'/g);
 
   it('registers a main handler for every preload invoke channel', () => {
     const missing = invokeChannels.filter((channel) => !mainHandlers.includes(channel));
