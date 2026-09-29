@@ -284,6 +284,27 @@ export interface UpdaterProgressEvent {
 
 export type UpdateCheckResponse = { error: string; message?: string } | null;
 
+export type V5BridgeOffer =
+  | {
+      status: 'v5-available';
+      mode: 'install' | 'notice';
+      version: string;
+      isBeta: boolean;
+      downloadPage: string;
+    }
+  | { status: 'v5-unsupported'; version: string; message: string; downloadPage: string };
+
+export type V5BridgeActionResult =
+  { ok: true; version?: string } | { ok: false; cancelled?: boolean; message: string };
+
+export interface V5BridgeFailure {
+  stage: 'failed';
+  reason?: string;
+  detail?: string;
+  version?: string;
+  downloadPage: string;
+}
+
 export interface UpdateDownloadResult {
   success?: boolean;
   cancelled?: boolean;
@@ -320,6 +341,11 @@ export interface RendererApi {
   downloadUpdate: () => Promise<UpdateDownloadResult>;
   cancelUpdateDownload: () => void;
   installUpdate: () => void;
+  checkV5Bridge: () => Promise<V5BridgeOffer | null>;
+  downloadV5Bridge: () => Promise<V5BridgeActionResult>;
+  cancelV5BridgeDownload: () => void;
+  installV5Bridge: () => Promise<V5BridgeActionResult>;
+  getV5BridgeFailure: () => Promise<V5BridgeFailure | null>;
   onUpdaterStatus: (callback: (data: UpdaterStatusEvent) => void) => () => void;
   onUpdaterProgress: (callback: (data: UpdaterProgressEvent) => void) => () => void;
   onProgress: (callback: (message: string) => void) => () => void;

@@ -15,6 +15,9 @@ import type {
   UpdateDownloadResult,
   UpdaterProgressEvent,
   UpdaterStatusEvent,
+  V5BridgeActionResult,
+  V5BridgeFailure,
+  V5BridgeOffer,
 } from '../types';
 
 const api: RendererApi = {
@@ -46,6 +49,12 @@ const api: RendererApi = {
   downloadUpdate: () => ipcRenderer.invoke('download-update') as Promise<UpdateDownloadResult>,
   cancelUpdateDownload: () => ipcRenderer.send('cancel-update-download'),
   installUpdate: () => ipcRenderer.send('install-update'),
+  checkV5Bridge: () => ipcRenderer.invoke('v5-bridge-check') as Promise<V5BridgeOffer | null>,
+  downloadV5Bridge: () => ipcRenderer.invoke('v5-bridge-download') as Promise<V5BridgeActionResult>,
+  cancelV5BridgeDownload: () => ipcRenderer.send('v5-bridge-cancel'),
+  installV5Bridge: () => ipcRenderer.invoke('v5-bridge-install') as Promise<V5BridgeActionResult>,
+  getV5BridgeFailure: () =>
+    ipcRenderer.invoke('v5-bridge-last-failure') as Promise<V5BridgeFailure | null>,
   onUpdaterStatus: (callback: (data: UpdaterStatusEvent) => void) => {
     const listener = (_: Electron.IpcRendererEvent, data: UpdaterStatusEvent) => callback(data);
     ipcRenderer.on('updater-status', listener);

@@ -1,3 +1,4 @@
+import './v5bridge/e2eOverrides';
 import { app, BrowserWindow, ipcMain, dialog, shell, Notification } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -21,8 +22,10 @@ import {
   cancelUpdateDownload,
   installUpdate,
   applyChannelFromSettings,
+  resolveUseBeta,
 } from './updater';
 import { checkDenoInstalled, installDeno } from './deno';
+import { registerV5BridgeIpc } from './v5bridge/ipc';
 import { detectGpu } from './gpu';
 import {
   startDownload,
@@ -566,6 +569,14 @@ if (!process.windowsStore) {
   ipcMain.handle('check-for-updates', () => checkForUpdates(isPackaged, loadSettings));
   ipcMain.handle('download-update', () => downloadUpdate());
   ipcMain.on('cancel-update-download', () => cancelUpdateDownload(getMainWindow));
+  registerV5BridgeIpc({
+    getMainWindow,
+    isAuthorized: assertMainWindowSender,
+    isPackaged,
+    isBusy: () => isDownloadBusy() || isQueueRunning,
+    channel: () =>
+      resolveUseBeta(loadSettings().updateChannel, app.getVersion()) ? 'beta' : 'stable',
+  });
   ipcMain.on('install-update', (event) => {
     if (!assertMainWindowSender(event)) {
       return;

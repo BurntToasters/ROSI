@@ -83,13 +83,16 @@ describe('preload api contract', () => {
         'cancelFormats',
         'cancelQueue',
         'cancelUpdateDownload',
+        'cancelV5BridgeDownload',
         'cancelVideoInfo',
         'checkDenoInstalled',
         'checkForUpdates',
+        'checkV5Bridge',
         'clearDownloadActivity',
         'clearQueue',
         'detectGpu',
         'downloadUpdate',
+        'downloadV5Bridge',
         'downloadVideo',
         'exportSettings',
         'getAppPlatform',
@@ -101,18 +104,20 @@ describe('preload api contract', () => {
         'getQueue',
         'getSettings',
         'getStats',
+        'getV5BridgeFailure',
         'getVideoInfo',
         'importSettings',
         'installDeno',
         'installUpdate',
+        'installV5Bridge',
         'isPackaged',
         'logError',
         'notifySettingsFlushed',
+        'onComplete',
         'onDownloadActivityUpdate',
         'onDownloadComplete',
         'onJobProgress',
         'onMenuAction',
-        'onComplete',
         'onPrepareForClose',
         'onProgress',
         'onQueueUpdate',
@@ -157,6 +162,10 @@ describe('preload api contract', () => {
     await expectInvokeCall(api, 'isPackaged', 'is-packaged');
     await expectInvokeCall(api, 'checkForUpdates', 'check-for-updates');
     await expectInvokeCall(api, 'downloadUpdate', 'download-update');
+    await expectInvokeCall(api, 'checkV5Bridge', 'v5-bridge-check');
+    await expectInvokeCall(api, 'downloadV5Bridge', 'v5-bridge-download');
+    await expectInvokeCall(api, 'installV5Bridge', 'v5-bridge-install');
+    await expectInvokeCall(api, 'getV5BridgeFailure', 'v5-bridge-last-failure');
     await expectInvokeCall(api, 'openFileLocation', 'open-file-location', ['C:/tmp/file.txt']);
     await expectInvokeCall(api, 'showNotification', 'show-notification', [notification]);
     await expectInvokeCall(api, 'exportSettings', 'export-settings');
@@ -209,6 +218,7 @@ describe('preload api contract', () => {
     expectSendCall(api, 'cancelVideoInfo', 'cancel-video-info');
     expectSendCall(api, 'cancelUpdateDownload', 'cancel-update-download');
     expectSendCall(api, 'installUpdate', 'install-update');
+    expectSendCall(api, 'cancelV5BridgeDownload', 'v5-bridge-cancel');
     expectSendCall(api, 'notifySettingsFlushed', 'settings-flush-complete');
   });
 
