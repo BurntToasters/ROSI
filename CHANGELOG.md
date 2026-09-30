@@ -23,7 +23,7 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 
 ## Changes in `v5.0.0-beta.1:`
 
-- **NEW - Tauri V2:** ROSI moved from Electron to Tauri V2 with a Rust backend. Installers and memory use are much smaller, and the app now uses the system webview.
+- **NEW - Tauri V2:** ROSI moved from Electron to Tauri V2 with a Rust backend. Installers, app size, and memory use are much smaller, and the app now uses the system webview.
 - **NEW - Update channels:** The in-app updater now uses signed Tauri updater manifests with separate stable and beta channels (Settings > Update channel).
 - **Breaking:** ROSI 5 is a new app. The app identifier is now `run.rosie.rosi`, and v4 cannot auto-update to v5. Install v5 manually.
 - **NEW - v4 import:** On its first launch, ROSI 5 imports your ROSI 4 settings, queue, lifetime stats, and download activity. Values ROSI 5 does not accept fall back to defaults, and the ROSI 4 files are left untouched.
