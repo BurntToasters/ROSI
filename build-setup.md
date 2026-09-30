@@ -75,8 +75,8 @@ smoke and is rejected for stable releases.
 
 ## Updater signing key
 
-`src-tauri/tauri.conf.json` currently carries a placeholder updater public key.
-Before the first v5 release, generate ROSI's own Minisign key pair:
+`src-tauri/tauri.conf.json` carries ROSI's updater public key. To rotate it,
+generate a new Minisign key pair before building a release:
 
 ```sh
 npx tauri signer generate -w ~/.tauri/rosi.key
@@ -86,7 +86,8 @@ Put the printed public key in `plugins.updater.pubkey`, and set
 `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in `.env` on
 every release VM. `release:sign:gpg` cryptographically checks each `.sig`
 against the configured public key, so a mismatched key fails before anything is
-uploaded.
+uploaded. When the v4 bridge is still supported, update its packaged public key
+and key-ID guard in the final v4 release before publishing v5 artifacts.
 
 ## License notice audit
 
