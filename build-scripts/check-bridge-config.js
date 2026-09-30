@@ -9,7 +9,7 @@ const path = require('node:path');
 
 const ROOT = path.resolve(__dirname, '..');
 // Key id of plugins.updater.pubkey in ROSI 5's src-tauri/tauri.conf.json.
-const ROSI5_UPDATER_KEY_ID = 'F9E00CF2F584CB6C';
+const ROSI5_UPDATER_KEY_ID = '7434C99B00DB46DA';
 const EXPECTED = {
   feedBase: 'https://github.com/BurntToasters/ROSI/releases/latest/download/',
   allowedDownloadPrefixes: ['https://github.com/BurntToasters/ROSI/releases/download/'],
