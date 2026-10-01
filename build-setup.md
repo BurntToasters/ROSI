@@ -18,8 +18,8 @@
 
 ## macOS
 
-- macOS 26 or later (Xcode 26). `minimumSystemVersion` in `tauri.conf.json` is
-  26.0 because the bundled FFmpeg is built for macOS 26; `build:mac:zip` rejects
+- macOS 15 or later. `minimumSystemVersion` in `tauri.conf.json` is
+  15.0 because the bundled FFmpeg is built for macOS 15; `build:mac:zip` rejects
   any bundled Mach-O whose minimum OS is above that floor.
 - Xcode Command Line Tools (`lipo`, `codesign`, `notarytool`)
 - Node.js `^22.22.2 || ^24.15.0 || >=26`
