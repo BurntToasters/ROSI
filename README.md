@@ -32,8 +32,8 @@ webview, so installers and memory use are much smaller.
 
 ## System requirements
 
-- macOS 26 or later (universal build for Intel and Apple silicon). The bundled
-  FFmpeg is built for macOS 26.
+- macOS 15 or later (universal build for Intel and Apple silicon). The bundled
+  FFmpeg is built for macOS 15.
 - Windows 10 version 2004 (build 19041) or later, on x64 or ARM64, with the
   Microsoft Edge WebView2 runtime (installed automatically when missing).
 - Linux x64 with WebKitGTK 4.1 (Ubuntu 24.04+, Debian 13+, Fedora 43+, or a
