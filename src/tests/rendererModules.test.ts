@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as ts from 'typescript';
 
 const REPO = path.resolve(__dirname, '..', '..');
-const RENDERER = path.join(REPO, 'src', 'renderer');
+const RENDERER = path.join(REPO, 'src');
 
 function transpile(tsSource: string): string {
   return ts.transpileModule(tsSource, {
@@ -486,7 +486,7 @@ describe('renderer modules', () => {
         },
         formatBytes
       );
-      expect(result).toBe('2048B / 4096B (1024B/s) — 43%');
+      expect(result).toBe('2048B / 4096B (1024B/s) - 43%');
     });
   });
 });

@@ -3,4 +3,8 @@
 
 # Shell scripts must use LF
 *.sh text eol=lf
-.husky/* text eol=lf
+
+.githooks/* text eol=lf
+
+# Bundled yt-dlp sidecars must never be newline-normalized.
+assets/yt-dlp* binary

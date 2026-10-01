@@ -1,0 +1,31 @@
+[advisories]
+# All ignored advisories are "unmaintained" or "unsound" warnings (not
+# vulnerabilities) originating from transitive dependencies pulled in by
+# Tauri v2 / wry / webkit2gtk. They are not directly controllable from this
+# crate and are resolved upstream as Tauri migrates off the GTK3 stack.
+# Plain `cargo audit` still fails on any new advisory in any other crate.
+# scripts/check-rustsec-ignore-policy.mjs makes this exact reviewed set expire
+# on 2026-12-01 so transitive debt cannot become a permanent silent allowlist.
+ignore = [
+    # gtk-rs GTK3 bindings - no longer maintained (Tauri Linux webview stack)
+    "RUSTSEC-2024-0411",
+    "RUSTSEC-2024-0412",
+    "RUSTSEC-2024-0413",
+    "RUSTSEC-2024-0414",
+    "RUSTSEC-2024-0415",
+    "RUSTSEC-2024-0416",
+    "RUSTSEC-2024-0417",
+    "RUSTSEC-2024-0418",
+    "RUSTSEC-2024-0419",
+    "RUSTSEC-2024-0420",
+    # glib VariantStrIter unsoundness (not reached by this app)
+    "RUSTSEC-2024-0429",
+    # proc-macro-error unmaintained (transitive build dep)
+    "RUSTSEC-2024-0370",
+    # unic-* unmaintained (transitive)
+    "RUSTSEC-2025-0075",
+    "RUSTSEC-2025-0080",
+    "RUSTSEC-2025-0081",
+    "RUSTSEC-2025-0098",
+    "RUSTSEC-2025-0100",
+]

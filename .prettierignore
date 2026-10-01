@@ -1,1 +1,3 @@
-src/renderer/licenses-iframe.html
+public/licenses-iframe.html
+src-tauri/gen/
+src-tauri/vendor/

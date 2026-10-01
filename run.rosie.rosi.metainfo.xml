@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>run.rosie.rosi</id>
+  <name>ROSI</name>
+  <summary>Cross-platform GUI for yt-dlp</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MPL-2.0</project_license>
+  <developer id="run.rosie">
+    <name>BurntToasters</name>
+  </developer>
+  <description>
+    <p>
+      ROSI is a fast, friendly graphical front end for yt-dlp on Windows,
+      macOS, and Linux, built with Tauri V2.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Download videos and audio from supported sites</li>
+      <li>Download queue with retry, reordering, and per-item progress</li>
+      <li>Saved download presets and playlist ranges</li>
+      <li>Bundled FFmpeg for conversion to MP4, MOV, MP3, and M4A</li>
+      <li>GPU-accelerated encoding (NVIDIA, AMD, Intel)</li>
+      <li>Browser cookie integration</li>
+      <li>Themed interface with light, dark, and purple themes</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">run.rosie.rosi.desktop</launchable>
+  <categories>
+    <category>Utility</category>
+    <category>AudioVideo</category>
+    <category>Network</category>
+  </categories>
+  <url type="homepage">https://github.com/BurntToasters/ROSI</url>
+  <url type="bugtracker">https://github.com/BurntToasters/ROSI/issues</url>
+  <url type="vcs-browser">https://github.com/BurntToasters/ROSI</url>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://media.rosie.run/rosi/gallery/ghv4/dark.png</image>
+      <caption>ROSI main interface</caption>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="5.0.0-beta.1" date="2026-09-26"/>
+    <release version="4.3.2" date="2026-09-05"/>
+    <release version="4.3.1" date="2026-08-26"/>
+    <release version="4.3.0" date="2026-08-21"/>
+    <release version="4.2.1" date="2026-07-20"/>
+    <release version="4.2.0" date="2026-07-14"/>
+    <release version="4.1.5" date="2026-07-03"/>
+    <release version="4.1.4" date="2026-06-22"/>
+    <release version="4.1.3" date="2026-06-21"/>
+  </releases>
+</component>

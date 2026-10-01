@@ -1,0 +1,299 @@
+name: CI
+
+# Pull requests prove candidate changes. Pushes prove the exact post-merge tips
+# of the protected release branches without duplicating every PR branch update.
+# Jobs run tests and smoke builds, not signed release artifacts.
+
+on:
+  push:
+    branches: [main, beta]
+  pull_request:
+    branches: [main, beta]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24.16.0"
+  NPM_VERSION: "12.0.2"
+  RUST_VERSION: "1.98.1"
+  CARGO_AUDIT_VERSION: "0.22.2"
+
+jobs:
+  commit-message-policy:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Enforce Co-authored-by email policy
+        run: node scripts/strip-coauthor-trailers.js --check-range ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+      - name: Enforce stable metadata-only main PR
+        if: >-
+          ${{
+            github.event.pull_request.base.ref == 'main' &&
+            startsWith(github.head_ref, 'release/')
+          }}
+        run: >-
+          node scripts/check-stable-metadata-pr.mjs
+          ${{ github.event.pull_request.base.sha }}
+          ${{ github.event.pull_request.head.sha }}
+
+  quality-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            appstream \
+            desktop-file-utils \
+            ffmpeg \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xvfb
+      - run: npm ci --ignore-scripts
+      - name: Strict Cargo license notices
+        run: npm run licenses:cargo:strict
+      - name: Quality gate
+        env:
+          WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+          ROSI_E2E_REQUIRE_FFMPEG: "1"
+        run: npm run test:all
+      - name: Upload E2E evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-ubuntu-latest
+          path: e2e/artifacts
+          if-no-files-found: warn
+          retention-days: 30
+
+  rust-check:
+    needs: quality-gate
+    strategy:
+      matrix:
+        os: [windows-latest, macos-26]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: clippy
+      - run: npm ci --ignore-scripts
+      - run: node scripts/npm-audit-signatures.cjs
+      - run: npm run test:cov
+      - run: npm run ytdlp:check
+      - run: npm run prepare:rust-tests
+      - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
+      - name: Install FFmpeg for E2E conversion scenarios
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows) choco install ffmpeg --no-progress -y ;;
+            macOS) brew install ffmpeg ;;
+          esac
+      - run: npm run test:e2e
+        env:
+          ROSI_E2E_REQUIRE_FFMPEG: "1"
+      - name: Upload E2E evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-${{ matrix.os }}
+          path: e2e/artifacts
+          if-no-files-found: warn
+          retention-days: 30
+
+  updater-manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - run: npm run validate:updater
+      # Read-only shape smoke. Exact candidate version is checked after publish
+      # by release:verify:published; requiring it here makes version bumps
+      # circular because build VMs cannot publish until this CI passes.
+      - name: Published updater feed sanity
+        run: npm run validate:updater:live
+
+  # Unsigned compile smoke only: not a release. Signed NSIS/DMG/AppImage stay on
+  # build VMs. FFmpeg is not public, so CI compiles against development stubs.
+  smoke-build:
+    needs: quality-gate
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            triple: x86_64-unknown-linux-gnu
+            binary: rosi
+          - os: ubuntu-24.04-arm
+            triple: aarch64-unknown-linux-gnu
+            binary: rosi
+          - os: macos-26
+            triple: aarch64-apple-darwin
+            binary: rosi
+          - os: macos-26-intel
+            triple: x86_64-apple-darwin
+            binary: rosi
+          - os: windows-latest
+            triple: x86_64-pc-windows-msvc
+            binary: rosi.exe
+          - os: windows-11-arm
+            triple: aarch64-pc-windows-msvc
+            binary: rosi.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+      - run: npm ci --ignore-scripts
+      - run: node scripts/npm-audit-signatures.cjs
+      - run: npm run sync-version
+      - name: Verify synchronized version files are committed
+        run: git diff --exit-code
+      - run: node scripts/prepare-sidecars.js --allow-stub-ffmpeg --target ${{ matrix.triple }}
+      - run: npm run licenses
+      - name: Unsigned tauri build (no bundle)
+        env:
+          ROSI_ALLOW_STUB_SIDECARS: "1"
+        run: npx tauri build --no-bundle
+      - name: Verify host sidecars and smoke binary
+        shell: bash
+        run: |
+          ext=""
+          case "${{ matrix.triple }}" in *windows*) ext=".exe" ;; esac
+          for sidecar in rosi-yt-dlp rosi-ffmpeg rosi-ffprobe; do
+            test -e "src-tauri/binaries/${sidecar}-${{ matrix.triple }}${ext}"
+          done
+          test -e "src-tauri/target/release/${{ matrix.binary }}"
+
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - run: npm ci --ignore-scripts
+      - run: node scripts/npm-audit-signatures.cjs
+      - name: npm audit - production
+        run: npm audit --omit=dev --audit-level=high
+      - name: npm audit - reviewed dev toolchain
+        # Fail only when a moderate-or-higher advisory reaches a non-dev
+        # install node. Proven development-toolchain findings are warnings.
+        run: npm run audit:dev-reviewed
+      - name: RustSec ignore review policy
+        run: npm run check:rustsec-ignore-policy
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version ${{ env.CARGO_AUDIT_VERSION }} --locked
+      - name: cargo audit
+        working-directory: src-tauri
+        run: cargo audit
+
+  ci-gate:
+    if: ${{ always() }}
+    needs:
+      - commit-message-policy
+      - quality-gate
+      - rust-check
+      - updater-manifest
+      - smoke-build
+      - security-audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every release check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMIT_MESSAGE_POLICY: ${{ needs.commit-message-policy.result }}
+          QUALITY_GATE: ${{ needs.quality-gate.result }}
+          RUST_CHECK: ${{ needs.rust-check.result }}
+          UPDATER_MANIFEST: ${{ needs.updater-manifest.result }}
+          SMOKE_BUILD: ${{ needs.smoke-build.result }}
+          SECURITY_AUDIT: ${{ needs.security-audit.result }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          RELEASE_PROMOTION_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && startsWith(github.head_ref, 'next-') }}
+          STABLE_METADATA_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && startsWith(github.head_ref, 'release/') }}
+        run: |
+          set -euo pipefail
+          test "$QUALITY_GATE" = success
+          test "$RUST_CHECK" = success
+          test "$UPDATER_MANIFEST" = success
+          test "$SMOKE_BUILD" = success
+          test "$SECURITY_AUDIT" = success
+          # Main accepts next-* promotion or tightly scoped stable metadata.
+          test "$PR_BASE_REF" != "main" || test "$RELEASE_PROMOTION_PR" = "true" || test "$STABLE_METADATA_PR" = "true"
+          if [ "$EVENT_NAME" = pull_request ]; then
+            test "$COMMIT_MESSAGE_POLICY" = success
+          else
+            test "$COMMIT_MESSAGE_POLICY" = skipped
+          fi
