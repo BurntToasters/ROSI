@@ -1,0 +1,105 @@
+app-id: run.rosie.rosi
+runtime: org.gnome.Platform
+runtime-version: "50"
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.node22
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: rosi
+separate-locales: false
+
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  # Network access (yt-dlp downloads).
+  - --share=network
+  # GPU acceleration (hardware-accelerated encoding).
+  - --device=dri
+  # Least-privilege download locations; other folders go through the portal.
+  - --filesystem=xdg-download
+  - --filesystem=xdg-videos
+  - --filesystem=xdg-music
+  # Notifications.
+  - --talk-name=org.freedesktop.Notifications
+  # "Show in folder": ask the host file manager to select the download.
+  - --talk-name=org.freedesktop.FileManager1
+  # Flatpak builds update by reinstalling the bundle, not the in-app updater.
+
+environment:
+  GTK_USE_PORTAL: "1"
+
+modules:
+  - name: rosi
+    buildsystem: simple
+    build-options:
+      # npm and Cargo fetch only integrity-locked dependencies. Application
+      # sources (plus the verified Linux FFmpeg binaries) come from the clean
+      # commit export prepared by scripts/prepare-flatpak-source.js.
+      build-args:
+        - --share=network
+      append-path: /run/build/rosi/npm-global/bin:/usr/lib/sdk/node22/bin:/usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/rosi/cargo
+        npm_config_cache: /run/build/rosi/npm-cache
+        HUSKY: "0"
+    build-commands:
+      # The Flatpak rust-stable SDK extension installs rustc/cargo directly,
+      # not through rustup. Fail closed if that extension drifts from our pin.
+      - test "$(rustc --version | cut -d' ' -f2)" = 1.98.1
+      # node22 SDK ships npm 10.x, which does not support --min-release-age.
+      # npm@12 plus --before 3 days ago takes the newest 12.x that is old enough.
+      - npm install --global npm@12 --ignore-scripts --engine-strict=false --before="$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%SZ)" --prefix /run/build/rosi/npm-global
+      - npm ci --engine-strict=false
+      - npm run sync-version
+      - |
+        case "$FLATPAK_ARCH" in
+          aarch64)
+            node scripts/prepare-sidecars.js --target aarch64-unknown-linux-gnu
+            ;;
+          x86_64)
+            node scripts/prepare-sidecars.js --target x86_64-unknown-linux-gnu
+            ;;
+          *)
+            echo "Unsupported FLATPAK_ARCH=$FLATPAK_ARCH (expected x86_64 or aarch64)" >&2
+            exit 1
+            ;;
+        esac
+      - npm run licenses
+      - npm run build
+      - npx tauri build --no-bundle -- --locked
+      - install -Dm755 src-tauri/target/release/rosi /app/bin/rosi
+      - |
+        case "$FLATPAK_ARCH" in
+          aarch64) triple=aarch64-unknown-linux-gnu ;;
+          x86_64) triple=x86_64-unknown-linux-gnu ;;
+          *) echo "Unsupported FLATPAK_ARCH=$FLATPAK_ARCH" >&2; exit 1 ;;
+        esac
+        for sidecar in rosi-yt-dlp rosi-ffmpeg rosi-ffprobe; do
+          install -Dm755 "src-tauri/binaries/${sidecar}-${triple}" "/app/bin/${sidecar}"
+        done
+      - install -Dm644 assets/YT-DLP-NOTICES.txt /app/share/rosi/licenses/yt-dlp/YT-DLP-NOTICES.txt
+      - install -Dm644 resources/ffmpeg/NOTICE.txt /app/share/rosi/licenses/ffmpeg/NOTICE.txt
+      - install -Dm644 resources/ffmpeg/ffmpeg_license.txt /app/share/rosi/licenses/ffmpeg/LICENSE.txt
+      - install -Dm644 resources/ffmpeg/SOURCE_OFFER.txt /app/share/rosi/licenses/ffmpeg/SOURCE_OFFER.txt
+      - install -Dm644 run.rosie.rosi.desktop /app/share/applications/run.rosie.rosi.desktop
+      - install -Dm644 run.rosie.rosi.metainfo.xml /app/share/metainfo/run.rosie.rosi.metainfo.xml
+      - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/run.rosie.rosi.png
+      - install -Dm644 src-tauri/icons/32x32.png /app/share/icons/hicolor/32x32/apps/run.rosie.rosi.png
+      - install -Dm644 src-tauri/icons/icon.png /app/share/icons/hicolor/512x512/apps/run.rosie.rosi.png
+    sources:
+      - type: dir
+        path: .flatpak-source
+        skip:
+          - .git
+          - .github
+          - .agents
+          - .codex
+          - .env
+          - .env.*
+          - node_modules
+          - src-tauri/target
+          - dist
+          - release
+          - flatpak-build
+          - flatpak-repo

@@ -1,0 +1,48 @@
+[package]
+name = "rosi"
+version = "5.0.0-beta.1"
+description = "Cross-platform yt-dlp GUI built with Tauri."
+license = "MPL-2.0"
+authors = ["BurntToasters <code@rosie.run>"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri-plugin-dialog = "2"
+tauri-plugin-process = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-wdio = { version = "1", optional = true }
+tauri-plugin-wdio-webdriver = { version = "1", optional = true }
+shared_child = "1.1"
+getrandom = "0.3"
+url = "2"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[features]
+default = []
+e2e = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
+
+# Patched: macOS transactional install, confined tar, Linux helper PATH, Windows ShellExecute.
+[patch.crates-io]
+tauri-plugin-updater = { path = "vendor/tauri-plugin-updater" }
+
+[profile.release]
+panic = "abort"
+codegen-units = 16
+lto = "thin"
+strip = true
+
+[dev-dependencies]
+minisign-verify = "0.2.5"

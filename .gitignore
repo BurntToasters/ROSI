@@ -1,55 +1,65 @@
-node_modules/
-*.zip
-*.7z
-dist/
-release/
 .DS_Store
-*.bak
-*.env
-!.env.example
-*.cer
-*.cert
-*.pem
-**/.*/
-!.github/
-!.husky/
-!.husky/**
-licenses.json
-coverage/
-*.lcov
-.nyc_output
-*.tsbuildinfo
-.eslintcache
-
 # Logs
-logs/
+logs
 *.log
 npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 
-# Runtime
-pids/
+/coverage/*
+
+licenses.json
+**/.*/
+!.github/
+!.githooks/
+!src-tauri/.cargo/
+!src-tauri/.cargo/audit.toml
+
+# Runtime data
+pids
 *.pid
-*.seed
-*.pid.lock
 
-# Node diagnostic reports
-report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+# Dependency directories
+node_modules/
 
-# Build artifacts
-build/Release
-*.tgz
-src/renderer/modules/*.js
-src/renderer/modules/*.js.map
-src/renderer/rosiEngine.js
-src/renderer/rosiEngine.js.map
+# TypeScript cache
+*.tsbuildinfo
 
-# macOS provisioning
-*.provisionprofile
-*.mobileprovision
+# Optional npm cache directory
+.npm
 
-# FFmpeg binaries (downloaded locally, not committed)
+# dotenv environment variable files
+.env
+.env.*
+!.env.example
+
+# Vite logs
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# Tauri
+src-tauri/target/
+src-tauri/vendor/**/target/
+src-tauri/binaries/
+src-tauri/.cargo/*
+!src-tauri/.cargo/audit.toml
+
+# Build outputs
+dist/
+release/
+flatpak-build/
+flatpak-repo/
+.flatpak-source/
+
+# Generated files
+public/licenses.json
+public/licenses-cargo.json
+public/licenses-cargo-unresolved.json
+public/bundled-licenses.json
+public/yt-dlp-notices.txt
+public/ffmpeg-notice.txt
+public/ffmpeg-license.txt
+public/ffmpeg-source-offer.txt
+
+# FFmpeg binaries (fetched with npm run get:ffmpeg, never committed)
 resources/ffmpeg/**/ffmpeg
 resources/ffmpeg/**/ffmpeg.exe
 resources/ffmpeg/**/ffprobe
@@ -57,11 +67,5 @@ resources/ffmpeg/**/ffprobe.exe
 resources/ffmpeg/**/ffplay
 resources/ffmpeg/**/ffplay.exe
 
-# REPL history
-.node_repl_history
-
-# Test scratch dirs
-.tmp-*/
-
-# Bridge E2E evidence (e2e/bridge/run.js)
+# E2E run artifacts (kept locally as verification evidence)
 e2e/artifacts/

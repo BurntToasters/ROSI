@@ -1,0 +1,28 @@
+#!/bin/sh
+# ROSI pre-commit gate. Enabled via `git config core.hooksPath .githooks`
+# (set automatically by `npm install` through the prepare script).
+# Bypass with: git commit --no-verify
+
+set -e
+
+run_npm() {
+  # Git hooks run under sh on Windows; route through cmd.exe so we never hit
+  # the POSIX npm shim in "C:\Program Files\nodejs\npm".
+  if [ "${OS:-}" = "Windows_NT" ] && command -v cmd.exe >/dev/null 2>&1; then
+    cmd.exe //d //c npm.cmd "$@"
+  elif command -v npm.cmd >/dev/null 2>&1; then
+    npm.cmd "$@"
+  else
+    npm "$@"
+  fi
+}
+
+# Only run JS tooling when staged files touch the frontend/tooling surface.
+if git diff --cached --name-only --diff-filter=ACM | grep -qE '\.(ts|css|html|js)$'; then
+  echo "pre-commit: prettier --check"
+  run_npm run --silent format:check
+  echo "pre-commit: eslint"
+  run_npm run --silent lint
+  echo "pre-commit: tsc --noEmit"
+  run_npm run --silent typecheck
+fi
