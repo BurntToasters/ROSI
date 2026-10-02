@@ -42,6 +42,7 @@
 }
 
 :root {
+  color-scheme: dark;
   --font-sans: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'IBM Plex Mono', 'SF Mono', 'Fira Code', 'Consolas', monospace;
 
@@ -303,6 +304,7 @@
 }
 
 :root[data-theme='light'] {
+  color-scheme: light;
   --bg-gradient-start: #f4f7fb;
   --bg-gradient-mid: #eef3f8;
   --bg-gradient-end: #e7edf5;
@@ -381,8 +383,13 @@
   padding: 0;
 }
 
+/* The page never scrolls as a whole: .main-stage and the panels scroll on
+   their own, and no surface rubber-bands past its ends on macOS. */
 html {
+  height: 100%;
   font-size: 16px;
+  background: var(--bg-gradient-mid);
+  overscroll-behavior: none;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -391,11 +398,11 @@ body {
   font-family: var(--font-sans);
   background: var(--bg-gradient-mid);
   background-attachment: fixed;
-  min-height: 100vh;
+  height: 100%;
   color: var(--text-primary);
   line-height: 1.5;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body.animate-bg {

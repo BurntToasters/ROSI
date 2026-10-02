@@ -110,6 +110,17 @@ const WEBVIEW_GUARD_SCRIPT: &str = r#"
 })();
 "#;
 
+/// Native title bar appearance for a saved theme preference. Dark and purple
+/// pin a dark bar so it matches the page even when the system appearance is
+/// light; the renderer keeps it in sync on later theme changes.
+fn window_theme(preference: &str) -> Option<tauri::Theme> {
+    match preference {
+        "light" => Some(tauri::Theme::Light),
+        "dark" | "purple" => Some(tauri::Theme::Dark),
+        _ => None,
+    }
+}
+
 fn build_main(app: &AppHandle) -> Result<WebviewWindow, String> {
     let config = app
         .config()
@@ -123,6 +134,7 @@ fn build_main(app: &AppHandle) -> Result<WebviewWindow, String> {
     let popup_app = app.clone();
     WebviewWindowBuilder::from_config(app, &config)
         .map_err(|error| error.to_string())?
+        .theme(window_theme(&crate::settings::load().theme))
         .initialization_script_for_all_frames(WEBVIEW_GUARD_SCRIPT)
         .on_navigation(move |url| {
             if is_app_url(url) {
