@@ -1,8 +1,9 @@
 @import 'css/01-base.css';
+@import 'css/controls.css';
 @import 'css/02-sidebar.css';
 @import 'css/03-main.css';
 @import 'css/04-panels.css';
-@import 'css/05-overlays.css';
-@import 'css/06-responsive.css';
 @import 'css/07-queue.css';
 @import 'css/08-wizard.css';
+@import 'css/05-overlays.css';
+@import 'css/06-responsive.css';

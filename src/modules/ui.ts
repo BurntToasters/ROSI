@@ -27,6 +27,7 @@
 
   type UiModules = {
     ui?: UiModule;
+    dock?: RosiDockModule;
   };
 
   type RosiWindow = Window & typeof globalThis & { rosiModules?: UiModules };
@@ -68,14 +69,18 @@
     }
   }
 
+  /** The console lives in the dock; showing it means offering its tab. */
   function updateConsoleVisibility(show: boolean) {
     const consoleSection = document.getElementById('console-section');
     if (consoleSection) {
-      if (show) {
-        consoleSection.classList.add('visible');
-      } else {
-        consoleSection.classList.remove('visible');
-      }
+      consoleSection.classList.toggle('visible', !!show);
+    }
+    const dock = (global as RosiWindow).rosiModules?.dock;
+    if (dock) {
+      dock.setTabAvailable('console', !!show);
+    } else {
+      const consoleTab = document.getElementById('dockTabConsole');
+      if (consoleTab) consoleTab.hidden = !show;
     }
     document.body.classList.toggle('console-visible', !!show);
   }
@@ -121,7 +126,7 @@
 
     const dismissBtn = document.createElement('button');
     dismissBtn.type = 'button';
-    dismissBtn.className = 'toast-dismiss';
+    dismissBtn.className = 'toast-dismiss btn btn--ghost btn--xs btn--icon';
     dismissBtn.setAttribute('aria-label', 'Dismiss');
     dismissBtn.innerHTML =
       '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';

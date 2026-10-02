@@ -129,6 +129,143 @@ async function typeUrl(url) {
   }, url);
 }
 
+const SCREENSHOT_DIR = env.ROSI_E2E_SCREENSHOTS;
+
+function settingsOnDisk() {
+  return JSON.parse(
+    fs.readFileSync(path.join(DATA_DIR, "settings.json"), "utf8"),
+  );
+}
+
+async function waitForSavedSetting(key, value, timeoutMsg) {
+  await browser.waitUntil(() => settingsOnDisk()[key] === value, {
+    timeout: 10_000,
+    interval: 200,
+    timeoutMsg: `${timeoutMsg}: settings.json ${key}=${JSON.stringify(settingsOnDisk()[key])}`,
+  });
+}
+
+/** Let CSS transitions (up to the 500 ms springy curve) finish. */
+function settle(ms = 600) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function clickById(id) {
+  await browser.execute((target) => {
+    document.getElementById(target)?.click();
+  }, id);
+}
+
+/** Dispatch a keydown the way a real key press reaches the renderer. */
+async function pressKey(targetSelector, init) {
+  await browser.execute(
+    (selector, eventInit) => {
+      const target = selector ? document.querySelector(selector) : document;
+      if (target instanceof HTMLElement) target.focus();
+      (target ?? document).dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          ...eventInit,
+        }),
+      );
+    },
+    targetSelector,
+    init,
+  );
+}
+
+async function setControlValue(id, value) {
+  await browser.execute(
+    (target, next) => {
+      const control = document.getElementById(target);
+      if (control.type === "checkbox") control.checked = next;
+      else control.value = next;
+      control.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    id,
+    value,
+  );
+}
+
+/** Which dock tab is selected and which panels are on screen. */
+function dockState() {
+  return browser.execute(() => {
+    const tabs = [...document.querySelectorAll("[data-dock-tab]")];
+    return {
+      selected: tabs
+        .filter((tab) => tab.getAttribute("aria-selected") === "true")
+        .map((tab) => tab.dataset.dockTab),
+      visiblePanels: tabs
+        .map((tab) =>
+          document.getElementById(tab.getAttribute("aria-controls")),
+        )
+        .filter(
+          (panel) => panel && !panel.hidden && panel.offsetParent !== null,
+        )
+        .map((panel) => panel.id),
+      focused: document.activeElement?.dataset?.dockTab ?? null,
+      collapsed: document
+        .getElementById("dock")
+        .classList.contains("collapsed"),
+    };
+  });
+}
+
+/** Reload the webview and wait for the renderer to come back. */
+async function reloadRenderer() {
+  // Defer the reload: WebView2 tears down the script context before the
+  // embedded WebDriver can answer a synchronous execute that navigates.
+  await browser.execute(() => {
+    window.__ROSI_E2E__.ready = false;
+    window.setTimeout(() => window.location.reload(), 50);
+  });
+  await browser.waitUntil(
+    async () =>
+      browser.execute(
+        () => Boolean(window.__ROSI_E2E__?.ready) && Boolean(window.api),
+      ),
+    { timeout: 60_000, timeoutMsg: "renderer did not come back after reload" },
+  );
+}
+
+/** Resize the window through Tauri and wait for layout to settle. */
+async function resizeWindow(width, height) {
+  const result = await browser.executeAsync(
+    (w, h, done) => {
+      const { getCurrentWindow } = window.__TAURI__.window;
+      const { LogicalSize } = window.__TAURI__.dpi;
+      getCurrentWindow()
+        .setSize(new LogicalSize(w, h))
+        .then(
+          () => setTimeout(() => done(JSON.stringify({ ok: true })), 600),
+          (error) => done(JSON.stringify({ error: String(error) })),
+        );
+    },
+    width,
+    height,
+  );
+  const parsed = JSON.parse(result);
+  assert.equal(parsed.error, undefined, parsed.error);
+}
+
+/** Computed box-shadow values of the first element matching each selector. */
+function boxShadows(selectors) {
+  return browser.execute(
+    (list) =>
+      Object.fromEntries(
+        list.map((selector) => {
+          const element = document.querySelector(selector);
+          return [
+            selector,
+            element ? getComputedStyle(element).boxShadow : "missing",
+          ];
+        }),
+      ),
+    selectors,
+  );
+}
+
 describe("ROSI main window", () => {
   before(async () => {
     await $("#url").waitForExist({ timeout: 60_000 });
@@ -247,6 +384,235 @@ describe("ROSI main window", () => {
     assert.equal(onDisk.subtitleLangs, "en,es");
     assert.equal(onDisk.downloadFolder, DOWNLOADS);
     record("settings-persistence", { settingsFile: "settings.json" });
+  });
+
+  it("shows download profiles on the card and migrates beta settings", async () => {
+    // The seed is a 5.0 beta profile with profiles off and downloadMode
+    // "best-video"; it must come back as Compatible (same output as before).
+    const loaded = await api("getSettings");
+    assert.equal(loaded.downloadMode, "compatible");
+    assert.equal(loaded.bestQuality, false);
+    assert.equal("downloadProfilesEnabled" in loaded, false);
+    assert.equal("downloadProfilesEnabled" in settingsOnDisk(), false);
+
+    const card = await browser.execute(() => {
+      const composer = document.getElementById("downloadProfilesComposer");
+      const accentProbe = document.createElement("span");
+      accentProbe.style.color = "var(--accent)";
+      document.body.appendChild(accentProbe);
+      const accent = getComputedStyle(accentProbe).color;
+      accentProbe.remove();
+      const selected = document.querySelector(
+        '.download-profile-btn[aria-pressed="true"]',
+      );
+      const style = selected ? getComputedStyle(selected) : null;
+      return {
+        composerShown: Boolean(composer && composer.offsetParent !== null),
+        hidden: composer?.classList.contains("hidden") ?? true,
+        profiles: [...document.querySelectorAll(".download-profile-btn")].map(
+          (button) => button.id,
+        ),
+        selected: selected?.id ?? null,
+        summaryInComposer: Boolean(
+          composer?.contains(document.getElementById("downloadOutputSummary")),
+        ),
+        formatsInComposer: Boolean(
+          composer?.contains(document.getElementById("formatOptions")),
+        ),
+        accent,
+        selectedBackground: style
+          ? `${style.backgroundColor} ${style.backgroundImage}`
+          : "",
+        profileToggleGone: !document.getElementById("downloadProfilesToggle"),
+      };
+    });
+    assert.equal(card.composerShown, true, "profile picker is not on screen");
+    assert.equal(card.hidden, false);
+    assert.equal(card.profileToggleGone, true);
+    assert.deepEqual(card.profiles, [
+      "profileCompatibleBtn",
+      "profileBestVideoBtn",
+      "profileAudioBtn",
+      "profileCustomBtn",
+    ]);
+    assert.equal(card.selected, "profileCompatibleBtn");
+    assert.equal(card.summaryInComposer, true);
+    assert.equal(card.formatsInComposer, true);
+    // The selected segment is raised neutral with an accent bar, never an
+    // accent fill that competes with the Download button.
+    assert.ok(
+      !card.selectedBackground.includes(card.accent),
+      `selected profile is filled with the accent: ${card.selectedBackground}`,
+    );
+
+    await clickById("profileAudioBtn");
+    await waitForSavedSetting("downloadMode", "audio", "Audio was not saved");
+    const audio = await browser.execute(() => ({
+      formatShown: !document
+        .getElementById("profileAudioFormatContainer")
+        .classList.contains("hidden"),
+      summary: document.getElementById("downloadOutputSummary").textContent,
+    }));
+    assert.equal(audio.formatShown, true);
+    assert.match(audio.summary, /audio/i);
+    assert.equal(settingsOnDisk().audioOnly, true);
+
+    await clickById("profileCustomBtn");
+    await waitForSavedSetting("downloadMode", "custom", "Custom was not saved");
+    assert.equal(
+      await browser.execute(() =>
+        document.getElementById("formatOptions").classList.contains("visible"),
+      ),
+      true,
+      "Custom did not reveal the format pickers",
+    );
+
+    await clickById("profileCompatibleBtn");
+    await waitForSavedSetting(
+      "downloadMode",
+      "compatible",
+      "Compatible was not saved",
+    );
+    const restored = await browser.execute(() => ({
+      formats: document
+        .getElementById("formatOptions")
+        .classList.contains("visible"),
+      saved: true,
+    }));
+    assert.equal(restored.formats, false);
+    assert.equal(settingsOnDisk().bestQuality, false);
+
+    // Saved presets live behind a menu button and close on Escape.
+    await clickById("presetMenuBtn");
+    const opened = await browser.execute(() => ({
+      open: !document.getElementById("presetPopover").hidden,
+      expanded: document
+        .getElementById("presetMenuBtn")
+        .getAttribute("aria-expanded"),
+      focusInside: document
+        .getElementById("presetPopover")
+        .contains(document.activeElement),
+    }));
+    assert.deepEqual(opened, {
+      open: true,
+      expanded: "true",
+      focusInside: true,
+    });
+    await pressKey("#presetNameInput", { key: "Escape" });
+    const closed = await browser.execute(() => ({
+      open: !document.getElementById("presetPopover").hidden,
+      focus: document.activeElement?.id ?? null,
+    }));
+    assert.deepEqual(closed, { open: false, focus: "presetMenuBtn" });
+
+    record("download-profiles", {
+      migratedMode: loaded.downloadMode,
+      selected: card.selected,
+    });
+  });
+
+  it("lays out settings as equal-width rows with in-row help", async () => {
+    await clickById("settingsBtn");
+    await browser.waitUntil(
+      async () =>
+        browser.execute(() =>
+          document.getElementById("sidebar")?.classList.contains("open"),
+        ),
+      { timeout: 10_000, timeoutMsg: "sidebar did not open" },
+    );
+    await settle();
+    const layout = await browser.execute(() => {
+      const sections = [...document.querySelectorAll(".settings-section")];
+      return {
+        sections: sections.map((section) => {
+          const widths = [...section.querySelectorAll(".setting-row")]
+            .filter((row) => row.offsetParent !== null)
+            .map((row) => Math.round(row.getBoundingClientRect().width));
+          return {
+            title: section.querySelector(".settings-section-title")
+              ?.textContent,
+            widths,
+            resetInHead: Boolean(
+              section.querySelector(
+                ".settings-section-head > .settings-section-reset",
+              ),
+            ),
+          };
+        }),
+        helpInsideRow: [...document.querySelectorAll(".help-icon")].every(
+          (help) => {
+            const row = help.closest(".setting-row");
+            if (!row) return false;
+            const outer = row.getBoundingClientRect();
+            const inner = help.getBoundingClientRect();
+            return inner.left >= outer.left && inner.right <= outer.right;
+          },
+        ),
+      };
+    });
+    for (const section of layout.sections) {
+      assert.ok(section.widths.length > 0, `${section.title} has no rows`);
+      const spread = Math.max(...section.widths) - Math.min(...section.widths);
+      assert.ok(
+        spread <= 1,
+        `${section.title} rows differ in width: ${section.widths.join(", ")}`,
+      );
+      assert.equal(section.resetInHead, true, `${section.title} reset`);
+    }
+    assert.equal(
+      layout.helpInsideRow,
+      true,
+      "a help badge sits outside its row",
+    );
+    await clickById("closeSidebar");
+    await browser.waitUntil(
+      async () =>
+        browser.execute(
+          () => !document.getElementById("sidebar")?.classList.contains("open"),
+        ),
+      { timeout: 10_000, timeoutMsg: "sidebar did not close" },
+    );
+    record("settings-layout", {
+      sections: layout.sections.map((section) => section.title),
+    });
+  });
+
+  it("drops every raised shadow in Flat UI and restores them", async () => {
+    const selectors = [
+      "#addToQueueBtn",
+      "#changeDownloadFolderBtn",
+      "#settingsBtn",
+      '.download-profile-btn[aria-pressed="true"]',
+      ".download-card",
+      "#dock",
+    ];
+    const raised = await boxShadows(selectors);
+    for (const selector of selectors) {
+      assert.notEqual(raised[selector], "none", `${selector} is not raised`);
+    }
+    await setControlValue("flatUiToggle", true);
+    await waitForSavedSetting("flatUi", true, "Flat UI was not saved");
+    await settle();
+    const flat = await boxShadows(selectors);
+    assert.equal(
+      await browser.execute(() => document.documentElement.dataset.flatUi),
+      "true",
+    );
+    for (const selector of selectors) {
+      assert.equal(
+        flat[selector],
+        "none",
+        `${selector} kept a shadow in Flat UI`,
+      );
+    }
+    await setControlValue("flatUiToggle", false);
+    await waitForSavedSetting("flatUi", false, "Flat UI off was not saved");
+    await settle();
+    const back = await boxShadows(selectors);
+    for (const selector of selectors) {
+      assert.notEqual(back[selector], "none", `${selector} did not come back`);
+    }
+    record("flat-ui-tokens", { checked: selectors.length });
   });
 
   it("rejects private-network and non-http URLs in the backend", async () => {
@@ -620,7 +986,6 @@ describe("ROSI main window", () => {
     const started = await api("downloadVideo", {
       url,
       outputPath: DOWNLOADS,
-      profileEnabled: true,
       profile: "best-video",
     });
     assert.equal(started.ok, true);
@@ -760,6 +1125,81 @@ describe("ROSI main window", () => {
     });
   });
 
+  it("switches Queue, Activity, and Console in one dock and remembers the tab", async () => {
+    await browser.execute(() => window.rosiModules.dock.selectTab("queue"));
+    let state = await dockState();
+    assert.deepEqual(state.selected, ["queue"]);
+    assert.deepEqual(state.visiblePanels, ["queueSection"]);
+
+    // Roving focus: arrows wrap, Home/End jump, selection follows focus.
+    await pressKey("#dockTabQueue", { key: "ArrowRight" });
+    state = await dockState();
+    assert.deepEqual(state.selected, ["activity"]);
+    assert.deepEqual(state.visiblePanels, ["download-history"]);
+    assert.equal(state.focused, "activity");
+    await pressKey("#dockTabActivity", { key: "End" });
+    assert.deepEqual((await dockState()).visiblePanels, ["console-section"]);
+    await pressKey("#dockTabConsole", { key: "Home" });
+    assert.deepEqual((await dockState()).selected, ["queue"]);
+    await pressKey("#dockTabQueue", { key: "ArrowLeft" });
+    assert.deepEqual((await dockState()).selected, ["console"]);
+
+    // Alt+2 from anywhere shows Activity.
+    await pressKey("#url", { key: "2", code: "Digit2", altKey: true });
+    state = await dockState();
+    assert.deepEqual(state.selected, ["activity"]);
+    await waitForSavedSetting("dockTab", "activity", "dock tab was not saved");
+
+    await clickById("dockCollapseBtn");
+    assert.equal((await dockState()).collapsed, true);
+    await waitForSavedSetting("dockCollapsed", true, "collapse was not saved");
+    await clickById("dockTabActivity");
+    assert.equal((await dockState()).collapsed, false);
+    await waitForSavedSetting("dockCollapsed", false, "expand was not saved");
+
+    // Several links pasted into the card go to the queue, which comes to front.
+    await api("clearQueue");
+    await typeUrl(`${MEDIA}/clip-one.mp4?dock=1 ${MEDIA}/clip-two.mp4?dock=1`);
+    await browser.waitUntil(
+      async () =>
+        browser.execute(() =>
+          document
+            .getElementById("downloadBtn")
+            ?.textContent.includes("Add 2 to Queue"),
+        ),
+      { timeout: 10_000, timeoutMsg: "batch links were not detected" },
+    );
+    await clickById("downloadBtn");
+    await browser.waitUntil(
+      async () => (await dockState()).selected[0] === "queue",
+      { timeout: 10_000, timeoutMsg: "queue tab did not come to front" },
+    );
+    assert.equal(
+      await browser.execute(
+        () => document.getElementById("queueCount").textContent,
+      ),
+      "2",
+    );
+    await api("clearQueue");
+    await browser.execute(() => window.rosiModules.dock.selectTab("activity"));
+    await waitForSavedSetting("dockTab", "activity", "dock tab was not saved");
+
+    await reloadRenderer();
+    await browser.waitUntil(
+      async () => (await dockState()).selected[0] === "activity",
+      { timeout: 15_000, timeoutMsg: "dock tab was not restored after reload" },
+    );
+    state = await dockState();
+    assert.deepEqual(state.visiblePanels, ["download-history"]);
+    await browser.execute(() => window.rosiModules.dock.selectTab("queue"));
+    await waitForSavedSetting(
+      "dockTab",
+      "queue",
+      "dock tab reset was not saved",
+    );
+    record("dock-tabs", { restored: "activity" });
+  });
+
   it("blocks webview reload, print, and page context menus", async () => {
     const result = await browser.execute(() => {
       const key = (init) => {
@@ -869,6 +1309,9 @@ describe("ROSI main window", () => {
           rect.bottom <= window.innerHeight + 1
         );
       };
+      // Only the stage scrolls; the window chrome (header, tabs, footer) stays put.
+      const pageScrolls = () =>
+        document.scrollingElement.scrollHeight > window.innerHeight + 1;
       (async () => {
         const before = window.innerHeight;
         await win.setSize(new LogicalSize(900, 560));
@@ -878,11 +1321,14 @@ describe("ROSI main window", () => {
           viewportHeight: window.innerHeight,
           resized: window.innerHeight !== before,
           downloadButton: reachable("#downloadBtn"),
+          dockTabs: reachable("#dockTabQueue"),
           footer: reachable(".main-footer"),
+          pageScrolls: pageScrolls(),
         };
         window.scrollTo(0, 0);
         await win.setSize(new LogicalSize(1200, 900));
         await settle();
+        out.pageScrollsLarge = pageScrolls();
         return out;
       })().then(
         (value) => done(JSON.stringify(value)),
@@ -896,7 +1342,10 @@ describe("ROSI main window", () => {
       assert.ok(sizes.viewportHeight <= 560, `560px window refused: ${result}`);
     }
     assert.equal(sizes.downloadButton, true, "download button unreachable");
+    assert.equal(sizes.dockTabs, true, "dock tabs unreachable");
     assert.equal(sizes.footer, true, "footer unreachable");
+    assert.equal(sizes.pageScrolls, false, "the page scrolls at 900x560");
+    assert.equal(sizes.pageScrollsLarge, false, "the page scrolls at 1200x900");
     record("small-window", sizes);
   });
 
@@ -913,22 +1362,7 @@ describe("ROSI main window", () => {
         "firefox",
       { timeout: 10_000, timeoutMsg: "browserChoice was not saved" },
     );
-    // Defer the reload: WebView2 tears down the script context before the
-    // embedded WebDriver can answer a synchronous execute that navigates.
-    await browser.execute(() => {
-      window.__ROSI_E2E__.ready = false;
-      window.setTimeout(() => window.location.reload(), 50);
-    });
-    await browser.waitUntil(
-      async () =>
-        browser.execute(
-          () => Boolean(window.__ROSI_E2E__?.ready) && Boolean(window.api),
-        ),
-      {
-        timeout: 60_000,
-        timeoutMsg: "renderer did not come back after reload",
-      },
-    );
+    await reloadRenderer();
     // The select shows the built-in default until saved settings load.
     let shown = null;
     await browser.waitUntil(
@@ -995,6 +1429,85 @@ describe("ROSI main window", () => {
       rejectedEscape: true,
       file: path.basename(entry.outputPath),
     });
+  });
+
+  it("captures the key UI states as screenshots", async () => {
+    assert.ok(SCREENSHOT_DIR, "ROSI_E2E_SCREENSHOTS is not set");
+    fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+    const shots = [];
+    const shoot = async (name) => {
+      await settle();
+      const file = path.join(SCREENSHOT_DIR, `${name}.png`);
+      await browser.saveScreenshot(file);
+      const bytes = fs.statSync(file).size;
+      assert.ok(bytes > 1000, `${name} screenshot is empty`);
+      shots.push({
+        name,
+        file: path.basename(file),
+        sha256: sha256File(file),
+        bytes,
+      });
+    };
+    const selectDock = (tab) =>
+      browser.execute((name) => window.rosiModules.dock.selectTab(name), tab);
+
+    await resizeWindow(1200, 900);
+    await typeUrl("");
+    await setControlValue("themeSelect", "dark");
+    await waitForSavedSetting("theme", "dark", "dark theme was not saved");
+    await selectDock("activity");
+    await shoot("default-dark");
+
+    await clickById("profileBestVideoBtn");
+    await shoot("profile-best-video");
+    await clickById("profileAudioBtn");
+    await shoot("profile-audio");
+    await clickById("profileCustomBtn");
+    await shoot("profile-custom");
+    await clickById("profileCompatibleBtn");
+    await waitForSavedSetting("downloadMode", "compatible", "profile reset");
+
+    await clickById("presetMenuBtn");
+    await shoot("presets-popover");
+    await pressKey("#presetNameInput", { key: "Escape" });
+
+    await selectDock("queue");
+    await shoot("dock-queue");
+    await selectDock("console");
+    await shoot("dock-console");
+    await selectDock("activity");
+
+    await clickById("settingsBtn");
+    await shoot("settings-open");
+    await clickById("closeSidebar");
+
+    await setControlValue("flatUiToggle", true);
+    await waitForSavedSetting("flatUi", true, "Flat UI was not saved");
+    await shoot("flat-ui");
+    await setControlValue("flatUiToggle", false);
+    await waitForSavedSetting("flatUi", false, "Flat UI off was not saved");
+
+    await setControlValue("themeSelect", "light");
+    await waitForSavedSetting("theme", "light", "light theme was not saved");
+    await shoot("theme-light");
+    await setControlValue("themeSelect", "purple");
+    await waitForSavedSetting("theme", "purple", "purple theme was not saved");
+    await shoot("theme-purple");
+    await setControlValue("themeSelect", "dark");
+    await waitForSavedSetting("theme", "dark", "dark theme was not restored");
+
+    await resizeWindow(900, 560);
+    await shoot("compact-900x560");
+    await resizeWindow(1200, 900);
+    await selectDock("queue");
+    await setControlValue("themeSelect", "system");
+    await waitForSavedSetting(
+      "theme",
+      "system",
+      "system theme was not restored",
+    );
+
+    record("ui-screenshots", { directory: SCREENSHOT_DIR, shots });
   });
 
   it("records lifetime statistics", async () => {

@@ -17,10 +17,9 @@ pub fn default_settings() -> Settings {
         settings_version: CURRENT_SETTINGS_VERSION,
         theme: "system".into(),
         show_console_output: false,
-        console_collapsed: false,
-        queue_collapsed: false,
-        download_profiles_enabled: false,
-        download_mode: "best-video".into(),
+        dock_tab: "queue".into(),
+        dock_collapsed: false,
+        download_mode: "compatible".into(),
         download_presets: Vec::new(),
         ask_download_location: false,
         advanced_options: false,
@@ -142,8 +141,22 @@ fn infer_download_mode(raw: &Map<String, Value>) -> &'static str {
     } else if raw.get("advancedOptions").and_then(Value::as_bool) == Some(true) {
         "custom"
     } else {
-        "best-video"
+        "compatible"
     }
+}
+
+/// Earlier builds hid profiles behind `downloadProfilesEnabled`; with it off,
+/// downloads used the compatible format whatever `downloadMode` said.
+fn read_download_mode(raw: &Map<String, Value>) -> String {
+    if raw.get("downloadProfilesEnabled").and_then(Value::as_bool) == Some(false) {
+        return "compatible".into();
+    }
+    read_choice(
+        raw,
+        "downloadMode",
+        ALLOWED_DOWNLOAD_PROFILES,
+        infer_download_mode(raw),
+    )
 }
 
 fn sanitize_preset_name(
@@ -303,7 +316,6 @@ pub fn sanitize_download_presets(value: Option<&Value>) -> Vec<DownloadPreset> {
 /// so request/on-screen values keep precedence.
 pub fn preset_to_request_options(preset: &DownloadPreset) -> Map<String, Value> {
     let options = DownloadRequestOptions {
-        profile_enabled: Some(true),
         profile: Some(preset.profile.clone()),
         preset_id: Some(preset.id.clone()),
         preset_name: Some(preset.name.clone()),
@@ -346,33 +358,18 @@ pub fn migrate_settings(raw: &Value) -> Settings {
     let Some(raw) = raw.as_object() else {
         return defaults;
     };
-    let download_profiles_enabled = read_bool(
-        raw,
-        "downloadProfilesEnabled",
-        defaults.download_profiles_enabled,
+    let download_mode = read_download_mode(raw);
+    let (advanced_options, audio_only, best_quality) = (
+        download_mode == "custom",
+        download_mode == "audio",
+        download_mode == "best-video",
     );
-    let download_mode = read_choice(
-        raw,
-        "downloadMode",
-        ALLOWED_DOWNLOAD_PROFILES,
-        infer_download_mode(raw),
-    );
-    let (advanced_options, audio_only, best_quality) = if download_profiles_enabled {
-        (
-            download_mode == "custom",
-            download_mode == "audio",
-            download_mode == "best-video",
-        )
-    } else {
-        (false, false, false)
-    };
     Settings {
         settings_version: read_settings_version(raw),
         theme: read_choice(raw, "theme", ALLOWED_THEMES, &defaults.theme),
         show_console_output: read_bool(raw, "showConsoleOutput", defaults.show_console_output),
-        console_collapsed: read_bool(raw, "consoleCollapsed", defaults.console_collapsed),
-        queue_collapsed: read_bool(raw, "queueCollapsed", defaults.queue_collapsed),
-        download_profiles_enabled,
+        dock_tab: read_choice(raw, "dockTab", ALLOWED_DOCK_TABS, &defaults.dock_tab),
+        dock_collapsed: read_bool(raw, "dockCollapsed", defaults.dock_collapsed),
         download_mode,
         download_presets: sanitize_download_presets(raw.get("downloadPresets")),
         ask_download_location: read_bool(

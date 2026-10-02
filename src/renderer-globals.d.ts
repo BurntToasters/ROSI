@@ -56,7 +56,7 @@ interface RosiDownloadCompletion {
   outcome: 'success' | 'failed' | 'cancelled';
   statusMessage: string;
   url: string;
-  profile?: 'best-video' | 'audio' | 'custom';
+  profile?: 'compatible' | 'best-video' | 'audio' | 'custom';
   presetId?: string;
   presetName?: string;
   request: Record<string, unknown>;
@@ -238,8 +238,24 @@ interface RosiUpdatesModule {
   isPrereleaseVersion: (version: string) => boolean;
 }
 
+type RosiDockTab = 'queue' | 'activity' | 'console';
+
+interface RosiDockModule {
+  initDock: (options?: {
+    initialTab?: string;
+    collapsed?: boolean;
+    onChange?: (state: { tab: RosiDockTab; collapsed: boolean }) => void;
+  }) => void;
+  selectTab: (tab: string, options?: { focus?: boolean }) => void;
+  markUnseen: (tab: string) => void;
+  setTabAvailable: (tab: string, available: boolean) => void;
+  setCollapsed: (collapsed: boolean) => void;
+  getState: () => { tab: RosiDockTab; collapsed: boolean };
+}
+
 interface RosiModules {
   ui?: RosiUiModule;
+  dock?: RosiDockModule;
   downloads?: RosiDownloadsModule;
   queue?: RosiQueueModule;
   settings?: RosiSettingsModule;

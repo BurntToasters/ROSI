@@ -21,7 +21,8 @@ pub const ALLOWED_BROWSERS: &[&str] = &[
 pub const ALLOWED_GPU_TYPES: &[&str] = &["auto", "nvidia", "amd", "intel"];
 pub const ALLOWED_UPDATE_CHANNELS: &[&str] = &["auto", "stable", "beta"];
 pub const ALLOWED_THEMES: &[&str] = &["system", "light", "dark", "purple"];
-pub const ALLOWED_DOWNLOAD_PROFILES: &[&str] = &["best-video", "audio", "custom"];
+pub const ALLOWED_DOWNLOAD_PROFILES: &[&str] = &["compatible", "best-video", "audio", "custom"];
+pub const ALLOWED_DOCK_TABS: &[&str] = &["queue", "activity", "console"];
 
 pub const MAX_QUEUE_SIZE: usize = 500;
 pub const MAX_DOWNLOAD_PRESETS: usize = 20;

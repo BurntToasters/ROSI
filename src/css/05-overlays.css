@@ -22,24 +22,22 @@
   opacity: 1;
 }
 
-.modal-overlay.showing {
-  opacity: 0;
-}
-
+.modal-overlay.showing,
 .modal-overlay.hiding {
   opacity: 0;
 }
 
 .modal-box {
   width: 90%;
-  max-width: var(--modal-max-width);
-  padding: var(--spacing-xl);
-  background: color-mix(in srgb, var(--modal-bg-start) 65%, transparent);
+  max-width: 480px;
+  padding: 1.6rem 1.6rem 1.3rem;
+  background: color-mix(in srgb, var(--modal-bg-start) 80%, transparent);
   -webkit-backdrop-filter: blur(var(--blur-lg));
   backdrop-filter: blur(var(--blur-lg));
   border: 1px solid var(--border-default);
   border-radius: var(--radius-xl);
   box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
     var(--shadow-lg),
     0 16px 48px rgba(0, 0, 0, 0.4);
   transform: scale(1) translateY(0);
@@ -47,6 +45,11 @@
   transition:
     transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
     opacity 0.2s ease;
+}
+
+:root[data-flat-ui='true'] .modal-box {
+  background: var(--modal-bg-start);
+  box-shadow: none;
 }
 
 .modal-overlay.showing .modal-box {
@@ -60,17 +63,17 @@
 }
 
 .modal-box h3 {
+  margin-bottom: 0.6rem;
   font-size: var(--text-lg);
-  font-weight: var(--weight-semibold);
-  margin-bottom: var(--spacing-md);
+  font-weight: var(--weight-bold);
   text-align: center;
 }
 
 .modal-message {
+  margin-bottom: 1.4rem;
+  line-height: 1.65;
   color: var(--text-secondary);
   text-align: center;
-  margin-bottom: var(--spacing-xl);
-  line-height: 1.7;
   white-space: pre-line;
 }
 
@@ -80,132 +83,70 @@
 
 .modal-buttons {
   display: flex;
-  gap: var(--spacing-md);
-  justify-content: center;
   flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--spacing-sm);
 }
 
-.modal-buttons button {
-  min-width: 100px;
-  padding: var(--spacing-sm) var(--spacing-lg);
-  background: var(--button-neutral-bg);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-  cursor: pointer;
-  transition: var(--button-transition);
-  box-shadow: var(--button-neutral-shadow);
+.modal-buttons .btn {
+  --btn-h: 38px;
+  --btn-px: 1.2rem;
+  --btn-fs: var(--text-base);
+  --btn-radius: var(--radius-md);
+  min-width: 104px;
 }
 
-.modal-buttons button:hover {
-  background: var(--button-neutral-bg-hover);
-  border-color: var(--border-strong);
-  color: var(--text-primary);
-  transform: var(--button-lift);
-  box-shadow: var(--button-neutral-shadow-hover);
-}
-
-.modal-buttons button:active {
-  transform: var(--button-press);
-  box-shadow: var(--button-active-shadow);
-}
-
-.modal-buttons .modal-btn-primary {
-  background: var(--button-primary-bg);
-  border-color: var(--accent-dark);
-  color: var(--accent-contrast);
-  box-shadow: var(--button-primary-shadow);
-}
-
-.modal-buttons .modal-btn-primary:hover {
-  background: var(--button-primary-bg-hover);
-  border-color: var(--accent-hover);
-  box-shadow: var(--button-primary-shadow-hover);
-}
-
-.modal-buttons .modal-btn-danger {
-  background: var(--button-danger-bg);
-  border-color: rgba(239, 68, 68, 0.3);
-  color: var(--danger);
-  box-shadow: var(--button-danger-shadow);
-}
-
-.modal-buttons .modal-btn-danger:hover {
-  background: var(--button-danger-bg-hover);
-  border-color: var(--danger);
-  color: var(--danger-contrast);
-  box-shadow: var(--button-danger-shadow-hover);
-}
-
+/* ── Licenses ── */
 .licenses-container {
+  display: flex;
+  flex-direction: column;
   width: 90%;
   max-width: var(--licenses-max-width);
   height: 80vh;
+  overflow: hidden;
   background: var(--modal-bg-start);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
 }
 
 .licenses-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--spacing-lg) var(--spacing-xl);
+  padding: 1rem 1.25rem;
   border-bottom: 1px solid var(--border-subtle);
 }
 
 .licenses-header h3 {
+  margin: 0;
   font-size: 1.1rem;
   font-weight: var(--weight-semibold);
-  margin: 0;
 }
 
 .modal-close-btn {
-  width: var(--icon-btn-size-sm);
-  height: var(--icon-btn-size-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--button-neutral-bg);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: var(--button-transition);
-  box-shadow: var(--button-neutral-shadow);
-}
-
-.modal-close-btn:hover {
-  background: var(--button-danger-bg);
-  border-color: var(--danger);
-  color: var(--danger);
-  transform: var(--button-lift);
-  box-shadow: var(--button-danger-shadow);
+  --btn-h: var(--icon-btn-size-sm);
+  --btn-radius: var(--radius-md);
 }
 
 .licenses-container iframe {
   flex: 1;
   width: 100%;
-  border: none;
   background: transparent;
+  border: none;
 }
 
+/* ── Update progress ── */
 .update-progress-container {
   margin: var(--spacing-md) 0;
 }
 
 .update-progress-bar-wrapper {
   height: 6px;
+  margin-bottom: var(--spacing-sm);
+  overflow: hidden;
   background: var(--surface-2);
   border-radius: 3px;
-  overflow: hidden;
-  margin-bottom: var(--spacing-sm);
 }
 
 .update-progress-bar {
@@ -223,13 +164,14 @@
 
 .update-banner {
   position: fixed;
-  bottom: 0;
   left: 0;
   right: 0;
-  background: var(--surface-1);
-  border-top: 1px solid var(--border-subtle);
-  padding: var(--spacing-sm) var(--spacing-xl);
+  bottom: 0;
   z-index: var(--z-update-banner);
+  padding: var(--spacing-sm) var(--spacing-xl);
+  background: var(--modal-bg-start);
+  border-top: 1px solid var(--border-default);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.2);
   transform: translateY(100%);
   transition: transform 0.3s ease;
   pointer-events: none;
@@ -248,26 +190,26 @@
 
 .update-banner-text {
   font-size: 0.85rem;
+  font-weight: var(--weight-medium);
   color: var(--text-secondary);
   white-space: nowrap;
-  font-weight: var(--weight-medium);
 }
 
 .update-banner-progress {
   flex: 1;
+  min-width: 80px;
   height: 4px;
+  overflow: hidden;
   background: var(--surface-2);
   border-radius: 2px;
-  overflow: hidden;
-  min-width: 80px;
 }
 
 .update-banner-bar {
+  width: 0%;
   height: 100%;
   background: var(--success);
   border-radius: 2px;
   transition: width 0.3s ease;
-  width: 0%;
 }
 
 .update-banner-info {
@@ -276,75 +218,61 @@
   white-space: nowrap;
 }
 
-.update-banner-cancel {
-  background: var(--button-neutral-bg);
-  border: 1px solid var(--border-default);
-  color: var(--text-secondary);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: var(--button-transition);
-  box-shadow: var(--button-neutral-shadow);
-}
-
-.update-banner-cancel:hover {
-  background: var(--button-danger-bg);
-  border-color: var(--danger);
-  color: var(--danger);
-  transform: var(--button-lift);
-  box-shadow: var(--button-danger-shadow);
-}
-
+/* ── Toasts ── */
 .toast-container {
   position: fixed;
-  bottom: var(--spacing-xl);
   right: var(--spacing-xl);
+  bottom: calc(var(--footer-height) + var(--spacing-md));
+  z-index: 1001;
   display: flex;
   flex-direction: column-reverse;
   gap: var(--spacing-sm);
-  z-index: 1001;
   pointer-events: none;
 }
 
 .toast-container-assertive {
-  bottom: calc(var(--spacing-xl) + 80px);
+  bottom: calc(var(--footer-height) + var(--spacing-md) + 80px);
 }
 
 .toast {
-  pointer-events: auto;
   display: flex;
   align-items: center;
-  gap: var(--spacing-md);
-  padding: var(--spacing-md) var(--spacing-lg);
-  background: color-mix(in srgb, var(--surface-2) 65%, transparent);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
+  gap: 0.75rem;
+  min-width: 240px;
+  max-width: 380px;
+  padding: 0.75rem 0.85rem 0.75rem 1rem;
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--modal-bg-start) 88%, transparent);
   -webkit-backdrop-filter: blur(var(--blur-lg));
   backdrop-filter: blur(var(--blur-lg));
+  border: 1px solid var(--border-default);
+  border-radius: calc(var(--radius-md) + 2px);
   box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
     var(--shadow-md),
-    0 8px 24px rgba(0, 0, 0, 0.2);
-  color: var(--text-primary);
-  font-size: var(--text-base);
-  max-width: 380px;
-  min-width: 240px;
-  transform: translateX(calc(100% + var(--spacing-xl)));
+    0 8px 24px rgba(0, 0, 0, 0.25);
   opacity: 0;
+  transform: translateX(calc(100% + var(--spacing-xl)));
   transition:
     transform var(--transition-springy),
     opacity var(--transition-normal);
+  pointer-events: auto;
+}
+
+:root[data-flat-ui='true'] .toast {
+  background: var(--modal-bg-start);
+  box-shadow: none;
 }
 
 .toast.visible {
-  transform: translateX(0);
   opacity: 1;
+  transform: translateX(0);
 }
 
 .toast.hiding {
-  transform: translateX(calc(100% + var(--spacing-xl)));
   opacity: 0;
+  transform: translateX(calc(100% + var(--spacing-xl)));
 }
 
 .toast-icon {
@@ -359,32 +287,7 @@
 }
 
 .toast-dismiss {
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 0;
-  border-radius: var(--radius-sm);
-  transition: var(--transition-fast);
-}
-
-.toast-dismiss:hover {
-  color: var(--text-primary);
-  background: var(--surface-3);
-}
-
-.toast-dismiss:focus-visible {
-  outline: none;
-  color: var(--text-primary);
-  box-shadow:
-    0 0 0 2px var(--accent-subtle),
-    0 0 0 4px var(--accent);
+  --btn-h: 24px;
 }
 
 .toast-warning {
@@ -419,6 +322,7 @@
   color: var(--accent-light);
 }
 
+/* ── Utilities ── */
 .hidden {
   display: none !important;
 }
@@ -439,34 +343,6 @@
   outline-offset: 2px;
 }
 
-.icon-btn:focus-visible,
-.download-btn:focus-visible,
-.settings-btn:focus-visible,
-.reset-btn:focus-visible,
-.modal-buttons button:focus-visible,
-.fetch-formats-btn:focus-visible,
-.settings-link-btn:focus-visible,
-.update-banner-cancel:focus-visible,
-.modal-close-btn:focus-visible,
-.sidebar-close:focus-visible,
-.console-clear-btn:focus-visible,
-.clear-btn:focus-visible,
-.preview-btn:focus-visible,
-.paste-btn:focus-visible,
-.queue-action-btn:focus-visible,
-.queue-collapse-btn:focus-visible,
-.history-open-btn:focus-visible,
-.history-collapse-btn:focus-visible,
-.console-collapse-btn:focus-visible,
-.wizard-btn:focus-visible,
-.history-clear-btn:focus-visible {
-  outline: 2px solid var(--accent);
+.skip-link:focus-visible {
   outline-offset: 2px;
-  box-shadow: 0 0 0 4px var(--accent-subtle);
-}
-
-.toggle-switch:focus-within {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  box-shadow: 0 0 0 4px var(--accent-subtle);
 }
