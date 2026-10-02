@@ -146,12 +146,14 @@ if (fs.existsSync(tauriConfPath)) {
     fail("tauri.conf.json identifier must be run.rosie.rosi");
   }
   const linux = tauriConf.bundle?.linux ?? {};
-  for (const kind of ["deb", "rpm"]) {
-    if (linux[kind]?.desktopTemplate !== "linux/desktop-template.hbs") {
-      fail(
-        `bundle.linux.${kind}.desktopTemplate must be linux/desktop-template.hbs`,
-      );
-    }
+  if (linux.appimage?.bundleMediaFramework !== false) {
+    fail("bundle.linux.appimage.bundleMediaFramework must be false");
+  }
+  if (
+    tauriConf.bundle?.targets?.includes("deb") ||
+    tauriConf.bundle?.targets?.includes("rpm")
+  ) {
+    fail("bundle.targets must not include retired DEB/RPM targets");
   }
   const externalBin = tauriConf.bundle?.externalBin ?? [];
   for (const sidecar of ["rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"]) {

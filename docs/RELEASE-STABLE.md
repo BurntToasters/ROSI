@@ -149,9 +149,8 @@ npm run release:mac
 npm run release:linux
 ```
 
-Run `release:linux:arm64` only on the supported ARM64 release environment when
-that artifact is part of the release. Do not use beta recovery overrides for a
-stable release.
+Linux ARM64 wiring is retained for future development but is not part of the
+v5 release matrix. Do not use beta recovery overrides for a stable release.
 
 The platform release commands intentionally skip GUI E2E on the signing VM.
 That is acceptable only because step 4 and protected CI already proved the
@@ -162,7 +161,7 @@ exact stable commit with E2E enabled.
 Before publishing, install each signed artifact on its platform and verify:
 launch, a real download, an FFmpeg conversion, the queue, notifications, the
 updater (stable and beta channels), macOS notarization and sidecar signatures,
-and Linux desktop integration (AppImage/DEB/RPM/Flatpak launchers).
+and Linux desktop integration (AppImage/Flatpak launchers).
 
 Fix and rebuild any failing artifact. Do not publish a draft that has not
 passed this matrix.

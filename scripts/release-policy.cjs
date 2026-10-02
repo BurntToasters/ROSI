@@ -12,10 +12,6 @@ const STABLE_FORBIDDEN_ENV = [
   "ROSI_ALLOW_STUB_SIDECARS",
 ];
 
-// Stable must keep the Linux x64 deb/rpm/AppImage completeness assertion;
-// only explicit disabling (ENFORCE_*=0/false) is refused, opt-in is fine.
-const STABLE_FORBIDDEN_FALSY_ENV = ["ENFORCE_LINUX_X64_PACKAGE_SET"];
-
 // Stable uploads must target the canonical repository only; env retargeting
 // is a beta-fork recovery path and must not ship a stable feed elsewhere.
 const STABLE_CANONICAL_ENV = {
@@ -52,11 +48,6 @@ function assertStableReleaseOverridesAllowed(
   const blocked = STABLE_FORBIDDEN_ENV.filter((name) =>
     isExplicitTruthy(env[name]),
   );
-  for (const name of STABLE_FORBIDDEN_FALSY_ENV) {
-    if (env[name] !== undefined && isExplicitFalsy(env[name])) {
-      blocked.push(name);
-    }
-  }
   if (blocked.length > 0) {
     throw new Error(
       `Stable release ${version} refuses ${blocked.join(", ")}. Those overrides are beta recovery paths only.`,
@@ -96,7 +87,6 @@ if (require.main === module) {
 
 module.exports = {
   STABLE_FORBIDDEN_ENV,
-  STABLE_FORBIDDEN_FALSY_ENV,
   isExplicitFalsy,
   isExplicitTruthy,
   isStableReleaseVersion,
