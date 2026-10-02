@@ -125,6 +125,10 @@
   --npm-error: #dc2626;
 }
 
+html {
+  overscroll-behavior: none;
+}
+
 body {
   margin: 0;
   padding: 0;
@@ -137,6 +141,7 @@ body {
   align-items: center;
   justify-content: flex-start;
   overflow-x: hidden;
+  overscroll-behavior: none;
 }
 
 .container {

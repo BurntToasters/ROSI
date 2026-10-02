@@ -4,6 +4,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   cancelUpdateDownload,
   checkForUpdates,
@@ -88,6 +89,11 @@ const api: RosiRendererApi = {
   clearDownloadActivity: () => invoke('clear_download_activity'),
   onDownloadActivityUpdate: (callback) => subscribe('download-activity-update', callback),
   logError: (message) => fire('log_error', { message }),
+  setWindowTheme: (theme) => {
+    getCurrentWindow()
+      .setTheme(theme)
+      .catch((error: unknown) => reportBridgeError('setTheme', error));
+  },
   notifySettingsFlushed: () => fire('notify_settings_flushed'),
   addToQueue: (urls, options) => invoke('add_to_queue', { urls, options: options ?? null }),
   removeFromQueue: (id) => invoke('remove_from_queue', { id }),

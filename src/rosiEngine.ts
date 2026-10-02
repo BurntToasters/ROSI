@@ -219,6 +219,12 @@ function syncLicensesTheme(theme: ThemeName) {
   }
 }
 
+// Pin the native title bar to the rendered theme rather than the system
+// appearance, so a dark page never sits under a light bar.
+function syncWindowTheme(theme: ThemeName) {
+  window.api?.setWindowTheme?.(theme === 'light' ? 'light' : 'dark');
+}
+
 function teardownSystemThemeListener() {
   if (!systemThemeMediaQuery || !systemThemeMediaQueryHandler) {
     return;
@@ -249,6 +255,7 @@ function ensureSystemThemeListener() {
     appliedTheme = resolveAppliedTheme('system');
     document.documentElement.dataset.theme = appliedTheme;
     syncLicensesTheme(appliedTheme);
+    syncWindowTheme(appliedTheme);
   };
   if (typeof systemThemeMediaQuery.addEventListener === 'function') {
     systemThemeMediaQuery.addEventListener('change', systemThemeMediaQueryHandler);
@@ -280,6 +287,7 @@ function applyTheme(preference: string) {
   appliedTheme = resolveAppliedTheme(themePreference);
   document.documentElement.dataset.theme = appliedTheme;
   syncLicensesTheme(appliedTheme);
+  syncWindowTheme(appliedTheme);
   try {
     localStorage.setItem('rosi-theme', themePreference);
   } catch {

@@ -249,6 +249,98 @@ async function resizeWindow(width, height) {
   assert.equal(parsed.error, undefined, parsed.error);
 }
 
+/** Native window theme as Tauri reports it ("light", "dark" or null). */
+async function windowTheme() {
+  const result = await browser.executeAsync((done) => {
+    window.__TAURI__.window
+      .getCurrentWindow()
+      .theme()
+      .then(
+        (theme) => done(JSON.stringify({ theme })),
+        (error) => done(JSON.stringify({ error: String(error) })),
+      );
+  });
+  const parsed = JSON.parse(result);
+  assert.equal(parsed.error, undefined, parsed.error);
+  return parsed.theme;
+}
+
+async function waitForWindowTheme(expected, timeoutMsg) {
+  let last = null;
+  await browser.waitUntil(
+    async () => {
+      last = await windowTheme();
+      return last === expected;
+    },
+    {
+      timeout: 10_000,
+      interval: 200,
+      timeoutMsg: `${timeoutMsg}: window theme is ${last}`,
+    },
+  );
+}
+
+/** Computed scroll and glass styles of the sidebar and every scroller. */
+function surfaceStyles() {
+  return browser.execute(() => {
+    // Resolve any CSS color (color-mix included) to its alpha through a canvas.
+    const alpha = (color) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1;
+      canvas.height = 1;
+      const context = canvas.getContext("2d");
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = color;
+      context.fillRect(0, 0, 1, 1);
+      return context.getImageData(0, 0, 1, 1).data[3] / 255;
+    };
+    const style = (selector) => {
+      const element = document.querySelector(selector);
+      return element ? getComputedStyle(element) : null;
+    };
+    const sidebar = style(".sidebar");
+    const content = style(".sidebar-content");
+    const version = document.querySelector(".version-info");
+    const versionRect = version?.getBoundingClientRect();
+    return {
+      overscroll: Object.fromEntries(
+        ["html", "body", ".main-stage", ".sidebar-content", ".dock-scroll"].map(
+          (selector) => [
+            selector,
+            style(selector)?.overscrollBehaviorY ?? "missing",
+          ],
+        ),
+      ),
+      sidebarAlpha: alpha(sidebar.backgroundColor),
+      sidebarFilter:
+        sidebar.backdropFilter || sidebar.webkitBackdropFilter || "none",
+      sidebarMask: content.maskImage || content.webkitMaskImage || "none",
+      versionBottom: versionRect ? versionRect.bottom : null,
+      versionHeight: versionRect ? versionRect.height : 0,
+      viewportHeight: window.innerHeight,
+    };
+  });
+}
+
+/** Open or close the settings sidebar and wait for the slide to finish. */
+async function setSidebarOpen(open) {
+  await clickById(open ? "settingsBtn" : "closeSidebar");
+  await browser.waitUntil(
+    async () =>
+      browser.execute(
+        (want) =>
+          document.getElementById("sidebar")?.classList.contains("open") ===
+          want,
+        open,
+      ),
+    {
+      timeout: 10_000,
+      timeoutMsg: `sidebar did not ${open ? "open" : "close"}`,
+    },
+  );
+  await settle();
+}
+
 /** Computed box-shadow values of the first element matching each selector. */
 function boxShadows(selectors) {
   return browser.execute(
@@ -613,6 +705,109 @@ describe("ROSI main window", () => {
       assert.notEqual(back[selector], "none", `${selector} did not come back`);
     }
     record("flat-ui-tokens", { checked: selectors.length });
+  });
+
+  it("keeps the native title bar on the rendered theme", async () => {
+    const original = settingsOnDisk().theme;
+    const seen = {};
+    for (const [theme, expected] of [
+      ["purple", "dark"],
+      ["light", "light"],
+      ["dark", "dark"],
+    ]) {
+      await setControlValue("themeSelect", theme);
+      await waitForSavedSetting("theme", theme, `${theme} theme was not saved`);
+      await waitForWindowTheme(expected, `${theme} theme left the title bar`);
+      seen[theme] = expected;
+    }
+    await setControlValue("themeSelect", original);
+    await waitForSavedSetting("theme", original, "theme was not restored");
+    record("window-theme", { seen });
+  });
+
+  it("never rubber-bands the page or its scrollers", async () => {
+    const styles = await surfaceStyles();
+    for (const [selector, value] of Object.entries(styles.overscroll)) {
+      assert.equal(
+        value,
+        "none",
+        `${selector} overscroll-behavior is ${value}`,
+      );
+    }
+    await resizeWindow(900, 560);
+    const scroll = await browser.execute(() => {
+      const root = document.scrollingElement;
+      const stage = document.querySelector(".main-stage");
+      // The dock flexes to fit, so force overflow with a temporary spacer.
+      const spacer = document.createElement("div");
+      spacer.style.cssText = "flex: 0 0 2000px";
+      stage.append(spacer);
+      root.scrollTop = 10_000;
+      stage.scrollTop = stage.scrollHeight;
+      const stageBottom = stage.scrollTop;
+      const atBottom = {
+        rootScroll: root.scrollTop,
+        shellTop: document.querySelector(".app-shell").getBoundingClientRect()
+          .top,
+      };
+      const range = {
+        root: root.scrollHeight - root.clientHeight,
+        stage: stage.scrollHeight - stage.clientHeight,
+      };
+      spacer.remove();
+      stage.scrollTop = 0;
+      return {
+        rootRange: range.root,
+        stageRange: range.stage,
+        stageBottom,
+        atBottom,
+      };
+    });
+    await resizeWindow(1200, 900);
+    assert.ok(scroll.rootRange <= 0, `page scrolls by ${scroll.rootRange}px`);
+    assert.equal(scroll.atBottom.rootScroll, 0, "page scrolled as a whole");
+    assert.equal(scroll.atBottom.shellTop, 0, "app shell moved off the top");
+    assert.ok(scroll.stageRange > 0, "spacer did not overflow the main stage");
+    assert.ok(scroll.stageBottom > 0, "main stage stopped scrolling");
+    record("no-overscroll", {
+      scrollers: Object.keys(styles.overscroll),
+      stageRange: scroll.stageRange,
+    });
+  });
+
+  it("frosts the floating sidebar and keeps Flat UI opaque", async () => {
+    await setSidebarOpen(true);
+    const floating = await surfaceStyles();
+    assert.ok(
+      floating.sidebarAlpha < 0.7,
+      `floating sidebar alpha ${floating.sidebarAlpha} is too opaque`,
+    );
+    assert.match(floating.sidebarFilter, /blur\(/);
+    assert.match(floating.sidebarFilter, /saturate\(/);
+    assert.match(floating.sidebarMask, /linear-gradient/);
+    await setSidebarOpen(false);
+
+    await setControlValue("flatUiToggle", true);
+    await waitForSavedSetting("flatUi", true, "Flat UI was not saved");
+    await setSidebarOpen(true);
+    const flat = await surfaceStyles();
+    await setSidebarOpen(false);
+    await setControlValue("flatUiToggle", false);
+    await waitForSavedSetting("flatUi", false, "Flat UI off was not saved");
+
+    assert.equal(flat.sidebarAlpha, 1, "Flat UI sidebar is see-through");
+    assert.equal(flat.sidebarFilter, "none", "Flat UI sidebar still blurs");
+    assert.ok(flat.versionHeight > 0, "version label is not rendered");
+    assert.ok(
+      flat.versionBottom <= flat.viewportHeight,
+      `version label ends at ${flat.versionBottom}, past ${flat.viewportHeight}`,
+    );
+    record("sidebar-glass", {
+      floatingAlpha: Number(floating.sidebarAlpha.toFixed(3)),
+      floatingFilter: floating.sidebarFilter,
+      flatVersionBottom: flat.versionBottom,
+      viewportHeight: flat.viewportHeight,
+    });
   });
 
   it("rejects private-network and non-http URLs in the backend", async () => {
@@ -1493,6 +1688,16 @@ describe("ROSI main window", () => {
     await setControlValue("themeSelect", "purple");
     await waitForSavedSetting("theme", "purple", "purple theme was not saved");
     await shoot("theme-purple");
+    await setSidebarOpen(true);
+    await shoot("settings-floating-purple");
+    await setSidebarOpen(false);
+    await setControlValue("flatUiToggle", true);
+    await waitForSavedSetting("flatUi", true, "Flat UI was not saved");
+    await setSidebarOpen(true);
+    await shoot("settings-flat-purple");
+    await setSidebarOpen(false);
+    await setControlValue("flatUiToggle", false);
+    await waitForSavedSetting("flatUi", false, "Flat UI off was not saved");
     await setControlValue("themeSelect", "dark");
     await waitForSavedSetting("theme", "dark", "dark theme was not restored");
 

@@ -17,7 +17,8 @@
             "wdio:default",
             "process:allow-exit",
             "core:window:allow-close",
-            "core:window:allow-set-size"
+            "core:window:allow-set-size",
+            "core:window:allow-theme"
           ]
         }
       ]

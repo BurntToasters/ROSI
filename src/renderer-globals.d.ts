@@ -125,6 +125,7 @@ interface RosiRendererApi {
   clearDownloadActivity: () => Promise<RosiIpcResult<void>>;
   onDownloadActivityUpdate: (callback: (activity: RosiDownloadActivity[]) => void) => () => void;
   logError: (message: string) => void;
+  setWindowTheme: (theme: 'light' | 'dark') => void;
   notifySettingsFlushed: () => void;
   addToQueue: (
     urls: string[],

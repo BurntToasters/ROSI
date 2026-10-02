@@ -17,6 +17,7 @@
   min-height: 30px;
   height: 30px;
   max-height: 96px;
+  overscroll-behavior: none;
   padding-top: 0.35rem;
   padding-bottom: 0.35rem;
   font-family: var(--font-mono);

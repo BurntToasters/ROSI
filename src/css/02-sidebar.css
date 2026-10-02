@@ -21,9 +21,9 @@
   left: 12px;
   width: min(360px, calc(100vw - 24px));
   height: calc(100vh - 24px);
-  background: color-mix(in srgb, var(--sidebar-bg-start) 72%, transparent);
-  -webkit-backdrop-filter: blur(var(--blur-lg));
-  backdrop-filter: blur(var(--blur-lg));
+  background: color-mix(in srgb, var(--sidebar-bg-start) 62%, transparent);
+  -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(160%);
+  backdrop-filter: blur(var(--blur-lg)) saturate(160%);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   transform: translateX(calc(-100% - 24px));
@@ -51,6 +51,8 @@
   border-radius: 0;
   background: var(--sidebar-bg-start);
   transform: translateX(-100%);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   box-shadow: none;
 }
 
@@ -105,10 +107,27 @@
   color: var(--text-muted);
 }
 
+/* Rows fade out at both scroll edges instead of being cut hard. */
 .sidebar-content {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: none;
   padding: 0.75rem 0.9rem 1rem;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 12px,
+    #000 calc(100% - 20px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 12px,
+    #000 calc(100% - 20px),
+    transparent 100%
+  );
 }
 
 .sidebar-content::-webkit-scrollbar {
@@ -535,6 +554,7 @@
 
 /* ── Footer ── */
 .sidebar-footer {
+  flex-shrink: 0;
   padding: 0.9rem 1.1rem 0.8rem;
   border-top: 1px solid var(--border-subtle);
 }

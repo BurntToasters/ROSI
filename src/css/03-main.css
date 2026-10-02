@@ -20,6 +20,7 @@
   padding: clamp(12px, 3vh, 32px) var(--spacing-md) var(--spacing-md);
   overflow-y: auto;
   overflow-x: hidden;
+  overscroll-behavior: none;
 }
 
 /* ── Top bar ── */
