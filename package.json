@@ -1,6 +1,6 @@
 {
   "name": "rosi",
-  "version": "5.0.0-beta.1",
+  "version": "5.0.0-beta.2",
   "license": "MPL-2.0",
   "private": true,
   "packageManager": "npm@12.0.2",

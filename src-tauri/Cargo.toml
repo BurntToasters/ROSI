@@ -1,6 +1,6 @@
 [package]
 name = "rosi"
-version = "5.0.0-beta.1"
+version = "5.0.0-beta.2"
 description = "Cross-platform yt-dlp GUI built with Tauri."
 license = "MPL-2.0"
 authors = ["BurntToasters <code@rosie.run>"]
