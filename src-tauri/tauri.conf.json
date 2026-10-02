@@ -35,7 +35,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["dmg", "app", "nsis", "appimage", "deb", "rpm"],
+    "targets": ["dmg", "app", "nsis", "appimage"],
     "publisher": "BurntToasters",
     "copyright": "Copyright (c) BurntToasters",
     "category": "Utility",
@@ -87,12 +87,6 @@
     "linux": {
       "appimage": {
         "bundleMediaFramework": false
-      },
-      "deb": {
-        "desktopTemplate": "linux/desktop-template.hbs"
-      },
-      "rpm": {
-        "desktopTemplate": "linux/desktop-template.hbs"
       }
     }
   },

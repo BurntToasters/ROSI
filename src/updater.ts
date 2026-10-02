@@ -69,6 +69,12 @@ async function updateCheckTarget(): Promise<string | undefined> {
   return isBetaVersion(await getVersion()) ? invoke<string>('get_beta_updater_target') : undefined;
 }
 
+async function retiredLinuxPackageMessage(): Promise<string | null> {
+  const installedTarget = await invoke<string>('get_beta_updater_target');
+  if (!/^linux-beta-[a-z0-9_]+-(?:deb|rpm)$/i.test(installedTarget)) return null;
+  return 'DEB and RPM packages are no longer published for ROSI 5. Install the AppImage or Flatpak manually from the latest release to continue receiving updates.';
+}
+
 async function checkFeed(target: string | undefined): Promise<Update | null> {
   const options = { ...(target ? { target } : {}), timeout: UPDATE_CHECK_TIMEOUT_MS };
   try {
@@ -102,6 +108,8 @@ export async function checkForUpdates(): Promise<{ error: string; message?: stri
       error: 'Flatpak builds update through a reinstalled bundle, not the in-app updater.',
     };
   }
+  const retiredPackageMessage = await retiredLinuxPackageMessage();
+  if (retiredPackageMessage) return { error: retiredPackageMessage };
   if (downloading) return null;
   emitStatus({ status: 'checking' });
   try {
