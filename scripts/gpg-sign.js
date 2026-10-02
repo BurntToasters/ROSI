@@ -102,9 +102,6 @@ const REQUIRE_LINUX_AARCH64 = isExplicitTruthy(
 const REQUIRED_UPDATER_TARGETS = (
   process.env.REQUIRED_UPDATER_TARGETS || ""
 ).trim();
-const ENFORCE_LINUX_X64_PACKAGE_SET = !/^(0|false|no|off)$/i.test(
-  String(process.env.ENFORCE_LINUX_X64_PACKAGE_SET || "").trim(),
-);
 
 const ext = (e) => (n) => n.toLowerCase().endsWith(e);
 const rx = (r) => (n) => r.test(n);
@@ -120,8 +117,6 @@ const ARTIFACT_RULES = [
   rx(/^ROSI-Windows-(?:x64|arm64)\.exe$/i),
   ext(".msi"),
   ext(".dmg"),
-  ext(".deb"),
-  ext(".rpm"),
   ext(".flatpak"),
   rx(/\.appimage$/i),
 
@@ -131,7 +126,7 @@ const ARTIFACT_RULES = [
   rx(/\.app\.tar\.gz$/i),
   rx(/\.appimage\.tar\.gz$/i),
 
-  rx(/\.(?:exe|msi|dmg|deb|rpm|flatpak|appimage)\.sig$/i),
+  rx(/\.(?:exe|msi|dmg|flatpak|appimage)\.sig$/i),
   rx(/^ROSI(?:-MacOS-universal)?\.zip\.sig$/i),
   rx(/\.nsis\.zip\.sig$/i),
   rx(/\.tar\.gz\.sig$/i),
@@ -144,8 +139,6 @@ const SIGN_RULES = [
   ext(".exe"),
   ext(".msi"),
   ext(".dmg"),
-  ext(".deb"),
-  ext(".rpm"),
   ext(".flatpak"),
   rx(/\.appimage$/i),
   rx(/^ROSI(?:-MacOS-universal)?\.zip$/i),
@@ -182,48 +175,11 @@ const SEARCH_DIRS = releaseArtifactSearchDirs();
 
 function artifactMatchesVersion(name, releaseVersion = VERSION) {
   if (name === "latest.json" || isPerTargetManifest(name)) return true;
-  if (/\.rpm(?:\.sig)?$/i.test(name)) {
-    return rpmArtifactMatchesVersion(name, releaseVersion);
-  }
   const versions = name.match(
     /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/g,
   );
   if (!versions || versions.length === 0) return true;
   return versions.some((candidate) => candidate === releaseVersion);
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function rpmArtifactMatchesVersion(name, releaseVersion = VERSION) {
-  if (!/\.rpm(?:\.sig)?$/i.test(name)) return false;
-
-  const numericVersions = name.match(/\d+\.\d+\.\d+/g);
-  if (!numericVersions || numericVersions.length === 0) return true;
-
-  const betaMatch = releaseVersion.match(
-    /^(\d+\.\d+\.\d+)-beta\.(0|[1-9]\d*)$/,
-  );
-  const stableMatch = releaseVersion.match(/^(\d+\.\d+\.\d+)$/);
-  if (!betaMatch && !stableMatch) return false;
-
-  const numericVersion = betaMatch?.[1] ?? stableMatch[1];
-  const escapedNumericVersion = escapeRegExp(numericVersion);
-  const versionPattern = betaMatch
-    ? `${escapedNumericVersion}(?:-beta\\.${betaMatch[2]}|[._~]beta[._-]${betaMatch[2]})`
-    : escapedNumericVersion;
-  // RPM names conventionally end in NAME-VERSION-RELEASE.ARCH.rpm. Tauri and
-  // distro tooling vary the release and architecture tokens, and updater
-  // signatures append another .sig. A release must begin with a digit, which
-  // keeps a sanitized beta marker from matching a stable application version.
-  const rpmRelease = "[0-9][0-9A-Za-z_+~%^.-]*";
-  const rpmArch =
-    "(?:x86_64|amd64|aarch64|arm64|i[3-6]86|noarch|ppc64le|ppc64|s390x|riscv64|armv[67]hl)";
-  return new RegExp(
-    `(?:^|[^0-9A-Za-z])${versionPattern}(?:-${rpmRelease})?(?:\\.${rpmArch})?\\.rpm(?:\\.sig)?$`,
-    "i",
-  ).test(name);
 }
 
 const SIDECAR_MANIFEST = path.join(
@@ -358,12 +314,6 @@ function cleanArtifactBaseName(name) {
   if (/amd64\.AppImage$/i.test(name)) return "ROSI-Linux-x64.AppImage";
   if (/aarch64\.AppImage$/i.test(name)) return "ROSI-Linux-arm64.AppImage";
 
-  if (/amd64\.deb$/i.test(name)) return "ROSI-Linux-x64.deb";
-  if (/aarch64\.deb$/i.test(name)) return "ROSI-Linux-arm64.deb";
-
-  if (/x86_64\.rpm$/i.test(name)) return "ROSI-Linux-x64.rpm";
-  if (/aarch64\.rpm$/i.test(name)) return "ROSI-Linux-arm64.rpm";
-
   // The public Flatpak release currently targets Linux x64 only. Normalize
   // generic files left by older build scripts to the documented asset name.
   if (/^ROSI-Linux\.flatpak$/i.test(name)) return "ROSI-Linux-x64.flatpak";
@@ -382,7 +332,7 @@ function cleanArtifactName(name) {
 
 const FALLBACK_INSTALLER_PRIORITY = {
   windows: { nsis: 3, msi: 2 },
-  linux: { appimage: 3, deb: 2, rpm: 1 },
+  linux: { appimage: 3 },
   darwin: { app: 3 },
 };
 
@@ -446,28 +396,6 @@ function canPopulateFallbackTarget(_target) {
   return true;
 }
 
-function assertLinuxX64PackageSet(byName) {
-  if (!ENFORCE_LINUX_X64_PACKAGE_SET) return;
-  const installers = new Set();
-  for (const [name] of byName) {
-    if (name.endsWith(".sig")) continue;
-    const targets = resolveUpdaterTargets(name);
-    for (const target of targets) {
-      if (target.os === "linux" && target.arch === "x86_64") {
-        installers.add(target.installer);
-      }
-    }
-  }
-  if (installers.size === 0) return;
-  const requiredInstallers = ["appimage", "deb", "rpm"];
-  const missing = requiredInstallers.filter((i) => !installers.has(i));
-  if (missing.length > 0) {
-    throw new Error(
-      `Incomplete Linux x86_64 bundle set: missing ${missing.join(", ")} artifact(s).`,
-    );
-  }
-}
-
 function resolveUpdaterTargets(name) {
   const targets = [];
   if (/\.app\.tar\.gz$/i.test(name)) {
@@ -500,20 +428,6 @@ function resolveUpdaterTargets(name) {
     return targets;
   }
 
-  if (/\.deb$/i.test(name)) {
-    const arch = inferArchFromName(name);
-    if (!arch) return targets;
-    targets.push({ os: "linux", arch, installer: "deb" });
-    return targets;
-  }
-
-  if (/\.rpm$/i.test(name)) {
-    const arch = inferArchFromName(name);
-    if (!arch) return targets;
-    targets.push({ os: "linux", arch, installer: "rpm" });
-    return targets;
-  }
-
   return targets;
 }
 
@@ -539,7 +453,6 @@ function generateUpdaterManifests(files) {
   for (const filePath of files) {
     byName.set(path.basename(filePath), filePath);
   }
-  assertLinuxX64PackageSet(byName);
 
   const signatureByBaseName = new Map();
   for (const [name, filePath] of byName) {
@@ -605,8 +518,8 @@ function generateUpdaterManifests(files) {
         manifest.platforms[installerKey] = { url, signature };
         if (channel.targetSuffix) {
           // A beta check uses the full installer-aware key as its custom Tauri
-          // target. Give that key its own endpoint manifest so DEB/RPM installs
-          // never fall through to the AppImage fallback (and vice versa).
+          // target. Give that key its own endpoint manifest so installers do
+          // not fall through to the generic fallback.
           const installerManifestName = `latest-${installerKey}.json`;
           manifests.set(installerManifestName, {
             version: VERSION,
@@ -1420,11 +1333,9 @@ function requiredPublishedBetaManifestNames() {
     "darwin-beta-aarch64-app",
     "linux-beta-x86_64",
     "linux-beta-x86_64-appimage",
-    "linux-beta-x86_64-deb",
-    "linux-beta-x86_64-rpm",
   ]);
   if (REQUIRE_LINUX_AARCH64) {
-    for (const suffix of ["", "-appimage", "-deb", "-rpm"]) {
+    for (const suffix of ["", "-appimage"]) {
       targets.add(`linux-beta-aarch64${suffix}`);
     }
   }
@@ -1442,7 +1353,7 @@ function requiredPublishedBetaManifestNames() {
 function expectedPublishedBetaManifestNames(actualNames = []) {
   const expected = new Set(requiredPublishedBetaManifestNames());
   const optionalGroups = [
-    ["", "-appimage", "-deb", "-rpm"].map(
+    ["", "-appimage"].map(
       (suffix) => `latest-linux-beta-aarch64${suffix}.json`,
     ),
   ];
@@ -1804,7 +1715,6 @@ export {
   isGitHubConflict,
   isTransactionalStagingAssetName,
   listAllGithubPages,
-  rpmArtifactMatchesVersion,
   expectedPublishedBetaManifestNames,
   requiredPublishedBetaManifestNames,
   requiredLinuxTargetKeys,

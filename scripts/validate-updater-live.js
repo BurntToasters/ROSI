@@ -76,12 +76,8 @@ const TARGETS = [
   "darwin-beta-x86_64-app",
   "linux-beta-x86_64",
   "linux-beta-x86_64-appimage",
-  "linux-beta-x86_64-deb",
-  "linux-beta-x86_64-rpm",
   "linux-beta-aarch64",
   "linux-beta-aarch64-appimage",
-  "linux-beta-aarch64-deb",
-  "linux-beta-aarch64-rpm",
 ];
 
 const STANDARD_STABLE_TARGETS = [
@@ -103,8 +99,6 @@ const STANDARD_BETA_TARGETS = [
   "darwin-beta-x86_64-app",
   "linux-beta-x86_64",
   "linux-beta-x86_64-appimage",
-  "linux-beta-x86_64-deb",
-  "linux-beta-x86_64-rpm",
 ];
 
 const requestedExpectedVersion =
@@ -262,7 +256,7 @@ export function resolveLiveUpdaterTargets(name) {
   ) {
     return [];
   }
-  if (/\.(exe|msi|dmg|deb|rpm|flatpak|appimage|zip)$/i.test(name)) {
+  if (/\.(exe|msi|dmg|flatpak|appimage|zip)$/i.test(name)) {
     return [{ os: "live", arch: "artifact" }];
   }
   return [];
