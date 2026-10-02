@@ -242,7 +242,6 @@ fn request_from_settings(url: &str, settings: &Settings) -> DownloadRequestOptio
             start: None,
             end: None,
         }),
-        profile_enabled: Some(settings.download_profiles_enabled),
         profile: Some(settings.download_mode.clone()),
         best_quality: Some(settings.best_quality),
         advanced_options: Some(settings.advanced_options),

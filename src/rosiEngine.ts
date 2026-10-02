@@ -15,7 +15,7 @@ interface RosiPlaylistSelection {
 interface RosiDownloadPreset {
   id: string;
   name: string;
-  profile: 'best-video' | 'audio' | 'custom';
+  profile: 'compatible' | 'best-video' | 'audio' | 'custom';
   bestQuality?: boolean;
   audioOnly?: boolean;
   audioFormat?: string;
@@ -38,10 +38,9 @@ interface RosiSettings {
   settingsVersion: number;
   theme: 'system' | 'light' | 'dark' | 'purple';
   showConsoleOutput: boolean;
-  consoleCollapsed: boolean;
-  queueCollapsed: boolean;
-  downloadProfilesEnabled: boolean;
-  downloadMode: 'best-video' | 'audio' | 'custom';
+  dockTab: 'queue' | 'activity' | 'console';
+  dockCollapsed: boolean;
+  downloadMode: 'compatible' | 'best-video' | 'audio' | 'custom';
   downloadPresets: RosiDownloadPreset[];
   askDownloadLocation: boolean;
   advancedOptions: boolean;
@@ -92,15 +91,10 @@ function resolveProgressPhaseFlags(
   activeSettings: RosiSettings,
   advancedFormats?: { videoFormat?: string; audioFormat?: string }
 ) {
-  if (
-    activeSettings.audioOnly ||
-    (activeSettings.downloadProfilesEnabled && activeSettings.downloadMode === 'audio')
-  ) {
+  if (activeSettings.audioOnly || activeSettings.downloadMode === 'audio') {
     return { needsMerge: false, needsConvert: activeSettings.convertEnabled };
   }
-  const baseMerge = activeSettings.downloadProfilesEnabled
-    ? activeSettings.downloadMode === 'best-video' || activeSettings.downloadMode === 'custom'
-    : activeSettings.bestQuality || activeSettings.advancedOptions;
+  const baseMerge = activeSettings.bestQuality || activeSettings.advancedOptions;
   const needsMerge =
     Boolean(advancedFormats?.videoFormat && advancedFormats?.audioFormat) || baseMerge;
   return {
@@ -125,6 +119,7 @@ const downloadsModule = rosiModules.downloads || null;
 const queueModule = rosiModules.queue || null;
 const settingsModule = rosiModules.settings || null;
 const updatesModule = rosiModules.updates || null;
+const dockModule = rosiModules.dock || null;
 
 function isMac() {
   if (uiModule && typeof uiModule.isMac === 'function') {
@@ -320,28 +315,7 @@ function appendConsoleOutput(outputEl: HTMLElement | null, text: string) {
   if (uiModule && typeof uiModule.appendConsoleOutput === 'function') {
     uiModule.appendConsoleOutput(outputEl, text);
   }
-}
-
-function setConsoleCollapsed(collapsed: boolean) {
-  const consoleSection = document.getElementById('console-section');
-  const consoleToggleBtn = document.getElementById('consoleToggleBtn');
-  const output = document.getElementById('output');
-  if (!consoleSection) return false;
-  consoleSection.classList.toggle('collapsed', !!collapsed);
-  const isCollapsed = consoleSection.classList.contains('collapsed');
-  if (consoleToggleBtn) consoleToggleBtn.setAttribute('aria-expanded', String(!isCollapsed));
-  if (output) output.setAttribute('aria-hidden', String(isCollapsed));
-  return isCollapsed;
-}
-
-// Toggle console collapsed state
-function toggleConsoleCollapse(forceCollapsed?: boolean) {
-  const consoleSection = document.getElementById('console-section');
-  if (!consoleSection) return false;
-  if (typeof forceCollapsed === 'boolean') {
-    return setConsoleCollapsed(forceCollapsed);
-  }
-  return setConsoleCollapsed(!consoleSection.classList.contains('collapsed'));
+  dockModule?.markUnseen('console');
 }
 
 function setButtonLoading(
@@ -502,8 +476,10 @@ function displayNextModal() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = label;
-    if (primary) btn.classList.add('modal-btn-primary');
-    if (danger) btn.classList.add('modal-btn-danger');
+    btn.className = 'btn';
+    if (primary) btn.classList.add('modal-btn-primary', 'btn--primary');
+    else if (danger) btn.classList.add('modal-btn-danger', 'btn--danger');
+    else btn.classList.add('btn--neutral');
     if (disabled) {
       btn.disabled = true;
       btn.setAttribute('aria-disabled', 'true');
@@ -613,7 +589,8 @@ function showKeyboardShortcuts() {
   const modKey = getModifierKeyName();
   showModal({
     title: 'Keyboard Shortcuts',
-    message: `${modKey}+D - Restart application\n${modKey}+F - Focus URL input field\n${modKey}+, - Open settings\n${modKey}+Shift+, - Toggle settings sidebar\n${modKey}+Enter - Submit queue URLs (when focused)\nAlt+↑ / Alt+↓ - Move a pending queue item (when focused)`,
+    message: `${modKey}+D - Restart application\n${modKey}+F - Focus URL input field\n${modKey}+, - Open settings\n${modKey}+Shift+, - Toggle settings sidebar\n${modKey}+Enter - Submit queue URLs (when focused)\nAlt+↑ / Alt+↓ - Move a pending queue item (when focused)
+Alt+1 / Alt+2 / Alt+3 - Show Queue, Activity, or Console`,
     buttons: [{ label: 'OK', primary: true }],
   });
 }
@@ -1054,6 +1031,7 @@ interface ActivityRow {
 let activityEntries: RosiDownloadActivity[] = [];
 let activityFilter: ActivityFilter = 'all';
 let activityReplayHandler: ((entry: RosiDownloadActivity) => void) | null = null;
+let activityLoaded = false;
 
 function hostFromUrl(url: string | null | undefined) {
   if (!url) return '';
@@ -1066,6 +1044,7 @@ function hostFromUrl(url: string | null | undefined) {
 
 function describeActivityProfile(entry: RosiDownloadActivity) {
   if (entry.presetName) return entry.presetName;
+  if (entry.profile === 'compatible') return 'Compatible';
   if (entry.profile === 'best-video') return 'Best video';
   if (entry.profile === 'audio') return 'Audio';
   if (entry.profile === 'custom') return 'Custom';
@@ -1136,7 +1115,7 @@ async function revealFileLocation(filePath: string) {
 function createActivityActionButton(label: string, ariaLabel: string, action: () => void) {
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'history-open-btn';
+  button.className = 'history-open-btn btn btn--neutral btn--xs btn--accent-hover';
   button.setAttribute('aria-label', ariaLabel);
   button.textContent = label;
   button.addEventListener('click', (event) => {
@@ -1246,7 +1225,13 @@ function renderActivity() {
 }
 
 function setActivityEntries(entries: RosiDownloadActivity[]) {
+  const previousCount = activityEntries.length;
   activityEntries = Array.isArray(entries) ? entries : [];
+  // The first load is history from earlier sessions, which is not news.
+  if (activityLoaded && activityEntries.length > previousCount) {
+    dockModule?.markUnseen('activity');
+  }
+  activityLoaded = true;
   renderActivity();
 }
 
@@ -1842,11 +1827,10 @@ function launchSetupWizard(
       }
     });
   }
-  const initialProfileValue = settings.downloadProfilesEnabled
-    ? settings.downloadMode === 'audio'
-      ? 'audio'
-      : 'best-video'
-    : 'standard';
+  const initialProfileValue =
+    settings.downloadMode === 'best-video' || settings.downloadMode === 'audio'
+      ? settings.downloadMode
+      : 'compatible';
   const initialProfileRadio = overlayEl.querySelector<HTMLInputElement>(
     `input[name="wizard-profile"][value="${initialProfileValue}"]`
   );
@@ -1912,19 +1896,12 @@ function launchSetupWizard(
       'input[name="wizard-profile"]:checked'
     );
     const profile = selectedProfile?.value;
-    if (profile === 'best-video' || profile === 'audio') {
-      settings.downloadProfilesEnabled = true;
-      settings.downloadMode = profile;
-      settings.bestQuality = profile === 'best-video';
-      settings.audioOnly = profile === 'audio';
-      settings.advancedOptions = false;
-      if (profile === 'audio') settings.convertEnabled = false;
-    } else {
-      settings.downloadProfilesEnabled = false;
-      settings.bestQuality = false;
-      settings.audioOnly = false;
-      settings.advancedOptions = false;
-    }
+    const mode = profile === 'best-video' || profile === 'audio' ? profile : 'compatible';
+    settings.downloadMode = mode;
+    settings.bestQuality = mode === 'best-video';
+    settings.audioOnly = mode === 'audio';
+    settings.advancedOptions = false;
+    if (mode === 'audio') settings.convertEnabled = false;
 
     // Download prefs
     const notifications = document.getElementById(
@@ -1955,10 +1932,6 @@ function launchSetupWizard(
       'askDownloadLocationToggle'
     ) as HTMLInputElement | null;
     if (askLocationToggle) askLocationToggle.checked = settings.askDownloadLocation;
-    const profilesToggle = document.getElementById(
-      'downloadProfilesToggle'
-    ) as HTMLInputElement | null;
-    if (profilesToggle) profilesToggle.checked = settings.downloadProfilesEnabled;
     const folderSummary = document.getElementById('downloadFolderSummary');
     if (folderSummary) {
       const folder = settings.downloadFolder?.trim();
@@ -2082,10 +2055,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       settingsVersion: 7,
       theme: 'system',
       showConsoleOutput: false,
-      consoleCollapsed: false,
-      queueCollapsed: false,
-      downloadProfilesEnabled: false,
-      downloadMode: 'best-video',
+      dockTab: 'queue',
+      dockCollapsed: false,
+      downloadMode: 'compatible',
       downloadPresets: [],
       askDownloadLocation: false,
       advancedOptions: false,
@@ -2269,8 +2241,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const animateBackgroundToggle = byId<HTMLInputElement>('animateBackgroundToggle');
   const themeSelect = byId<HTMLSelectElement>('themeSelect');
   const flatUiToggle = byId<HTMLInputElement>('flatUiToggle');
-  const downloadProfilesToggle = byId<HTMLInputElement>('downloadProfilesToggle');
-  const downloadProfilesComposer = byId('downloadProfilesComposer');
+  const profileCompatibleBtn = byId<HTMLButtonElement>('profileCompatibleBtn');
   const profileBestVideoBtn = byId<HTMLButtonElement>('profileBestVideoBtn');
   const profileAudioBtn = byId<HTMLButtonElement>('profileAudioBtn');
   const profileCustomBtn = byId<HTMLButtonElement>('profileCustomBtn');
@@ -2301,7 +2272,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const downloadCard = document.querySelector<HTMLElement>('.download-card');
   const previewBtn = byId<HTMLButtonElement>('previewBtn');
   const previewCloseBtn = byId<HTMLButtonElement>('previewClose');
-  const historyToggle = byId<HTMLButtonElement>('historyToggle');
   const clearHistoryBtn = byId<HTMLButtonElement>('clearHistory');
   const browserCookiesHelp = byId('browserCookiesHelp');
   const helpLink = byId('helpLink');
@@ -2320,8 +2290,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const writeSubtitlesToggle = byId<HTMLInputElement>('writeSubtitlesToggle');
   const subtitleLangsContainer = byId('subtitleLangsContainer');
   const subtitleLangsInput = byId<HTMLInputElement>('subtitleLangsInput');
-  const queueToggleBtn = byId<HTMLButtonElement>('queueToggleBtn');
-  const queueBody = byId<HTMLElement>('queueBody');
   const queueUrlInput = byId<HTMLTextAreaElement>('queueUrlInput');
   const addToQueueBtn = byId<HTMLButtonElement>('addToQueueBtn');
   const startQueueBtn = byId<HTMLButtonElement>('startQueueBtn');
@@ -2360,27 +2328,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (browserWindowsHint) browserWindowsHint.classList.remove('hidden');
   }
 
-  function setQueueCollapsed(collapsed: boolean) {
-    if (!queueSection) return false;
-    queueSection.classList.toggle('collapsed', !!collapsed);
-    const isCollapsed = queueSection.classList.contains('collapsed');
-    if (queueToggleBtn) {
-      queueToggleBtn.setAttribute('aria-expanded', String(!isCollapsed));
-    }
-    if (queueBody instanceof HTMLElement) {
-      queueBody.setAttribute('aria-hidden', String(isCollapsed));
-      queueBody.inert = isCollapsed;
-    }
-    return isCollapsed;
-  }
-
-  function toggleQueueCollapsed(collapsed?: boolean) {
-    if (typeof collapsed === 'boolean') {
-      return setQueueCollapsed(collapsed);
-    }
-    if (!queueSection) return false;
-    return setQueueCollapsed(!queueSection.classList.contains('collapsed'));
-  }
+  const profileButtons = [
+    ['compatible', profileCompatibleBtn],
+    ['best-video', profileBestVideoBtn],
+    ['audio', profileAudioBtn],
+    ['custom', profileCustomBtn],
+  ] as const;
 
   // update UI from settings
   const updateUIFromSettings = () => {
@@ -2442,11 +2395,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     updateConsoleVisibility(settings.showConsoleOutput);
 
-    // Restore console collapsed state
-    setConsoleCollapsed(!!settings.consoleCollapsed);
-    setQueueCollapsed(!!settings.queueCollapsed);
-
-    toggleAdvancedUI(!!settings.downloadProfilesEnabled && settings.downloadMode === 'custom');
+    toggleAdvancedUI(settings.downloadMode === 'custom');
 
     // Update additional options
     if (animateBackgroundToggle) {
@@ -2479,20 +2428,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       themeSelect.value = nextTheme;
       applyTheme(nextTheme);
     }
-    if (downloadProfilesToggle) {
-      downloadProfilesToggle.checked = !!settings.downloadProfilesEnabled;
-    }
-    if (downloadProfilesComposer) {
-      downloadProfilesComposer.classList.toggle('hidden', !settings.downloadProfilesEnabled);
-    }
-    const profileButtons = [
-      ['best-video', profileBestVideoBtn],
-      ['audio', profileAudioBtn],
-      ['custom', profileCustomBtn],
-    ] as const;
     profileButtons.forEach(([mode, button]) => {
       if (!button) return;
-      const isSelected = settings.downloadProfilesEnabled && settings.downloadMode === mode;
+      const isSelected = settings.downloadMode === mode;
       button.classList.toggle('selected', isSelected);
       button.setAttribute('aria-pressed', String(isSelected));
     });
@@ -2500,10 +2438,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       profileAudioFormatSelect.value = settings.audioFormat ?? 'mp3';
     }
     if (profileAudioFormatContainer) {
-      profileAudioFormatContainer.classList.toggle(
-        'hidden',
-        !settings.downloadProfilesEnabled || settings.downloadMode !== 'audio'
-      );
+      profileAudioFormatContainer.classList.toggle('hidden', settings.downloadMode !== 'audio');
     }
     if (askDownloadLocationToggle) {
       askDownloadLocationToggle.checked = !!settings.askDownloadLocation;
@@ -2514,14 +2449,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       downloadFolderSummary.title = folder || 'Choose a folder before downloading';
     }
     if (downloadOutputSummary) {
-      if (!settings.downloadProfilesEnabled) {
-        downloadOutputSummary.textContent = 'Standard compatible video';
-      } else if (settings.downloadMode === 'best-video') {
-        downloadOutputSummary.textContent = 'Highest available video and audio quality';
+      if (settings.downloadMode === 'best-video') {
+        downloadOutputSummary.textContent =
+          'Highest available video and audio quality, merged into one file';
       } else if (settings.downloadMode === 'audio') {
-        downloadOutputSummary.textContent = `${(settings.audioFormat || 'mp3').toUpperCase()} audio`;
+        downloadOutputSummary.textContent = `Audio only, saved as ${(settings.audioFormat || 'mp3').toUpperCase()}`;
+      } else if (settings.downloadMode === 'custom') {
+        downloadOutputSummary.textContent = 'Pick exact video and audio formats below';
       } else {
-        downloadOutputSummary.textContent = 'Custom video and audio formats';
+        downloadOutputSummary.textContent = 'One MP4 file that plays everywhere';
       }
     }
     // disable convert when audio-only is enabled
@@ -2586,23 +2522,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (mode === 'audio') settings.convertEnabled = false;
   };
 
-  const setDownloadProfilesEnabled = (enabled: boolean) => {
-    settings.downloadProfilesEnabled = enabled;
-    if (enabled) {
-      applyDownloadProfile(settings.downloadMode || 'best-video');
-    } else {
-      settings.bestQuality = false;
-      settings.audioOnly = false;
-      settings.advancedOptions = false;
-    }
-    updateUIFromSettings();
-  };
-
   try {
     updateUIFromSettings();
   } catch (e) {
     logError('Failed to update UI from settings', e);
   }
+
+  // Runs after a settings pass, so the Console tab is already offered or not.
+  function syncDockFromSettings() {
+    dockModule?.initDock({
+      initialTab: settings.dockTab,
+      collapsed: settings.dockCollapsed,
+      onChange: ({ tab, collapsed }) => {
+        settings.dockTab = tab;
+        settings.dockCollapsed = collapsed;
+        void persistSettings();
+      },
+    });
+  }
+  syncDockFromSettings();
 
   function maybeShowSupportModal() {
     if (settings.hideSupportModal || settings.firstLaunch) return;
@@ -2803,11 +2741,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   function setPreviewButtonLabel(label: string) {
     previewButtonLabel = label;
     if (!previewBtn || previewBtn.classList.contains('loading')) return;
-    const textNodes = Array.from(previewBtn.childNodes).filter(
-      (node) => node.nodeType === Node.TEXT_NODE && (node.textContent || '').trim().length > 0
-    );
-    const target = textNodes[textNodes.length - 1];
-    if (target) target.textContent = ` ${label}`;
+    const target = previewBtn.querySelector('.btn-label');
+    if (target) target.textContent = label;
   }
 
   function restorePreviewButtonLabel() {
@@ -2942,7 +2877,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const preset: RosiDownloadPreset = {
       id,
       name,
-      profile: settings.downloadProfilesEnabled ? settings.downloadMode : 'best-video',
+      profile: settings.downloadMode,
       bestQuality: settings.bestQuality,
       audioOnly: settings.audioOnly,
       audioFormat: settings.audioFormat,
@@ -2994,7 +2929,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   /** On-screen download options that must beat a selected preset's stored values. */
   function buildOnScreenPresetOverrides(): Record<string, unknown> {
     const overrides: Record<string, unknown> = {
-      profileEnabled: settings.downloadProfilesEnabled,
       profile: settings.downloadMode,
       bestQuality: settings.bestQuality,
       audioOnly: settings.audioOnly,
@@ -3018,7 +2952,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function applyPresetToSettings(preset: RosiDownloadPreset) {
-    settings.downloadProfilesEnabled = true;
     applyDownloadProfile(preset.profile);
     if (typeof preset.bestQuality === 'boolean') settings.bestQuality = preset.bestQuality;
     if (typeof preset.audioOnly === 'boolean') settings.audioOnly = preset.audioOnly;
@@ -3147,6 +3080,53 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   renderPresetOptions();
 
+  const presetMenuBtn = byId<HTMLButtonElement>('presetMenuBtn');
+  const presetPopover = byId<HTMLElement>('presetPopover');
+
+  function isPresetPopoverOpen() {
+    return !!presetPopover && !presetPopover.hidden;
+  }
+
+  function setPresetPopoverOpen(open: boolean, { restoreFocus = true } = {}) {
+    if (!presetPopover || !presetMenuBtn) return;
+    if (open === isPresetPopoverOpen()) return;
+    presetPopover.hidden = !open;
+    presetMenuBtn.setAttribute('aria-expanded', String(open));
+    if (open) {
+      const first = presetPopover.querySelector<HTMLElement>(
+        'select:not(:disabled), input, button:not(:disabled)'
+      );
+      first?.focus();
+    } else if (restoreFocus) {
+      presetMenuBtn.focus();
+    }
+  }
+
+  if (presetMenuBtn && presetPopover) {
+    presetMenuBtn.addEventListener('click', () => {
+      setPresetPopoverOpen(!isPresetPopoverOpen());
+    });
+    presetPopover.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      setPresetPopoverOpen(false);
+    });
+    // Close when focus or a click lands anywhere outside the trigger and popover.
+    document.addEventListener('pointerdown', (event) => {
+      const target = event.target;
+      if (!isPresetPopoverOpen() || !(target instanceof Node)) return;
+      if (presetPopover.contains(target) || presetMenuBtn.contains(target)) return;
+      setPresetPopoverOpen(false, { restoreFocus: false });
+    });
+    document.addEventListener('focusin', (event) => {
+      const target = event.target;
+      if (!isPresetPopoverOpen() || !(target instanceof Node)) return;
+      if (presetPopover.contains(target) || presetMenuBtn.contains(target)) return;
+      setPresetPopoverOpen(false, { restoreFocus: false });
+    });
+  }
+
   // ── Settings search and per-section reset ───────────────────────────────────
   const settingsSearchInput = byId<HTMLInputElement>('settingsSearch');
   const settingsSearchStatus = byId<HTMLElement>('settingsSearchStatus');
@@ -3185,13 +3165,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let matches = 0;
     settingsSections.forEach((section) => {
       const controls = Array.from(
-        section.querySelectorAll<HTMLElement>(
-          '.toggle-switch, .select-label, .settings-btn, .settings-link-btn, .sub-option, .preset-manager, .toggle-row'
-        )
-      ).filter(
-        (control) =>
-          !control.closest('.sub-option, .toggle-row') ||
-          control.matches('.sub-option, .toggle-row')
+        section.querySelectorAll<HTMLElement>('.setting-row, .settings-btn')
       );
       let sectionMatches = false;
       controls.forEach((control) => {
@@ -3256,12 +3230,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const SECTION_RESET_KEYS: Record<string, Array<keyof RosiSettings>> = {
     download: [
-      'downloadProfilesEnabled',
-      'downloadMode',
-      'bestQuality',
-      'audioOnly',
-      'advancedOptions',
-      'audioFormat',
       'convertEnabled',
       'convertFormat',
       'keepOriginalAfterConvert',
@@ -3279,7 +3247,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     browser: ['hookBrowser', 'browserChoice'],
     interface: [
       'showConsoleOutput',
-      'consoleCollapsed',
       'animateBackground',
       'theme',
       'flatUi',
@@ -3510,6 +3477,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (result.data.skipped > 0) parts.push(`${result.data.skipped} already queued.`);
         if (rejected > 0) parts.push(`${rejected} ignored as invalid.`);
         announceQueueAction(parts.join(' '));
+        dockModule?.selectTab('queue');
         return true;
       }
       const message = result?.error?.message || 'Could not add links to the queue.';
@@ -3739,45 +3707,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       .catch(() => {});
   }
 
-  if (historyToggle) {
-    const historySection = document.getElementById('download-history');
-    const historyList = document.getElementById('history-list');
-    const setHistoryCollapsed = (collapsed: boolean) => {
-      if (!historySection) return false;
-      historySection.classList.toggle('collapsed', !!collapsed);
-      const isCollapsed = historySection.classList.contains('collapsed');
-      historyToggle.setAttribute('aria-expanded', String(!isCollapsed));
-      if (historyList instanceof HTMLElement) {
-        historyList.setAttribute('aria-hidden', String(isCollapsed));
-        historyList.inert = isCollapsed;
-      }
-      return isCollapsed;
-    };
-    const toggleHistoryCollapsed = () => {
-      if (!historySection) return false;
-      return setHistoryCollapsed(!historySection.classList.contains('collapsed'));
-    };
-    if (historySection) {
-      setHistoryCollapsed(historySection.classList.contains('collapsed'));
-    }
-
-    historyToggle.addEventListener('click', () => {
-      toggleHistoryCollapsed();
-    });
-    historyToggle.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        toggleHistoryCollapsed();
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        setHistoryCollapsed(true);
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        setHistoryCollapsed(false);
-      }
-    });
-  }
-
   if (clearHistoryBtn) {
     clearHistoryBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -3901,45 +3830,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       updateConsoleVisibility(settings.showConsoleOutput);
     });
 
-  const consoleToggleBtn = document.getElementById('consoleToggleBtn');
-  if (consoleToggleBtn) {
-    consoleToggleBtn.addEventListener('click', () => {
-      const isCollapsed = toggleConsoleCollapse();
-      settings.consoleCollapsed = isCollapsed;
-      void persistSettings();
-    });
-    consoleToggleBtn.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        const isCollapsed = toggleConsoleCollapse();
-        settings.consoleCollapsed = isCollapsed;
-        void persistSettings();
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        settings.consoleCollapsed = toggleConsoleCollapse(true);
-        void persistSettings();
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        settings.consoleCollapsed = toggleConsoleCollapse(false);
-        void persistSettings();
-      }
-    });
-  }
-
-  if (downloadProfilesToggle) {
-    downloadProfilesToggle.addEventListener('change', (e) => {
-      setDownloadProfilesEnabled((e.target as HTMLInputElement).checked);
-      void persistSettings(true, true);
-    });
-  }
-  const profileButtons = [
-    ['best-video', profileBestVideoBtn],
-    ['audio', profileAudioBtn],
-    ['custom', profileCustomBtn],
-  ] as const;
   profileButtons.forEach(([mode, button]) => {
     button?.addEventListener('click', () => {
-      if (!settings.downloadProfilesEnabled) return;
       applyDownloadProfile(mode);
       updateUIFromSettings();
       void persistSettings(true, true);
@@ -4511,29 +4403,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   syncQueueActionBusyState();
 
-  if (queueToggleBtn) {
-    setQueueCollapsed(!!settings.queueCollapsed);
-    queueToggleBtn.addEventListener('click', () => {
-      settings.queueCollapsed = toggleQueueCollapsed();
-      void persistSettings();
-    });
-    queueToggleBtn.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        settings.queueCollapsed = toggleQueueCollapsed();
-        void persistSettings();
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        settings.queueCollapsed = setQueueCollapsed(true);
-        void persistSettings();
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        settings.queueCollapsed = setQueueCollapsed(false);
-        void persistSettings();
-      }
-    });
-  }
-
   if (addToQueueBtn && queueUrlInput) {
     // Allow Ctrl/Cmd+Enter to submit from the textarea (standard multi-line UX).
     queueUrlInput.addEventListener('keydown', (e) => {
@@ -4995,6 +4864,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       settings = importedSettings;
       try {
         updateUIFromSettings();
+        syncDockFromSettings();
         renderPresetOptions();
         applyTheme(settings.theme ?? 'system');
         localStorage.setItem('rosi-flat-ui', settings.flatUi ? 'true' : 'false');
@@ -5054,6 +4924,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (settings.firstLaunch) {
     launchSetupWizard(settings, applyTheme, persistSettings, () => {
+      updateUIFromSettings();
       void checkDenoInstallation(settings, () => void persistSettings());
       void checkUpdatesOnStartup();
     });
@@ -5090,6 +4961,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
       }
 
+      if (isPresetPopoverOpen()) {
+        setPresetPopoverOpen(false);
+        return;
+      }
+
       const appModal = document.getElementById('app-modal');
       if (appModal && appModal.classList.contains('active')) {
         hideModal(appModal, null);
@@ -5117,6 +4993,31 @@ document.addEventListener('DOMContentLoaded', async () => {
           { label: 'Restart', primary: true, action: () => window.api.restartApp() },
         ],
       });
+    }
+
+    // Match the physical key: with Alt held, event.key can be a symbol on macOS.
+    const dockTabKeys: Record<string, string> = {
+      Digit1: 'queue',
+      Digit2: 'activity',
+      Digit3: 'console',
+    };
+    const dockTab = dockTabKeys[event.code];
+    const sidebarOpen = document.getElementById('sidebar')?.classList.contains('open');
+    // On macOS Option+digit types a character, so leave text fields alone there.
+    const typingOnMac =
+      isMac() &&
+      event.target instanceof HTMLElement &&
+      event.target.matches('input, textarea, select, [contenteditable="true"]');
+    if (
+      event.altKey &&
+      !modifierPressed &&
+      !event.shiftKey &&
+      dockTab &&
+      !sidebarOpen &&
+      !typingOnMac
+    ) {
+      event.preventDefault();
+      dockModule?.selectTab(dockTab, { focus: true });
     }
 
     if (modifierPressed && event.key === 'f') {

@@ -102,7 +102,7 @@ pub fn normalize_record(value: &Value) -> Option<DownloadCompletion> {
     let profile = object
         .get("profile")
         .and_then(Value::as_str)
-        .filter(|profile| matches!(*profile, "best-video" | "audio" | "custom"))
+        .filter(|profile| matches!(*profile, "compatible" | "best-video" | "audio" | "custom"))
         .map(str::to_string)
         .or_else(|| request.profile.clone());
     let error = match outcome {

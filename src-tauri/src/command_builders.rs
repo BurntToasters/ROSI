@@ -209,15 +209,10 @@ pub fn build_ytdlp_args(input: YtdlpArgsInput<'_>) -> (Vec<String>, Vec<String>)
         ffmpeg_location,
         path_output_file,
     } = input;
-    let configured_profile = settings
-        .download_profiles_enabled
-        .then(|| settings.download_mode.clone());
-    let request_profile = if options.profile_enabled == Some(false) {
-        None
-    } else {
-        options.profile.clone()
-    };
-    let profile = request_profile.or(configured_profile);
+    let profile = options
+        .profile
+        .clone()
+        .or_else(|| Some(settings.download_mode.clone()));
     let mut best_quality = settings.best_quality;
     let mut audio_only = settings.audio_only;
     match profile.as_deref() {
@@ -229,7 +224,7 @@ pub fn build_ytdlp_args(input: YtdlpArgsInput<'_>) -> (Vec<String>, Vec<String>)
             best_quality = false;
             audio_only = true;
         }
-        Some("custom") => {
+        Some("compatible" | "custom") => {
             best_quality = false;
             audio_only = false;
         }

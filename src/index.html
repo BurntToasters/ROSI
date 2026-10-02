@@ -20,10 +20,15 @@
     >
       <div class="sidebar-header">
         <h2 id="sidebarTitle">Settings</h2>
-        <button type="button" id="closeSidebar" class="sidebar-close" aria-label="Close settings">
+        <button
+          type="button"
+          id="closeSidebar"
+          class="sidebar-close btn btn--neutral btn--icon btn--danger-hover"
+          aria-label="Close settings"
+        >
           <svg
-            width="20"
-            height="20"
+            width="18"
+            height="18"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -38,14 +43,32 @@
       </div>
 
       <div class="settings-search" role="search">
-        <label for="settingsSearch">Search settings</label>
-        <input
-          id="settingsSearch"
-          type="search"
-          placeholder="Search profiles, subtitles, theme…"
-          autocomplete="off"
-          aria-describedby="settingsSearchStatus"
-        />
+        <label class="sr-only" for="settingsSearch">Search settings</label>
+        <div class="settings-search-field">
+          <svg
+            class="settings-search-icon"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            id="settingsSearch"
+            class="field"
+            type="search"
+            placeholder="Search settings…"
+            autocomplete="off"
+            aria-describedby="settingsSearchStatus"
+          />
+        </div>
         <p
           id="settingsSearchStatus"
           class="settings-search-status"
@@ -56,142 +79,163 @@
 
       <div class="sidebar-content">
         <section class="settings-section">
-          <button
-            type="button"
-            id="settingsSectionHeaderDownload"
-            class="settings-section-header"
-            aria-expanded="true"
-            aria-controls="settingsSectionBodyDownload"
-          >
-            <span class="settings-section-title">Download Options</span>
-            <svg
-              class="settings-chevron"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
+          <div class="settings-section-head">
+            <button
+              type="button"
+              id="settingsSectionHeaderDownload"
+              class="settings-section-header"
+              aria-expanded="true"
+              aria-controls="settingsSectionBodyDownload"
             >
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
-          </button>
+              <svg
+                class="settings-chevron"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+              <span class="settings-section-title">Conversion</span>
+            </button>
+            <button
+              type="button"
+              class="settings-section-reset btn btn--ghost btn--xs btn--danger-hover"
+              data-reset-section="download"
+              aria-label="Reset conversion settings"
+            >
+              Reset
+            </button>
+          </div>
           <div
             id="settingsSectionBodyDownload"
             class="settings-section-body"
             role="region"
             aria-labelledby="settingsSectionHeaderDownload"
           >
-            <label class="toggle-switch" id="downloadProfilesToggleLabel">
-              <input type="checkbox" id="downloadProfilesToggle" />
-              <span class="toggle-slider"></span>
-              <span class="toggle-text">Enable download profiles</span>
-            </label>
-            <div class="settings-hint">
-              Profiles add Best video, Audio, and Custom choices to the download card.
-            </div>
-
-            <label class="toggle-switch">
-              <input type="checkbox" id="convertToggle" />
-              <span class="toggle-slider"></span>
-              <span class="toggle-text">Convert after download</span>
-            </label>
-
-            <div id="convertFormatContainer" class="sub-option">
-              <label class="select-label">
-                <span>Convert to:</span>
-                <select id="convertFormat">
-                  <option value="mp4">.mp4 (video)</option>
-                  <option value="mov">.mov (video)</option>
-                  <option value="mp3">.mp3 (audio)</option>
-                  <option value="m4a">.m4a (audio)</option>
-                </select>
-              </label>
-              <label class="toggle-switch small" id="keepOriginalLabel">
-                <input type="checkbox" id="keepOriginalToggle" />
+            <div class="setting-row">
+              <label class="toggle-switch">
+                <input type="checkbox" id="convertToggle" />
                 <span class="toggle-slider"></span>
-                <span class="toggle-text">Keep original file</span>
+                <span class="toggle-text">Convert after download</span>
               </label>
-              <label class="toggle-switch small" id="gpuAccelerationLabel">
-                <input type="checkbox" id="gpuAccelerationToggle" />
-                <span class="toggle-slider"></span>
-                <span class="toggle-text">GPU acceleration</span>
-              </label>
-              <div id="gpuTypeContainer" class="sub-option">
+              <div id="convertFormatContainer" class="sub-option setting-subgroup">
                 <label class="select-label">
-                  <span>GPU:</span>
-                  <select id="gpuType">
-                    <option value="auto">Auto-detect</option>
-                    <option value="nvidia">NVIDIA (NVENC)</option>
-                    <option value="amd">AMD (AMF)</option>
-                    <option value="intel">Intel (Quick Sync)</option>
-                  </select>
+                  <span>Convert to</span>
+                  <span class="select-wrap">
+                    <select id="convertFormat" class="field">
+                      <option value="mp4">.mp4 (video)</option>
+                      <option value="mov">.mov (video)</option>
+                      <option value="mp3">.mp3 (audio)</option>
+                      <option value="m4a">.m4a (audio)</option>
+                    </select>
+                  </span>
                 </label>
+                <label class="toggle-switch small" id="keepOriginalLabel">
+                  <input type="checkbox" id="keepOriginalToggle" />
+                  <span class="toggle-slider"></span>
+                  <span class="toggle-text">Keep original file</span>
+                </label>
+                <label class="toggle-switch small" id="gpuAccelerationLabel">
+                  <input type="checkbox" id="gpuAccelerationToggle" />
+                  <span class="toggle-slider"></span>
+                  <span class="toggle-text">GPU acceleration</span>
+                </label>
+                <div id="gpuTypeContainer" class="sub-option">
+                  <label class="select-label">
+                    <span>GPU</span>
+                    <span class="select-wrap">
+                      <select id="gpuType" class="field">
+                        <option value="auto">Auto-detect</option>
+                        <option value="nvidia">NVIDIA (NVENC)</option>
+                        <option value="amd">AMD (AMF)</option>
+                        <option value="intel">Intel (Quick Sync)</option>
+                      </select>
+                    </span>
+                  </label>
+                </div>
               </div>
             </div>
 
-            <label class="select-label">
-              <span>FFmpeg path (override, optional)</span>
-              <input
-                id="ffmpegPathInput"
-                type="text"
-                placeholder="Leave blank to use bundled FFmpeg"
-              />
-            </label>
-            <div class="settings-hint">
-              FFmpeg is bundled with ROSI. Only set this if you want to use a different FFmpeg
-              installation.
+            <div class="setting-row">
+              <label class="select-label">
+                <span class="setting-label">FFmpeg path override</span>
+                <input
+                  id="ffmpegPathInput"
+                  class="field"
+                  type="text"
+                  placeholder="Leave blank to use bundled FFmpeg"
+                />
+              </label>
+              <p class="settings-hint">
+                FFmpeg is bundled with ROSI. Only set this to use a different FFmpeg installation.
+              </p>
             </div>
-            <button type="button" class="settings-section-reset" data-reset-section="download">
-              Reset section
-            </button>
           </div>
         </section>
 
         <section class="settings-section">
-          <button
-            type="button"
-            id="settingsSectionHeaderEnhancements"
-            class="settings-section-header"
-            aria-expanded="true"
-            aria-controls="settingsSectionBodyEnhancements"
-          >
-            <span class="settings-section-title">Enhancements</span>
-            <svg
-              class="settings-chevron"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
+          <div class="settings-section-head">
+            <button
+              type="button"
+              id="settingsSectionHeaderEnhancements"
+              class="settings-section-header"
+              aria-expanded="true"
+              aria-controls="settingsSectionBodyEnhancements"
             >
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
-          </button>
+              <svg
+                class="settings-chevron"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+              <span class="settings-section-title">Enhancements</span>
+            </button>
+            <button
+              type="button"
+              class="settings-section-reset btn btn--ghost btn--xs btn--danger-hover"
+              data-reset-section="enhancements"
+              aria-label="Reset enhancement settings"
+            >
+              Reset
+            </button>
+          </div>
           <div
             id="settingsSectionBodyEnhancements"
             class="settings-section-body"
             role="region"
             aria-labelledby="settingsSectionHeaderEnhancements"
           >
-            <label class="toggle-switch">
-              <input type="checkbox" id="embedMetadataToggle" />
-              <span class="toggle-slider"></span>
-              <span class="toggle-text">Embed metadata (title, artist, date)</span>
-            </label>
+            <div class="setting-row">
+              <label class="toggle-switch">
+                <input type="checkbox" id="embedMetadataToggle" />
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">Embed metadata (title, artist, date)</span>
+              </label>
+            </div>
 
-            <label class="toggle-switch">
-              <input type="checkbox" id="embedThumbnailToggle" />
-              <span class="toggle-slider"></span>
-              <span class="toggle-text">Embed thumbnail / cover art</span>
-            </label>
+            <div class="setting-row">
+              <label class="toggle-switch">
+                <input type="checkbox" id="embedThumbnailToggle" />
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">Embed thumbnail / cover art</span>
+              </label>
+            </div>
 
-            <div class="toggle-row">
+            <div class="setting-row">
               <label class="toggle-switch">
                 <input type="checkbox" id="sponsorblockToggle" />
                 <span class="toggle-slider"></span>
@@ -200,78 +244,89 @@
               <a
                 href="#"
                 id="sponsorblockHelp"
-                class="help-icon"
+                class="help-icon setting-row__aside"
                 title="Learn more"
                 aria-label="Learn more about SponsorBlock"
                 >?</a
               >
+              <p class="settings-hint">Removes sponsor segments from YouTube videos.</p>
             </div>
 
-            <label class="toggle-switch">
-              <input type="checkbox" id="writeSubtitlesToggle" />
-              <span class="toggle-slider"></span>
-              <span class="toggle-text">Download &amp; embed subtitles</span>
-            </label>
-
-            <div id="subtitleLangsContainer" class="sub-option">
-              <label class="select-label">
-                <span>Subtitle languages</span>
-                <input
-                  id="subtitleLangsInput"
-                  type="text"
-                  placeholder="en,es (comma-separated)"
-                  autocomplete="off"
-                  spellcheck="false"
-                  aria-describedby="subtitleLangsHint subtitleLangsError"
-                />
+            <div class="setting-row">
+              <label class="toggle-switch">
+                <input type="checkbox" id="writeSubtitlesToggle" />
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">Download &amp; embed subtitles</span>
               </label>
-              <div id="subtitleLangsHint" class="settings-hint">
-                Comma-separated language codes (for example <code>en,es</code>). Use
-                <code>all</code> for every available language.
+              <div id="subtitleLangsContainer" class="sub-option setting-subgroup">
+                <label class="select-label">
+                  <span>Subtitle languages</span>
+                  <input
+                    id="subtitleLangsInput"
+                    class="field"
+                    type="text"
+                    placeholder="en,es (comma-separated)"
+                    autocomplete="off"
+                    spellcheck="false"
+                    aria-describedby="subtitleLangsHint subtitleLangsError"
+                  />
+                </label>
+                <p id="subtitleLangsHint" class="settings-hint">
+                  Language codes such as <code>en,es</code>, or <code>all</code> for every available
+                  language.
+                </p>
+                <p
+                  id="subtitleLangsError"
+                  class="url-validation-message"
+                  role="alert"
+                  aria-live="polite"
+                ></p>
               </div>
-              <p
-                id="subtitleLangsError"
-                class="url-validation-message"
-                role="alert"
-                aria-live="polite"
-              ></p>
             </div>
-            <button type="button" class="settings-section-reset" data-reset-section="enhancements">
-              Reset section
-            </button>
           </div>
         </section>
 
         <section class="settings-section">
-          <button
-            type="button"
-            id="settingsSectionHeaderBrowser"
-            class="settings-section-header"
-            aria-expanded="true"
-            aria-controls="settingsSectionBodyBrowser"
-          >
-            <span class="settings-section-title">Browser Integration</span>
-            <svg
-              class="settings-chevron"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
+          <div class="settings-section-head">
+            <button
+              type="button"
+              id="settingsSectionHeaderBrowser"
+              class="settings-section-header"
+              aria-expanded="true"
+              aria-controls="settingsSectionBodyBrowser"
             >
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
-          </button>
+              <svg
+                class="settings-chevron"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+              <span class="settings-section-title">Browser Integration</span>
+            </button>
+            <button
+              type="button"
+              class="settings-section-reset btn btn--ghost btn--xs btn--danger-hover"
+              data-reset-section="browser"
+              aria-label="Reset browser integration settings"
+            >
+              Reset
+            </button>
+          </div>
           <div
             id="settingsSectionBodyBrowser"
             class="settings-section-body"
             role="region"
             aria-labelledby="settingsSectionHeaderBrowser"
           >
-            <div class="toggle-row">
+            <div class="setting-row">
               <label class="toggle-switch">
                 <input type="checkbox" id="hookBrowserToggle" />
                 <span class="toggle-slider"></span>
@@ -280,266 +335,338 @@
               <a
                 href="#"
                 id="browserCookiesHelp"
-                class="help-icon"
+                class="help-icon setting-row__aside"
                 title="Learn more"
                 aria-label="Learn more about browser cookie integration"
                 >?</a
               >
-            </div>
-
-            <div id="browserChoiceContainer" class="sub-option">
-              <label class="select-label">
-                <span>Browser:</span>
-                <select id="browserChoice">
-                  <option value="chrome">Chrome</option>
-                  <option value="chromium">Chromium</option>
-                  <option value="firefox">Firefox</option>
-                  <option value="edge">Edge</option>
-                  <option value="brave">Brave</option>
-                  <option value="opera">Opera</option>
-                  <option value="safari">Safari</option>
-                  <option value="vivaldi">Vivaldi</option>
-                  <option value="whale">Whale</option>
-                </select>
-              </label>
-              <div id="browserWindowsHint" class="settings-hint hidden">
-                On Windows, Chromium browsers (Chrome, Edge, Brave) encrypt their cookies in a way
-                yt-dlp cannot read, so ROSI uses Firefox cookies here.
+              <p class="settings-hint">Lets yt-dlp reach videos that need you to be signed in.</p>
+              <div id="browserChoiceContainer" class="sub-option setting-subgroup">
+                <label class="select-label">
+                  <span>Browser</span>
+                  <span class="select-wrap">
+                    <select id="browserChoice" class="field">
+                      <option value="chrome">Chrome</option>
+                      <option value="chromium">Chromium</option>
+                      <option value="firefox">Firefox</option>
+                      <option value="edge">Edge</option>
+                      <option value="brave">Brave</option>
+                      <option value="opera">Opera</option>
+                      <option value="safari">Safari</option>
+                      <option value="vivaldi">Vivaldi</option>
+                      <option value="whale">Whale</option>
+                    </select>
+                  </span>
+                </label>
+                <p id="browserWindowsHint" class="settings-hint hidden">
+                  On Windows, Chromium browsers (Chrome, Edge, Brave) encrypt their cookies in a way
+                  yt-dlp cannot read, so ROSI uses Firefox cookies here.
+                </p>
               </div>
             </div>
-            <button type="button" class="settings-section-reset" data-reset-section="browser">
-              Reset section
-            </button>
           </div>
         </section>
 
         <section class="settings-section">
-          <button
-            type="button"
-            id="settingsSectionHeaderInterface"
-            class="settings-section-header"
-            aria-expanded="true"
-            aria-controls="settingsSectionBodyInterface"
-          >
-            <span class="settings-section-title">Interface</span>
-            <svg
-              class="settings-chevron"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
+          <div class="settings-section-head">
+            <button
+              type="button"
+              id="settingsSectionHeaderInterface"
+              class="settings-section-header"
+              aria-expanded="true"
+              aria-controls="settingsSectionBodyInterface"
             >
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
-          </button>
+              <svg
+                class="settings-chevron"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+              <span class="settings-section-title">Interface</span>
+            </button>
+            <button
+              type="button"
+              class="settings-section-reset btn btn--ghost btn--xs btn--danger-hover"
+              data-reset-section="interface"
+              aria-label="Reset interface settings"
+            >
+              Reset
+            </button>
+          </div>
           <div
             id="settingsSectionBodyInterface"
             class="settings-section-body"
             role="region"
             aria-labelledby="settingsSectionHeaderInterface"
           >
-            <label class="toggle-switch">
-              <input type="checkbox" id="consoleToggle" />
-              <span class="toggle-slider"></span>
-              <span class="toggle-text">Show console output</span>
-            </label>
+            <div class="setting-row setting-row--inline">
+              <label class="select-label">
+                <span class="setting-label">Theme</span>
+                <span class="select-wrap">
+                  <select id="themeSelect" class="field">
+                    <option value="system">System</option>
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                    <option value="purple">Purple</option>
+                  </select>
+                </span>
+              </label>
+            </div>
 
-            <label class="toggle-switch">
-              <input type="checkbox" id="animateBackgroundToggle" />
-              <span class="toggle-slider"></span>
-              <span class="toggle-text">Animate background</span>
-            </label>
+            <div class="setting-row">
+              <label class="toggle-switch">
+                <input type="checkbox" id="animateBackgroundToggle" />
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">Animate background</span>
+              </label>
+            </div>
 
-            <label class="select-label">
-              <span>Theme</span>
-              <select id="themeSelect">
-                <option value="system">System</option>
-                <option value="light">Light</option>
-                <option value="dark">Dark</option>
-                <option value="purple">Purple</option>
-              </select>
-            </label>
+            <div class="setting-row">
+              <label class="toggle-switch">
+                <input type="checkbox" id="consoleToggle" />
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">Show console output</span>
+              </label>
+              <p class="settings-hint">Adds a Console tab with raw yt-dlp output.</p>
+            </div>
 
-            <label class="toggle-switch">
-              <input type="checkbox" id="notificationsToggle" />
-              <span class="toggle-slider"></span>
-              <span class="toggle-text">Download notifications</span>
-            </label>
+            <div class="setting-row">
+              <label class="toggle-switch">
+                <input type="checkbox" id="notificationsToggle" />
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">Download notifications</span>
+              </label>
+            </div>
 
-            <label class="toggle-switch" id="taskbarProgressSetting">
-              <input type="checkbox" id="taskbarProgressToggle" />
-              <span class="toggle-slider"></span>
-              <span class="toggle-text">Taskbar / Dock progress</span>
-            </label>
-            <p id="taskbarProgressLinuxNote" class="settings-hint hidden">
+            <div class="setting-row" id="taskbarProgressSetting">
+              <label class="toggle-switch">
+                <input type="checkbox" id="taskbarProgressToggle" />
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">Taskbar / Dock progress</span>
+              </label>
+            </div>
+            <p id="taskbarProgressLinuxNote" class="setting-row setting-row--note hidden">
               Taskbar / Dock progress is available on Windows and macOS only.
             </p>
-            <button type="button" class="settings-section-reset" data-reset-section="interface">
-              Reset section
-            </button>
           </div>
         </section>
 
         <section class="settings-section">
-          <button
-            type="button"
-            id="settingsSectionHeaderApplication"
-            class="settings-section-header"
-            aria-expanded="true"
-            aria-controls="settingsSectionBodyApplication"
-          >
-            <span class="settings-section-title">Application</span>
-            <svg
-              class="settings-chevron"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
+          <div class="settings-section-head">
+            <button
+              type="button"
+              id="settingsSectionHeaderApplication"
+              class="settings-section-header"
+              aria-expanded="true"
+              aria-controls="settingsSectionBodyApplication"
             >
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
-          </button>
+              <svg
+                class="settings-chevron"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+              <span class="settings-section-title">Application</span>
+            </button>
+            <button
+              type="button"
+              class="settings-section-reset btn btn--ghost btn--xs btn--danger-hover"
+              data-reset-section="application"
+              aria-label="Reset application settings"
+            >
+              Reset
+            </button>
+          </div>
           <div
             id="settingsSectionBodyApplication"
             class="settings-section-body"
             role="region"
             aria-labelledby="settingsSectionHeaderApplication"
           >
-            <label class="toggle-switch" id="checkUpdatesOnStartupLabel">
-              <input type="checkbox" id="checkUpdatesOnStartupToggle" />
-              <span class="toggle-slider"></span>
-              <span class="toggle-text">Auto check for updates</span>
-            </label>
-
-            <button
-              type="button"
-              id="showUpdateChannelBtn"
-              class="settings-link-btn"
-              aria-expanded="false"
-              aria-controls="updateChannelContainer"
-            >
-              ▸ Update channel settings
-            </button>
-            <div id="updateChannelContainer" class="sub-option" aria-hidden="true">
-              <label class="select-label">
-                <span>Update Channel:</span>
-                <select id="updateChannelSelect">
-                  <option value="auto">Auto (follows version)</option>
-                  <option value="stable">Stable</option>
-                  <option value="beta">Beta</option>
-                </select>
+            <div class="setting-row" id="checkUpdatesOnStartupLabel">
+              <label class="toggle-switch">
+                <input type="checkbox" id="checkUpdatesOnStartupToggle" />
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">Auto check for updates</span>
               </label>
+              <button
+                type="button"
+                id="showUpdateChannelBtn"
+                class="settings-link-btn btn btn--ghost btn--xs setting-row__aside"
+                aria-expanded="false"
+                aria-controls="updateChannelContainer"
+              >
+                Channel
+                <svg
+                  class="settings-link-chevron"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </button>
+              <div
+                id="updateChannelContainer"
+                class="sub-option setting-subgroup"
+                aria-hidden="true"
+              >
+                <label class="select-label">
+                  <span>Update channel</span>
+                  <span class="select-wrap">
+                    <select id="updateChannelSelect" class="field">
+                      <option value="auto">Auto (follows version)</option>
+                      <option value="stable">Stable</option>
+                      <option value="beta">Beta</option>
+                    </select>
+                  </span>
+                </label>
+              </div>
             </div>
 
-            <button type="button" id="checkUpdateBtn" class="settings-btn">
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
+            <div class="settings-actions">
+              <button
+                type="button"
+                id="checkUpdateBtn"
+                class="settings-btn btn btn--neutral btn--block btn--start"
               >
-                <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                <path d="M3 3v5h5" />
-                <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-                <path d="M16 16h5v5" />
-              </svg>
-              Check for Updates
-            </button>
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                  <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+                  <path d="M16 16h5v5" />
+                </svg>
+                Check for Updates
+              </button>
 
-            <button type="button" id="shortcutsBtn" class="settings-btn">
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
+              <button
+                type="button"
+                id="shortcutsBtn"
+                class="settings-btn btn btn--neutral btn--block btn--start"
               >
-                <rect x="2" y="4" width="20" height="16" rx="2" />
-                <path
-                  d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M6 16h12"
-                />
-              </svg>
-              Keyboard Shortcuts
-            </button>
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <rect x="2" y="4" width="20" height="16" rx="2" />
+                  <path
+                    d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M6 16h12"
+                  />
+                </svg>
+                Keyboard Shortcuts
+              </button>
 
-            <button type="button" id="viewStatsBtn" class="settings-btn">
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
+              <button
+                type="button"
+                id="viewStatsBtn"
+                class="settings-btn btn btn--neutral btn--block btn--start"
               >
-                <line x1="18" y1="20" x2="18" y2="10" />
-                <line x1="12" y1="20" x2="12" y2="4" />
-                <line x1="6" y1="20" x2="6" y2="14" />
-              </svg>
-              Download Statistics
-            </button>
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <line x1="18" y1="20" x2="18" y2="10" />
+                  <line x1="12" y1="20" x2="12" y2="4" />
+                  <line x1="6" y1="20" x2="6" y2="14" />
+                </svg>
+                Download Statistics
+              </button>
 
-            <button type="button" id="exportSettingsBtn" class="settings-btn">
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="17 8 12 3 7 8" />
-                <line x1="12" y1="3" x2="12" y2="15" />
-              </svg>
-              Export Settings
-            </button>
+              <div class="settings-actions-pair">
+                <button
+                  type="button"
+                  id="exportSettingsBtn"
+                  class="settings-btn btn btn--neutral btn--block"
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                  Export Settings
+                </button>
 
-            <button type="button" id="importSettingsBtn" class="settings-btn">
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-              Import Settings
-            </button>
-
-            <button type="button" class="settings-section-reset" data-reset-section="application">
-              Reset section
-            </button>
+                <button
+                  type="button"
+                  id="importSettingsBtn"
+                  class="settings-btn btn btn--neutral btn--block"
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  Import Settings
+                </button>
+              </div>
+            </div>
           </div>
         </section>
       </div>
 
       <div class="sidebar-footer">
-        <button type="button" id="resetSettings" class="reset-btn">
+        <button type="button" id="resetSettings" class="reset-btn btn btn--danger btn--block">
           <svg
             width="16"
             height="16"
@@ -571,7 +698,7 @@
           <button
             type="button"
             id="settingsBtn"
-            class="icon-btn"
+            class="icon-btn btn btn--neutral btn--icon btn--accent-hover"
             title="Settings"
             aria-label="Settings"
             aria-expanded="false"
@@ -615,7 +742,13 @@
                 >Flat UI</span
               >
             </label>
-            <a href="#" id="helpLink" title="Help" aria-label="Help">
+            <a
+              href="#"
+              id="helpLink"
+              class="btn btn--neutral btn--sm btn--icon"
+              title="Help"
+              aria-label="Help"
+            >
               <svg
                 width="20"
                 height="20"
@@ -631,7 +764,13 @@
                 <circle cx="12" cy="17" r="0.5" />
               </svg>
             </a>
-            <a href="#" id="supportLink" title="Support" aria-label="Support">
+            <a
+              href="#"
+              id="supportLink"
+              class="btn btn--neutral btn--sm btn--icon"
+              title="Support"
+              aria-label="Support"
+            >
               <svg
                 width="20"
                 height="20"
@@ -653,11 +792,13 @@
         <div class="main-stage">
           <section class="download-section">
             <div class="download-card">
-              <h1 class="download-title">Download Videos</h1>
-              <p class="download-subtitle">Paste a video URL to get started</p>
+              <div class="download-card-head">
+                <h1 class="download-title">Download Videos</h1>
+                <p class="download-subtitle">Paste a video URL to get started</p>
+              </div>
 
               <div class="url-input-wrapper">
-                <div class="url-input-container">
+                <div class="url-input-container is-empty">
                   <svg
                     class="url-icon"
                     width="20"
@@ -668,6 +809,7 @@
                     stroke-width="2"
                     stroke-linecap="round"
                     stroke-linejoin="round"
+                    aria-hidden="true"
                   >
                     <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
                     <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
@@ -682,53 +824,79 @@
                     aria-label="Video URL"
                     aria-describedby="urlValidationMessage"
                   />
-                  <button
-                    type="button"
-                    id="pasteUrl"
-                    class="paste-btn"
-                    title="Paste from clipboard"
-                    aria-label="Paste URL from clipboard"
-                  >
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
+                  <div class="url-input-actions">
+                    <button
+                      id="previewBtn"
+                      class="preview-btn btn btn--ghost btn--xs"
+                      type="button"
+                      data-default-text="Preview"
+                      title="Look up the title, length, and playlist size"
+                      disabled
                     >
-                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    id="clearUrl"
-                    class="clear-btn hidden"
-                    title="Clear"
-                    aria-label="Clear URL"
-                  >
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                      <span class="btn-label">Preview</span>
+                    </button>
+                    <button
+                      type="button"
+                      id="pasteUrl"
+                      class="paste-btn btn btn--neutral btn--xs btn--icon btn--accent-hover"
+                      title="Paste from clipboard"
+                      aria-label="Paste URL from clipboard"
                     >
-                      <line x1="18" y1="6" x2="6" y2="18"></line>
-                      <line x1="6" y1="6" x2="18" y2="18"></line>
-                    </svg>
-                  </button>
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      id="clearUrl"
+                      class="clear-btn btn btn--neutral btn--xs btn--icon btn--danger-hover hidden"
+                      title="Clear"
+                      aria-label="Clear URL"
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                      </svg>
+                    </button>
+                  </div>
                 </div>
                 <button
                   type="button"
                   id="downloadBtn"
-                  class="download-btn"
+                  class="download-btn btn btn--primary btn--lg"
                   data-default-text="Download"
                 >
                   <svg
@@ -757,129 +925,240 @@
 
               <section
                 id="downloadProfilesComposer"
-                class="download-profiles-composer hidden"
-                aria-labelledby="downloadProfilesTitle"
+                class="download-profiles-composer"
+                aria-label="Download options"
               >
-                <div class="download-profiles-heading">
-                  <h2 id="downloadProfilesTitle">Download profile</h2>
-                  <span>Choose how this download is made</span>
-                </div>
-                <div class="download-profile-options" role="group" aria-label="Download profile">
-                  <button
-                    type="button"
-                    id="profileBestVideoBtn"
-                    class="download-profile-btn"
-                    aria-pressed="false"
+                <div class="profile-row">
+                  <div
+                    class="segmented profile-segmented"
+                    role="group"
+                    aria-label="Download profile"
                   >
-                    <strong>Best video</strong><span>Highest available quality</span>
-                  </button>
-                  <button
-                    type="button"
-                    id="profileAudioBtn"
-                    class="download-profile-btn"
-                    aria-pressed="false"
-                  >
-                    <strong>Audio</strong><span>Extract music or podcasts</span>
-                  </button>
-                  <button
-                    type="button"
-                    id="profileCustomBtn"
-                    class="download-profile-btn"
-                    aria-pressed="false"
-                  >
-                    <strong>Custom</strong><span>Choose exact source formats</span>
-                  </button>
-                </div>
-                <label id="profileAudioFormatContainer" class="profile-audio-format hidden">
-                  <span>Audio format</span>
-                  <select id="profileAudioFormatSelect">
-                    <option value="mp3">MP3</option>
-                    <option value="flac">FLAC</option>
-                    <option value="ogg">Ogg</option>
-                    <option value="wav">WAV</option>
-                    <option value="m4a">M4A</option>
-                    <option value="opus">Opus</option>
-                  </select>
-                </label>
-                <div class="preset-manager" aria-labelledby="presetManagerTitle">
-                  <div class="preset-manager-heading">
-                    <h3 id="presetManagerTitle">Saved presets</h3>
-                    <span>Reuse this setup for downloads and queues</span>
-                  </div>
-                  <div class="preset-manager-row">
-                    <label class="sr-only" for="downloadPresetSelect">Saved preset</label>
-                    <select id="downloadPresetSelect" aria-describedby="presetStatus">
-                      <option value="">No saved preset</option>
-                    </select>
-                    <button type="button" id="applyPresetBtn" class="preset-action-btn">
-                      Apply
+                    <button
+                      type="button"
+                      id="profileCompatibleBtn"
+                      class="download-profile-btn segmented__item"
+                      aria-pressed="false"
+                      title="One MP4 file that plays everywhere"
+                    >
+                      Compatible
+                    </button>
+                    <button
+                      type="button"
+                      id="profileBestVideoBtn"
+                      class="download-profile-btn segmented__item"
+                      aria-pressed="false"
+                      title="Highest available video and audio quality"
+                    >
+                      Best video
+                    </button>
+                    <button
+                      type="button"
+                      id="profileAudioBtn"
+                      class="download-profile-btn segmented__item"
+                      aria-pressed="false"
+                      title="Extract music or podcasts"
+                    >
+                      Audio
+                    </button>
+                    <button
+                      type="button"
+                      id="profileCustomBtn"
+                      class="download-profile-btn segmented__item"
+                      aria-pressed="false"
+                      title="Choose exact source formats"
+                    >
+                      Custom
                     </button>
                   </div>
-                  <div class="preset-manager-row">
+                  <label id="profileAudioFormatContainer" class="profile-audio-format hidden">
+                    <span class="sr-only">Audio format</span>
+                    <span class="select-wrap select-wrap--inline">
+                      <select id="profileAudioFormatSelect" class="field">
+                        <option value="mp3">MP3</option>
+                        <option value="flac">FLAC</option>
+                        <option value="ogg">Ogg</option>
+                        <option value="wav">WAV</option>
+                        <option value="m4a">M4A</option>
+                        <option value="opus">Opus</option>
+                      </select>
+                    </span>
+                  </label>
+                  <button
+                    type="button"
+                    id="presetMenuBtn"
+                    class="preset-menu-btn btn btn--neutral btn--sm"
+                    aria-haspopup="dialog"
+                    aria-expanded="false"
+                    aria-controls="presetPopover"
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+                    </svg>
+                    <span>Presets</span>
+                  </button>
+                </div>
+                <p id="downloadOutputSummary" class="download-output-summary">
+                  One MP4 file that plays everywhere
+                </p>
+
+                <div
+                  id="presetPopover"
+                  class="popover preset-popover"
+                  role="dialog"
+                  aria-labelledby="presetPopoverTitle"
+                  hidden
+                >
+                  <div class="preset-popover-head">
+                    <h2 id="presetPopoverTitle">Saved presets</h2>
+                    <span>Reuse a setup for downloads and queues</span>
+                  </div>
+                  <div class="preset-popover-row">
+                    <label class="sr-only" for="downloadPresetSelect">Saved preset</label>
+                    <span class="select-wrap">
+                      <select
+                        id="downloadPresetSelect"
+                        class="field"
+                        aria-describedby="presetStatus"
+                      >
+                        <option value="">No saved preset</option>
+                      </select>
+                    </span>
+                    <button
+                      type="button"
+                      id="applyPresetBtn"
+                      class="preset-action-btn btn btn--neutral btn--sm"
+                    >
+                      Apply
+                    </button>
+                    <button
+                      type="button"
+                      id="deletePresetBtn"
+                      class="preset-action-btn btn btn--neutral btn--sm btn--icon btn--danger-hover"
+                      aria-label="Delete selected preset"
+                      title="Delete selected preset"
+                      disabled
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                  <div class="preset-popover-row">
                     <label class="sr-only" for="presetNameInput">Preset name</label>
                     <input
                       id="presetNameInput"
+                      class="field"
                       type="text"
                       maxlength="40"
-                      placeholder="Preset name"
+                      placeholder="Name this setup…"
                       autocomplete="off"
                     />
                     <button
                       type="button"
                       id="savePresetBtn"
-                      class="preset-action-btn preset-save-btn"
+                      class="preset-action-btn preset-save-btn btn btn--neutral btn--sm btn--accent-hover"
                     >
                       Save current
-                    </button>
-                    <button type="button" id="deletePresetBtn" class="preset-action-btn" disabled>
-                      Delete
                     </button>
                   </div>
                   <p id="presetStatus" class="preset-status" role="status" aria-live="polite"></p>
                 </div>
+
+                <div id="formatOptions" class="format-options">
+                  <div class="format-grid">
+                    <label class="format-select-label">
+                      <span>Video quality</span>
+                      <span class="select-wrap">
+                        <select id="videoFormat" class="field"></select>
+                      </span>
+                    </label>
+                    <label class="format-select-label">
+                      <span>Audio quality</span>
+                      <span class="select-wrap">
+                        <select id="audioFormat" class="field"></select>
+                      </span>
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    id="fetchFormatsBtn"
+                    class="fetch-formats-btn btn btn--neutral btn--sm btn--accent-hover"
+                    data-default-text="Check Available Formats"
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="11" cy="11" r="8" />
+                      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    </svg>
+                    Check Available Formats
+                  </button>
+                </div>
               </section>
 
               <div class="download-destination" aria-live="polite">
+                <svg
+                  class="download-destination-icon"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+                  />
+                </svg>
                 <div class="download-destination-copy">
                   <span class="download-destination-label">Save to</span>
                   <span id="downloadFolderSummary" class="download-destination-path"
                     >Choose a folder</span
                   >
                 </div>
-                <button type="button" id="changeDownloadFolderBtn" class="change-folder-btn">
-                  Change…
-                </button>
-                <label class="ask-download-location">
+                <label class="ask-download-location check">
                   <input type="checkbox" id="askDownloadLocationToggle" />
                   <span>Ask every time</span>
                 </label>
-              </div>
-              <p id="downloadOutputSummary" class="download-output-summary">
-                Standard compatible video
-              </p>
-
-              <div class="preview-actions">
                 <button
-                  id="previewBtn"
-                  class="preview-btn"
                   type="button"
-                  data-default-text="Preview"
-                  disabled
+                  id="changeDownloadFolderBtn"
+                  class="change-folder-btn btn btn--neutral btn--sm"
                 >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                    <circle cx="12" cy="12" r="3" />
-                  </svg>
-                  Preview
+                  Change…
                 </button>
               </div>
 
@@ -892,14 +1171,14 @@
               >
                 <button
                   id="previewClose"
-                  class="preview-close"
+                  class="preview-close btn btn--ghost btn--xs btn--icon"
                   type="button"
                   title="Hide preview"
                   aria-label="Hide preview"
                 >
                   <svg
-                    width="16"
-                    height="16"
+                    width="14"
+                    height="14"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
@@ -941,6 +1220,7 @@
                   <label for="playlistRangeStart">From</label>
                   <input
                     id="playlistRangeStart"
+                    class="field"
                     type="number"
                     min="1"
                     max="10000"
@@ -950,6 +1230,7 @@
                   <label for="playlistRangeEnd">to</label>
                   <input
                     id="playlistRangeEnd"
+                    class="field"
                     type="number"
                     min="1"
                     max="10000"
@@ -1014,70 +1295,295 @@
                   </svg>
                 </div>
               </div>
+            </div>
+          </section>
 
-              <div id="formatOptions" class="format-options">
+          <section id="dock" class="dock" aria-label="Queue, activity, and console">
+            <div class="dock-header">
+              <div class="dock-tabs segmented" role="tablist" aria-label="Panels">
                 <button
                   type="button"
-                  id="fetchFormatsBtn"
-                  class="fetch-formats-btn"
-                  data-default-text="Check Available Formats"
+                  role="tab"
+                  id="dockTabQueue"
+                  class="dock-tab segmented__item"
+                  data-dock-tab="queue"
+                  aria-selected="true"
+                  aria-controls="queueSection"
+                  tabindex="0"
                 >
                   <svg
-                    width="18"
-                    height="18"
+                    width="14"
+                    height="14"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
                     stroke-width="2"
                     stroke-linecap="round"
                     stroke-linejoin="round"
+                    aria-hidden="true"
                   >
-                    <circle cx="11" cy="11" r="8" />
-                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    <line x1="8" y1="6" x2="21" y2="6" />
+                    <line x1="8" y1="12" x2="21" y2="12" />
+                    <line x1="8" y1="18" x2="21" y2="18" />
+                    <line x1="3" y1="6" x2="3.01" y2="6" />
+                    <line x1="3" y1="12" x2="3.01" y2="12" />
+                    <line x1="3" y1="18" x2="3.01" y2="18" />
                   </svg>
-                  Check Available Formats
+                  <span class="dock-tab-label">Queue</span>
+                  <span id="queueCount" class="queue-count count-badge">0</span>
                 </button>
-                <div class="format-grid">
-                  <label class="format-select-label">
-                    <span>Video Quality</span>
-                    <select id="videoFormat"></select>
-                  </label>
-                  <label class="format-select-label">
-                    <span>Audio Quality</span>
-                    <select id="audioFormat"></select>
-                  </label>
+                <button
+                  type="button"
+                  role="tab"
+                  id="dockTabActivity"
+                  class="dock-tab segmented__item"
+                  data-dock-tab="activity"
+                  aria-selected="false"
+                  aria-controls="download-history"
+                  tabindex="-1"
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
+                  </svg>
+                  <span class="dock-tab-label">Activity</span>
+                  <span id="history-count" class="history-count count-badge">0</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  id="dockTabConsole"
+                  class="dock-tab segmented__item"
+                  data-dock-tab="console"
+                  aria-selected="false"
+                  aria-controls="console-section"
+                  tabindex="-1"
+                  hidden
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <polyline points="4 17 10 11 4 5" />
+                    <line x1="12" y1="19" x2="20" y2="19" />
+                  </svg>
+                  <span class="dock-tab-label">Console</span>
+                </button>
+              </div>
+              <button
+                type="button"
+                id="dockCollapseBtn"
+                class="dock-collapse-btn btn btn--ghost btn--sm btn--icon"
+                aria-expanded="true"
+                aria-label="Collapse panel"
+                title="Collapse panel"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </button>
+            </div>
+
+            <div class="dock-body">
+              <section
+                id="queueSection"
+                class="queue-section dock-panel"
+                role="tabpanel"
+                aria-labelledby="dockTabQueue"
+                aria-busy="false"
+                tabindex="-1"
+              >
+                <div class="dock-toolbar queue-toolbar">
+                  <div class="queue-input-row">
+                    <label class="sr-only" for="queueUrlInput">Queue URLs</label>
+                    <textarea
+                      id="queueUrlInput"
+                      class="queue-url-input field"
+                      placeholder="Paste one or more URLs, one per line"
+                      rows="1"
+                      aria-label="Queue URLs"
+                      aria-describedby="queueStatusMessage"
+                    ></textarea>
+                    <button
+                      type="button"
+                      id="addToQueueBtn"
+                      class="queue-action-btn queue-add-btn btn btn--primary btn--sm"
+                      title="Add to queue"
+                      aria-label="Add URLs to queue"
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <line x1="12" y1="5" x2="12" y2="19" />
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                      </svg>
+                      Add
+                    </button>
+                  </div>
+                  <div class="queue-controls">
+                    <button
+                      type="button"
+                      id="startQueueBtn"
+                      class="queue-action-btn queue-start-btn btn btn--neutral btn--sm btn--accent-hover"
+                      title="Start queue"
+                      aria-label="Start queue processing"
+                    >
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <polygon points="5 3 19 12 5 21 5 3" />
+                      </svg>
+                      Start
+                    </button>
+                    <button
+                      type="button"
+                      id="cancelQueueBtn"
+                      class="queue-action-btn queue-cancel-btn btn btn--neutral btn--sm"
+                      title="Cancel queue"
+                      aria-label="Cancel active queue"
+                    >
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <rect x="4" y="4" width="16" height="16" rx="2" ry="2" />
+                      </svg>
+                      Stop
+                    </button>
+                    <button
+                      type="button"
+                      id="clearQueueBtn"
+                      class="queue-action-btn queue-clear-btn btn btn--ghost btn--sm btn--icon btn--danger-hover"
+                      title="Clear queue"
+                      aria-label="Clear queued and completed items"
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path
+                          d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+                        />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </div>
-          </section>
+                <p
+                  id="queueStatusMessage"
+                  class="queue-status-message"
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="true"
+                ></p>
+                <div id="queueList" class="queue-list dock-scroll" role="list"></div>
+              </section>
 
-          <section id="queueSection" class="queue-section" aria-busy="false">
-            <div class="queue-header">
-              <button
-                type="button"
-                id="queueToggleBtn"
-                class="queue-collapse-btn"
-                aria-expanded="true"
-                aria-controls="queueBody"
+              <section
+                id="download-history"
+                class="download-history dock-panel visible"
+                role="tabpanel"
+                aria-labelledby="dockTabActivity"
+                tabindex="-1"
+                hidden
               >
-                <span class="queue-header-left">
-                  <svg
-                    class="queue-collapse-icon"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
+                <div class="dock-toolbar">
+                  <div class="activity-filters segmented" role="group" aria-label="Filter activity">
+                    <button
+                      type="button"
+                      class="activity-filter segmented__item selected"
+                      data-activity-filter="all"
+                      aria-pressed="true"
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      class="activity-filter segmented__item"
+                      data-activity-filter="success"
+                      aria-pressed="false"
+                    >
+                      Completed
+                    </button>
+                    <button
+                      type="button"
+                      class="activity-filter segmented__item"
+                      data-activity-filter="failed"
+                      aria-pressed="false"
+                    >
+                      Failed
+                    </button>
+                    <button
+                      type="button"
+                      class="activity-filter segmented__item"
+                      data-activity-filter="cancelled"
+                      aria-pressed="false"
+                    >
+                      Cancelled
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    id="clearHistory"
+                    class="history-clear-btn btn btn--ghost btn--sm btn--icon btn--danger-hover"
+                    title="Clear activity"
+                    aria-label="Clear history"
                   >
-                    <polyline points="6 9 12 15 18 9"></polyline>
-                  </svg>
-                  <span class="queue-title">
                     <svg
-                      width="16"
-                      height="16"
+                      width="14"
+                      height="14"
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
@@ -1085,160 +1591,35 @@
                       stroke-linecap="round"
                       stroke-linejoin="round"
                     >
-                      <line x1="8" y1="6" x2="21" y2="6" />
-                      <line x1="8" y1="12" x2="21" y2="12" />
-                      <line x1="8" y1="18" x2="21" y2="18" />
-                      <line x1="3" y1="6" x2="3.01" y2="6" />
-                      <line x1="3" y1="12" x2="3.01" y2="12" />
-                      <line x1="3" y1="18" x2="3.01" y2="18" />
+                      <path
+                        d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+                      />
                     </svg>
-                    Download Queue
-                  </span>
-                  <span id="queueCount" class="queue-count">0</span>
-                </span>
-              </button>
-            </div>
-            <div id="queueBody" class="queue-body" role="region" aria-labelledby="queueToggleBtn">
-              <div class="queue-input-row">
-                <label class="sr-only" for="queueUrlInput">Queue URLs</label>
-                <textarea
-                  id="queueUrlInput"
-                  class="queue-url-input"
-                  placeholder="Paste one or more URLs, one per line"
-                  rows="2"
-                  aria-label="Queue URLs"
-                  aria-describedby="queueStatusMessage"
-                ></textarea>
-                <button
-                  type="button"
-                  id="addToQueueBtn"
-                  class="queue-action-btn queue-add-btn"
-                  title="Add to queue"
-                  aria-label="Add URLs to queue"
-                >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
-                  Add URLs
-                </button>
-              </div>
-              <div class="queue-controls">
-                <button
-                  type="button"
-                  id="startQueueBtn"
-                  class="queue-action-btn queue-start-btn"
-                  title="Start queue"
-                  aria-label="Start queue processing"
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <polygon points="5 3 19 12 5 21 5 3" />
-                  </svg>
-                  Start Queue
-                </button>
-                <button
-                  type="button"
-                  id="cancelQueueBtn"
-                  class="queue-action-btn queue-cancel-btn"
-                  title="Cancel queue"
-                  aria-label="Cancel active queue"
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                  </svg>
-                  Cancel Queue
-                </button>
-                <button
-                  type="button"
-                  id="clearQueueBtn"
-                  class="queue-action-btn queue-clear-btn"
-                  title="Clear queue"
-                  aria-label="Clear queued and completed items"
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path
-                      d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
-                    />
-                  </svg>
-                  Clear Queue
-                </button>
-              </div>
-              <p
-                id="queueStatusMessage"
-                class="queue-status-message"
-                role="status"
-                aria-live="polite"
-                aria-atomic="true"
-              >
-                Queue status updates will appear here.
-              </p>
-              <div id="queueList" class="queue-list" role="list"></div>
-            </div>
-          </section>
+                  </button>
+                </div>
+                <div id="history-list" class="history-list dock-scroll" role="list"></div>
+              </section>
 
-          <section id="download-history" class="download-history visible">
-            <div class="history-header">
-              <button
-                type="button"
-                class="history-collapse-btn"
-                id="historyToggle"
-                aria-expanded="true"
-                aria-controls="history-list"
+              <section
+                id="console-section"
+                class="console-section dock-panel"
+                role="tabpanel"
+                aria-labelledby="dockTabConsole"
+                tabindex="-1"
+                hidden
               >
-                <span class="history-header-left">
-                  <svg
-                    class="history-collapse-icon"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
+                <div class="dock-toolbar">
+                  <span class="dock-toolbar-label">yt-dlp output</span>
+                  <button
+                    type="button"
+                    id="clearConsole"
+                    class="console-clear-btn btn btn--ghost btn--sm btn--icon btn--danger-hover"
+                    title="Clear console"
+                    aria-label="Clear console"
                   >
-                    <polyline points="6 9 12 15 18 9"></polyline>
-                  </svg>
-                  <span class="history-title">
                     <svg
-                      width="16"
-                      height="16"
+                      width="14"
+                      height="14"
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
@@ -1246,139 +1627,20 @@
                       stroke-linecap="round"
                       stroke-linejoin="round"
                     >
-                      <circle cx="12" cy="12" r="10" />
-                      <polyline points="12 6 12 12 16 14" />
+                      <path
+                        d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+                      />
                     </svg>
-                    Activity
-                  </span>
-                  <span id="history-count" class="history-count">0</span>
-                </span>
-              </button>
-              <button
-                type="button"
-                id="clearHistory"
-                class="history-clear-btn"
-                title="Clear history"
-                aria-label="Clear history"
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path
-                    d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
-                  />
-                </svg>
-              </button>
+                  </button>
+                </div>
+                <pre
+                  id="output"
+                  class="console-output dock-scroll"
+                  role="log"
+                  aria-label="Console output"
+                ></pre>
+              </section>
             </div>
-            <div class="activity-filters" role="group" aria-label="Filter activity">
-              <button
-                type="button"
-                class="activity-filter selected"
-                data-activity-filter="all"
-                aria-pressed="true"
-              >
-                All
-              </button>
-              <button
-                type="button"
-                class="activity-filter"
-                data-activity-filter="success"
-                aria-pressed="false"
-              >
-                Completed
-              </button>
-              <button
-                type="button"
-                class="activity-filter"
-                data-activity-filter="failed"
-                aria-pressed="false"
-              >
-                Failed
-              </button>
-              <button
-                type="button"
-                class="activity-filter"
-                data-activity-filter="cancelled"
-                aria-pressed="false"
-              >
-                Cancelled
-              </button>
-            </div>
-            <div id="history-list" class="history-list" role="list"></div>
-          </section>
-
-          <section id="console-section" class="console-section">
-            <div class="console-header">
-              <button
-                type="button"
-                class="console-collapse-btn"
-                id="consoleToggleBtn"
-                aria-expanded="false"
-                aria-controls="output"
-              >
-                <span class="console-header-left">
-                  <svg
-                    class="console-collapse-icon"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <polyline points="6 9 12 15 18 9"></polyline>
-                  </svg>
-                  <span class="console-title">
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <polyline points="4 17 10 11 4 5" />
-                      <line x1="12" y1="19" x2="20" y2="19" />
-                    </svg>
-                    Console Output
-                  </span>
-                </span>
-              </button>
-              <button
-                type="button"
-                id="clearConsole"
-                class="console-clear-btn"
-                title="Clear console"
-                aria-label="Clear console"
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path
-                    d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
-                  />
-                </svg>
-              </button>
-            </div>
-            <pre id="output" class="console-output" role="log" aria-label="Console output"></pre>
           </section>
         </div>
 
@@ -1406,7 +1668,7 @@
             <button
               type="button"
               id="update-banner-cancel"
-              class="update-banner-cancel"
+              class="update-banner-cancel btn btn--neutral btn--xs btn--danger-hover"
               aria-label="Cancel update download"
             >
               Cancel
@@ -1453,7 +1715,12 @@
       <div class="licenses-container">
         <div class="licenses-header">
           <h3>Open Source Licenses</h3>
-          <button type="button" id="close-licenses" class="modal-close-btn" aria-label="Close">
+          <button
+            type="button"
+            id="close-licenses"
+            class="modal-close-btn btn btn--neutral btn--icon btn--danger-hover"
+            aria-label="Close"
+          >
             <svg
               width="20"
               height="20"
@@ -1560,7 +1827,11 @@
                 <strong>Download folder</strong>
                 <small id="wizard-folder-summary">Choose a folder or ask each time</small>
               </span>
-              <button type="button" id="wizard-choose-folder" class="wizard-inline-btn">
+              <button
+                type="button"
+                id="wizard-choose-folder"
+                class="wizard-inline-btn btn btn--neutral btn--sm"
+              >
                 Choose…
               </button>
             </div>
@@ -1573,15 +1844,28 @@
               </span>
             </label>
             <fieldset class="wizard-profile-choice">
-              <legend>Default profile</legend>
-              <label
-                ><input type="radio" name="wizard-profile" value="standard" checked /> Standard
-                video</label
-              >
-              <label
-                ><input type="radio" name="wizard-profile" value="best-video" /> Best video</label
-              >
-              <label><input type="radio" name="wizard-profile" value="audio" /> Audio</label>
+              <legend>Default download profile</legend>
+              <div class="segmented wizard-profile-segmented">
+                <label class="wizard-segment"
+                  ><input type="radio" name="wizard-profile" value="compatible" checked /><span
+                    class="segmented__item"
+                    >Compatible</span
+                  ></label
+                >
+                <label class="wizard-segment"
+                  ><input type="radio" name="wizard-profile" value="best-video" /><span
+                    class="segmented__item"
+                    >Best video</span
+                  ></label
+                >
+                <label class="wizard-segment"
+                  ><input type="radio" name="wizard-profile" value="audio" /><span
+                    class="segmented__item"
+                    >Audio</span
+                  ></label
+                >
+              </div>
+              <small>You can switch profiles on the download card at any time.</small>
             </fieldset>
           </div>
         </div>
@@ -1635,11 +1919,19 @@
         </div>
 
         <div class="wizard-nav">
-          <button id="wizard-back" class="wizard-btn wizard-btn-secondary" type="button">
+          <button
+            id="wizard-back"
+            class="wizard-btn wizard-btn-secondary btn btn--neutral"
+            type="button"
+          >
             Back
           </button>
           <div class="wizard-dots" id="wizard-dots"></div>
-          <button id="wizard-next" class="wizard-btn wizard-btn-primary" type="button">
+          <button
+            id="wizard-next"
+            class="wizard-btn wizard-btn-primary btn btn--primary"
+            type="button"
+          >
             Get Started
           </button>
         </div>

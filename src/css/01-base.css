@@ -226,6 +226,30 @@
     -1px 1px 0 rgba(255, 255, 255, 0.34), 1px 1px 0 rgba(255, 255, 255, 0.34),
     0 0 5px rgba(255, 255, 255, 0.2);
   --download-btn-radial: none;
+
+  /* Raised cards: the download card and the dock share one surface. */
+  --card-bg: color-mix(in srgb, var(--surface-1) 32%, transparent);
+  --card-border: rgba(255, 255, 255, 0.12);
+  --card-border-hover: rgba(255, 255, 255, 0.2);
+  --card-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05), var(--shadow-lg), 0 8px 32px rgba(0, 0, 0, 0.28);
+  --card-shadow-hover:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07), var(--shadow-lg), 0 12px 40px rgba(0, 0, 0, 0.35);
+  --card-lift: translateY(-2px);
+
+  /* Inset wells hold inputs, selects and segmented tracks. */
+  --well-bg: rgba(0, 0, 0, 0.22);
+  --well-border: var(--border-subtle);
+  --well-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.32), inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+
+  /* The selected segment is raised like a neutral button; the accent bar marks it. */
+  --segmented-selected-bg: var(--button-neutral-bg-hover);
+  --segmented-selected-shadow: var(--button-neutral-shadow-hover);
+  --segmented-indicator: var(--accent);
+
+  --content-max-width: 820px;
+  --dock-min-height: 136px;
+  --dock-tab-height: 34px;
 }
 
 :root[data-theme='dark'] {
@@ -327,6 +351,26 @@
     -1px 1px 0 rgba(248, 250, 252, 0.5), 1px 1px 0 rgba(248, 250, 252, 0.5),
     0 0 5px rgba(248, 250, 252, 0.2);
   --download-btn-radial: none;
+  --card-bg: color-mix(in srgb, #ffffff 58%, transparent);
+  --card-border: rgba(15, 23, 42, 0.1);
+  --card-border-hover: rgba(15, 23, 42, 0.18);
+  --card-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 2px rgba(15, 23, 42, 0.06),
+    0 8px 28px rgba(15, 23, 42, 0.08);
+  --card-shadow-hover:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 2px 4px rgba(15, 23, 42, 0.08),
+    0 12px 36px rgba(15, 23, 42, 0.12);
+  --well-bg: rgba(15, 23, 42, 0.045);
+  --well-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.1);
+  --button-neutral-bg: linear-gradient(to bottom, #ffffff 0%, #eef2f7 100%);
+  --button-neutral-bg-hover: linear-gradient(to bottom, #ffffff 0%, #e6ecf4 100%);
+  --button-neutral-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1.5px 0 rgba(15, 23, 42, 0.1),
+    0 1px 2px rgba(15, 23, 42, 0.08);
+  --button-neutral-shadow-hover:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1.5px 0 rgba(15, 23, 42, 0.12),
+    0 2px 4px rgba(15, 23, 42, 0.1);
+  --button-active-shadow: inset 0 2px 3px rgba(15, 23, 42, 0.14);
 }
 
 *,
@@ -456,125 +500,34 @@ html[data-flat-ui='true'] *::after {
   -webkit-backdrop-filter: none !important;
 }
 
-/* Reset 3D buttons and cards */
-html[data-flat-ui='true'] .download-card,
-html[data-flat-ui='true'] .queue-section,
-html[data-flat-ui='true'] .download-history,
-html[data-flat-ui='true'] .console-section {
-  box-shadow: none !important;
-  transform: none !important;
-  border-width: 1px !important;
-}
-
-html[data-flat-ui='true'] .download-btn,
-html[data-flat-ui='true'] .settings-btn,
-html[data-flat-ui='true'] .settings-link-btn,
-html[data-flat-ui='true'] .icon-btn,
-html[data-flat-ui='true'] .top-bar-links a,
-html[data-flat-ui='true'] .reset-btn,
-html[data-flat-ui='true'] .modal-buttons button,
-html[data-flat-ui='true'] .modal-close-btn,
-html[data-flat-ui='true'] .update-banner-cancel,
-html[data-flat-ui='true'] .queue-action-btn,
-html[data-flat-ui='true'] .preview-btn,
-html[data-flat-ui='true'] .paste-btn,
-html[data-flat-ui='true'] .clear-btn,
-html[data-flat-ui='true'] .history-clear-btn,
-html[data-flat-ui='true'] .console-clear-btn,
-html[data-flat-ui='true'] .history-open-btn,
-html[data-flat-ui='true'] .fetch-formats-btn,
-html[data-flat-ui='true'] .download-profile-btn,
-html[data-flat-ui='true'] .change-folder-btn,
-html[data-flat-ui='true'] .wizard-btn {
-  border-bottom: 1px solid var(--border-default) !important;
-  transform: none !important;
-  box-shadow: none !important;
-  background: var(--surface-2) !important;
-  color: var(--text-primary) !important;
-}
-
-html[data-flat-ui='true'] .download-btn:hover,
-html[data-flat-ui='true'] .settings-btn:hover,
-html[data-flat-ui='true'] .settings-link-btn:hover,
-html[data-flat-ui='true'] .icon-btn:hover,
-html[data-flat-ui='true'] .top-bar-links a:hover,
-html[data-flat-ui='true'] .reset-btn:hover,
-html[data-flat-ui='true'] .modal-buttons button:hover,
-html[data-flat-ui='true'] .modal-close-btn:hover,
-html[data-flat-ui='true'] .update-banner-cancel:hover,
-html[data-flat-ui='true'] .queue-action-btn:hover,
-html[data-flat-ui='true'] .preview-btn:hover,
-html[data-flat-ui='true'] .paste-btn:hover,
-html[data-flat-ui='true'] .clear-btn:hover,
-html[data-flat-ui='true'] .history-clear-btn:hover,
-html[data-flat-ui='true'] .console-clear-btn:hover,
-html[data-flat-ui='true'] .history-open-btn:hover,
-html[data-flat-ui='true'] .fetch-formats-btn:hover,
-html[data-flat-ui='true'] .download-profile-btn:hover,
-html[data-flat-ui='true'] .change-folder-btn:hover,
-html[data-flat-ui='true'] .wizard-btn:hover {
-  background: var(--surface-hover) !important;
-  transform: none !important;
-  box-shadow: none !important;
-}
-
-html[data-flat-ui='true'] .download-btn:active,
-html[data-flat-ui='true'] .settings-btn:active,
-html[data-flat-ui='true'] .settings-link-btn:active,
-html[data-flat-ui='true'] .icon-btn:active,
-html[data-flat-ui='true'] .top-bar-links a:active,
-html[data-flat-ui='true'] .reset-btn:active,
-html[data-flat-ui='true'] .modal-buttons button:active,
-html[data-flat-ui='true'] .modal-close-btn:active,
-html[data-flat-ui='true'] .update-banner-cancel:active,
-html[data-flat-ui='true'] .queue-action-btn:active,
-html[data-flat-ui='true'] .preview-btn:active,
-html[data-flat-ui='true'] .paste-btn:active,
-html[data-flat-ui='true'] .clear-btn:active,
-html[data-flat-ui='true'] .history-clear-btn:active,
-html[data-flat-ui='true'] .console-clear-btn:active,
-html[data-flat-ui='true'] .history-open-btn:active,
-html[data-flat-ui='true'] .fetch-formats-btn:active,
-html[data-flat-ui='true'] .download-profile-btn:active,
-html[data-flat-ui='true'] .change-folder-btn:active,
-html[data-flat-ui='true'] .wizard-btn:active {
-  transform: none !important;
-}
-
-/* Keep semantic fills in flat mode without the raised button treatment. */
-html[data-flat-ui='true'] .download-btn,
-html[data-flat-ui='true'] .queue-add-btn,
-html[data-flat-ui='true'] .download-profile-btn.selected,
-html[data-flat-ui='true'] .modal-buttons .modal-btn-primary,
-html[data-flat-ui='true'] .wizard-btn-primary {
-  background: var(--accent) !important;
-  color: var(--accent-contrast) !important;
-  border: 1px solid var(--accent-dark) !important;
-}
-
-html[data-flat-ui='true'] .download-btn:hover,
-html[data-flat-ui='true'] .queue-add-btn:hover,
-html[data-flat-ui='true'] .download-profile-btn.selected:hover,
-html[data-flat-ui='true'] .modal-buttons .modal-btn-primary:hover,
-html[data-flat-ui='true'] .wizard-btn-primary:hover {
-  background: var(--accent-hover) !important;
-}
-
-html[data-flat-ui='true'] .reset-btn,
-html[data-flat-ui='true'] .modal-buttons .modal-btn-danger {
-  background: var(--danger-subtle) !important;
-  color: var(--danger) !important;
-  border: 1px solid var(--danger) !important;
-}
-
-html[data-flat-ui='true'] .reset-btn:hover,
-html[data-flat-ui='true'] .modal-buttons .modal-btn-danger:hover,
-html[data-flat-ui='true'] .modal-close-btn:hover,
-html[data-flat-ui='true'] .update-banner-cancel:hover,
-html[data-flat-ui='true'] .clear-btn:hover,
-html[data-flat-ui='true'] .history-clear-btn:hover,
-html[data-flat-ui='true'] .console-clear-btn:hover {
-  background: var(--danger) !important;
-  color: var(--danger-contrast) !important;
-  border-color: var(--danger) !important;
+/* Flat UI swaps the raised tokens for flat ones. Every control reads these
+   tokens, so nothing needs a per-selector override. Higher specificity than
+   :root[data-theme] so flat wins in every theme. */
+:root[data-flat-ui='true'] {
+  --button-neutral-bg: var(--surface-2);
+  --button-neutral-bg-hover: var(--surface-hover);
+  --button-primary-bg: var(--accent);
+  --button-primary-bg-hover: var(--accent-hover);
+  --button-danger-bg: var(--danger-subtle);
+  --button-danger-bg-hover: var(--danger);
+  --button-neutral-shadow: none;
+  --button-neutral-shadow-hover: none;
+  --button-primary-shadow: none;
+  --button-primary-shadow-hover: none;
+  --button-danger-shadow: none;
+  --button-danger-shadow-hover: none;
+  --button-active-shadow: none;
+  --button-danger-active-shadow: none;
+  --button-lift: none;
+  --button-press: none;
+  --card-bg: var(--surface-1);
+  --card-border: var(--border-default);
+  --card-border-hover: var(--border-default);
+  --card-shadow: none;
+  --card-shadow-hover: none;
+  --card-lift: none;
+  --well-bg: var(--surface-1);
+  --well-shadow: none;
+  --segmented-selected-bg: var(--surface-3);
+  --segmented-selected-shadow: none;
 }

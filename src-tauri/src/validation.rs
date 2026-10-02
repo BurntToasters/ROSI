@@ -680,14 +680,18 @@ pub fn validate_download_request(value: &Value) -> Result<DownloadRequestOptions
             booleans.insert(*key, value);
         }
     }
-    let profile = optional_string(object, "profile")?.map(str::to_string);
+    let mut profile = optional_string(object, "profile")?.map(str::to_string);
     if profile
         .as_deref()
         .is_some_and(|value| !allowed(ALLOWED_DOWNLOAD_PROFILES, value))
     {
         return Err(validation_error(
-            "profile must be best-video, audio, or custom.",
+            "profile must be compatible, best-video, audio, or custom.",
         ));
+    }
+    // Requests stored by earlier builds marked a disabled profile this way.
+    if booleans.get("profileEnabled") == Some(&false) {
+        profile = Some("compatible".into());
     }
     let audio_output_format = optional_string(object, "audioOutputFormat")?.map(str::to_string);
     if audio_output_format
@@ -755,7 +759,6 @@ pub fn validate_download_request(value: &Value) -> Result<DownloadRequestOptions
         video_format,
         audio_format,
         playlist,
-        profile_enabled: flag("profileEnabled"),
         profile,
         preset_id: preset_id.map(str::to_string),
         preset_name: preset_name.map(str::to_string),
@@ -777,9 +780,7 @@ pub fn validate_download_request(value: &Value) -> Result<DownloadRequestOptions
 
 const SETTINGS_BOOLEAN_KEYS: &[&str] = &[
     "showConsoleOutput",
-    "consoleCollapsed",
-    "queueCollapsed",
-    "downloadProfilesEnabled",
+    "dockCollapsed",
     "askDownloadLocation",
     "advancedOptions",
     "audioOnly",
@@ -840,7 +841,12 @@ pub fn validate_settings_patch(value: &Value) -> Result<Map<String, Value>, IpcE
             "downloadMode" => enum_patch(
                 raw,
                 ALLOWED_DOWNLOAD_PROFILES,
-                "downloadMode must be best-video, audio, or custom.",
+                "downloadMode must be compatible, best-video, audio, or custom.",
+            )?,
+            "dockTab" => enum_patch(
+                raw,
+                ALLOWED_DOCK_TABS,
+                "dockTab must be queue, activity, or console.",
             )?,
             "theme" => enum_patch(
                 raw,

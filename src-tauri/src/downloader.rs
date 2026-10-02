@@ -465,24 +465,12 @@ fn resolve_preset_options(
 
 fn apply_request_to_settings(settings: &Settings, options: &DownloadRequestOptions) -> Settings {
     let mut effective = settings.clone();
-    if let Some(enabled) = options.profile_enabled {
-        effective.download_profiles_enabled = enabled;
-    }
     if let Some(profile) = &options.profile {
         effective.download_mode = profile.clone();
-        if options.profile_enabled.is_none() {
-            effective.download_profiles_enabled = true;
-        }
     }
-    if effective.download_profiles_enabled {
-        effective.advanced_options = effective.download_mode == "custom";
-        effective.audio_only = effective.download_mode == "audio";
-        effective.best_quality = effective.download_mode == "best-video";
-    } else if options.profile_enabled == Some(false) {
-        effective.advanced_options = false;
-        effective.audio_only = false;
-        effective.best_quality = false;
-    }
+    effective.advanced_options = effective.download_mode == "custom";
+    effective.audio_only = effective.download_mode == "audio";
+    effective.best_quality = effective.download_mode == "best-video";
     if let Some(value) = options.advanced_options {
         effective.advanced_options = value;
     }
@@ -579,7 +567,6 @@ fn resolved_snapshot(
                     end: None,
                 }),
         ),
-        profile_enabled: Some(effective.download_profiles_enabled),
         profile: Some(effective.download_mode.clone()),
         preset_id: options.preset_id.clone(),
         preset_name: options.preset_name.clone(),

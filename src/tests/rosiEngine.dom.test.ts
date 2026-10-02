@@ -8,7 +8,7 @@ const REPO = path.resolve(__dirname, '..', '..');
 const RENDERER = path.join(REPO, 'src');
 const ENGINE_TS = path.join(RENDERER, 'rosiEngine.ts');
 const INDEX_HTML = path.join(RENDERER, 'index.html');
-const MODULE_FILES = ['ui', 'downloads', 'queue', 'settings', 'updates'];
+const MODULE_FILES = ['ui', 'downloads', 'queue', 'settings', 'updates', 'dock'];
 
 function transpile(tsSource: string): string {
   return ts.transpileModule(tsSource, {
@@ -44,10 +44,9 @@ function defaultSettings() {
     settingsVersion: 7,
     theme: 'dark',
     showConsoleOutput: false,
-    consoleCollapsed: false,
-    queueCollapsed: false,
-    downloadProfilesEnabled: false,
-    downloadMode: 'best-video',
+    dockTab: 'queue',
+    dockCollapsed: false,
+    downloadMode: 'compatible',
     downloadPresets: [],
     askDownloadLocation: false,
     advancedOptions: false,
@@ -260,34 +259,11 @@ describe('rosiEngine DOM wiring', () => {
     expect(api.saveSettings).toHaveBeenCalled();
   });
 
-  it('keeps download profiles hidden until enabled in settings', async () => {
-    const api = buildMockApi();
-    await loadEngine(api);
-
-    const composer = document.getElementById('downloadProfilesComposer') as HTMLElement;
-    const profilesToggle = document.getElementById('downloadProfilesToggle') as HTMLInputElement;
-    expect(composer.classList.contains('hidden')).toBe(true);
-
-    profilesToggle.checked = true;
-    profilesToggle.dispatchEvent(new Event('change', { bubbles: true }));
-    await flush();
-
-    expect(composer.classList.contains('hidden')).toBe(false);
-    expect(api.saveSettings).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        downloadProfilesEnabled: true,
-        downloadMode: 'best-video',
-        bestQuality: true,
-      })
-    );
-  });
-
-  it('switches enabled profiles and exposes Audio format choice', async () => {
+  it('switches profiles and exposes Audio format choice', async () => {
     const api = buildMockApi({
       getSettings: vi.fn(() =>
         Promise.resolve({
           ...defaultSettings(),
-          downloadProfilesEnabled: true,
           downloadMode: 'best-video',
           bestQuality: true,
         })
@@ -409,7 +385,6 @@ describe('rosiEngine DOM wiring', () => {
       getSettings: vi.fn(() =>
         Promise.resolve({
           ...defaultSettings(),
-          downloadProfilesEnabled: true,
           downloadMode: 'custom',
           advancedOptions: true,
         })
@@ -458,7 +433,6 @@ describe('rosiEngine DOM wiring', () => {
       getSettings: vi.fn(() =>
         Promise.resolve({
           ...defaultSettings(),
-          downloadProfilesEnabled: true,
           downloadMode: 'custom',
           advancedOptions: true,
         })
@@ -649,31 +623,6 @@ describe('rosiEngine DOM wiring', () => {
     expect(api.addToQueue).toHaveBeenCalledWith(['https://example.com/shortcut']);
   });
 
-  it('collapses queue and persists the preference', async () => {
-    const api = buildMockApi();
-    await loadEngine(api);
-
-    const queueSection = document.getElementById('queueSection') as HTMLElement;
-    const queueBody = document.getElementById('queueBody') as HTMLElement;
-    const queueToggle = document.getElementById('queueToggleBtn') as HTMLButtonElement;
-
-    expect(queueSection.classList.contains('collapsed')).toBe(false);
-    expect(queueToggle.getAttribute('aria-expanded')).toBe('true');
-
-    queueToggle.click();
-    await flush(350);
-
-    expect(queueSection.classList.contains('collapsed')).toBe(true);
-    expect(queueToggle.getAttribute('aria-expanded')).toBe('false');
-    expect(queueBody.getAttribute('aria-hidden')).toBe('true');
-    expect(queueBody.inert).toBe(true);
-    expect(api.saveSettings).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        queueCollapsed: true,
-      })
-    );
-  });
-
   it('accepts dropped URLs in the queue textarea', async () => {
     const api = buildMockApi();
     await loadEngine(api);
@@ -747,12 +696,13 @@ describe('rosiEngine DOM wiring', () => {
     settingsImportedCb?.({
       ...defaultSettings(),
       theme: 'light',
-      queueCollapsed: true,
+      dockTab: 'activity',
     });
     await flush();
 
     expect(document.documentElement.dataset.theme).toBe('light');
-    expect(document.getElementById('queueSection')?.classList.contains('collapsed')).toBe(true);
+    expect(document.getElementById('download-history')?.hidden).toBe(false);
+    expect(document.getElementById('queueSection')?.hidden).toBe(true);
   });
 
   it('persists flat UI through settings when the toggle changes', async () => {

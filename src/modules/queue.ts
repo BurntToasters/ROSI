@@ -123,7 +123,13 @@
   ) {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = `queue-item-action ${className}`;
+    const variant =
+      className === 'queue-item-retry'
+        ? 'btn--primary'
+        : className === 'queue-item-remove'
+          ? 'btn--neutral btn--danger-hover'
+          : 'btn--neutral';
+    button.className = `queue-item-action ${className} btn btn--xs ${variant}`;
     button.dataset.queueId = item.id;
     button.dataset.queueAction = className;
     button.setAttribute('aria-label', ariaLabel);

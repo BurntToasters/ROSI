@@ -29,6 +29,9 @@ const EXPECTED_SCENARIOS = [
   "legacy-v4-preserve",
   "settings-sidebar",
   "settings-persistence",
+  "download-profiles",
+  "settings-layout",
+  "flat-ui-tokens",
   "url-safety",
   "manual-download",
   "unicode-download",
@@ -44,11 +47,13 @@ const EXPECTED_SCENARIOS = [
   "merge-download",
   "queue-management",
   "queue-cancel",
+  "dock-tabs",
   "webview-guard",
   "link-drop",
   "small-window",
   "browser-choice",
   "xdg-download-dir",
+  "ui-screenshots",
   "stats",
   "activity-clear",
   "close-flow",
@@ -368,6 +373,33 @@ function cleanupProfile(profileDir) {
   }
 }
 
+/**
+ * Re-hash every screenshot the spec reported, so the evidence report vouches
+ * for the PNGs actually on disk. Returns the list and any mismatch problems.
+ */
+function verifyScreenshots(scenarios, directory) {
+  const reported =
+    scenarios.find((scenario) => scenario.name === "ui-screenshots")?.shots ??
+    [];
+  const problems = [];
+  const screenshots = reported.map((shot) => {
+    const file = path.join(directory, shot.file);
+    if (!fs.existsSync(file)) {
+      problems.push(`${shot.file} is missing`);
+      return { ...shot, path: path.relative(REPO_ROOT, file) };
+    }
+    const actual = sha256(fs.readFileSync(file));
+    if (actual !== shot.sha256) problems.push(`${shot.file} changed on disk`);
+    return {
+      name: shot.name,
+      path: path.relative(REPO_ROOT, file).split(path.sep).join("/"),
+      sha256: actual,
+      bytes: fs.statSync(file).size,
+    };
+  });
+  return { screenshots, problems };
+}
+
 function writeEvidence(report) {
   fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
   const body = { ...report };
@@ -408,6 +440,13 @@ async function main() {
     );
     process.exit(1);
   }
+  const screenshotDir = path.join(
+    ARTIFACT_DIR,
+    "screenshots",
+    `${process.platform}-${process.arch}`,
+  );
+  // Start empty so the report never lists a PNG left over from an older run.
+  fs.rmSync(screenshotDir, { recursive: true, force: true });
   const profile = createE2eProfile({ ffmpegPath: ffmpeg?.customPath ?? "" });
   const fixtureDir = path.join(profile.profileDir, "fixtures");
   fs.mkdirSync(fixtureDir, { recursive: true });
@@ -510,6 +549,7 @@ async function main() {
       // gate always runs main.spec.js and requires every scenario.
       ROSI_E2E_SPECS: process.env.ROSI_E2E_ONLY ?? "./specs/main.spec.js",
       ROSI_E2E_LEGACY_V4: JSON.stringify(mainPass.seed),
+      ROSI_E2E_SCREENSHOTS: screenshotDir,
     });
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error);
@@ -546,6 +586,10 @@ async function main() {
     : Object.entries(legacyImportCoverage)
         .filter(([, mode]) => mode.coveredBy.length === 0)
         .map(([id]) => id);
+  const { screenshots, problems: screenshotProblems } = verifyScreenshots(
+    scenarios,
+    screenshotDir,
+  );
   const packageJson = JSON.parse(
     fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
   );
@@ -567,8 +611,14 @@ async function main() {
     missingScenarios: missing,
     legacyImportCoverage,
     uncoveredLegacyImportFailureModes: uncovered,
+    screenshots,
+    screenshotProblems,
     failure,
-    passed: !failure && missing.length === 0 && uncovered.length === 0,
+    passed:
+      !failure &&
+      missing.length === 0 &&
+      uncovered.length === 0 &&
+      screenshotProblems.length === 0,
     mediaRequests: server.requests.length,
     legacyPassLogTails: Object.fromEntries(
       legacyPasses.map((pass) => [pass.legacyCase, readLogTail(pass, 15)]),
@@ -587,6 +637,11 @@ async function main() {
   if (uncovered.length > 0) {
     throw new Error(
       `ROSI 4 import failure modes without a covering scenario: ${uncovered.join(", ")} (evidence: ${evidence})`,
+    );
+  }
+  if (screenshotProblems.length > 0) {
+    throw new Error(
+      `Screenshot evidence is inconsistent: ${screenshotProblems.join(", ")} (evidence: ${evidence})`,
     );
   }
 }

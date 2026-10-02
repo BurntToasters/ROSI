@@ -361,25 +361,11 @@ impl FfmpegProgressState {
     }
 }
 
-/// Phase weights follow the profile/quality settings, not only the -f string.
+/// Phase weights follow the effective quality flags (derived from the profile,
+/// then request overrides), not only the -f string.
 pub fn resolve_plan(settings: &Settings) -> Plan {
-    if settings.audio_only
-        || (settings.download_profiles_enabled && settings.download_mode == "audio")
-    {
-        return Plan {
-            expect_merge: false,
-            expect_convert: settings.convert_enabled,
-        };
-    }
-    if settings.download_profiles_enabled {
-        return Plan {
-            expect_merge: settings.download_mode == "best-video"
-                || settings.download_mode == "custom",
-            expect_convert: settings.convert_enabled,
-        };
-    }
     Plan {
-        expect_merge: settings.best_quality || settings.advanced_options,
+        expect_merge: !settings.audio_only && (settings.best_quality || settings.advanced_options),
         expect_convert: settings.convert_enabled,
     }
 }

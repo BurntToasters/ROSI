@@ -6,6 +6,7 @@ import './modules/downloads';
 import './modules/queue';
 import './modules/settings';
 import './modules/updates';
+import './modules/dock';
 import './rosiEngine';
 import { invoke } from '@tauri-apps/api/core';
 import { installE2eHookIfEnabled } from './e2e-hook';
