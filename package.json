@@ -129,7 +129,7 @@
     "prerelease:prepare": "node scripts/release-warning.js && npm run release:preflight && npm run release:licenses",
     "release:mirror": "dotenv -e .env -- node scripts/finalize-release-assets.js",
     "release:finalize": "npm run release:mirror && git fetch origin && git reset --hard @{u} && git clean -fd",
-    "release:win:continue": "npm run release:session:verify && npm run release:licenses && npm run release:draft && npm run release:legacy-v4-feed && npm run rust:targets:win && npm run build:win:prepared && npm run release:sign:gpg && npm run release:finalize",
+    "release:win:continue": "npm run release:session:verify && npm run release:licenses && npm run release:draft && npm run release:legacy-v4-feed && npm run rust:targets:win && npm run build:win:prepared && npm run prepare:sidecars && npm run release:sign:gpg && npm run release:finalize",
     "release:win:resume": "npm run prerelease:prepare && npm run release:win:continue",
     "release:win": "node scripts/run-release.js win",
     "release:mac:continue": "npm run release:session:verify && npm run release:licenses && npm run release:wait-draft && npm run rust:targets:mac && npm run build:mac:universal:prepared && npm run build:mac:zip && npm run release:sign:gpg && npm run release:finalize",
@@ -148,7 +148,7 @@
     "release:linux:arm64": "node scripts/run-release.js linux:arm64",
     "release:sign:gpg": "dotenv -e .env -- node scripts/gpg-sign.js",
     "release:sync-beta-manifests": "dotenv -e .env -- node scripts/gpg-sign.js --sync-beta-manifests",
-    "setup:deb": "sudo apt update && sudo apt install -y build-essential curl wget file libgtk-3-dev libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libglib2.0-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf xvfb 7zip flatpak flatpak-builder && sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo && sudo flatpak install -y flathub org.gnome.Platform//50 org.gnome.Sdk//50 org.freedesktop.Sdk.Extension.node22//25.08 org.freedesktop.Sdk.Extension.rust-stable//25.08",
+    "setup:deb": "sudo apt update && sudo apt install -y build-essential curl wget file libgtk-3-dev libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libglib2.0-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils xvfb 7zip flatpak flatpak-builder && sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo && sudo flatpak install -y flathub org.gnome.Platform//50 org.gnome.Sdk//50 org.freedesktop.Sdk.Extension.node22//25.08 org.freedesktop.Sdk.Extension.rust-stable//25.08",
     "gitprune": "node scripts/git-prune-local-branches.js",
     "gitprune:dry": "node scripts/git-prune-local-branches.js --dry-run",
     "gitprune:force": "node scripts/git-prune-local-branches.js --force"
