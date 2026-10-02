@@ -7,15 +7,15 @@ The FFmpeg binaries are not included in the repository due to size constraints.
 All bundled binaries are built by BurntToasters:
 
 - **Repository:** https://github.com/BurntToasters/ffmpeg-static-builds
-- **FFmpeg 8.1.2 source release:** https://github.com/BurntToasters/ffmpeg-static-builds/releases/tag/ffmpeg-v8.1.2
+- **FFmpeg 9.0.2 source release:** https://github.com/BurntToasters/ffmpeg-static-builds/releases/tag/ffmpeg-v9.0.2
 
 ## Current Versions
 
 | Platform            | Version |
 | ------------------- | ------- |
-| Windows x64 / arm64 | 8.1.2   |
-| Linux x64 / arm64   | 8.1.2   |
-| macOS x64 / arm64   | 8.1.2   |
+| Windows x64 / arm64 | 9.0.2   |
+| Linux x64 / arm64   | 9.0.2   |
+| macOS x64 / arm64   | 9.0.2   |
 
 ## Required Structure
 
