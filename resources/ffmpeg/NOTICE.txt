@@ -21,7 +21,7 @@ The pre-built FFmpeg binaries included with this application are built and
 distributed by BurntToasters for all platforms (Windows, macOS, and Linux).
 
 Current versions in this distribution:
-  - FFmpeg 8.1.2: Windows (x64, arm64), Linux (x64, arm64), macOS (x64, arm64)
+  - FFmpeg 9.0.2: Windows (x64, arm64), Linux (x64, arm64), macOS (x64, arm64)
 
 Build repository: https://github.com/BurntToasters/ffmpeg-static-builds
 
@@ -49,7 +49,7 @@ BurntToasters under the written offer included at:
 ffmpeg/SOURCE_OFFER.txt
 
 Source code, build scripts, and release archives are hosted at:
-https://github.com/BurntToasters/ffmpeg-static-builds/releases/tag/ffmpeg-v8.1.2
+https://github.com/BurntToasters/ffmpeg-static-builds/releases/tag/ffmpeg-v9.0.2
 
 ROSI Application Notice
 ------------------------
