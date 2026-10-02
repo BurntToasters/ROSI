@@ -13,10 +13,6 @@ export function artifactMatchesVersion(
   name: string,
   releaseVersion?: string,
 ): boolean;
-export function rpmArtifactMatchesVersion(
-  name: string,
-  releaseVersion?: string,
-): boolean;
 export function checksumTargetKeysForArtifactName(
   name: string,
   channelVariants?: UpdaterChannelVariant[],

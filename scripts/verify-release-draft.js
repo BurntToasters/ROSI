@@ -42,6 +42,8 @@ const {
 } = require("./release-draft-metadata.cjs");
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+const RETIRED_LINUX_PACKAGE_ASSET =
+  /(?:\.(?:deb|rpm)(?:\.(?:asc|sig))?$|^latest-linux(?:-beta)?-[a-z0-9_]+-(?:deb|rpm)\.json$)/i;
 
 function readPackageVersion(repositoryRoot = root) {
   return JSON.parse(
@@ -62,16 +64,10 @@ export function requiredDraftInstallerNames({
     "ROSI-MacOS-universal.dmg",
     "ROSI-MacOS-universal.zip",
     "ROSI-Linux-x64.AppImage",
-    "ROSI-Linux-x64.deb",
-    "ROSI-Linux-x64.rpm",
     "ROSI-Linux-x64.flatpak",
   ];
   if (requireLinuxAarch64) {
-    names.push(
-      "ROSI-Linux-arm64.AppImage",
-      "ROSI-Linux-arm64.deb",
-      "ROSI-Linux-arm64.rpm",
-    );
+    names.push("ROSI-Linux-arm64.AppImage");
   }
   return names;
 }
@@ -79,7 +75,7 @@ export function requiredDraftInstallerNames({
 export function requiredDraftSidecarNames(installers) {
   return installers.flatMap((name) => {
     const names = [`${name}.asc`];
-    if (/\.(?:exe|deb|rpm)$/i.test(name) || /\.AppImage$/i.test(name)) {
+    if (/\.exe$/i.test(name) || /\.AppImage$/i.test(name)) {
       names.unshift(`${name}.sig`);
     }
     return names;
@@ -116,11 +112,9 @@ export function requiredDraftBetaManifestNames({
     "darwin-beta-aarch64-app",
     "linux-beta-x86_64",
     "linux-beta-x86_64-appimage",
-    "linux-beta-x86_64-deb",
-    "linux-beta-x86_64-rpm",
   ];
   if (requireLinuxAarch64) {
-    for (const suffix of ["", "-appimage", "-deb", "-rpm"]) {
+    for (const suffix of ["", "-appimage"]) {
       keys.push(`linux-beta-aarch64${suffix}`);
     }
   }
@@ -198,6 +192,14 @@ export function assertDraftReleaseShape({
   if (missing.length > 0) {
     throw new Error(
       `Draft ${tag} is missing required assets: ${missing.join(", ")}.`,
+    );
+  }
+  const retired = assetNames.filter((name) =>
+    RETIRED_LINUX_PACKAGE_ASSET.test(name),
+  );
+  if (retired.length > 0) {
+    throw new Error(
+      `Draft ${tag} contains retired DEB/RPM assets: ${retired.join(", ")}.`,
     );
   }
   return { tag, missing };

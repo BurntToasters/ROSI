@@ -27,8 +27,9 @@ webview, so installers and memory use are much smaller.
   the v4 files untouched.
 - The in-app updater has **stable** and **beta** channels (Settings > Update
   channel). `auto` follows the installed version.
-- Linux ships x64 AppImage, DEB, RPM, and a sideloaded Flatpak. Linux ARM64
-  builds are paused; the build wiring remains for a future release.
+- Linux ships an x64 AppImage and a sideloaded Flatpak. DEB and RPM packages
+  are no longer built or published. Linux ARM64 is not supported in v5; the
+  build wiring remains available for future development.
 
 ## System requirements
 

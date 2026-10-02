@@ -27,15 +27,15 @@
 
 ## Linux
 
-- Build public AppImage and DEB artifacts on Ubuntu 24.04, the oldest supported
-  glibc baseline. Build and test RPM artifacts on Fedora 43.
+- Build the public AppImage on Ubuntu 24.04, the oldest supported glibc
+  baseline.
 - `npm run setup:deb` installs the Ubuntu build, E2E (xvfb), 7-Zip (for
   `get:ffmpeg`), and Flatpak prerequisites.
 - Node.js `^22.22.2 || ^24.15.0 || >=26`
 - Rust (rustup)
-- Linux releases ship x64 only (`npm run release:linux:x64`). The ARM64 wiring
-  (`release:linux:arm64`, `build:linux:arm64`) is kept for a future release and
-  must run on native ARM64 hardware.
+- Linux v5 releases ship x64 only (`npm run release:linux:x64`). ARM64 wiring
+  (`release:linux:arm64`, `build:linux:arm64`) remains for future development
+  and is not part of the v5 release matrix.
 
 ## Rust toolchain policy
 
@@ -164,7 +164,7 @@ been cryptographically matched to its artifact with the public key in
 The `b`, `r`, and `release:*` scripts intentionally reset and clean their Git
 worktrees. Run them only on disposable, isolated build VMs. Before publishing,
 verify that the draft contains the Windows x64/ARM64 NSIS installers, the
-universal macOS DMG/ZIP, Linux x64 AppImage/DEB/RPM/Flatpak, updater
+universal macOS DMG/ZIP, Linux x64 AppImage/Flatpak, updater
 manifests/signatures, SHA-256 lists, and GPG detached signatures
 (`npm run release:verify:draft`).
 

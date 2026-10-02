@@ -6,16 +6,14 @@
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux |
 | :-- | :-- | :-- |
 | **EXE: [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-MacOS-universal.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-Linux-x64.AppImage) |
-| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div> | **[Universal ZIP](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-MacOS-universal.zip)** | **DEB:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-Linux-x64.deb) |
-| | | **RPM:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-Linux-x64.rpm) |
-| | | **Flatpak:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-Linux-x64.flatpak) |
+| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div> | **[Universal ZIP](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-MacOS-universal.zip)** | **Flatpak:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-Linux-x64.flatpak) |
 
 > macOS downloads require macOS 15 or later.
 
 > [!IMPORTANT]
 > The `.sig` files in this repo are NOT normal GPG signatures. They are for Tauri V2's updater to verify the integrity of updates before downloading and installing.
 > The `.asc` files are my normal GPG signatures which you can verify using my GPG Public Key: https://tuxedo.rosie.run/GPG/BurntToasters_0xF2FBC20F_public.asc
-> ⚠️ Linux ARM64 AppImage/DEB/RPM are published only when that release is built for ARM64; Flatpak stays x64.
+> ⚠️ ROSI 5 Linux downloads are x64-only: AppImage and Flatpak. ARM64 build wiring remains for future development, but ARM64 downloads are not supported in v5.
 
 ### ℹ️ Enjoying ROSI? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
 
@@ -28,7 +26,7 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 - **Breaking:** ROSI 5 is a new app. The app identifier is now `run.rosie.rosi`, and v4 cannot auto-update to v5. Install v5 manually.
 - **NEW - v4 import:** On its first launch, ROSI 5 imports your ROSI 4 settings, queue, lifetime stats, and download activity. Values ROSI 5 does not accept fall back to defaults, and the ROSI 4 files are left untouched.
 - **Breaking - macOS:** ROSI 5 requires macOS 15 or later, matching the bundled FFmpeg build.
-- **Breaking - Linux:** Linux ARM64 builds are paused; Linux x64 ships as AppImage, DEB, RPM, and Flatpak.
+- **Linux - DEB and RPM builds are retired:** ROSI 5 supports Linux x64 AppImage and Flatpak downloads only. Linux ARM64 downloads are not supported in v5, although the build wiring remains for future development. DEB and RPM packaging is retired for v5 releases.
 - **Packaging:** Bundled helpers are now named `rosi-yt-dlp`, `rosi-ffmpeg`, and `rosi-ffprobe` so Linux packages never collide with distro `yt-dlp` / `ffmpeg` files.
 - **Licenses:** The licenses view now also lists every compiled Rust crate and shows the exact bundled yt-dlp and FFmpeg notices.
 - **Windows:** Dragging a link from the browser onto the download card or queue works again, and F5, Ctrl+R, Ctrl+P, and the page right-click menu no longer reload or print the app mid-download.
