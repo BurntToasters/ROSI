@@ -1339,8 +1339,16 @@ describe("ROSI main window", () => {
     await pressKey("#dockTabQueue", { key: "ArrowLeft" });
     assert.deepEqual((await dockState()).selected, ["console"]);
 
-    // Alt+2 from anywhere shows Activity.
-    await pressKey("#url", { key: "2", code: "Digit2", altKey: true });
+    // In a text field, macOS Option+digit types a character, so the dock
+    // shortcut stands down there; other platforms still switch tabs.
+    await pressKey("#url", { key: "1", code: "Digit1", altKey: true });
+    assert.deepEqual(
+      (await dockState()).selected,
+      process.platform === "darwin" ? ["console"] : ["queue"],
+    );
+
+    // Alt+2 outside a text field shows Activity on every platform.
+    await pressKey("body", { key: "2", code: "Digit2", altKey: true });
     state = await dockState();
     assert.deepEqual(state.selected, ["activity"]);
     await waitForSavedSetting("dockTab", "activity", "dock tab was not saved");
