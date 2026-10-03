@@ -66,6 +66,7 @@
 
 .char-white {
   color: var(--logo-char-white-color);
+  -webkit-text-stroke: var(--logo-char-white-stroke);
   text-shadow: var(--logo-char-white-shadow);
 }
 
@@ -343,7 +344,12 @@
 
 .download-btn:disabled,
 .download-btn.is-disabled {
-  opacity: 0.55;
+  --btn-bg: var(--surface-3);
+  --btn-bg-hover: var(--surface-3);
+  --btn-border: var(--border-default);
+  --btn-border-hover: var(--border-default);
+  --btn-fg: var(--text-muted);
+  --btn-fg-hover: var(--text-muted);
   cursor: not-allowed;
   box-shadow: none;
 }
@@ -546,12 +552,33 @@
 }
 
 .download-destination-path {
+  display: flex;
+  min-width: 0;
   overflow: hidden;
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   color: var(--text-secondary);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The parent folders give way first; the last folder only truncates once it
+   alone is wider than the row. */
+.download-destination-head,
+.download-destination-tail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.download-destination-head {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.download-destination-tail {
+  flex: 0 0 auto;
+  max-width: 100%;
+  color: var(--text-primary);
 }
 
 .ask-download-location {

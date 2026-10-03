@@ -120,6 +120,21 @@ const queueModule = rosiModules.queue || null;
 const settingsModule = rosiModules.settings || null;
 const updatesModule = rosiModules.updates || null;
 const dockModule = rosiModules.dock || null;
+const iconsModule = rosiModules.icons || null;
+
+/** Write a status line, showing a leading Rust status emoji as an icon. */
+function renderStatusText(target: HTMLElement, text: string) {
+  if (iconsModule) iconsModule.renderStatus(target, text);
+  else target.textContent = text;
+}
+
+/** Replace a button's content with a Lucide icon and a text label. */
+function setButtonIconLabel(button: HTMLElement, iconName: string, label: string, size = 18) {
+  const svg = iconsModule?.icon(iconName, size) ?? null;
+  const text = document.createElement('span');
+  text.textContent = label;
+  button.replaceChildren(...(svg ? [svg] : []), text);
+}
 
 function isMac() {
   if (uiModule && typeof uiModule.isMac === 'function') {
@@ -205,6 +220,31 @@ function resolveAppliedTheme(preference: ThemeName): ThemeName {
       ? window.matchMedia('(prefers-color-scheme: dark)')
       : null);
   return query && query.matches ? 'dark' : 'light';
+}
+
+/**
+ * Show the save folder with its last segment pinned, so a long path loses its
+ * middle to the ellipsis and the folder name stays readable.
+ */
+function renderFolderSummary(target: HTMLElement, folderSetting: string | undefined) {
+  const folder = folderSetting?.trim() ?? '';
+  target.title = folder || 'Choose a folder before downloading';
+  if (!folder) {
+    target.textContent = 'Choose a folder';
+    return;
+  }
+  const [, parents, name] = /^(.*[\\/])([^\\/]+)[\\/]?$/.exec(folder) ?? [];
+  const head = document.createElement('span');
+  head.className = 'download-destination-head';
+  head.textContent = parents ?? folder;
+  const parts: HTMLElement[] = [head];
+  if (name) {
+    const tail = document.createElement('span');
+    tail.className = 'download-destination-tail';
+    tail.textContent = name;
+    parts.push(tail);
+  }
+  target.replaceChildren(...parts);
 }
 
 function syncLicensesTheme(theme: ThemeName) {
@@ -357,6 +397,7 @@ function toggleAdvancedUI(show: boolean) {
 // Modal queue system
 interface ModalButton {
   label: string;
+  icon?: string;
   action?: () => void;
   primary?: boolean;
   danger?: boolean;
@@ -480,10 +521,11 @@ function displayNextModal() {
     modal.classList.remove('showing');
   });
 
-  buttons.forEach(({ label, action, primary, danger, disabled }) => {
+  buttons.forEach(({ label, icon, action, primary, danger, disabled }) => {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.textContent = label;
+    if (icon) setButtonIconLabel(btn, icon, label, 16);
+    else btn.textContent = label;
     btn.className = 'btn';
     if (primary) btn.classList.add('modal-btn-primary', 'btn--primary');
     else if (danger) btn.classList.add('modal-btn-danger', 'btn--danger');
@@ -904,7 +946,7 @@ function showProgressBar(status = 'Downloading...') {
   if (container) {
     container.classList.add('visible');
   }
-  if (statusEl) statusEl.textContent = status;
+  if (statusEl) renderStatusText(statusEl, status);
   if (percentEl) percentEl.textContent = '0%';
   if (bar) {
     bar.style.width = '0%';
@@ -942,7 +984,7 @@ function updateProgressBar(
     barWrapper.setAttribute('aria-valuenow', String(rounded));
     barWrapper.removeAttribute('aria-valuetext');
   }
-  if (statusText && statusEl) statusEl.textContent = statusText;
+  if (statusText && statusEl) renderStatusText(statusEl, statusText);
   if (detailsText && details) details.textContent = detailsText;
 }
 
@@ -953,7 +995,7 @@ function setProgressIndeterminate(status = 'Processing...') {
   const barWrapper = document.getElementById('progress-bar-wrapper');
   const details = document.getElementById('progress-details');
 
-  if (statusEl) statusEl.textContent = status;
+  if (statusEl) renderStatusText(statusEl, status);
   if (percentEl) percentEl.textContent = '';
   if (bar) bar.classList.add('indeterminate');
   if (barWrapper) {
@@ -1120,12 +1162,20 @@ async function revealFileLocation(filePath: string) {
   }
 }
 
-function createActivityActionButton(label: string, ariaLabel: string, action: () => void) {
+function createActivityActionButton(
+  iconName: string,
+  label: string,
+  ariaLabel: string,
+  action: () => void
+) {
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'history-open-btn btn btn--neutral btn--xs btn--accent-hover';
+  button.className = 'history-open-btn btn btn--ghost btn--xs btn--icon btn--accent-hover';
   button.setAttribute('aria-label', ariaLabel);
-  button.textContent = label;
+  button.title = label;
+  const svg = iconsModule?.icon(iconName, 16) ?? null;
+  if (svg) button.appendChild(svg);
+  else button.textContent = label;
   button.addEventListener('click', (event) => {
     event.stopPropagation();
     action();
@@ -1185,7 +1235,7 @@ function renderActivity() {
     if (row.outcome === 'failed' && row.error) {
       const errorEl = document.createElement('span');
       errorEl.className = 'history-error';
-      errorEl.textContent = row.error;
+      renderStatusText(errorEl, row.error);
       info.appendChild(errorEl);
     }
 
@@ -1200,29 +1250,44 @@ function renderActivity() {
       const entry = activityEntries.find((candidate) => candidate.id === row.id);
       if (entry) {
         actions.appendChild(
-          createActivityActionButton('Download again', `Download ${row.title} again`, () => {
-            activityReplayHandler?.(entry);
-          })
+          createActivityActionButton(
+            'rotate-ccw',
+            'Download again',
+            `Download ${row.title} again`,
+            () => {
+              activityReplayHandler?.(entry);
+            }
+          )
         );
       }
     }
     if (row.url) {
       const sourceUrl = row.url;
       actions.appendChild(
-        createActivityActionButton('Copy source', `Copy source link for ${row.title}`, () => {
-          void navigator.clipboard.writeText(sourceUrl).then(
-            () => showToast('Source link copied.', { type: 'info' }),
-            () => showToast('Could not copy the source link.', { type: 'warning' })
-          );
-        })
+        createActivityActionButton(
+          'link',
+          'Copy source',
+          `Copy source link for ${row.title}`,
+          () => {
+            void navigator.clipboard.writeText(sourceUrl).then(
+              () => showToast('Source link copied.', { type: 'info' }),
+              () => showToast('Could not copy the source link.', { type: 'warning' })
+            );
+          }
+        )
       );
     }
     if (row.outcome === 'success' && row.outputPath) {
       const filePath = row.outputPath;
       actions.appendChild(
-        createActivityActionButton('Open folder', `Open file location for ${row.title}`, () => {
-          void revealFileLocation(filePath);
-        })
+        createActivityActionButton(
+          'folder-open',
+          'Open folder',
+          `Open file location for ${row.title}`,
+          () => {
+            void revealFileLocation(filePath);
+          }
+        )
       );
     }
 
@@ -1639,6 +1704,19 @@ function updateBackgroundAnimation(animate: boolean) {
   }
 }
 
+const SUBTITLE_LANGS_RE = /^[A-Za-z0-9.*-]+(,[A-Za-z0-9.*-]+)*$/;
+
+function isValidSubtitleLangs(raw: string) {
+  return raw.length > 0 && raw.length <= 256 && SUBTITLE_LANGS_RE.test(raw);
+}
+
+// Automatic Deno install uses winget (Windows) or Homebrew (macOS) only.
+function isLinuxPlatform() {
+  return /linux/i.test(navigator.userAgent) && !/android/i.test(navigator.userAgent);
+}
+
+const DENO_INSTALL_DOCS = 'https://docs.deno.com/runtime/getting_started/installation/';
+
 // check for Deno
 async function checkDenoInstallation(settings: RosiSettings, persist: () => void) {
   if (settings.denoReminderDismissed) {
@@ -1648,9 +1726,7 @@ async function checkDenoInstallation(settings: RosiSettings, persist: () => void
   try {
     const isInstalled = await window.api.checkDenoInstalled();
 
-    // Automatic install uses winget (Windows) or Homebrew (macOS) only.
-    const isLinux = /linux/i.test(navigator.userAgent) && !/android/i.test(navigator.userAgent);
-    if (!isInstalled && isLinux) {
+    if (!isInstalled && isLinuxPlatform()) {
       showModal({
         title: 'Deno Required for Full YouTube Functionality',
         message:
@@ -1659,10 +1735,7 @@ async function checkDenoInstallation(settings: RosiSettings, persist: () => void
           {
             label: 'Open Deno Instructions',
             primary: true,
-            action: () =>
-              window.api.openExternal(
-                'https://docs.deno.com/runtime/getting_started/installation/'
-              ),
+            action: () => window.api.openExternal(DENO_INSTALL_DOCS),
           },
           { label: 'Later' },
           {
@@ -1749,13 +1822,47 @@ async function checkDenoInstallation(settings: RosiSettings, persist: () => void
   }
 }
 
+/** Settings the setup wizard asks about; Skip resets exactly these. */
+const WIZARD_SETTING_KEYS = [
+  'theme',
+  'flatUi',
+  'animateBackground',
+  'askDownloadLocation',
+  'downloadMode',
+  'bestQuality',
+  'audioOnly',
+  'advancedOptions',
+  'embedMetadata',
+  'embedThumbnail',
+  'sponsorblockRemove',
+  'writeSubtitles',
+  'subtitleLangs',
+  'notifications',
+  'checkUpdatesOnStartup',
+] as const satisfies readonly (keyof RosiSettings)[];
+
+interface WizardOutcome {
+  skipped: boolean;
+  /** The user already saw the Deno step, so no follow-up prompt is needed. */
+  denoReviewed: boolean;
+}
+
+function applyFlatUi(isFlat: boolean) {
+  if (isFlat) document.documentElement.dataset.flatUi = 'true';
+  else delete document.documentElement.dataset.flatUi;
+  try {
+    localStorage.setItem('rosi-flat-ui', isFlat ? 'true' : 'false');
+  } catch {
+    /* ignore */
+  }
+}
+
 function launchSetupWizard(
   settings: RosiSettings,
   applyThemeFn: (preference: string) => void,
   persistSettingsFn: (silent?: boolean, immediate?: boolean) => Promise<boolean> | void,
-  onComplete: () => void
+  onComplete: (outcome: WizardOutcome) => void
 ) {
-  const TOTAL_STEPS = 5;
   let currentStep = 0;
 
   const overlay = document.getElementById('setup-wizard');
@@ -1770,13 +1877,16 @@ function launchSetupWizard(
   if (!overlay || !progressBar || !backBtn || !nextBtn || !dotsContainer || steps.length === 0) {
     settings.firstLaunch = false;
     void persistSettingsFn();
-    onComplete();
+    onComplete({ skipped: true, denoReviewed: false });
     return;
   }
+  const TOTAL_STEPS = steps.length;
 
   const overlayEl = overlay;
   const progressBarEl = progressBar;
   const wizardProgress = overlayEl.querySelector<HTMLElement>('.wizard-progress');
+  wizardProgress?.setAttribute('aria-valuemax', String(TOTAL_STEPS));
+  const skipBtn = document.getElementById('wizard-skip') as HTMLButtonElement | null;
   const stepAnnounce = document.getElementById('wizard-step-announce');
   const backBtnEl = backBtn;
   const nextBtnEl = nextBtn;
@@ -1845,6 +1955,156 @@ function launchSetupWizard(
   if (initialProfileRadio) initialProfileRadio.checked = true;
   syncWizardFolderSummary();
 
+  const wizardCheckbox = (id: string) => document.getElementById(id) as HTMLInputElement | null;
+
+  // Look and feel: preview live, like the theme cards.
+  const flatUiInput = wizardCheckbox('wizard-flat-ui');
+  const animateBgInput = wizardCheckbox('wizard-animate-bg');
+  if (flatUiInput) {
+    flatUiInput.checked = !!settings.flatUi;
+    flatUiInput.addEventListener('change', () => applyFlatUi(flatUiInput.checked));
+  }
+  if (animateBgInput) {
+    animateBgInput.checked = settings.animateBackground ?? true;
+    animateBgInput.addEventListener('change', () =>
+      updateBackgroundAnimation(animateBgInput.checked)
+    );
+  }
+
+  // Download extras.
+  const extraInputs: [
+    HTMLInputElement | null,
+    'embedMetadata' | 'embedThumbnail' | 'sponsorblockRemove' | 'writeSubtitles',
+  ][] = [
+    [wizardCheckbox('wizard-embed-metadata'), 'embedMetadata'],
+    [wizardCheckbox('wizard-embed-thumbnail'), 'embedThumbnail'],
+    [wizardCheckbox('wizard-sponsorblock'), 'sponsorblockRemove'],
+    [wizardCheckbox('wizard-subtitles'), 'writeSubtitles'],
+  ];
+  extraInputs.forEach(([input, key]) => {
+    if (input) input.checked = !!settings[key];
+  });
+  const subtitlesInput = wizardCheckbox('wizard-subtitles');
+  const subtitleLangsRow = document.getElementById('wizard-subtitle-langs-row');
+  const subtitleLangsInput = wizardCheckbox('wizard-subtitle-langs');
+  const subtitleLangsError = document.getElementById('wizard-subtitle-langs-error');
+  if (subtitleLangsInput) subtitleLangsInput.value = settings.subtitleLangs || 'en';
+  const setSubtitleLangsError = (message: string) => {
+    if (subtitleLangsError) subtitleLangsError.textContent = message;
+    if (message) subtitleLangsInput?.setAttribute('aria-invalid', 'true');
+    else subtitleLangsInput?.removeAttribute('aria-invalid');
+  };
+  const syncSubtitleRow = () => {
+    if (subtitleLangsRow) subtitleLangsRow.hidden = !subtitlesInput?.checked;
+    if (!subtitlesInput?.checked) setSubtitleLangsError('');
+  };
+  subtitlesInput?.addEventListener('change', syncSubtitleRow);
+  subtitleLangsInput?.addEventListener('input', () => setSubtitleLangsError(''));
+  syncSubtitleRow();
+
+  /** Block leaving the extras step with languages the backend would reject. */
+  function subtitleLangsValid() {
+    if (!subtitlesInput?.checked || !subtitleLangsInput) return true;
+    if (isValidSubtitleLangs(subtitleLangsInput.value.trim())) return true;
+    setSubtitleLangsError('Enter language codes such as en,es, or use all.');
+    subtitleLangsInput.focus();
+    return false;
+  }
+
+  // YouTube helper: check for Deno the first time the step is shown.
+  const stepIndex = (name: string) =>
+    Array.from(steps).findIndex((step) => step.dataset.wizardStep === name);
+  const extrasStepIndex = stepIndex('extras');
+  const denoStepIndex = stepIndex('deno');
+  const denoStatus = document.getElementById('wizard-deno-status');
+  const denoAction = document.getElementById('wizard-deno-action') as HTMLButtonElement | null;
+  let denoChecked = false;
+  let denoReviewed = false;
+
+  function setDenoStatus(
+    state: 'checking' | 'installed' | 'missing' | 'installing' | 'error',
+    text: string
+  ) {
+    if (!denoStatus) return;
+    denoStatus.dataset.state = state;
+    const iconName = {
+      checking: 'hourglass',
+      installing: 'hourglass',
+      installed: 'circle-check',
+      missing: 'triangle-alert',
+      error: 'circle-x',
+    }[state];
+    const iconSlot = denoStatus.querySelector<HTMLElement>('.wizard-status-icon');
+    const textSlot = denoStatus.querySelector<HTMLElement>('.wizard-status-text');
+    const svg = iconsModule?.icon(iconName, 18) ?? null;
+    if (iconSlot) iconSlot.replaceChildren(...(svg ? [svg] : []));
+    if (textSlot) textSlot.textContent = text;
+  }
+
+  function setDenoAction(label: string | null, action: (() => void) | null) {
+    if (!denoAction) return;
+    denoAction.hidden = !label;
+    denoAction.disabled = false;
+    denoAction.textContent = label ?? '';
+    denoAction.onclick = action;
+  }
+
+  function showDenoMissing() {
+    setDenoStatus(
+      'missing',
+      "Deno isn't installed. Some YouTube videos may not download until it is."
+    );
+    if (isLinuxPlatform()) {
+      setDenoAction('Open install instructions', () => {
+        void window.api.openExternal(DENO_INSTALL_DOCS);
+      });
+    } else {
+      setDenoAction('Install Deno', () => void installDenoFromWizard());
+    }
+  }
+
+  async function installDenoFromWizard() {
+    setDenoStatus('installing', 'Installing Deno. This may take a moment…');
+    if (denoAction) denoAction.disabled = true;
+    try {
+      const result = await window.api.installDeno();
+      if (result && result.cancelled) {
+        showDenoMissing();
+        return;
+      }
+      setDenoStatus('installed', 'Deno is installed. Restart ROSI after setup to use it.');
+      setDenoAction(null, null);
+    } catch (error) {
+      const message =
+        (error as { error?: string })?.error ||
+        (error instanceof Error ? error.message : 'Unknown error');
+      setDenoStatus('error', `Automatic install failed: ${message}`);
+      setDenoAction('Open Deno website', () => {
+        void window.api.openExternal('https://deno.land');
+      });
+    }
+  }
+
+  async function checkDenoForWizard() {
+    if (denoChecked) return;
+    denoChecked = true;
+    setDenoStatus('checking', 'Checking for Deno…');
+    setDenoAction(null, null);
+    try {
+      if (await window.api.checkDenoInstalled()) {
+        setDenoStatus('installed', 'Deno is installed. YouTube downloads are fully supported.');
+      } else {
+        showDenoMissing();
+      }
+    } catch (error) {
+      logError('Wizard Deno check failed', error);
+      setDenoStatus('error', "Couldn't check for Deno.");
+      setDenoAction('Open install instructions', () => {
+        void window.api.openExternal(DENO_INSTALL_DOCS);
+      });
+    }
+  }
+
   function updateUI() {
     // Steps
     steps.forEach((step, i) => {
@@ -1872,6 +2132,12 @@ function launchSetupWizard(
       backBtnEl.removeAttribute('hidden');
       backBtnEl.disabled = false;
       backBtnEl.removeAttribute('tabindex');
+    }
+
+    if (skipBtn) skipBtn.hidden = currentStep === TOTAL_STEPS - 1;
+    if (currentStep === denoStepIndex) {
+      denoReviewed = true;
+      void checkDenoForWizard();
     }
 
     // Next button text
@@ -1919,10 +2185,42 @@ function launchSetupWizard(
 
     if (notifications) settings.notifications = notifications.checked;
     if (autoUpdates) settings.checkUpdatesOnStartup = autoUpdates.checked;
+
+    // Look and feel
+    if (flatUiInput) settings.flatUi = flatUiInput.checked;
+    if (animateBgInput) settings.animateBackground = animateBgInput.checked;
+
+    // Download extras
+    extraInputs.forEach(([input, key]) => {
+      if (input) settings[key] = input.checked;
+    });
+    const langs = subtitleLangsInput?.value.trim() ?? '';
+    if (settings.writeSubtitles && isValidSubtitleLangs(langs)) settings.subtitleLangs = langs;
   }
 
-  function finalizeWizard() {
-    gatherSettings();
+  /** Skip: put every wizard-managed setting back to its default. */
+  async function applyWizardDefaults() {
+    let defaults: Partial<RosiSettings> | null = null;
+    try {
+      const result = await window.api.getDefaultSettings();
+      if (result && result.ok) defaults = result.data as Partial<RosiSettings>;
+    } catch (error) {
+      logError('Could not load default settings for setup skip', error);
+    }
+    if (defaults) {
+      const target = settings as unknown as Record<string, unknown>;
+      const source = defaults as unknown as Record<string, unknown>;
+      WIZARD_SETTING_KEYS.forEach((key) => {
+        if (key in source) target[key] = source[key];
+      });
+    }
+    applyThemeFn(settings.theme || 'system');
+    applyFlatUi(!!settings.flatUi);
+    updateBackgroundAnimation(settings.animateBackground ?? true);
+  }
+
+  function finalizeWizard(skipped: boolean) {
+    if (!skipped) gatherSettings();
     settings.firstLaunch = false;
     void persistSettingsFn(false, true);
 
@@ -1941,21 +2239,18 @@ function launchSetupWizard(
     ) as HTMLInputElement | null;
     if (askLocationToggle) askLocationToggle.checked = settings.askDownloadLocation;
     const folderSummary = document.getElementById('downloadFolderSummary');
-    if (folderSummary) {
-      const folder = settings.downloadFolder?.trim();
-      folderSummary.textContent = folder || 'Choose a folder';
-      folderSummary.title = folder || 'Choose a folder before downloading';
-    }
+    if (folderSummary) renderFolderSummary(folderSummary, settings.downloadFolder);
 
-    onComplete();
+    onComplete({ skipped, denoReviewed: !skipped && denoReviewed });
   }
 
   nextBtn.addEventListener('click', () => {
+    if (currentStep === extrasStepIndex && !subtitleLangsValid()) return;
     if (currentStep < TOTAL_STEPS - 1) {
       currentStep++;
       updateUI();
     } else {
-      closeWizard();
+      closeWizard(false);
     }
   });
 
@@ -1977,7 +2272,21 @@ function launchSetupWizard(
   let wizardTrapHandler: ((e: KeyboardEvent) => void) | null = null;
   let wizardFocusinHandler: ((e: FocusEvent) => void) | null = null;
 
-  function closeWizard() {
+  let wizardSkipping = false;
+  let wizardClosed = false;
+
+  async function skipWizard() {
+    if (wizardSkipping || wizardClosed) return;
+    wizardSkipping = true;
+    if (skipBtn) skipBtn.disabled = true;
+    await applyWizardDefaults();
+    closeWizard(true);
+  }
+  skipBtn?.addEventListener('click', () => void skipWizard());
+
+  function closeWizard(skipped = false) {
+    if (wizardClosed) return;
+    wizardClosed = true;
     if (wizardTrapHandler) {
       overlayEl.removeEventListener('keydown', wizardTrapHandler);
       wizardTrapHandler = null;
@@ -1993,7 +2302,7 @@ function launchSetupWizard(
       wizardPreviousFocus.focus();
       wizardPreviousFocus = null;
     }
-    finalizeWizard();
+    finalizeWizard(skipped);
   }
 
   wizardPreviousFocus = document.activeElement;
@@ -2006,10 +2315,10 @@ function launchSetupWizard(
       e.stopPropagation();
       showModal({
         title: 'Skip setup?',
-        message: 'Skip setup and use the standard ROSI download settings?',
+        message: 'Skip setup and start with the default settings?',
         buttons: [
           { label: 'Keep setting up', primary: true },
-          { label: 'Skip setup', action: closeWizard },
+          { label: 'Skip setup', action: () => void skipWizard() },
         ],
       });
       return;
@@ -2452,9 +2761,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       askDownloadLocationToggle.checked = !!settings.askDownloadLocation;
     }
     if (downloadFolderSummary) {
-      const folder = settings.downloadFolder?.trim();
-      downloadFolderSummary.textContent = folder || 'Choose a folder';
-      downloadFolderSummary.title = folder || 'Choose a folder before downloading';
+      renderFolderSummary(downloadFolderSummary, settings.downloadFolder);
     }
     if (downloadOutputSummary) {
       if (settings.downloadMode === 'best-video') {
@@ -2562,7 +2869,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         'Would you like to support the development of ROSI?\nYour help keeps this project alive!',
       buttons: [
         {
-          label: '❤️ Yes Support!',
+          label: 'Yes Support!',
+          icon: 'heart',
           primary: true,
           action: () => {
             void window.api.openExternal('https://rosie.run/support');
@@ -2589,7 +2897,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const bindExternalLink = (element: HTMLElement | null, url: string) => {
     if (settingsModule && typeof settingsModule.bindExternalLink === 'function') {
-      settingsModule.bindExternalLink(element, url, window.api.openExternal);
+      // Look the bridge up per click so it is never a stale reference.
+      settingsModule.bindExternalLink(element, url, (target) => window.api.openExternal(target));
       return;
     }
     if (element) {
@@ -3204,7 +3513,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       settingsSearchStatus.textContent =
         matches === 0
           ? 'No settings match your search.'
-          : `${matches} section${matches === 1 ? '' : 's'} match your search.`;
+          : `${matches} ${matches === 1 ? 'section matches' : 'sections match'} your search.`;
     }
   }
 
@@ -3518,6 +3827,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
     urlInput.addEventListener('input', () => {
       hasUrlValidationIntent = true;
+      // A new link means a new download, not the last one's result.
+      clearDownloadResult();
       updateUrlButtons();
     });
     urlInput.addEventListener('blur', () => {
@@ -4014,7 +4325,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   bindExternalLink(sponsorblockHelp, 'https://sponsor.ajay.app/');
 
-  const SUBTITLE_LANGS_RE = /^[A-Za-z0-9.*-]+(,[A-Za-z0-9.*-]+)*$/;
   if (writeSubtitlesToggle) {
     writeSubtitlesToggle.addEventListener('change', (e) => {
       settings.writeSubtitles = (e.target as HTMLInputElement).checked;
@@ -4041,7 +4351,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     const commitSubtitleLangs = () => {
       const raw = subtitleLangsInput.value.trim();
-      if (!raw || !SUBTITLE_LANGS_RE.test(raw) || raw.length > 256) {
+      if (!isValidSubtitleLangs(raw)) {
         showSubtitleLangsError(
           'Enter comma-separated language codes (for example en,es) or use all.'
         );
@@ -4646,7 +4956,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!savePath) {
           isDownloading = false;
           syncPrimaryActionState();
-          if (outputEl) outputEl.textContent = '⚠️ Download cancelled: No save location selected.';
+          if (outputEl) {
+            outputEl.replaceChildren();
+            appendConsoleOutput(outputEl, '⚠️ Download cancelled: No save location selected.');
+          }
           return;
         }
         settings.downloadFolder = savePath;
@@ -4735,6 +5048,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     checkUpdateBtn.onclick = checkForUpdates;
   }
   const ipcCleanupFunctions: Array<() => void> = [];
+
+  // After a download the button briefly offers the result ("Open File
+  // Location" / "Download complete") with its own click handler.
+  let downloadResultTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function showDownloadResult(ms: number) {
+    if (downloadResultTimer !== null) clearTimeout(downloadResultTimer);
+    downloadResultTimer = setTimeout(clearDownloadResult, ms);
+  }
+
+  /** Put the Download button back, click handler included. */
+  function clearDownloadResult() {
+    if (downloadResultTimer === null) return;
+    clearTimeout(downloadResultTimer);
+    downloadResultTimer = null;
+    lastDownloadedFilePath = null;
+    setButtonLoading(downloadBtn, false);
+    syncPrimaryActionState();
+  }
 
   ipcCleanupFunctions.push(
     window.api.onProgress((message) => {
@@ -4826,21 +5158,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (isSuccess && lastDownloadedFilePath) {
           const filePath = lastDownloadedFilePath;
-          downloadBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg><span>Open File Location</span>`;
+          setButtonIconLabel(downloadBtn, 'folder-open', 'Open File Location');
           downloadBtn.disabled = false;
           downloadBtn.onclick = () => {
             void window.api.openFileLocation(filePath);
           };
-          setTimeout(() => {
-            restoreDefaultDownloadButton();
-            lastDownloadedFilePath = null;
-          }, 8000);
+          showDownloadResult(8000);
         } else if (isSuccess) {
-          downloadBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span>Download complete</span>`;
+          setButtonIconLabel(downloadBtn, 'check', 'Download complete');
           downloadBtn.disabled = false;
-          setTimeout(() => {
-            restoreDefaultDownloadButton();
-          }, 2500);
+          showDownloadResult(2500);
         } else {
           restoreDefaultDownloadButton();
           lastDownloadedFilePath = null;
@@ -4931,9 +5258,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (settings.firstLaunch) {
-    launchSetupWizard(settings, applyTheme, persistSettings, () => {
+    launchSetupWizard(settings, applyTheme, persistSettings, (outcome) => {
       updateUIFromSettings();
-      void checkDenoInstallation(settings, () => void persistSettings());
+      if (!outcome.denoReviewed) {
+        void checkDenoInstallation(settings, () => void persistSettings());
+      }
       void checkUpdatesOnStartup();
     });
   } else {

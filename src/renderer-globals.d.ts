@@ -254,7 +254,19 @@ interface RosiDockModule {
   getState: () => { tab: RosiDockTab; collapsed: boolean };
 }
 
+interface RosiIconsModule {
+  icon: (name: string, size?: number, className?: string) => SVGSVGElement | null;
+  initializeIcons: (root?: ParentNode) => void;
+  parseStatus: (text: string) => {
+    icon: string | null;
+    tone: 'danger' | 'success' | 'warning' | null;
+    text: string;
+  };
+  renderStatus: (target: HTMLElement, text: string) => void;
+}
+
 interface RosiModules {
+  icons?: RosiIconsModule;
   ui?: RosiUiModule;
   dock?: RosiDockModule;
   downloads?: RosiDownloadsModule;

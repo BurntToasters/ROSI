@@ -341,6 +341,327 @@ async function setSidebarOpen(open) {
   await settle();
 }
 
+/**
+ * Contrast of an element's text (or text stroke) against the colors painted
+ * behind it, compositing translucent ancestor backgrounds over the page.
+ */
+function contrastOf(selector, { stroke = false } = {}) {
+  return browser.execute(
+    (target, useStroke) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1;
+      canvas.height = 1;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      const rgba = (color) => {
+        context.clearRect(0, 0, 1, 1);
+        context.fillStyle = color;
+        context.fillRect(0, 0, 1, 1);
+        const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
+        return [r, g, b, a / 255];
+      };
+      const over = (top, bottom) => {
+        const alpha = top[3] + bottom[3] * (1 - top[3]);
+        if (alpha === 0) return [0, 0, 0, 0];
+        return [
+          ...[0, 1, 2].map(
+            (i) =>
+              (top[i] * top[3] + bottom[i] * bottom[3] * (1 - top[3])) / alpha,
+          ),
+          alpha,
+        ];
+      };
+      const luminance = ([r, g, b]) => {
+        const channel = (value) => {
+          const c = value / 255;
+          return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+        };
+        return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+      };
+      const element = document.querySelector(target);
+      if (!element) return { error: `${target} missing` };
+      const layers = [];
+      for (let node = element; node; node = node.parentElement) {
+        layers.push(rgba(getComputedStyle(node).backgroundColor));
+      }
+      let background = [255, 255, 255, 1];
+      for (const layer of layers.reverse())
+        background = over(layer, background);
+      const style = getComputedStyle(element);
+      const ink = over(
+        rgba(useStroke ? style.webkitTextStrokeColor : style.color),
+        background,
+      );
+      const [light, dark] = [luminance(ink), luminance(background)].sort(
+        (a, b) => b - a,
+      );
+      return {
+        ratio: (light + 0.05) / (dark + 0.05),
+        strokeWidth: parseFloat(style.webkitTextStrokeWidth) || 0,
+      };
+    },
+    selector,
+    stroke,
+  );
+}
+
+/** Settings keys the setup wizard manages; Skip resets exactly these. */
+const WIZARD_KEYS = [
+  "theme",
+  "flatUi",
+  "animateBackground",
+  "askDownloadLocation",
+  "downloadMode",
+  "bestQuality",
+  "audioOnly",
+  "advancedOptions",
+  "embedMetadata",
+  "embedThumbnail",
+  "sponsorblockRemove",
+  "writeSubtitles",
+  "subtitleLangs",
+  "notifications",
+  "checkUpdatesOnStartup",
+];
+
+/** Settings a failed test may have left changed; recovery restores these. */
+const RECOVERABLE_SETTINGS = [
+  "firstLaunch",
+  "theme",
+  "flatUi",
+  "animateBackground",
+  "showConsoleOutput",
+  "dockTab",
+  "dockCollapsed",
+  "downloadMode",
+  "downloadPresets",
+  "askDownloadLocation",
+  "downloadFolder",
+  "audioFormat",
+  "bestQuality",
+  "audioOnly",
+  "advancedOptions",
+  "convertEnabled",
+  "convertFormat",
+  "keepOriginalAfterConvert",
+  "gpuAcceleration",
+  "gpuType",
+  "hookBrowser",
+  "browserChoice",
+  "notifications",
+  "checkUpdatesOnStartup",
+  "updateChannel",
+  "writeSubtitles",
+  "subtitleLangs",
+  "embedThumbnail",
+  "embedMetadata",
+  "sponsorblockRemove",
+  "showTaskbarProgress",
+];
+
+/** Reload into the first-run wizard, optionally seeding settings first. */
+async function openWizard(patch = {}) {
+  const saved = await api("saveSettings", { ...patch, firstLaunch: true });
+  assert.equal(saved.ok, true, saved.error?.message);
+  await reloadRenderer();
+  await browser.waitUntil(
+    async () =>
+      browser.execute(() =>
+        document.getElementById("setup-wizard")?.classList.contains("active"),
+      ),
+    { timeout: 10_000, timeoutMsg: "setup wizard did not open" },
+  );
+}
+
+/** Current wizard step index and whether the overlay is still open. */
+function wizardState() {
+  return browser.execute(() => {
+    const overlay = document.getElementById("setup-wizard");
+    const steps = [...overlay.querySelectorAll(".wizard-step")];
+    return {
+      open: overlay.classList.contains("active"),
+      step: steps.findIndex((step) => step.classList.contains("active")),
+      total: steps.length,
+      skipHidden: document.getElementById("wizard-skip").hidden,
+    };
+  });
+}
+
+/** Check or select a wizard input and fire its change event. */
+async function wizardPick(selector, checked = true) {
+  await browser.execute(
+    (target, value) => {
+      const input = document.querySelector(target);
+      input.checked = value;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    selector,
+    checked,
+  );
+}
+
+async function waitForWizardClosed() {
+  await browser.waitUntil(async () => !(await wizardState()).open, {
+    timeout: 10_000,
+    timeoutMsg: "setup wizard did not close",
+  });
+}
+
+/** Put the wizard-managed settings back and leave first-run mode. */
+async function restoreWizardSettings(original) {
+  const patch = Object.fromEntries(
+    WIZARD_KEYS.map((key) => [key, original[key]]),
+  );
+  const saved = await api("saveSettings", { ...patch, firstLaunch: false });
+  assert.equal(saved.ok, true, saved.error?.message);
+  await reloadRenderer();
+}
+
+/**
+ * Replace window.api methods with recorders for bridge calls that would
+ * leave the app (browser, Finder, OS dialogs, notifications). Each stub
+ * records its arguments and resolves to the given value.
+ */
+async function stubApi(stubs) {
+  await browser.execute((map) => {
+    window.__rosiStubs ??= { original: {}, calls: [] };
+    for (const [name, value] of Object.entries(map)) {
+      if (!(name in window.__rosiStubs.original)) {
+        window.__rosiStubs.original[name] = window.api[name];
+      }
+      window.api[name] = (...args) => {
+        window.__rosiStubs.calls.push({
+          name,
+          args: JSON.parse(JSON.stringify(args)),
+        });
+        return Promise.resolve(value);
+      };
+    }
+  }, stubs);
+}
+
+/** Calls recorded by stubApi so far. */
+function stubCalls(name) {
+  return browser.execute(
+    (target) =>
+      (window.__rosiStubs?.calls ?? [])
+        .filter((call) => !target || call.name === target)
+        .map((call) => call.args),
+    name ?? null,
+  );
+}
+
+/** Put the real bridge methods back and return every recorded call. */
+function restoreApi() {
+  return browser.execute(() => {
+    const stubs = window.__rosiStubs;
+    if (!stubs) return [];
+    Object.assign(window.api, stubs.original);
+    window.__rosiStubs = undefined;
+    return stubs.calls;
+  });
+}
+
+/** The app's in-page modal: whether it is open, its title, and buttons. */
+function modalState() {
+  return browser.execute(() => {
+    const modal = document.getElementById("app-modal");
+    return {
+      open: modal.classList.contains("active"),
+      title: document.getElementById("modal-title").textContent,
+      message: document.getElementById("modal-message").textContent,
+      buttons: [...document.querySelectorAll("#modal-buttons button")].map(
+        (button) => button.textContent.trim(),
+      ),
+    };
+  });
+}
+
+async function waitForModal(open, timeoutMsg) {
+  let state = null;
+  await browser.waitUntil(
+    async () => {
+      state = await modalState();
+      return state.open === open;
+    },
+    { timeout: 10_000, timeoutMsg },
+  );
+  return state;
+}
+
+async function clickModalButton(label) {
+  const clicked = await browser.execute((text) => {
+    const button = [...document.querySelectorAll("#modal-buttons button")].find(
+      (candidate) => candidate.textContent.trim() === text,
+    );
+    button?.click();
+    return Boolean(button);
+  }, label);
+  assert.ok(clicked, `modal has no "${label}" button`);
+}
+
+/** Type a URL, press Download, and wait for its new activity entry. */
+async function downloadThroughUi(url, timeoutMsg) {
+  await typeUrl(url);
+  await browser.waitUntil(
+    async () =>
+      browser.execute(() => {
+        const button = document.getElementById("downloadBtn");
+        return !button.disabled && !button.classList.contains("loading");
+      }),
+    { timeout: 15_000, timeoutMsg: "download button stayed disabled" },
+  );
+  const clickedAt = Date.now();
+  await clickById("downloadBtn");
+  const entry = await waitForActivity(
+    (item) => item.url === url && item.completedAt >= clickedAt,
+    timeoutMsg,
+  );
+  await waitForIdle();
+  return entry;
+}
+
+/** Streams and tags of a media file, through the test FFprobe. */
+function probeMedia(file) {
+  const probe = spawnSync(
+    FFPROBE,
+    [
+      "-v",
+      "error",
+      "-show_entries",
+      "format_tags=title:stream=codec_type,codec_name:stream_disposition=attached_pic",
+      "-of",
+      "json",
+      file,
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(probe.status, 0, probe.stderr);
+  return JSON.parse(probe.stdout);
+}
+
+/** Record a scenario as skipped when FFmpeg fixtures are unavailable. */
+function skipWithoutFfmpeg(context, name) {
+  if (HAS_FFMPEG && FFPROBE) return false;
+  results.push({ name, status: "skipped", reason: "no FFmpeg available" });
+  context.skip();
+  return true;
+}
+
+async function selectProfile(mode) {
+  const ids = {
+    compatible: "profileCompatibleBtn",
+    "best-video": "profileBestVideoBtn",
+    audio: "profileAudioBtn",
+    custom: "profileCustomBtn",
+  };
+  await clickById(ids[mode]);
+  await waitForSavedSetting(
+    "downloadMode",
+    mode,
+    `${mode} profile was not saved`,
+  );
+}
+
 /** Computed box-shadow values of the first element matching each selector. */
 function boxShadows(selectors) {
   return browser.execute(
@@ -368,6 +689,38 @@ describe("ROSI main window", () => {
         ),
       { timeout: 60_000, timeoutMsg: "E2E hook / window.api not installed" },
     );
+  });
+
+  // One failed test must not strand the next one in its state (an open
+  // sidebar leaves the page inert, a stray profile changes every download).
+  // Settings return to how they were when the failed test started, stubs are
+  // removed, and the renderer reloads to drop open dialogs and popovers.
+  let settingsAtTestStart = null;
+  beforeEach(() => {
+    settingsAtTestStart = settingsOnDisk();
+  });
+  afterEach(async function () {
+    if (this.currentTest?.state !== "failed" || !settingsAtTestStart) return;
+    try {
+      await browser.execute(() => {
+        const stubs = window.__rosiStubs;
+        if (stubs) Object.assign(window.api, stubs.original);
+        window.__rosiStubs = undefined;
+      });
+      const patch = Object.fromEntries(
+        RECOVERABLE_SETTINGS.filter((key) => key in settingsAtTestStart).map(
+          (key) => [key, settingsAtTestStart[key]],
+        ),
+      );
+      await api("saveSettings", patch);
+      await reloadRenderer();
+      await resizeWindow(1200, 900);
+    } catch (error) {
+      console.error(
+        `[e2e] recovery after "${this.currentTest.title}" failed`,
+        error,
+      );
+    }
   });
 
   after(() => {
@@ -720,6 +1073,15 @@ describe("ROSI main window", () => {
       await waitForWindowTheme(expected, `${theme} theme left the title bar`);
       seen[theme] = expected;
     }
+    // System resolves to the page's rendered theme, never to null.
+    await setControlValue("themeSelect", "system");
+    await waitForSavedSetting("theme", "system", "system theme was not saved");
+    const rendered = await browser.execute(
+      () => document.documentElement.dataset.theme,
+    );
+    const systemExpected = rendered === "light" ? "light" : "dark";
+    await waitForWindowTheme(systemExpected, "system theme left the title bar");
+    seen.system = systemExpected;
     await setControlValue("themeSelect", original);
     await waitForSavedSetting("theme", original, "theme was not restored");
     record("window-theme", { seen });
@@ -1552,6 +1914,941 @@ describe("ROSI main window", () => {
     record("small-window", sizes);
   });
 
+  it("shrinks the dock to its empty message and grows it for content", async () => {
+    const originalTab = await browser.execute(
+      () => window.rosiModules.dock.getState().tab,
+    );
+    const measure = () =>
+      browser.execute(() => {
+        const dock = document.getElementById("dock");
+        const stage = document.querySelector(".main-stage");
+        return {
+          empty: dock.classList.contains("is-empty"),
+          height: dock.getBoundingClientRect().height,
+          gapBelow:
+            stage.getBoundingClientRect().bottom -
+            dock.getBoundingClientRect().bottom,
+        };
+      });
+    const waitForEmpty = async (want, timeoutMsg) => {
+      await browser.waitUntil(async () => (await measure()).empty === want, {
+        timeout: 10_000,
+        timeoutMsg,
+      });
+      await settle();
+      return measure();
+    };
+
+    await api("clearQueue");
+    await browser.execute(() => window.rosiModules.dock.selectTab("queue"));
+    const empty = await waitForEmpty(
+      true,
+      "empty queue did not shrink the dock",
+    );
+    assert.ok(
+      empty.gapBelow > 150,
+      `empty dock still fills the stage (${empty.gapBelow}px left)`,
+    );
+
+    const added = await api("addToQueue", [`${MEDIA}/clip-one.mp4?empty=1`]);
+    assert.equal(added.ok, true, added.error?.message);
+    const filled = await waitForEmpty(false, "queued item left the dock empty");
+    assert.ok(
+      filled.height > empty.height,
+      `dock did not grow (${empty.height}px to ${filled.height}px)`,
+    );
+    assert.ok(filled.gapBelow < 40, `full dock left ${filled.gapBelow}px`);
+
+    await api("clearQueue");
+    await waitForEmpty(true, "cleared queue did not shrink the dock again");
+    await browser.execute(() => window.rosiModules.dock.selectTab("activity"));
+    const activity = await waitForEmpty(false, "activity with rows is empty");
+    await browser.execute(
+      (tab) => window.rosiModules.dock.selectTab(tab),
+      originalTab,
+    );
+    record("dock-empty", {
+      emptyHeight: Math.round(empty.height),
+      filledHeight: Math.round(filled.height),
+      activityHeight: Math.round(activity.height),
+    });
+  });
+
+  it("keeps the save folder name visible on a long path", async () => {
+    const folder = settingsOnDisk().downloadFolder;
+    assert.ok(folder, "no download folder is saved");
+    await resizeWindow(900, 560);
+    const summary = await browser.execute(() => {
+      const target = document.getElementById("downloadFolderSummary");
+      const head = target.querySelector(".download-destination-head");
+      const tail = target.querySelector(".download-destination-tail");
+      const box = target.getBoundingClientRect();
+      return {
+        text: target.textContent,
+        title: target.title,
+        tail: tail?.textContent ?? null,
+        tailClipped: tail ? tail.scrollWidth > tail.clientWidth : null,
+        tailInside: tail
+          ? tail.getBoundingClientRect().right <= box.right + 1
+          : null,
+        headClipped: head ? head.scrollWidth > head.clientWidth : null,
+      };
+    });
+    await resizeWindow(1200, 900);
+    const name = folder
+      .replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .pop();
+    assert.equal(summary.text, folder, "summary lost part of the path");
+    assert.equal(summary.title, folder);
+    assert.equal(summary.tail, name);
+    assert.equal(summary.tailClipped, false, "folder name was truncated");
+    assert.equal(summary.tailInside, true, "folder name overflows the row");
+    assert.equal(summary.headClipped, true, "parent folders did not truncate");
+    record("save-path", { folderName: name, length: folder.length });
+  });
+
+  it("draws every icon from the bundled Lucide set", async () => {
+    const icons = await browser.execute(() => {
+      window.rosiModules.ui.showToast("Lucide check", { type: "success" });
+      const svgs = [...document.querySelectorAll("svg")];
+      return {
+        placeholders: document.querySelectorAll("span[data-icon]").length,
+        total: svgs.length,
+        foreign: svgs
+          .filter(
+            (svg) =>
+              !svg.dataset.icon || !svg.classList.contains("lucide-icon"),
+          )
+          .map((svg) => svg.outerHTML.slice(0, 80)),
+        names: [...new Set(svgs.map((svg) => svg.dataset.icon))].sort(),
+        settingsWidth: document
+          .querySelector("#settingsBtn svg")
+          ?.getBoundingClientRect().width,
+        toastIcon:
+          document.querySelector(".toast .toast-icon svg")?.dataset.icon ??
+          null,
+      };
+    });
+    assert.equal(icons.placeholders, 0, "icon placeholders were not replaced");
+    assert.ok(icons.total >= 40, `only ${icons.total} icons rendered`);
+    assert.deepEqual(icons.foreign, [], "inline SVGs outside the Lucide set");
+    assert.equal(icons.settingsWidth, 22, "settings icon changed size");
+    assert.equal(icons.toastIcon, "circle-check", "toast is missing its icon");
+    const licenses = JSON.parse(
+      fs.readFileSync(
+        path.join(import.meta.dirname, "..", "..", "public", "licenses.json"),
+        "utf8",
+      ),
+    );
+    assert.ok(
+      JSON.stringify(licenses).includes("lucide-static@"),
+      "lucide-static is missing from the npm license notices",
+    );
+    record("lucide-icons", { count: icons.total, names: icons.names });
+  });
+
+  it("shows status emoji from the backend as icons", async () => {
+    // A manual download clears the console and streams the backend's status
+    // lines (which start with emoji) into it.
+    const url = `${MEDIA}/clip-one.mp4?icons=1`;
+    await typeUrl(url);
+    await browser.waitUntil(
+      async () =>
+        browser.execute(
+          () => !document.getElementById("downloadBtn")?.disabled,
+        ),
+      { timeout: 10_000, timeoutMsg: "download button stayed disabled" },
+    );
+    await clickById("downloadBtn");
+    const entry = await waitForActivity(
+      (item) => item.url === url,
+      "status-icon download never finished",
+    );
+    assert.equal(entry.outcome, "success", entry.error ?? entry.statusMessage);
+
+    // The button briefly offers the result, then goes back to Download.
+    const buttonState = () =>
+      browser.execute(() => {
+        const button = document.getElementById("downloadBtn");
+        const svg = button.querySelector("svg");
+        return {
+          icon: svg?.dataset.icon ?? null,
+          lucide: svg?.classList.contains("lucide-icon") ?? false,
+          label: button.textContent.trim(),
+        };
+      });
+    let finished = null;
+    await browser.waitUntil(
+      async () => {
+        finished = await buttonState();
+        return ["folder-open", "check"].includes(finished.icon);
+      },
+      { timeout: 5_000, timeoutMsg: "download button never showed the result" },
+    );
+    assert.equal(
+      finished.label,
+      finished.icon === "folder-open"
+        ? "Open File Location"
+        : "Download complete",
+    );
+    let restored = null;
+    await browser.waitUntil(
+      async () => {
+        restored = await buttonState();
+        return restored.icon === "download";
+      },
+      { timeout: 12_000, timeoutMsg: "download button never came back" },
+    );
+    assert.equal(restored.lucide, true, "restored button lost its Lucide icon");
+    assert.equal(restored.label, "Download");
+    await waitForIdle();
+    await typeUrl("");
+    const result = await browser.execute(() => {
+      const pictographic = /\p{Extended_Pictographic}/u;
+      const probe = document.createElement("span");
+      window.rosiModules.icons.renderStatus(probe, "\u274C Download failed.");
+      const output = document.getElementById("output");
+      return {
+        probeIcon: probe.querySelector("svg")?.dataset.icon ?? null,
+        probeText: probe.textContent,
+        consoleLines: output.querySelectorAll(".console-line").length,
+        consoleIcons: output.querySelectorAll(".console-line svg[data-icon]")
+          .length,
+        consoleEmoji: [...output.querySelectorAll(".console-line")]
+          .map((line) => line.textContent)
+          .filter((line) => pictographic.test(line))
+          .slice(0, 5),
+        pageEmoji: [...document.body.querySelectorAll("*")]
+          .filter(
+            (el) =>
+              el.childElementCount === 0 && pictographic.test(el.textContent),
+          )
+          .map((el) => el.textContent.slice(0, 60)),
+      };
+    });
+    assert.equal(result.probeIcon, "circle-x");
+    assert.equal(result.probeText, "Download failed.");
+    assert.ok(result.consoleLines > 0, "console has no lines after downloads");
+    assert.ok(result.consoleIcons > 0, "no console status line has an icon");
+    assert.deepEqual(result.consoleEmoji, [], "console still shows emoji");
+    assert.deepEqual(result.pageEmoji, [], "emoji left in the page");
+    record("status-icons", {
+      button: [finished.icon, restored.icon],
+      consoleLines: result.consoleLines,
+      consoleIcons: result.consoleIcons,
+    });
+  });
+
+  it("keeps console lines copyable, capped, and clearable", async () => {
+    const originalTab = await browser.execute(
+      () => window.rosiModules.dock.getState().tab,
+    );
+    await browser.execute(() => window.rosiModules.dock.selectTab("console"));
+    const result = await browser.execute(() => {
+      const output = document.getElementById("output");
+      const lines = () =>
+        [...output.querySelectorAll(".console-line")].map(
+          (line) => line.textContent,
+        );
+      // Copying the log must keep one line per console line.
+      const copied = output.textContent.split("\n").slice(0, -1);
+      const before = { lines: lines(), copied };
+      const bulk = Array.from({ length: 4100 }, (_, i) => `bulk line ${i}`);
+      window.rosiModules.ui.appendConsoleOutput(output, bulk.join("\n"));
+      const after = lines();
+      return {
+        before,
+        count: after.length,
+        first: after[0],
+        last: after[after.length - 1],
+        newlines: output.textContent.split("\n").length - 1,
+      };
+    });
+    assert.ok(
+      result.before.lines.length > 0,
+      "console was empty before the cap test",
+    );
+    assert.deepEqual(
+      result.before.copied,
+      result.before.lines,
+      "copied text lost lines",
+    );
+    assert.equal(result.count, 4000, "console is not capped at 4000 lines");
+    assert.equal(
+      result.first,
+      "bulk line 100",
+      "the oldest lines were not dropped",
+    );
+    assert.equal(result.last, "bulk line 4099");
+    assert.equal(result.newlines, 4000, "line breaks drifted from line count");
+
+    await clickById("clearConsole");
+    await settle();
+    const cleared = await browser.execute(() => ({
+      nodes: document.getElementById("output").childNodes.length,
+      dockEmpty: document.getElementById("dock").classList.contains("is-empty"),
+    }));
+    assert.equal(cleared.nodes, 0, "Clear left console content behind");
+    assert.equal(
+      cleared.dockEmpty,
+      true,
+      "cleared console did not shrink the dock",
+    );
+    await browser.execute(
+      (tab) => window.rosiModules.dock.selectTab(tab),
+      originalTab,
+    );
+    record("console-log", { capped: result.count, firstKept: result.first });
+  });
+
+  it("keeps Activity row actions as quiet icon buttons", async () => {
+    await browser.execute(() => {
+      window.rosiModules.dock.selectTab("activity");
+      document.activeElement?.blur();
+    });
+    await settle();
+    const rest = await browser.execute(() => {
+      const row = document.querySelector("#history-list .history-item");
+      const buttons = [...row.querySelectorAll(".history-item-actions button")];
+      return {
+        buttons: buttons.map((button) => ({
+          icon: button.classList.contains("btn--icon"),
+          label: button.getAttribute("aria-label"),
+          title: button.title,
+          svg: button.querySelector("svg")?.dataset.icon ?? null,
+          text: button.textContent.trim(),
+        })),
+        opacity: Number(getComputedStyle(buttons[0]).opacity),
+      };
+    });
+    assert.ok(rest.buttons.length >= 2, "activity row has too few actions");
+    for (const button of rest.buttons) {
+      assert.ok(button.icon, `${button.title} is not an icon button`);
+      assert.ok(button.label, `${button.title} has no aria-label`);
+      assert.ok(button.title, "an action has no tooltip");
+      assert.ok(button.svg, `${button.title} has no icon`);
+      assert.equal(button.text, "", `${button.title} still shows text`);
+    }
+    await browser.execute(() =>
+      document
+        .querySelector(
+          "#history-list .history-item .history-item-actions button",
+        )
+        .focus(),
+    );
+    await settle();
+    const focused = await browser.execute(() =>
+      Number(
+        getComputedStyle(
+          document.querySelector(
+            "#history-list .history-item .history-item-actions button",
+          ),
+        ).opacity,
+      ),
+    );
+    assert.ok(rest.opacity < 1, `actions are loud at rest (${rest.opacity})`);
+    assert.equal(focused, 1, "focused row did not raise its actions");
+    record("activity-actions", {
+      actions: rest.buttons.map((button) => button.svg),
+      restOpacity: rest.opacity,
+    });
+  });
+
+  it("runs each Activity row action", async () => {
+    await browser.execute(() => window.rosiModules.dock.selectTab("activity"));
+    await settle();
+    const activity = (await api("getDownloadActivity")).data;
+    const target = activity.find(
+      (item) => item.outcome === "success" && item.outputPath,
+    );
+    assert.ok(target, "no finished download to act on");
+    // Rows render newest first, in the same order as the activity log.
+    const rowIndex = activity.indexOf(target);
+    const clickAction = (icon) =>
+      browser.execute(
+        (index, name) => {
+          const row = document.querySelectorAll("#history-list .history-item")[
+            index
+          ];
+          const button = row
+            ?.querySelector(`.history-item-actions svg[data-icon="${name}"]`)
+            ?.closest("button");
+          button?.click();
+          return Boolean(button);
+        },
+        rowIndex,
+        icon,
+      );
+    const lastToast = () =>
+      browser.execute(
+        () =>
+          [...document.querySelectorAll(".toast .toast-message")].pop()
+            ?.textContent ?? null,
+      );
+
+    // Open folder: stub the bridge so the test does not open Finder.
+    await browser.execute(() => {
+      window.__rosiOpened = [];
+      window.__rosiOpenFileLocation = window.api.openFileLocation;
+      window.api.openFileLocation = async (filePath) => {
+        window.__rosiOpened.push(filePath);
+        return { ok: true };
+      };
+    });
+    assert.ok(
+      await clickAction("folder-open"),
+      "row has no Open folder action",
+    );
+    await settle(300);
+    const opened = await browser.execute(() => {
+      window.api.openFileLocation = window.__rosiOpenFileLocation;
+      return window.__rosiOpened;
+    });
+    assert.deepEqual(
+      opened,
+      [target.outputPath],
+      "Open folder used the wrong path",
+    );
+
+    // Copy source: the real clipboard, read back through the OS on macOS.
+    assert.ok(await clickAction("link"), "row has no Copy source action");
+    let toast = null;
+    await browser.waitUntil(
+      async () => {
+        toast = await lastToast();
+        return /source link/i.test(toast ?? "");
+      },
+      { timeout: 5_000, timeoutMsg: "Copy source showed no toast" },
+    );
+    assert.equal(toast, "Source link copied.", `copy failed: ${toast}`);
+    if (process.platform === "darwin") {
+      const pasted = spawnSync("pbpaste", { encoding: "utf8" }).stdout;
+      assert.equal(
+        pasted,
+        target.url,
+        "clipboard does not hold the source URL",
+      );
+    }
+
+    // Download again: a new activity entry for the same URL.
+    const clickedAt = Date.now();
+    assert.ok(
+      await clickAction("rotate-ccw"),
+      "row has no Download again action",
+    );
+    const replay = await waitForActivity(
+      (item) => item.url === target.url && item.completedAt >= clickedAt,
+      "Download again never produced a new download",
+    );
+    assert.equal(
+      replay.outcome,
+      "success",
+      replay.error ?? replay.statusMessage,
+    );
+    await waitForIdle();
+    record("activity-action-clicks", {
+      opened: path.basename(target.outputPath),
+      replayed: path.basename(replay.outputPath ?? ""),
+    });
+  });
+
+  it("keeps the logo and disabled buttons readable in every theme", async () => {
+    const original = settingsOnDisk().theme;
+    await typeUrl("");
+    const seen = {};
+    for (const [theme, flat] of ["light", "dark", "purple"].flatMap((name) => [
+      [name, false],
+      [name, true],
+    ])) {
+      await setControlValue("flatUiToggle", flat);
+      await waitForSavedSetting("flatUi", flat, "Flat UI was not saved");
+      await setControlValue("themeSelect", theme);
+      await waitForSavedSetting("theme", theme, `${theme} theme was not saved`);
+      await settle();
+      const disabled = await browser.execute(() => {
+        const button = document.getElementById("downloadBtn");
+        return button.disabled || button.classList.contains("is-disabled");
+      });
+      assert.ok(disabled, "download button is enabled with an empty URL");
+      const button = await contrastOf("#downloadBtn");
+      assert.ok(
+        button.ratio >= 3,
+        `${theme} disabled download text contrast ${button.ratio.toFixed(2)}`,
+      );
+      const logo = await contrastOf(".app-name .char-white", {
+        stroke: theme === "light",
+      });
+      if (theme === "light") {
+        assert.ok(logo.strokeWidth > 0, "light logo letters have no outline");
+      }
+      assert.ok(
+        logo.ratio >= 3,
+        `${theme} logo contrast ${logo.ratio.toFixed(2)}`,
+      );
+      seen[`${theme}${flat ? "-flat" : ""}`] = {
+        button: Number(button.ratio.toFixed(2)),
+        logo: Number(logo.ratio.toFixed(2)),
+      };
+    }
+    await setControlValue("flatUiToggle", false);
+    await waitForSavedSetting("flatUi", false, "Flat UI off was not saved");
+    await setControlValue("themeSelect", original);
+    await waitForSavedSetting("theme", original, "theme was not restored");
+    record("theme-contrast", seen);
+  });
+
+  it("walks the setup wizard and saves every choice", async () => {
+    const original = settingsOnDisk();
+    await openWizard({
+      theme: "system",
+      flatUi: false,
+      animateBackground: false,
+    });
+    let state = await wizardState();
+    assert.equal(state.step, 0);
+    assert.equal(state.total, 7, "wizard step count changed");
+    assert.equal(state.skipHidden, false, "Skip is missing on the first step");
+    const next = async () => {
+      await clickById("wizard-next");
+      await settle(200);
+      return wizardState();
+    };
+    const shots = [];
+    const shoot = async (name) => {
+      if (!SCREENSHOT_DIR) return;
+      await settle();
+      fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+      const file = path.join(SCREENSHOT_DIR, `${name}.png`);
+      await browser.saveScreenshot(file);
+      shots.push({ name, sha256: sha256File(file) });
+    };
+    await shoot("wizard-welcome");
+
+    state = await next();
+    assert.equal(state.step, 1);
+    await wizardPick('input[name="wizard-theme"][value="purple"]');
+    await wizardPick("#wizard-flat-ui");
+    await wizardPick("#wizard-animate-bg");
+    const preview = await browser.execute(() => ({
+      theme: document.documentElement.dataset.theme,
+      flat: document.documentElement.dataset.flatUi ?? null,
+      animated: document.body.classList.contains("animate-bg"),
+    }));
+    assert.deepEqual(preview, {
+      theme: "purple",
+      flat: "true",
+      animated: true,
+    });
+    await wizardPick("#wizard-flat-ui", false);
+    await shoot("wizard-look");
+    await wizardPick("#wizard-flat-ui");
+
+    state = await next();
+    assert.equal(state.step, 2);
+    await wizardPick('input[name="wizard-profile"][value="audio"]');
+
+    state = await next();
+    assert.equal(state.step, 3);
+    for (const id of [
+      "#wizard-embed-metadata",
+      "#wizard-embed-thumbnail",
+      "#wizard-sponsorblock",
+      "#wizard-subtitles",
+    ]) {
+      await wizardPick(id);
+    }
+    const setLangs = (value) =>
+      browser.execute((text) => {
+        const input = document.getElementById("wizard-subtitle-langs");
+        input.value = text;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }, value);
+    await setLangs("en es!");
+    state = await next();
+    assert.equal(state.step, 3, "invalid subtitle languages left the step");
+    const langError = await browser.execute(
+      () => document.getElementById("wizard-subtitle-langs-error").textContent,
+    );
+    assert.ok(langError, "no error for invalid subtitle languages");
+    await setLangs("en,es");
+    await shoot("wizard-extras");
+
+    // Back and forward again keeps every choice made so far.
+    await clickById("wizard-back");
+    await clickById("wizard-back");
+    await settle(200);
+    assert.equal((await wizardState()).step, 1);
+    await next();
+    state = await next();
+    assert.equal(state.step, 3);
+    const kept = await browser.execute(() => ({
+      theme: document.querySelector('input[name="wizard-theme"]:checked')
+        ?.value,
+      profile: document.querySelector('input[name="wizard-profile"]:checked')
+        ?.value,
+      metadata: document.getElementById("wizard-embed-metadata").checked,
+      subtitles: document.getElementById("wizard-subtitles").checked,
+      langs: document.getElementById("wizard-subtitle-langs").value,
+    }));
+    assert.deepEqual(kept, {
+      theme: "purple",
+      profile: "audio",
+      metadata: true,
+      subtitles: true,
+      langs: "en,es",
+    });
+
+    state = await next();
+    assert.equal(state.step, 4);
+    let deno = null;
+    await browser.waitUntil(
+      async () => {
+        deno = await browser.execute(() => {
+          const status = document.getElementById("wizard-deno-status");
+          const action = document.getElementById("wizard-deno-action");
+          return {
+            state: status.dataset.state,
+            text: status.textContent.trim(),
+            icon: status.querySelector("svg")?.dataset.icon ?? null,
+            action: action.hidden ? null : action.textContent,
+          };
+        });
+        return deno.state && deno.state !== "checking";
+      },
+      { timeout: 15_000, timeoutMsg: "Deno check never finished" },
+    );
+    assert.ok(["installed", "missing", "error"].includes(deno.state));
+    assert.ok(deno.icon, "Deno status has no icon");
+    if (deno.state !== "installed") {
+      assert.ok(deno.action, "missing Deno offers no next step");
+    }
+    await shoot("wizard-deno");
+
+    state = await next();
+    assert.equal(state.step, 5);
+    await wizardPick("#wizard-notifications", false);
+    state = await next();
+    assert.equal(state.step, 6);
+    assert.equal(state.skipHidden, true, "Skip still shows on the last step");
+    await clickById("wizard-next");
+    await waitForWizardClosed();
+
+    await waitForSavedSetting("firstLaunch", false, "wizard did not finish");
+    const saved = settingsOnDisk();
+    const expected = {
+      theme: "purple",
+      flatUi: true,
+      animateBackground: true,
+      downloadMode: "audio",
+      audioOnly: true,
+      embedMetadata: true,
+      embedThumbnail: true,
+      sponsorblockRemove: true,
+      writeSubtitles: true,
+      subtitleLangs: "en,es",
+      notifications: false,
+    };
+    for (const [key, value] of Object.entries(expected)) {
+      assert.deepEqual(saved[key], value, `wizard saved ${key}=${saved[key]}`);
+    }
+    await settle(1500);
+    const followUp = await browser.execute(
+      () =>
+        document.querySelector(".modal-overlay.active, .modal.active")
+          ?.textContent ?? null,
+    );
+    assert.equal(followUp, null, `a prompt followed the wizard: ${followUp}`);
+
+    await restoreWizardSettings(original);
+    record("setup-wizard", { steps: state.total, deno: deno.state, shots });
+  });
+
+  it("skips the setup wizard straight to the defaults", async () => {
+    const original = settingsOnDisk();
+    const defaults = (await api("getDefaultSettings")).data;
+    await openWizard({
+      theme: "dark",
+      flatUi: true,
+      animateBackground: false,
+      embedMetadata: !defaults.embedMetadata,
+      sponsorblockRemove: !defaults.sponsorblockRemove,
+      notifications: !defaults.notifications,
+      downloadMode: "best-video",
+    });
+    // Walk partway and change things, then skip: none of it may stick.
+    await clickById("wizard-next");
+    await wizardPick('input[name="wizard-theme"][value="light"]');
+    await clickById("wizard-skip");
+    await waitForWizardClosed();
+    await waitForSavedSetting(
+      "firstLaunch",
+      false,
+      "skip did not finish setup",
+    );
+    const saved = settingsOnDisk();
+    const mismatched = WIZARD_KEYS.filter(
+      (key) => JSON.stringify(saved[key]) !== JSON.stringify(defaults[key]),
+    ).map(
+      (key) =>
+        `${key}: ${JSON.stringify(saved[key])} != ${JSON.stringify(defaults[key])}`,
+    );
+    assert.deepEqual(mismatched, [], "skip left non-default settings");
+    assert.equal(
+      saved.downloadFolder,
+      original.downloadFolder,
+      "skip moved the folder",
+    );
+    const applied = await browser.execute(() => ({
+      flat: document.documentElement.dataset.flatUi ?? null,
+    }));
+    assert.equal(applied.flat, defaults.flatUi ? "true" : null);
+
+    await restoreWizardSettings(original);
+    record("setup-wizard-skip", { keys: WIZARD_KEYS.length });
+  });
+
+  it("asks before Escape skips setup, then applies the defaults", async () => {
+    const original = settingsOnDisk();
+    const defaults = (await api("getDefaultSettings")).data;
+    await openWizard({ theme: "dark", embedMetadata: !defaults.embedMetadata });
+    await clickById("wizard-next");
+    await wizardPick('input[name="wizard-theme"][value="light"]');
+    const modalState = () =>
+      browser.execute(() => {
+        const modal = document.getElementById("app-modal");
+        return {
+          open: modal.classList.contains("active"),
+          title: document.getElementById("modal-title").textContent,
+          buttons: [...document.querySelectorAll("#modal-buttons button")].map(
+            (button) => button.textContent.trim(),
+          ),
+        };
+      });
+    const pressEscape = () => pressKey("#wizard-next", { key: "Escape" });
+    const clickModal = (label) =>
+      browser.execute((text) => {
+        [...document.querySelectorAll("#modal-buttons button")]
+          .find((button) => button.textContent.trim() === text)
+          ?.click();
+      }, label);
+    const waitModal = (open) =>
+      browser.waitUntil(async () => (await modalState()).open === open, {
+        timeout: 5_000,
+        timeoutMsg: `skip prompt did not ${open ? "open" : "close"}`,
+      });
+
+    await pressEscape();
+    await waitModal(true);
+    const prompt = await modalState();
+    assert.equal(prompt.title, "Skip setup?");
+    assert.deepEqual(prompt.buttons, ["Keep setting up", "Skip setup"]);
+    await clickModal("Keep setting up");
+    await waitModal(false);
+    const kept = await wizardState();
+    assert.equal(kept.open, true, "Keep setting up closed the wizard");
+    assert.equal(kept.step, 1, "Keep setting up changed the step");
+    assert.equal(
+      await browser.execute(
+        () =>
+          document.querySelector('input[name="wizard-theme"]:checked')?.value,
+      ),
+      "light",
+      "Keep setting up lost the theme choice",
+    );
+
+    await pressEscape();
+    await waitModal(true);
+    await clickModal("Skip setup");
+    await waitForWizardClosed();
+    await waitForSavedSetting(
+      "firstLaunch",
+      false,
+      "Escape skip did not finish setup",
+    );
+    const saved = settingsOnDisk();
+    const mismatched = WIZARD_KEYS.filter(
+      (key) => JSON.stringify(saved[key]) !== JSON.stringify(defaults[key]),
+    );
+    assert.deepEqual(mismatched, [], "Escape skip kept wizard choices");
+    await restoreWizardSettings(original);
+    record("setup-wizard-escape");
+  });
+
+  it("fits every wizard step in the smallest window", async () => {
+    const original = settingsOnDisk();
+    await resizeWindow(900, 560);
+    await openWizard();
+    const steps = [];
+    for (let step = 0; step < 7; step += 1) {
+      if (step === 3) await wizardPick("#wizard-subtitles");
+      const fit = await browser.execute(() => {
+        const inView = (element) => {
+          const box = element.getBoundingClientRect();
+          return (
+            box.top >= 0 && box.bottom <= window.innerHeight && box.height > 0
+          );
+        };
+        const active = document.querySelector(".wizard-step.active");
+        // The last control on the step must be reachable by scrolling it.
+        const controls = [
+          ...active.querySelectorAll("input, button, select"),
+        ].filter((control) => control.getClientRects().length > 0);
+        const lastControl = controls[controls.length - 1];
+        lastControl?.scrollIntoView({ block: "nearest" });
+        return {
+          card: inView(document.querySelector(".wizard-card")),
+          next: inView(document.getElementById("wizard-next")),
+          skip:
+            document.getElementById("wizard-skip").hidden ||
+            inView(document.getElementById("wizard-skip")),
+          lastControl: lastControl ? inView(lastControl) : true,
+        };
+      });
+      steps.push(fit);
+      assert.deepEqual(
+        fit,
+        { card: true, next: true, skip: true, lastControl: true },
+        `step ${step} does not fit 900x560`,
+      );
+      if (step < 6) await clickById("wizard-next");
+      await settle(200);
+    }
+    await clickById("wizard-next");
+    await waitForWizardClosed();
+    await resizeWindow(1200, 900);
+    await restoreWizardSettings(original);
+    record("setup-wizard-small", { steps: steps.length });
+  });
+
+  it("guides every Deno outcome in the wizard", async () => {
+    const original = settingsOnDisk();
+    // The Deno check looks in fixed system paths, so the page-side bridge is
+    // stubbed to drive each outcome; nothing is installed for real.
+    const stubDeno = (mode) =>
+      browser.execute((how) => {
+        window.__rosiDeno = { installs: 0, external: [] };
+        if (how.linux) {
+          Object.defineProperty(navigator, "userAgent", {
+            configurable: true,
+            get: () => "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15",
+          });
+        }
+        window.api.checkDenoInstalled = async () => {
+          if (how.check === "throw") throw new Error("lookup failed");
+          return false;
+        };
+        window.api.installDeno = async () => {
+          window.__rosiDeno.installs += 1;
+          const next = how.installs.shift();
+          if (next === "fail") throw new Error("winget exploded");
+          return next === "cancel" ? { cancelled: true } : { success: true };
+        };
+        window.api.openExternal = async (url) => {
+          window.__rosiDeno.external.push(url);
+        };
+      }, mode);
+    const denoView = () =>
+      browser.execute(() => {
+        const status = document.getElementById("wizard-deno-status");
+        const action = document.getElementById("wizard-deno-action");
+        const note = document.querySelector(
+          '[data-wizard-step="deno"] .wizard-note',
+        );
+        return {
+          state: status.dataset.state ?? null,
+          text: status.textContent.trim(),
+          icon: status.querySelector("svg")?.dataset.icon ?? null,
+          action: action.hidden ? null : action.textContent.trim(),
+          note: note ? getComputedStyle(note).display !== "none" : false,
+          calls: window.__rosiDeno,
+        };
+      });
+    const waitDeno = async (state) => {
+      let view = null;
+      await browser.waitUntil(
+        async () => {
+          view = await denoView();
+          return view.state === state;
+        },
+        { timeout: 5_000, timeoutMsg: `Deno step never reached ${state}` },
+      );
+      return view;
+    };
+    const toDenoStep = async (mode) => {
+      await openWizard();
+      await stubDeno(mode);
+      for (let i = 0; i < 4; i += 1) await clickById("wizard-next");
+      assert.equal((await wizardState()).step, 4);
+    };
+    const leave = async () => {
+      await clickById("wizard-skip");
+      await waitForWizardClosed();
+    };
+    const seen = {};
+
+    // Missing on macOS/Windows: cancel keeps the offer, then install succeeds.
+    await toDenoStep({ installs: ["cancel", "ok"] });
+    let view = await waitDeno("missing");
+    assert.equal(view.icon, "triangle-alert");
+    assert.equal(view.action, "Install Deno");
+    assert.equal(view.note, true, "optional note hidden while Deno is missing");
+    await clickById("wizard-deno-action");
+    view = await waitDeno("missing");
+    assert.equal(view.calls.installs, 1);
+    assert.equal(
+      view.action,
+      "Install Deno",
+      "cancel removed the Install button",
+    );
+    await clickById("wizard-deno-action");
+    view = await waitDeno("installed");
+    assert.equal(view.icon, "circle-check");
+    assert.equal(view.action, null, "Install button stayed after success");
+    assert.equal(view.note, false, "optional note shown after install");
+    assert.match(view.text, /restart/i);
+    seen.install = view.state;
+    await leave();
+
+    // Install failure points to the Deno website.
+    await toDenoStep({ installs: ["fail"] });
+    await waitDeno("missing");
+    await clickById("wizard-deno-action");
+    view = await waitDeno("error");
+    assert.equal(view.icon, "circle-x");
+    assert.match(view.text, /winget exploded/);
+    assert.equal(view.action, "Open Deno website");
+    await clickById("wizard-deno-action");
+    await settle(200);
+    assert.deepEqual((await denoView()).calls.external, ["https://deno.land"]);
+    seen.installFailure = view.state;
+    await leave();
+
+    // A failed lookup still offers the instructions.
+    await toDenoStep({ check: "throw", installs: [] });
+    view = await waitDeno("error");
+    assert.equal(view.action, "Open install instructions");
+    seen.checkFailure = view.state;
+    await leave();
+
+    // Linux has no automatic install: it links to the instructions.
+    await toDenoStep({ linux: true, installs: [] });
+    view = await waitDeno("missing");
+    assert.equal(view.action, "Open install instructions");
+    await clickById("wizard-deno-action");
+    await settle(200);
+    view = await denoView();
+    assert.equal(view.calls.installs, 0, "Linux tried an automatic install");
+    assert.deepEqual(view.calls.external, [
+      "https://docs.deno.com/runtime/getting_started/installation/",
+    ]);
+    seen.linux = view.state;
+    await leave();
+
+    await restoreWizardSettings(original);
+    record("setup-wizard-deno", seen);
+  });
+
   it("keeps the cookie browser choice across a reload", async () => {
     await browser.execute(() => {
       const select = document.getElementById("browserChoice");
@@ -1732,6 +3029,951 @@ describe("ROSI main window", () => {
       successfulDownloads: stats.successfulDownloads,
       cancelledDownloads: stats.cancelledDownloads,
     });
+  });
+
+  it("searches, collapses, and resets settings sections", async () => {
+    const original = settingsOnDisk();
+    await clickById("settingsBtn");
+    await settle();
+    const search = (query) =>
+      browser.execute((text) => {
+        const input = document.getElementById("settingsSearch");
+        input.value = text;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        const sections = [...document.querySelectorAll(".settings-section")];
+        return {
+          status: document.getElementById("settingsSearchStatus").textContent,
+          visible: sections
+            .filter((section) => !section.classList.contains("search-hidden"))
+            .map(
+              (section) =>
+                section.querySelector(".settings-section-title").textContent,
+            ),
+        };
+      }, query);
+    const subtitle = await search("subtitle");
+    assert.deepEqual(subtitle.visible, ["Enhancements"]);
+    assert.equal(subtitle.status, "1 section matches your search.");
+    const none = await search("zzz-not-a-setting");
+    assert.deepEqual(none.visible, []);
+    assert.equal(none.status, "No settings match your search.");
+    await pressKey("#settingsSearch", { key: "Escape" });
+    const cleared = await browser.execute(() => ({
+      value: document.getElementById("settingsSearch").value,
+      hidden: document.querySelectorAll(".settings-section.search-hidden")
+        .length,
+    }));
+    assert.deepEqual(
+      cleared,
+      { value: "", hidden: 0 },
+      "Escape did not clear the search",
+    );
+
+    // Collapse and expand a section from its header.
+    const header = "#settingsSectionHeaderEnhancements";
+    const sectionState = () =>
+      browser.execute((selector) => {
+        const button = document.querySelector(selector);
+        return {
+          collapsed: button
+            .closest(".settings-section")
+            .classList.contains("collapsed"),
+          expanded: button.getAttribute("aria-expanded"),
+        };
+      }, header);
+    const start = await sectionState();
+    await browser.execute(
+      (selector) => document.querySelector(selector).click(),
+      header,
+    );
+    const toggled = await sectionState();
+    assert.notEqual(
+      toggled.collapsed,
+      start.collapsed,
+      "header did not toggle the section",
+    );
+    assert.equal(toggled.expanded, String(!toggled.collapsed));
+    await browser.execute(
+      (selector) => document.querySelector(selector).click(),
+      header,
+    );
+    assert.deepEqual(
+      await sectionState(),
+      start,
+      "section did not toggle back",
+    );
+
+    // Per-section reset puts that section's keys back to the defaults only.
+    const defaults = (await api("getDefaultSettings")).data;
+    await setControlValue("embedMetadataToggle", !defaults.embedMetadata);
+    await setControlValue("sponsorblockToggle", !defaults.sponsorblockRemove);
+    await setControlValue(
+      "taskbarProgressToggle",
+      !defaults.showTaskbarProgress,
+    );
+    await waitForSavedSetting(
+      "sponsorblockRemove",
+      !defaults.sponsorblockRemove,
+      "SponsorBlock change was not saved",
+    );
+    await browser.execute(() =>
+      document
+        .querySelector(
+          '.settings-section-reset[data-reset-section="enhancements"]',
+        )
+        .click(),
+    );
+    await waitForSavedSetting(
+      "embedMetadata",
+      defaults.embedMetadata,
+      "section reset missed metadata",
+    );
+    await waitForSavedSetting(
+      "sponsorblockRemove",
+      defaults.sponsorblockRemove,
+      "section reset missed SponsorBlock",
+    );
+    assert.equal(
+      settingsOnDisk().showTaskbarProgress,
+      !defaults.showTaskbarProgress,
+      "Enhancements reset touched the Interface section",
+    );
+    await setControlValue(
+      "taskbarProgressToggle",
+      original.showTaskbarProgress,
+    );
+    await waitForSavedSetting(
+      "showTaskbarProgress",
+      original.showTaskbarProgress,
+      "taskbar progress was not restored",
+    );
+    await clickById("closeSidebar");
+    record("settings-search-reset", { matched: subtitle.visible });
+  });
+
+  it("saves every settings control through the real UI", async () => {
+    const original = settingsOnDisk();
+    const checked = [];
+    // [control id, settings key, element that must show while on]
+    const toggles = [
+      ["convertToggle", "convertEnabled", "convertFormatContainer"],
+      ["keepOriginalToggle", "keepOriginalAfterConvert", null],
+      ["gpuAccelerationToggle", "gpuAcceleration", "gpuTypeContainer"],
+      ["embedMetadataToggle", "embedMetadata", null],
+      ["embedThumbnailToggle", "embedThumbnail", null],
+      ["sponsorblockToggle", "sponsorblockRemove", null],
+      ["writeSubtitlesToggle", "writeSubtitles", "subtitleLangsContainer"],
+      ["hookBrowserToggle", "hookBrowser", "browserChoiceContainer"],
+      ["animateBackgroundToggle", "animateBackground", null],
+      ["taskbarProgressToggle", "showTaskbarProgress", null],
+      ["notificationsToggle", "notifications", null],
+      ["checkUpdatesOnStartupToggle", "checkUpdatesOnStartup", null],
+      ["askDownloadLocationToggle", "askDownloadLocation", null],
+    ];
+    for (const [id, key, shows] of toggles) {
+      for (const value of [!original[key], original[key]]) {
+        await setControlValue(id, value);
+        await waitForSavedSetting(
+          key,
+          value,
+          `${id} did not save ${key}=${value}`,
+        );
+        if (shows && value) {
+          const visible = await browser.execute(
+            (target) =>
+              document.getElementById(target).classList.contains("visible"),
+            shows,
+          );
+          assert.ok(visible, `${id} on did not reveal #${shows}`);
+        }
+      }
+      checked.push(id);
+    }
+
+    // Side effects the toggles drive outside Settings.
+    await setControlValue("animateBackgroundToggle", true);
+    await waitForSavedSetting(
+      "animateBackground",
+      true,
+      "animated background was not saved",
+    );
+    assert.ok(
+      await browser.execute(() =>
+        document.body.classList.contains("animate-bg"),
+      ),
+      "animated background did not start",
+    );
+    await setControlValue(
+      "animateBackgroundToggle",
+      original.animateBackground,
+    );
+    await waitForSavedSetting(
+      "animateBackground",
+      original.animateBackground,
+      "animated background was not restored",
+    );
+    await setControlValue("consoleToggle", false);
+    await waitForSavedSetting(
+      "showConsoleOutput",
+      false,
+      "console toggle was not saved",
+    );
+    assert.ok(
+      await browser.execute(
+        () => document.getElementById("dockTabConsole").hidden,
+      ),
+      "hiding the console left its dock tab",
+    );
+    await setControlValue("consoleToggle", true);
+    await waitForSavedSetting(
+      "showConsoleOutput",
+      true,
+      "console toggle was not restored",
+    );
+    checked.push("consoleToggle");
+
+    // Selects, each set away from and back to its saved value.
+    const selects = [
+      ["convertFormat", "convertFormat", "mov"],
+      ["gpuType", "gpuType", "intel"],
+      ["profileAudioFormatSelect", "audioFormat", "flac"],
+    ];
+    for (const [id, key, value] of selects) {
+      await setControlValue(id, value);
+      await waitForSavedSetting(key, value, `${id} did not save ${value}`);
+      await setControlValue(id, original[key]);
+      await waitForSavedSetting(key, original[key], `${id} was not restored`);
+      checked.push(id);
+    }
+
+    // The update channel sits behind a reveal button.
+    await clickById("showUpdateChannelBtn");
+    assert.ok(
+      await browser.execute(() =>
+        document
+          .getElementById("updateChannelContainer")
+          .classList.contains("visible"),
+      ),
+      "update channel did not reveal",
+    );
+    await setControlValue("updateChannelSelect", "beta");
+    await waitForSavedSetting(
+      "updateChannel",
+      "beta",
+      "update channel was not saved",
+    );
+    await setControlValue("updateChannelSelect", original.updateChannel);
+    await waitForSavedSetting(
+      "updateChannel",
+      original.updateChannel,
+      "update channel was not restored",
+    );
+    checked.push("updateChannelSelect");
+
+    // Subtitle languages reject bad input and keep the saved value.
+    const setLangs = (value) =>
+      browser.execute((text) => {
+        const input = document.getElementById("subtitleLangsInput");
+        input.value = text;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        return document.getElementById("subtitleLangsError").textContent;
+      }, value);
+    const error = await setLangs("en es!");
+    assert.ok(error, "invalid subtitle languages showed no error");
+    assert.equal(settingsOnDisk().subtitleLangs, original.subtitleLangs);
+    assert.equal(await setLangs("en,fr"), "", "valid languages kept the error");
+    await waitForSavedSetting(
+      "subtitleLangs",
+      "en,fr",
+      "subtitle languages were not saved",
+    );
+    await setLangs(original.subtitleLangs);
+    await waitForSavedSetting(
+      "subtitleLangs",
+      original.subtitleLangs,
+      "subtitle languages were not restored",
+    );
+    checked.push("subtitleLangsInput");
+    record("settings-controls", { controls: checked.length });
+  });
+
+  it("asks before Reset All, then resets and restarts", async () => {
+    // The real reset restarts the app, which would end the WebDriver session;
+    // the bridge call is recorded instead.
+    await stubApi({ resetSettings: { ok: true } });
+    await clickById("resetSettings");
+    let modal = await waitForModal(true, "Reset All asked nothing");
+    assert.equal(modal.buttons.length, 2);
+    await clickModalButton("Cancel");
+    await waitForModal(false, "Cancel did not close the reset prompt");
+    assert.deepEqual(
+      await stubCalls("resetSettings"),
+      [],
+      "Cancel still reset",
+    );
+    await clickById("resetSettings");
+    modal = await waitForModal(true, "Reset All asked nothing the second time");
+    await clickModalButton(modal.buttons.find((label) => /reset/i.test(label)));
+    await settle(300);
+    const calls = await stubCalls("resetSettings");
+    await restoreApi();
+    assert.equal(calls.length, 1, "confirming did not reset");
+    record("settings-reset-all", { prompt: modal.title });
+  });
+
+  it("opens every help and support link at the right address", async () => {
+    await stubApi({ openExternal: null });
+    const links = {
+      helpLink: "https://help.rosie.run/rosi/en-us/faq",
+      supportLink: "https://rosie.run/support",
+      websiteLink: "https://rosie.run",
+      supportProjectLink: "https://rosie.run/support",
+      sponsorblockHelp: "https://sponsor.ajay.app/",
+      browserCookiesHelp:
+        "https://help.rosie.run/rosi/en-us/about-browser-cookies",
+    };
+    for (const id of Object.keys(links)) await clickById(id);
+    await settle(200);
+    const opened = (await restoreApi()).map((call) => call.args[0]);
+    assert.deepEqual(opened, Object.values(links));
+    record("external-links", { links: opened.length });
+  });
+
+  it("handles every app menu action", async () => {
+    const emit = (action) =>
+      browser.executeAsync((name, done) => {
+        window.__TAURI__.event.emit("menu-action", name).then(
+          () => setTimeout(done, 400),
+          (error) => done(String(error)),
+        );
+      }, action);
+    const sidebarOpen = () =>
+      browser.execute(() =>
+        document.getElementById("sidebar").classList.contains("open"),
+      );
+    assert.equal(await emit("open-settings"), null);
+    assert.equal(
+      await sidebarOpen(),
+      true,
+      "open-settings did not open Settings",
+    );
+    await emit("open-settings");
+    assert.equal(
+      await sidebarOpen(),
+      true,
+      "open-settings closed an open sidebar",
+    );
+    await emit("toggle-sidebar");
+    assert.equal(
+      await sidebarOpen(),
+      false,
+      "toggle-sidebar did not close Settings",
+    );
+    await emit("show-licenses");
+    assert.ok(
+      await browser.execute(() =>
+        document
+          .getElementById("licenses-overlay")
+          .classList.contains("active"),
+      ),
+      "show-licenses did not open the licenses",
+    );
+    await clickById("close-licenses");
+    await emit("check-for-updates");
+    const modal = await waitForModal(true, "check-for-updates showed nothing");
+    assert.equal(modal.title, "Development Mode");
+    await clickModalButton("OK");
+    await waitForModal(false, "update result did not close");
+    record("menu-actions", {
+      actions: [
+        "open-settings",
+        "toggle-sidebar",
+        "show-licenses",
+        "check-for-updates",
+      ],
+    });
+  });
+
+  it("checks for updates from Settings", async () => {
+    await clickById("checkUpdateBtn");
+    const modal = await waitForModal(true, "Check for Updates showed nothing");
+    // Unpackaged builds never reach the network; they say so instead.
+    assert.equal(modal.title, "Development Mode");
+    await clickModalButton("OK");
+    await waitForModal(false, "update result did not close");
+    record("update-check", { result: modal.title });
+  });
+
+  it("shows the keyboard shortcuts and statistics, and resets statistics", async () => {
+    await clickById("shortcutsBtn");
+    let modal = await waitForModal(true, "shortcuts did not open");
+    assert.equal(modal.title, "Keyboard Shortcuts");
+    assert.match(modal.message, /Alt\+1 \/ Alt\+2 \/ Alt\+3/);
+    await clickModalButton("OK");
+    await waitForModal(false, "shortcuts did not close");
+
+    const stats = await api("getStats");
+    await clickById("viewStatsBtn");
+    modal = await waitForModal(true, "statistics did not open");
+    assert.equal(modal.title, "Download Statistics");
+    assert.match(
+      modal.message,
+      new RegExp(`Total downloads: ${stats.totalDownloads}\\b`),
+    );
+    assert.match(
+      modal.message,
+      new RegExp(`Successful: ${stats.successfulDownloads}\\b`),
+    );
+    await clickModalButton("Reset Stats");
+    await waitForModal(false, "Reset Stats did not close the dialog");
+    let reset = null;
+    await browser.waitUntil(
+      async () => {
+        reset = await api("getStats");
+        return reset.totalDownloads === 0;
+      },
+      { timeout: 5_000, timeoutMsg: "statistics were not reset" },
+    );
+    assert.equal(reset.successfulDownloads, 0);
+    record("dialogs", { statsBeforeReset: stats.totalDownloads });
+  });
+
+  it("pastes, clears, and batches links on the download card", async () => {
+    const one = `${MEDIA}/clip-one.mp4?paste=1`;
+    const two = `${MEDIA}/clip-two.mp4?paste=1`;
+    // The system clipboard prompts in WebKit; the page's clipboard read is
+    // replaced with fixed text so the button's own handling is what's tested.
+    await browser.execute((text) => {
+      Object.defineProperty(navigator.clipboard, "readText", {
+        configurable: true,
+        value: () => Promise.resolve(text),
+      });
+    }, `look at ${one}\nand ${two}`);
+    await typeUrl("");
+    await clickById("pasteUrl");
+    let card = null;
+    await browser.waitUntil(
+      async () => {
+        card = await browser.execute(() => ({
+          url: document.getElementById("url").value,
+          button: document.getElementById("downloadBtn").textContent.trim(),
+          clearShown: !document
+            .getElementById("clearUrl")
+            .classList.contains("hidden"),
+        }));
+        return card.url.length > 0;
+      },
+      { timeout: 5_000, timeoutMsg: "Paste did not fill the URL" },
+    );
+    assert.equal(
+      card.url,
+      `${one} ${two}`,
+      "Paste did not keep only the links",
+    );
+    assert.match(card.button, /Add 2 to Queue/);
+    assert.equal(
+      card.clearShown,
+      true,
+      "Clear did not appear for a filled URL",
+    );
+    await clickById("clearUrl");
+    const after = await browser.execute(() => ({
+      url: document.getElementById("url").value,
+      pasteShown: !document
+        .getElementById("pasteUrl")
+        .classList.contains("hidden"),
+    }));
+    assert.deepEqual(
+      after,
+      { url: "", pasteShown: true },
+      "Clear left the URL",
+    );
+    record("download-card-input");
+  });
+
+  it("saves, applies, and deletes presets", async () => {
+    const original = settingsOnDisk();
+    await clickById("presetMenuBtn");
+    const presetStatus = () =>
+      browser.execute(
+        () => document.getElementById("presetStatus").textContent,
+      );
+    const setName = (name) =>
+      browser.execute((value) => {
+        const input = document.getElementById("presetNameInput");
+        input.value = value;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }, name);
+
+    await setName("");
+    await clickById("savePresetBtn");
+    assert.match(await presetStatus(), /Enter a name/);
+
+    await selectProfile("audio");
+    await setControlValue("profileAudioFormatSelect", "flac");
+    await waitForSavedSetting(
+      "audioFormat",
+      "flac",
+      "audio format was not saved",
+    );
+    await setName("E2E Audio");
+    await clickById("savePresetBtn");
+    await browser.waitUntil(
+      async () => /Saved E2E Audio/.test(await presetStatus()),
+      {
+        timeout: 5_000,
+        timeoutMsg: "preset was not saved",
+      },
+    );
+    const saved = settingsOnDisk().downloadPresets.find(
+      (preset) => preset.name === "E2E Audio",
+    );
+    assert.ok(saved, "preset missing from settings.json");
+    assert.equal(saved.profile, "audio");
+    assert.equal(saved.audioFormat, "flac");
+
+    // Apply it after switching away.
+    await selectProfile("compatible");
+    await browser.execute((id) => {
+      const select = document.getElementById("downloadPresetSelect");
+      select.value = id;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    }, saved.id);
+    await clickById("applyPresetBtn");
+    await waitForSavedSetting(
+      "downloadMode",
+      "audio",
+      "preset did not apply its profile",
+    );
+    assert.equal(settingsOnDisk().audioFormat, "flac");
+    assert.match(await presetStatus(), /Applied E2E Audio/);
+
+    await clickById("deletePresetBtn");
+    await browser.waitUntil(
+      async () =>
+        !settingsOnDisk().downloadPresets.some(
+          (preset) => preset.id === saved.id,
+        ),
+      { timeout: 5_000, timeoutMsg: "preset was not deleted" },
+    );
+    assert.match(await presetStatus(), /Deleted E2E Audio/);
+    await pressKey("#presetNameInput", { key: "Escape" });
+    await setControlValue("profileAudioFormatSelect", original.audioFormat);
+    await waitForSavedSetting(
+      "audioFormat",
+      original.audioFormat,
+      "audio format not restored",
+    );
+    await selectProfile(original.downloadMode);
+    record("presets", { preset: saved.name });
+  });
+
+  it("downloads chosen formats from the Custom profile", async function () {
+    if (skipWithoutFfmpeg(this, "custom-formats")) return;
+    const original = settingsOnDisk();
+    const url = `${MEDIA}/dash/manifest.mpd`;
+    await selectProfile("custom");
+    await typeUrl(url);
+    await clickById("fetchFormatsBtn");
+    let formats = null;
+    await browser.waitUntil(
+      async () => {
+        formats = await browser.execute(() => {
+          const values = (id) =>
+            [...document.getElementById(id).options]
+              .map((option) => option.value)
+              .filter(Boolean);
+          return { video: values("videoFormat"), audio: values("audioFormat") };
+        });
+        return formats.video.length > 0 && formats.audio.length > 0;
+      },
+      { timeout: 60_000, timeoutMsg: "formats never loaded" },
+    );
+    await setControlValue("videoFormat", formats.video[0]);
+    await setControlValue("audioFormat", formats.audio[0]);
+    const clickedAt = Date.now();
+    await clickById("downloadBtn");
+    const entry = await waitForActivity(
+      (item) => item.url === url && item.completedAt >= clickedAt,
+      "custom-format download never finished",
+    );
+    await waitForIdle();
+    assert.equal(entry.outcome, "success", entry.error ?? entry.statusMessage);
+    const streams = probeMedia(entry.outputPath)
+      .streams.map((stream) => stream.codec_type)
+      .sort();
+    assert.deepEqual(
+      streams,
+      ["audio", "video"],
+      "custom formats were not merged",
+    );
+    await typeUrl("");
+    await selectProfile(original.downloadMode);
+    record("custom-formats", {
+      video: formats.video[0],
+      audio: formats.audio[0],
+    });
+  });
+
+  it("downloads a playlist range chosen in the UI", async function () {
+    if (skipWithoutFfmpeg(this, "playlist-range")) return;
+    const url = `${MEDIA}/list.html`;
+    await typeUrl(url);
+    await browser.waitUntil(
+      async () =>
+        browser.execute(
+          () =>
+            !document
+              .getElementById("playlistScope")
+              .classList.contains("hidden"),
+        ),
+      { timeout: 60_000, timeoutMsg: "playlist choices never appeared" },
+    );
+    const setRange = (start, end) =>
+      browser.execute(
+        (from, to) => {
+          const radio = document.querySelector(
+            'input[name="playlist-scope"][value="range"]',
+          );
+          radio.checked = true;
+          radio.dispatchEvent(new Event("change", { bubbles: true }));
+          for (const [id, value] of [
+            ["playlistRangeStart", from],
+            ["playlistRangeEnd", to],
+          ]) {
+            const input = document.getElementById(id);
+            input.value = String(value);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+        },
+        start,
+        end,
+      );
+    // A backwards range is refused before anything downloads.
+    await setRange(3, 2);
+    await clickById("downloadBtn");
+    await settle();
+    const refused = await browser.execute(() => ({
+      // An `error` key would read as a thrown error to the WebDriver bridge.
+      scopeError: document.getElementById("playlistScopeError").textContent,
+      busy: document
+        .getElementById("downloadBtn")
+        .classList.contains("loading"),
+    }));
+    assert.ok(refused.scopeError, "a backwards range showed no error");
+    assert.equal(
+      refused.busy,
+      false,
+      "a backwards range still started a download",
+    );
+
+    const before = new Set(fs.readdirSync(DOWNLOADS));
+    await setRange(2, 3);
+    const clickedAt = Date.now();
+    await clickById("downloadBtn");
+    await waitForActivity(
+      (item) => item.url === url && item.completedAt >= clickedAt,
+      "playlist range download never finished",
+    );
+    await waitForIdle();
+    const added = fs
+      .readdirSync(DOWNLOADS)
+      .filter(
+        (name) =>
+          !before.has(name) && /ROSI List/.test(name) && name.endsWith(".mp4"),
+      )
+      .sort();
+    assert.equal(
+      added.length,
+      2,
+      `expected items 2 and 3, got ${added.join(", ")}`,
+    );
+    assert.ok(
+      added.every((name) => !/\(1\)|list-1\b/.test(name)),
+      `item 1 was downloaded: ${added.join(", ")}`,
+    );
+    await typeUrl("");
+    record("playlist-range", { files: added });
+  });
+
+  it("embeds metadata, thumbnail, and subtitles into the file", async function () {
+    if (skipWithoutFfmpeg(this, "embed-extras")) return;
+    const original = settingsOnDisk();
+    const extras = [
+      ["embedMetadataToggle", "embedMetadata"],
+      ["embedThumbnailToggle", "embedThumbnail"],
+      ["writeSubtitlesToggle", "writeSubtitles"],
+    ];
+    for (const [id, key] of extras) {
+      await setControlValue(id, true);
+      await waitForSavedSetting(key, true, `${id} was not saved`);
+    }
+    await browser.execute(() => {
+      const input = document.getElementById("subtitleLangsInput");
+      input.value = "en";
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await waitForSavedSetting(
+      "subtitleLangs",
+      "en",
+      "subtitle language was not saved",
+    );
+    const entry = await downloadThroughUi(
+      `${MEDIA}/page.html`,
+      "extras download never finished",
+    );
+    assert.equal(entry.outcome, "success", entry.error ?? entry.statusMessage);
+    const media = probeMedia(entry.outputPath);
+    const types = media.streams.map((stream) => stream.codec_type);
+    const embedded = {
+      title: media.format?.tags?.title ?? null,
+      thumbnail: media.streams.some(
+        (stream) => stream.disposition?.attached_pic === 1,
+      ),
+      subtitles: types.includes("subtitle"),
+    };
+    assert.ok(embedded.title, "no title tag was embedded");
+    assert.equal(embedded.thumbnail, true, "no cover art was embedded");
+    assert.equal(embedded.subtitles, true, "no subtitle track was embedded");
+    for (const [id, key] of extras) {
+      await setControlValue(id, original[key]);
+      await waitForSavedSetting(key, original[key], `${id} was not restored`);
+    }
+    await browser.execute((value) => {
+      const input = document.getElementById("subtitleLangsInput");
+      input.value = value;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }, original.subtitleLangs);
+    await typeUrl("");
+    record("embed-extras", {
+      file: path.basename(entry.outputPath),
+      ...embedded,
+    });
+  });
+
+  it("runs the queue entirely from its controls", async () => {
+    await api("clearQueue");
+    await browser.execute(() => window.rosiModules.dock.selectTab("queue"));
+    const urls = [`${MEDIA}/clip-two.mp4?ui=1`, `${MEDIA}/clip-three.mp4?ui=1`];
+    const fillQueueInput = (text) =>
+      browser.execute((value) => {
+        const input = document.getElementById("queueUrlInput");
+        input.value = value;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }, text);
+    await fillQueueInput(urls.join("\n"));
+    await clickById("addToQueueBtn");
+    let queue = null;
+    await browser.waitUntil(
+      async () => {
+        queue = await api("getQueue");
+        return urls.every((url) => queue.some((item) => item.url === url));
+      },
+      { timeout: 10_000, timeoutMsg: "Add did not queue both links" },
+    );
+    assert.equal(
+      await browser.execute(
+        () => document.getElementById("queueUrlInput").value,
+      ),
+      "",
+      "Add left the links in the box",
+    );
+    await clickById("startQueueBtn");
+    await browser.waitUntil(
+      async () => {
+        queue = await api("getQueue");
+        return urls.every(
+          (url) =>
+            queue.find((item) => item.url === url)?.status === "completed",
+        );
+      },
+      { timeout: 120_000, timeoutMsg: "Start did not finish the queue" },
+    );
+
+    // Stop asks first, then cancels the running item.
+    const slow = `${MEDIA}/slow.mp4?ui=1`;
+    await fillQueueInput(slow);
+    await clickById("addToQueueBtn");
+    await browser.waitUntil(
+      async () => (await api("getQueue")).some((item) => item.url === slow),
+      {
+        timeout: 10_000,
+        timeoutMsg: "slow link was not queued",
+      },
+    );
+    await clickById("startQueueBtn");
+    await browser.waitUntil(
+      async () =>
+        (await api("getQueue")).find((item) => item.url === slow)?.status ===
+        "downloading",
+      { timeout: 30_000, timeoutMsg: "slow item never started" },
+    );
+    await clickById("cancelQueueBtn");
+    const stop = await waitForModal(true, "Stop asked nothing");
+    assert.equal(stop.title, "Cancel Queue");
+    await clickModalButton("Cancel Queue");
+    await browser.waitUntil(
+      async () =>
+        (await api("getQueue")).find((item) => item.url === slow)?.status ===
+        "cancelled",
+      { timeout: 30_000, timeoutMsg: "Stop did not cancel the running item" },
+    );
+
+    // Clear asks first, then empties the queue.
+    await clickById("clearQueueBtn");
+    const clear = await waitForModal(true, "Clear asked nothing");
+    assert.equal(clear.title, "Clear Queue");
+    await clickModalButton("Clear");
+    await browser.waitUntil(async () => (await api("getQueue")).length === 0, {
+      timeout: 10_000,
+      timeoutMsg: "Clear did not empty the queue",
+    });
+    record("queue-controls", { completed: urls.length, cancelled: 1 });
+  });
+
+  it("changes the save folder and asks every time when told to", async () => {
+    const original = settingsOnDisk();
+    const picked = path.join(DOWNLOADS, "picked folder");
+    const asked = path.join(DOWNLOADS, "asked folder");
+    fs.mkdirSync(picked, { recursive: true });
+    fs.mkdirSync(asked, { recursive: true });
+    // The OS folder dialog is replaced by a recorder that returns a folder.
+    await stubApi({ selectDownloadLocation: picked });
+    await clickById("changeDownloadFolderBtn");
+    await waitForSavedSetting(
+      "downloadFolder",
+      picked,
+      "Change… did not save the folder",
+    );
+    assert.equal(
+      await browser.execute(
+        () => document.getElementById("downloadFolderSummary").title,
+      ),
+      picked,
+    );
+
+    await stubApi({ selectDownloadLocation: asked });
+    await setControlValue("askDownloadLocationToggle", true);
+    await waitForSavedSetting(
+      "askDownloadLocation",
+      true,
+      "Ask every time was not saved",
+    );
+    const entry = await downloadThroughUi(
+      `${MEDIA}/clip-one.mp4?ask=1`,
+      "ask-every-time download never finished",
+    );
+    assert.equal(entry.outcome, "success", entry.error ?? entry.statusMessage);
+    assert.ok(
+      entry.outputPath.startsWith(asked),
+      `saved to ${entry.outputPath}`,
+    );
+    const pickerCalls = await stubCalls("selectDownloadLocation");
+    assert.equal(
+      pickerCalls.length,
+      2,
+      "the folder picker was not asked for the download",
+    );
+
+    // A cancelled picker cancels the download.
+    await stubApi({ selectDownloadLocation: null });
+    await typeUrl(`${MEDIA}/clip-one.mp4?ask=cancel`);
+    await clickById("downloadBtn");
+    await settle();
+    const cancelled = await browser.execute(() => ({
+      busy: document
+        .getElementById("downloadBtn")
+        .classList.contains("loading"),
+      console: document.getElementById("output").textContent,
+    }));
+    assert.equal(cancelled.busy, false, "a cancelled picker still downloaded");
+    assert.match(cancelled.console, /No save location selected/);
+
+    await restoreApi();
+    await setControlValue("askDownloadLocationToggle", false);
+    await waitForSavedSetting(
+      "askDownloadLocation",
+      false,
+      "Ask every time was not restored",
+    );
+    const restored = await api("saveSettings", {
+      downloadFolder: original.downloadFolder,
+    });
+    assert.equal(restored.ok, true, restored.error?.message);
+    await reloadRenderer();
+    await typeUrl("");
+    record("save-location", {
+      picked: path.basename(picked),
+      asked: path.basename(asked),
+    });
+  });
+
+  it("notifies when a download finishes", async () => {
+    const original = settingsOnDisk().notifications;
+    await setControlValue("notificationsToggle", true);
+    await waitForSavedSetting(
+      "notifications",
+      true,
+      "notifications were not saved",
+    );
+    await stubApi({ showNotification: { ok: true } });
+    const entry = await downloadThroughUi(
+      `${MEDIA}/clip-one.mp4?notify=1`,
+      "notified download never finished",
+    );
+    assert.equal(entry.outcome, "success");
+    let calls = [];
+    await browser.waitUntil(
+      async () => {
+        calls = await stubCalls("showNotification");
+        return calls.length > 0;
+      },
+      { timeout: 5_000, timeoutMsg: "no notification was shown" },
+    );
+    await restoreApi();
+    assert.equal(calls[0][0].title, "Download Complete!");
+    await setControlValue("notificationsToggle", original);
+    await waitForSavedSetting(
+      "notifications",
+      original,
+      "notifications were not restored",
+    );
+    await typeUrl("");
+    record("notifications", { title: calls[0][0].title });
+  });
+
+  it("starts a new download right after one finishes", async () => {
+    // For a few seconds after a download the button offers "Open File
+    // Location". Typing a new link must turn it back into Download.
+    await stubApi({ openFileLocation: { ok: true } });
+    await downloadThroughUi(
+      `${MEDIA}/clip-one.mp4?again=1`,
+      "first download never finished",
+    );
+    const second = `${MEDIA}/clip-two.mp4?again=2`;
+    await typeUrl(second);
+    const button = await browser.execute(() =>
+      document.getElementById("downloadBtn").textContent.trim(),
+    );
+    const clickedAt = Date.now();
+    await clickById("downloadBtn");
+    await settle(500);
+    const opened = await stubCalls("openFileLocation");
+    await restoreApi();
+    assert.equal(
+      button,
+      "Download",
+      `button still read "${button}" after typing`,
+    );
+    assert.deepEqual(opened, [], "Download opened the old file's folder");
+    const entry = await waitForActivity(
+      (item) => item.url === second && item.completedAt >= clickedAt,
+      "the second download never started",
+    );
+    await waitForIdle();
+    assert.equal(entry.outcome, "success");
+    await typeUrl("");
+    record("download-again-quickly");
   });
 
   it("clears download activity", async () => {

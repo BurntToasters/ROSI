@@ -24,6 +24,11 @@
   min-height: 0;
 }
 
+/* Nothing to list: size to the empty message rather than fill the stage. */
+.dock.is-empty {
+  flex: 0 0 auto;
+}
+
 .dock-header {
   flex: 0 0 auto;
   display: flex;
@@ -216,7 +221,26 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   flex-shrink: 0;
-  gap: 0.35rem;
+  gap: 0.25rem;
+}
+
+/* Row actions stay quiet until the row is hovered or focused. */
+.history-item-actions .btn--icon {
+  opacity: 0.55;
+  transition:
+    var(--button-transition),
+    opacity var(--transition-fast);
+}
+
+.history-item:hover .history-item-actions .btn--icon,
+.history-item:focus-within .history-item-actions .btn--icon {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .history-item-actions .btn--icon {
+    opacity: 1;
+  }
 }
 
 .history-status {
@@ -294,4 +318,11 @@
 
 .footer-credit {
   color: var(--text-muted);
+}
+
+.footer-heart {
+  margin: 0 0.1em;
+  color: var(--danger);
+  fill: currentColor;
+  vertical-align: -0.15em;
 }

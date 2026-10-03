@@ -1,6 +1,7 @@
 // Main window entry. Order matters: the bridge must define window.api before
 // the renderer modules and engine evaluate.
 import './tauri-bridge';
+import './modules/icons';
 import './modules/ui';
 import './modules/downloads';
 import './modules/queue';

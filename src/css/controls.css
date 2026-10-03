@@ -48,6 +48,31 @@
   flex-shrink: 0;
 }
 
+/* Lucide icons draw with currentColor strokes; size comes from width/height. */
+.lucide-icon {
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+/* Icon that replaces a leading emoji in a status or console line. */
+.status-icon {
+  display: inline-block;
+  margin-right: 0.4em;
+  vertical-align: -0.15em;
+}
+
+.status-icon--danger {
+  color: var(--danger);
+}
+
+.status-icon--success {
+  color: var(--success);
+}
+
+.status-icon--warning {
+  color: var(--warning);
+}
+
 .btn:hover:not(:disabled) {
   color: var(--btn-fg-hover);
   background: var(--btn-bg-hover);
@@ -68,8 +93,23 @@
 
 .btn:disabled,
 .btn[aria-disabled='true'] {
-  opacity: 0.5;
+  opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* A faded accent fill reads as pale on light themes; disabled primary
+   buttons switch to a neutral surface with muted text instead. */
+.btn--primary:disabled,
+.btn--primary[aria-disabled='true'] {
+  --btn-bg: var(--surface-3);
+  --btn-bg-hover: var(--surface-3);
+  --btn-border: var(--border-default);
+  --btn-border-hover: var(--border-default);
+  --btn-fg: var(--text-muted);
+  --btn-fg-hover: var(--text-muted);
+  --btn-shadow: none;
+  --btn-shadow-hover: none;
+  opacity: 1;
 }
 
 .btn--primary {

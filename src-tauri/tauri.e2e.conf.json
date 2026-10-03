@@ -18,7 +18,8 @@
             "process:allow-exit",
             "core:window:allow-close",
             "core:window:allow-set-size",
-            "core:window:allow-theme"
+            "core:window:allow-theme",
+            "core:event:allow-emit"
           ]
         }
       ]
