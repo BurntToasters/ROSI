@@ -59,6 +59,21 @@
     return TABS.filter(isAvailable);
   }
 
+  /** A panel is empty when its list holds nothing or only its empty message. */
+  function isPanelEmpty(panel: HTMLElement | null) {
+    const scroll = panel?.querySelector<HTMLElement>('.dock-scroll');
+    if (!scroll) return false;
+    const first = scroll.firstElementChild;
+    if (!first) return !scroll.hasChildNodes();
+    return scroll.childElementCount === 1 && first.matches('.queue-empty-message, .history-empty');
+  }
+
+  /** Let an empty panel hug its message instead of stretching the dock. */
+  function syncEmpty() {
+    const panel = getPanel(getTabButton(state.tab));
+    getDock()?.classList.toggle('is-empty', isPanelEmpty(panel));
+  }
+
   function notify() {
     onChange?.({ ...state });
   }
@@ -84,6 +99,7 @@
       collapseBtn.setAttribute('aria-label', label);
       collapseBtn.title = label;
     }
+    syncEmpty();
   }
 
   function applyTab(tab: DockTab) {
@@ -161,6 +177,11 @@
     document.getElementById('dockCollapseBtn')?.addEventListener('click', () => {
       setCollapsed(!state.collapsed);
     });
+    // Lists re-render by replacing their children, so childList is enough.
+    const observer = new MutationObserver(syncEmpty);
+    getDock()
+      ?.querySelectorAll('.dock-scroll')
+      .forEach((scroll) => observer.observe(scroll, { childList: true }));
   }
 
   const windowRef = global as RosiWindow;

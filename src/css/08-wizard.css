@@ -36,18 +36,31 @@
   box-shadow:
     var(--card-shadow),
     0 16px 48px rgba(0, 0, 0, 0.3);
-  padding: var(--spacing-2xl) var(--spacing-xl) var(--spacing-xl);
+  max-height: calc(100vh - 2rem);
+  padding: var(--spacing-xl) var(--spacing-xl) var(--spacing-xl);
   display: flex;
   flex-direction: column;
   animation: cardEntrance 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* Progress bar with the Skip button beside it. */
+.wizard-top {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-xl);
+}
+
 .wizard-progress {
+  flex: 1;
   height: 3px;
   background: var(--surface-3);
   border-radius: 2px;
-  margin-bottom: var(--spacing-xl);
   overflow: hidden;
+}
+
+.wizard-skip[hidden] {
+  display: none;
 }
 
 .wizard-progress-bar {
@@ -58,12 +71,15 @@
   transition: width var(--transition-normal);
 }
 
+/* Steps scroll inside the card when the window is short. */
 .wizard-step {
   display: none;
   flex-direction: column;
   align-items: center;
   text-align: center;
   min-height: 280px;
+  overflow-y: auto;
+  overscroll-behavior: none;
 }
 
 .wizard-step.active {
@@ -377,4 +393,90 @@
 .wizard-segment input:focus-visible + .segmented__item {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* ── Look and feel, extras, and YouTube helper steps ── */
+.wizard-options--below {
+  margin-top: var(--spacing-md);
+}
+
+.wizard-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.wizard-field[hidden] {
+  display: none;
+}
+
+.wizard-field label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
+.wizard-field small {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.wizard-field .wizard-field-error {
+  color: var(--danger);
+}
+
+.wizard-field-error:empty {
+  display: none;
+}
+
+.wizard-status {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.wizard-status-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.wizard-status[data-state='installed'] .wizard-status-icon {
+  color: var(--success);
+}
+
+.wizard-status[data-state='missing'] .wizard-status-icon {
+  color: var(--warning);
+}
+
+.wizard-status[data-state='error'] .wizard-status-icon {
+  color: var(--danger);
+}
+
+#wizard-deno-action {
+  align-self: flex-start;
+}
+
+#wizard-deno-action[hidden] {
+  display: none;
+}
+
+.wizard-note {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* Nothing left to do once Deno is installed. */
+.wizard-status[data-state='installed'] ~ .wizard-note {
+  display: none;
 }

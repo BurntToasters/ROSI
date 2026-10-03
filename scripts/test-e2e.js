@@ -54,10 +54,39 @@ const EXPECTED_SCENARIOS = [
   "webview-guard",
   "link-drop",
   "small-window",
+  "dock-empty",
+  "save-path",
+  "lucide-icons",
+  "status-icons",
+  "console-log",
+  "activity-actions",
+  "activity-action-clicks",
+  "theme-contrast",
+  "setup-wizard",
+  "setup-wizard-skip",
+  "setup-wizard-escape",
+  "setup-wizard-small",
+  "setup-wizard-deno",
   "browser-choice",
   "xdg-download-dir",
   "ui-screenshots",
   "stats",
+  "settings-search-reset",
+  "settings-controls",
+  "settings-reset-all",
+  "external-links",
+  "menu-actions",
+  "update-check",
+  "dialogs",
+  "download-card-input",
+  "presets",
+  "custom-formats",
+  "playlist-range",
+  "embed-extras",
+  "queue-controls",
+  "save-location",
+  "notifications",
+  "download-again-quickly",
   "activity-clear",
   "close-flow",
 ];
@@ -302,6 +331,63 @@ function buildToneFixture(ffmpeg, destination) {
   }
 }
 
+/**
+ * HTML5 pages for yt-dlp's generic extractor: one video with a poster and a
+ * subtitle track (thumbnail, subtitle, and metadata embedding), and one page
+ * of three videos that yt-dlp reads as a playlist.
+ */
+function buildPageFixtures(ffmpeg, directory) {
+  fs.mkdirSync(directory, { recursive: true });
+  const thumb = path.join(directory, "thumb.jpg");
+  const result = spawnSync(
+    ffmpeg,
+    [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=red:s=160x120",
+      "-frames:v",
+      "1",
+      "-y",
+      thumb,
+    ],
+    { encoding: "utf8" },
+  );
+  if (result.status !== 0) {
+    throw new Error(`Could not build the thumbnail fixture: ${result.stderr}`);
+  }
+  const page = (title, body) =>
+    `<!doctype html><html><head><title>${title}</title></head><body>${body}</body></html>\n`;
+  return {
+    "/thumb.jpg": { file: thumb, contentType: "image/jpeg" },
+    "/subs.en.vtt": {
+      body: Buffer.from("WEBVTT\n\n00:00.000 --> 00:01.500\nHello from ROSI\n"),
+      contentType: "text/vtt",
+    },
+    "/page.html": {
+      body: Buffer.from(
+        page(
+          "ROSI Extras",
+          '<video src="tone.mp4" poster="thumb.jpg"><track kind="subtitles" src="subs.en.vtt" srclang="en" label="English"></video>',
+        ),
+      ),
+      contentType: "text/html; charset=utf-8",
+    },
+    "/list.html": {
+      body: Buffer.from(
+        page(
+          "ROSI List",
+          '<video src="tone.mp4?item=1"></video><video src="tone.mp4?item=2"></video><video src="tone.mp4?item=3"></video>',
+        ),
+      ),
+      contentType: "text/html; charset=utf-8",
+    },
+  };
+}
+
 /** Separate DASH video + audio renditions: exercises yt-dlp's merge path. */
 function buildDashFixture(ffmpeg, directory) {
   fs.mkdirSync(directory, { recursive: true });
@@ -478,6 +564,10 @@ async function main() {
     buildToneFixture(ffmpeg.binary, tone);
     routes["/tone.mp4"] = { file: tone };
     fixtures["tone.mp4"] = sha256(fs.readFileSync(tone));
+    Object.assign(
+      routes,
+      buildPageFixtures(ffmpeg.binary, path.join(fixtureDir, "pages")),
+    );
     const dashDir = path.join(fixtureDir, "dash");
     for (const name of buildDashFixture(ffmpeg.binary, dashDir)) {
       routes[`/dash/${name}`] = {
@@ -649,12 +739,124 @@ async function main() {
   }
 }
 
+/** `--repeat N` (or ROSI_E2E_REPEAT=N) reruns the whole suite N times. */
+export function parseRepeat(argv, env = process.env) {
+  const index = argv.indexOf("--repeat");
+  const raw = index >= 0 ? argv[index + 1] : env.ROSI_E2E_REPEAT;
+  if (raw === undefined) return 1;
+  const times = Number(raw);
+  if (!Number.isInteger(times) || times < 1 || times > 100) {
+    throw new Error(`--repeat needs a whole number from 1 to 100, got ${raw}`);
+  }
+  return times;
+}
+
+/**
+ * Per-scenario outcome across repeated runs. A scenario that passed in some
+ * runs and failed or never reported in others is flaky.
+ */
+export function summarizeStability(runs) {
+  const names = new Set([
+    ...EXPECTED_SCENARIOS,
+    ...runs.flatMap((run) => run.passed),
+  ]);
+  const scenarios = [...names].sort().map((name) => {
+    const passed = runs.filter((run) => run.passed.includes(name)).length;
+    const skipped = runs.filter((run) => run.skipped.includes(name)).length;
+    return { name, passed, skipped, failed: runs.length - passed - skipped };
+  });
+  return {
+    runs: runs.length,
+    failedRuns: runs.filter((run) => run.error).map((run) => run.run),
+    flaky: scenarios
+      .filter((scenario) => scenario.passed > 0 && scenario.failed > 0)
+      .map((scenario) => scenario.name),
+    alwaysFailing: scenarios
+      .filter((scenario) => scenario.passed === 0 && scenario.failed > 0)
+      .map((scenario) => scenario.name),
+    scenarios,
+  };
+}
+
+async function runStability(times) {
+  const reportFile = path.join(
+    ARTIFACT_DIR,
+    `e2e-report-${process.platform}-${process.arch}.json`,
+  );
+  const runDir = path.join(
+    ARTIFACT_DIR,
+    "stability",
+    `${process.platform}-${process.arch}`,
+  );
+  fs.rmSync(runDir, { recursive: true, force: true });
+  fs.mkdirSync(runDir, { recursive: true });
+  const runs = [];
+  for (let run = 1; run <= times; run += 1) {
+    console.log(`\n=== E2E stability run ${run}/${times} ===`);
+    // The first run builds; later runs reuse that binary.
+    if (run > 1) process.env.ROSI_E2E_REUSE = "1";
+    let error = null;
+    try {
+      await main();
+    } catch (caught) {
+      error = caught instanceof Error ? caught.message : String(caught);
+    }
+    const report = fs.existsSync(reportFile)
+      ? JSON.parse(fs.readFileSync(reportFile, "utf8"))
+      : { scenarios: [] };
+    fs.copyFileSync(reportFile, path.join(runDir, `run-${run}.json`));
+    runs.push({
+      run,
+      error,
+      passed: report.scenarios
+        .filter((scenario) => scenario.status === "passed")
+        .map((scenario) => scenario.name),
+      skipped: report.scenarios
+        .filter((scenario) => scenario.status === "skipped")
+        .map((scenario) => scenario.name),
+    });
+  }
+  const summary = {
+    app: "ROSI",
+    platform: process.platform,
+    arch: process.arch,
+    commit: gitCommit(),
+    finishedAt: new Date().toISOString(),
+    ...summarizeStability(runs),
+  };
+  summary.reportSha256 = crypto
+    .createHash("sha256")
+    .update(JSON.stringify(summary, null, 2))
+    .digest("hex");
+  const file = path.join(
+    ARTIFACT_DIR,
+    `e2e-stability-${process.platform}-${process.arch}.json`,
+  );
+  fs.writeFileSync(file, `${JSON.stringify(summary, null, 2)}\n`);
+  console.log(
+    `\nStability: ${times - summary.failedRuns.length}/${times} runs passed; ` +
+      `flaky: ${summary.flaky.join(", ") || "none"}; ` +
+      `always failing: ${summary.alwaysFailing.join(", ") || "none"}`,
+  );
+  console.log(
+    `Stability evidence written to ${path.relative(REPO_ROOT, file)}`,
+  );
+  if (summary.failedRuns.length > 0) {
+    throw new Error(`E2E failed in run(s) ${summary.failedRuns.join(", ")}`);
+  }
+}
+
 if (
   process.argv[1] &&
   fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
 ) {
-  main().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  });
+  Promise.resolve()
+    .then(() => {
+      const times = parseRepeat(process.argv.slice(2));
+      return times > 1 ? runStability(times) : main();
+    })
+    .catch((error) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    });
 }
