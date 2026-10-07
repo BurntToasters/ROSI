@@ -50,11 +50,10 @@ impl FfmpegToolGuard {
         };
         let ffprobe = if ffprobe_only {
             resolve_path_probe()
+        } else if ffmpeg.is_some() {
+            resolve_probe(&configured)
         } else {
-            ffmpeg
-                .as_ref()
-                .and_then(|path| resolve_probe(path))
-                .or_else(resolve_path_probe)
+            resolve_path_probe()
         };
         let has_tools = ffmpeg.is_some() || ffprobe.is_some();
         let root = if has_tools {
@@ -488,13 +487,32 @@ fn resolve_executable(path: &Path) -> Option<PathBuf> {
 }
 
 fn resolve_probe(ffmpeg: &Path) -> Option<PathBuf> {
-    let name = ffmpeg.file_name()?.to_string_lossy();
-    let replaced = name.replace("ffmpeg", "ffprobe");
-    let sibling = ffmpeg.parent()?.join(replaced);
-    if sibling.is_file() {
-        return sibling.canonicalize().ok();
-    }
-    resolve_path_probe()
+    let executable = resolve_executable(ffmpeg)?;
+    let selected = if is_bare_name(ffmpeg) {
+        &executable
+    } else {
+        ffmpeg
+    };
+    let name = selected.file_name()?.to_string_lossy().to_ascii_lowercase();
+    let probe_name = match name.as_str() {
+        "ffmpeg" => Some("ffprobe".to_string()),
+        "ffmpeg.exe" => Some("ffprobe.exe".to_string()),
+        _ => name
+            .strip_prefix("rosi-ffmpeg")
+            .map(|suffix| format!("rosi-ffprobe{suffix}")),
+    };
+    let sibling = probe_name.and_then(|name| selected.parent().map(|parent| parent.join(name)));
+    sibling
+        .as_deref()
+        .and_then(resolve_executable)
+        .filter(|probe| probe != &executable)
+        .or_else(|| {
+            crate::sidecars::bundled_path(crate::sidecars::FFPROBE_SIDECAR)
+                .as_deref()
+                .and_then(resolve_executable)
+                .filter(|probe| probe != &executable)
+        })
+        .or_else(|| resolve_path_probe().filter(|probe| probe != &executable))
 }
 
 fn resolve_path_probe() -> Option<PathBuf> {
@@ -524,4 +542,38 @@ fn resolve_from_path(name: &OsStr) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod audit4_tests {
+    use super::*;
+
+    #[test]
+    fn probe_uses_the_selected_sibling_and_never_ffmpeg() {
+        let root = std::env::temp_dir().join(crate::fs_util::uuid_v4());
+        fs::create_dir(&root).unwrap();
+        let ffmpeg = root.join("FFMPEG");
+        let ffprobe = root.join(format!("ffprobe{}", std::env::consts::EXE_SUFFIX));
+        fs::write(&ffmpeg, "ffmpeg fixture").unwrap();
+        fs::write(&ffprobe, "ffprobe fixture").unwrap();
+        assert_eq!(
+            resolve_probe(&ffmpeg),
+            Some(ffprobe.canonicalize().unwrap())
+        );
+        #[cfg(unix)]
+        {
+            let lexical = root.join("ffmpeg");
+            // A separate directory avoids case-insensitive filesystem aliases.
+            let selected = root.join("selected");
+            fs::create_dir(&selected).unwrap();
+            std::os::unix::fs::symlink(&ffmpeg, selected.join("ffmpeg")).unwrap();
+            std::os::unix::fs::symlink(&ffmpeg, selected.join("ffprobe")).unwrap();
+            assert_ne!(
+                resolve_probe(&selected.join("ffmpeg")),
+                Some(ffmpeg.canonicalize().unwrap())
+            );
+            let _ = lexical;
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 }

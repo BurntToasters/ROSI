@@ -21,6 +21,7 @@ import {
   verifyUpdaterSignatures,
 } from "./updater-signature-verifier.js";
 import { resolveUpdaterTargets } from "./gpg-sign.js";
+import { validateManifestData } from "./validate-updater-manifest.js";
 import {
   LEGACY_FEED_FILES,
   assertLegacyFeedAssets,
@@ -460,6 +461,8 @@ export function assertManifestAssetReferences(
   assetNames,
   { repoOwner, repoName, tag } = {},
 ) {
+  const problems = validateManifestData(manifest, manifestName);
+  if (problems.length > 0) throw new Error(problems.join("; "));
   const present = new Set(assetNames);
   const platforms = manifest?.platforms;
   if (
@@ -805,6 +808,8 @@ async function verifyDraftUpdaterArtifacts({
   );
   const records = new Map();
   for (const { manifest, name: manifestName } of manifests) {
+    const problems = validateManifestData(manifest, manifestName);
+    if (problems.length > 0) throw new Error(problems.join("; "));
     for (const [target, entry] of Object.entries(manifest.platforms || {})) {
       const parsed = new URL(entry.url);
       const artifactName = decodeURIComponent(

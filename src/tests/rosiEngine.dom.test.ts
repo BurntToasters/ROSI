@@ -957,4 +957,167 @@ describe('rosiEngine DOM wiring', () => {
     expect(rows).toHaveLength(1);
     expect(document.querySelector('.history-error')?.textContent).toBe('network unreachable');
   });
+  it('waits for the latest save before exporting settings', async () => {
+    let release!: (value: unknown) => void;
+    let defer = false;
+    const api = buildMockApi({
+      saveSettings: vi.fn((value) =>
+        defer
+          ? new Promise((r) => {
+              release = r;
+            })
+          : Promise.resolve({ ok: true, data: value })
+      ),
+    });
+    await loadEngine(api);
+    await flush(350);
+    defer = true;
+    const toggle = document.getElementById('notificationsToggle') as HTMLInputElement;
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event('change'));
+    document.getElementById('exportSettingsBtn')!.click();
+    await flush(350);
+    expect(api.exportSettings).not.toHaveBeenCalled();
+    release({ ok: true, data: { ...defaultSettings(), notifications: false } });
+    await flush(30);
+    expect(api.exportSettings).toHaveBeenCalledOnce();
+  });
+
+  it('does not export after settings persistence fails', async () => {
+    const api = buildMockApi({
+      saveSettings: vi.fn(() => Promise.resolve({ ok: false, error: { message: 'disk full' } })),
+    });
+    await loadEngine(api);
+    const toggle = document.getElementById('notificationsToggle') as HTMLInputElement;
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event('change'));
+    document.getElementById('exportSettingsBtn')!.click();
+    await flush(350);
+    expect(api.exportSettings).not.toHaveBeenCalled();
+  });
+
+  for (const action of ['downloadBtn', 'addToQueueBtn']) {
+    it(`keeps playlist range while ${action} awaits a save`, async () => {
+      let release!: (value: unknown) => void;
+      const api = buildMockApi({
+        getSettings: vi.fn(() =>
+          Promise.resolve({ ...defaultSettings(), downloadFolder: '/tmp/downloads' })
+        ),
+        saveSettings: vi.fn(
+          () =>
+            new Promise((r) => {
+              release = r;
+            })
+        ),
+      });
+      await loadEngine(api);
+      const input = document.getElementById('url') as HTMLInputElement;
+      input.value = 'https://example.com/playlist/old';
+      input.dispatchEvent(new Event('input'));
+      document.getElementById('playlistScope')!.classList.remove('hidden');
+      (
+        document.querySelector('input[name="playlist-scope"][value="range"]') as HTMLInputElement
+      ).checked = true;
+      (document.getElementById('playlistRangeStart') as HTMLInputElement).value = '2';
+      (document.getElementById('playlistRangeEnd') as HTMLInputElement).value = '5';
+      (document.getElementById('queueUrlInput') as HTMLTextAreaElement).value = input.value;
+      document.getElementById(action)!.click();
+      await flush(20);
+      input.value = 'https://example.com/new';
+      input.dispatchEvent(new Event('input'));
+      release({ ok: true, data: { ...defaultSettings(), downloadFolder: '/tmp/downloads' } });
+      await flush(30);
+      if (action === 'downloadBtn')
+        expect(api.downloadVideo).toHaveBeenCalledWith(
+          expect.objectContaining({
+            url: 'https://example.com/playlist/old',
+            playlist: { mode: 'range', start: 2, end: 5 },
+          })
+        );
+      else
+        expect(api.addToQueue).toHaveBeenCalledWith(
+          ['https://example.com/playlist/old'],
+          expect.objectContaining({ playlist: { mode: 'range', start: 2, end: 5 } })
+        );
+    });
+  }
+
+  it('shows cancelled recovery diagnostics in activity', async () => {
+    const api = buildMockApi({
+      getDownloadActivity: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          data: [
+            {
+              id: 'cancel-recovery',
+              owner: 'manual',
+              outcome: 'cancelled',
+              statusMessage: 'Cancelled',
+              url: 'https://example.com/video',
+              request: {},
+              error: 'Staging retained for recovery at /tmp/recovery',
+              startedAt: 1,
+              completedAt: 2,
+            },
+          ],
+        })
+      ),
+    });
+    await loadEngine(api);
+    expect(document.querySelector('.history-error')?.textContent).toContain('/tmp/recovery');
+  });
+
+  for (const result of [{ success: false, error: 'package manager failed' }, {}]) {
+    it(`shows Deno reminder failure for ${JSON.stringify(result)}`, async () => {
+      const api = buildMockApi({
+        getSettings: vi.fn(() =>
+          Promise.resolve({ ...defaultSettings(), denoReminderDismissed: false })
+        ),
+        checkDenoInstalled: vi.fn(() => Promise.resolve(false)),
+        installDeno: vi.fn(() => Promise.resolve(result)),
+      });
+      await loadEngine(api);
+      await flush(50);
+      const install = [
+        ...document.querySelectorAll<HTMLButtonElement>('#modal-buttons button'),
+      ].find((b) => b.textContent === 'Install');
+      expect(install).toBeDefined();
+      install!.click();
+      await flush(350);
+      expect(document.getElementById('modal-title')!.textContent).toBe('Installation Failed');
+    });
+  }
+
+  it('shows Deno setup failure instead of an installed state', async () => {
+    const api = buildMockApi({
+      getSettings: vi.fn(() =>
+        Promise.resolve({
+          ...defaultSettings(),
+          firstLaunch: true,
+          downloadFolder: '/tmp/downloads',
+        })
+      ),
+      checkDenoInstalled: vi.fn(() => Promise.resolve(false)),
+      installDeno: vi.fn(() =>
+        Promise.resolve({ success: false, error: 'package manager failed' })
+      ),
+    });
+    await loadEngine(api);
+    for (
+      let i = 0;
+      i < 6 && (document.getElementById('wizard-deno-action') as HTMLButtonElement).hidden;
+      i++
+    ) {
+      document.getElementById('wizard-next')!.click();
+      await flush(20);
+    }
+    const action = document.getElementById('wizard-deno-action') as HTMLButtonElement;
+    expect(action.hidden).toBe(false);
+    action.click();
+    await flush(20);
+    expect(document.getElementById('wizard-deno-status')!.dataset.state).toBe('error');
+    expect(document.getElementById('wizard-deno-status')!.textContent).toContain(
+      'package manager failed'
+    );
+  });
 });

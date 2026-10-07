@@ -10,6 +10,7 @@ pub struct SourceCodecs {
     pub video: Option<String>,
     pub audio: Option<String>,
     pub subtitles: Vec<String>,
+    pub has_attached_pictures: bool,
     pub duration_seconds: Option<f64>,
 }
 
@@ -37,6 +38,9 @@ fn codec_after(stderr: &str, marker: &str, exclude_attached_pictures: bool) -> O
 pub fn parse_codecs(stderr: &str) -> SourceCodecs {
     SourceCodecs {
         video: codec_after(stderr, ": Video: ", true),
+        has_attached_pictures: stderr
+            .lines()
+            .any(|line| line.contains("Stream #") && line.contains("(attached pic)")),
         audio: codec_after(stderr, ": Audio: ", false),
         subtitles: stderr
             .lines()
@@ -77,6 +81,14 @@ pub fn target_subtitle_codec(target_format: &str, source: &SourceCodecs) -> Opti
         return Some("copy");
     }
     None
+}
+
+/// Conversion currently maps primary media and supported captions, not artwork.
+/// Keep a recoverable original whenever any source content would be omitted.
+pub fn must_preserve_original(target: &str, source: &SourceCodecs, probe_complete: bool) -> bool {
+    !probe_complete
+        || source.has_attached_pictures
+        || (!source.subtitles.is_empty() && target_subtitle_codec(target, source).is_none())
 }
 
 fn resolve_gpu_video_encoder(settings: &Settings) -> &'static str {
@@ -506,4 +518,24 @@ pub fn build_ytdlp_args(input: YtdlpArgsInput<'_>) -> (Vec<String>, Vec<String>)
         status.push("⏭️ SponsorBlock: removing segments".into());
     }
     (args, status)
+}
+
+#[cfg(test)]
+mod audit4_tests {
+    use super::*;
+    #[test]
+    fn retain_artwork_and_captions_without_retaining_ordinary_audio() {
+        let artwork = parse_codecs(
+            "Input #0\n  Stream #0:0: Audio: aac\n  Stream #0:1: Video: mjpeg (attached pic)\n",
+        );
+        assert_eq!(artwork.video, None);
+        assert!(must_preserve_original("mp3", &artwork, true));
+        let ordinary = parse_codecs("Input #0\n  Stream #0:0: Audio: aac\n");
+        assert!(!must_preserve_original("mp3", &ordinary, true));
+        assert!(must_preserve_original("mp3", &ordinary, false));
+        let captions =
+            parse_codecs("Input #0\n Stream #0:0: Video: h264\n Stream #0:1: Subtitle: subrip\n");
+        assert!(must_preserve_original("mp3", &captions, true));
+        assert!(!must_preserve_original("mp4", &captions, true));
+    }
 }

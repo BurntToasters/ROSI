@@ -56,6 +56,50 @@ struct Session {
 
 static ACTIVE: Mutex<Option<Session>> = Mutex::new(None);
 static SESSION_CHANGED: Condvar = Condvar::new();
+static FINALIZING: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+static FINALIZATION_CHANGED: Condvar = Condvar::new();
+
+struct CompletionFinalizer(u64);
+
+impl CompletionFinalizer {
+    fn begin(id: u64) -> Self {
+        FINALIZING
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(id);
+        Self(id)
+    }
+}
+
+impl Drop for CompletionFinalizer {
+    fn drop(&mut self) {
+        FINALIZING
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .retain(|id| *id != self.0);
+        FINALIZATION_CHANGED.notify_all();
+        SESSION_CHANGED.notify_all();
+    }
+}
+
+fn finalizing_ids() -> Vec<u64> {
+    FINALIZING
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .copied()
+        .collect()
+}
+
+fn wait_for_finalizations(ids: &[u64]) {
+    let mut pending = FINALIZING.lock().unwrap_or_else(|p| p.into_inner());
+    while ids.iter().any(|id| pending.contains(id)) {
+        pending = FINALIZATION_CHANGED
+            .wait(pending)
+            .unwrap_or_else(|p| p.into_inner());
+    }
+}
+
 static STARTUP: Mutex<()> = Mutex::new(());
 static EVENT_PUBLISH: Mutex<()> = Mutex::new(());
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -73,6 +117,8 @@ fn wait_for_session_completion(id: u64) {
             .wait(active)
             .unwrap_or_else(|poisoned| poisoned.into_inner());
     }
+    drop(active);
+    wait_for_finalizations(&[id]);
 }
 
 fn with_session<R>(id: u64, f: impl FnOnce(&mut Session) -> R) -> Option<R> {
@@ -376,11 +422,14 @@ fn complete_session(id: u64, status_message: &str, outcome: Outcome, meta: Compl
     let session = {
         let mut guard = lock();
         match guard.as_ref() {
-            Some(session) if session.id == id => guard.take(),
+            Some(session) if session.id == id => {
+                let finalizer = CompletionFinalizer::begin(id);
+                guard.take().map(|session| (session, finalizer))
+            }
             _ => None,
         }
     };
-    let Some(mut session) = session else {
+    let Some((mut session, _finalizer)) = session else {
         return;
     };
     let final_path = meta.file_path.map(resolve_path);
@@ -424,11 +473,10 @@ fn complete_session(id: u64, status_message: &str, outcome: Outcome, meta: Compl
         }),
         size_bytes,
         format: meta.format.clone(),
-        error: (outcome == Outcome::Failed).then(|| {
-            meta.error
-                .clone()
-                .unwrap_or_else(|| status_message.to_string())
-        }),
+        error: meta
+            .error
+            .clone()
+            .or_else(|| (outcome == Outcome::Failed).then(|| status_message.to_string())),
         started_at: session.started_at,
         completed_at: crate::app_state::now_ms(),
     };
@@ -462,6 +510,11 @@ pub fn cancel_active_session(notify: bool) {
     let (id, owner, children, partial, wait_for_ytdlp) = {
         let mut guard = lock();
         let Some(session) = guard.as_mut() else {
+            // Snapshot under ACTIVE so completion cannot clear the slot before
+            // registering its pending callback. Do not wait on future sessions.
+            let pending = finalizing_ids();
+            drop(guard);
+            wait_for_finalizations(&pending);
             return;
         };
         session.cancelled = true;
@@ -503,6 +556,11 @@ pub fn kill_all_processes() {
     let (id, children, partial, wait_for_ytdlp) = {
         let mut guard = lock();
         let Some(session) = guard.as_mut() else {
+            // Snapshot under ACTIVE so completion cannot clear the slot before
+            // registering its pending callback. Do not wait on future sessions.
+            let pending = finalizing_ids();
+            drop(guard);
+            wait_for_finalizations(&pending);
             return;
         };
         session.cancelled = true;
@@ -2568,7 +2626,7 @@ struct ConversionPosition {
 struct ConvertedOutput {
     path: PathBuf,
     unchanged: bool,
-    preserve_original_for_captions: bool,
+    preserve_original: bool,
 }
 
 fn convert_one(
@@ -2599,7 +2657,7 @@ fn convert_one(
         return Ok(ConvertedOutput {
             path: input.to_path_buf(),
             unchanged: true,
-            preserve_original_for_captions: false,
+            preserve_original: false,
         });
     }
     send_progress(
@@ -2623,9 +2681,8 @@ fn convert_one(
     if !active_not_cancelled(id) {
         return Err(ConversionFailure::Cancelled);
     }
-    let preserve_original_for_captions = !probe_complete
-        || (!codecs.subtitles.is_empty()
-            && crate::command_builders::target_subtitle_codec(target, &codecs).is_none());
+    let preserve_original =
+        crate::command_builders::must_preserve_original(target, &codecs, probe_complete);
     let selected_encoder = resolve_video_encoder(effective);
     let original_args = build_ffmpeg_args(input, input, target, &selected_encoder, Some(&codecs));
     let gpu_encoder_used = effective.gpu_acceleration
@@ -2689,7 +2746,7 @@ fn convert_one(
                 return Ok(ConvertedOutput {
                     path: output,
                     unchanged: false,
-                    preserve_original_for_captions,
+                    preserve_original,
                 });
             }
             Err(ConversionFailure::Exit(code, _stderr)) if attempt + 1 < encoders.len() => {
@@ -3222,7 +3279,7 @@ fn run_conversion(
                         );
                         return;
                     }
-                    let should_preserve_original = result.preserve_original_for_captions;
+                    let should_preserve_original = result.preserve_original;
                     let mut preserve_publication_failed = false;
                     if should_preserve_original {
                         match publish_staged_source_with_captions(
@@ -3235,7 +3292,7 @@ fn run_conversion(
                                 send_progress(
                                     id,
                                     format!(
-                                        "ℹ️ Retained original to preserve unsupported or unverified captions: {}",
+                                        "ℹ️ Retained original to preserve artwork or unsupported or unverified captions: {}",
                                         path.display()
                                     ),
                                 );
@@ -3491,4 +3548,92 @@ pub fn download_video(options: Value) -> IpcResult<Started> {
 #[tauri::command(async)]
 pub fn cancel_download() {
     cancel_active_session(true);
+}
+
+#[cfg(test)]
+mod audit4_tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    fn session(callback: CompletionCallback) -> Session {
+        Session {
+            id: u64::MAX,
+            completion_id: "audit4".into(),
+            started_at: 1,
+            request: DownloadRequestOptions::default(),
+            owner: Owner::Queue,
+            cancelled: false,
+            cancel_notify: false,
+            ytdlp: None,
+            ytdlp_exit_pending: false,
+            conversion_pending: false,
+            ffmpeg: None,
+            on_complete: Some(callback),
+            ytdlp_postprocess: false,
+            ytdlp_download_finished: false,
+            conversion_format: None,
+            completed_paths: vec![],
+            failed_paths: vec![],
+            conversion_failures: vec![],
+            reporter: Reporter::new(progress::Plan::default(), None, false),
+        }
+    }
+
+    #[test]
+    fn cancellation_waits_for_callback_after_active_slot_is_empty() {
+        let _serial = SERIAL.lock().unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        *lock() = Some(session(Box::new(move |_| {
+            entered_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        })));
+        let completion = std::thread::spawn(|| {
+            complete_session(
+                u64::MAX,
+                "Done",
+                Outcome::Success,
+                CompletionMeta::default(),
+            )
+        });
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(lock().is_none());
+        let (cancel_tx, cancel_rx) = mpsc::channel();
+        let cancel = std::thread::spawn(move || {
+            cancel_active_session(false);
+            cancel_tx.send(()).unwrap();
+        });
+        let early = cancel_rx.recv_timeout(Duration::from_millis(100)).is_ok();
+        release_tx.send(()).unwrap();
+        completion.join().unwrap();
+        cancel.join().unwrap();
+        assert!(
+            !early,
+            "Cancellation returned before completion callback finished"
+        );
+    }
+
+    #[test]
+    fn cancellation_retains_explicit_recovery_error() {
+        let _serial = SERIAL.lock().unwrap();
+        let (tx, rx) = mpsc::channel();
+        *lock() = Some(session(Box::new(move |completion| {
+            tx.send(completion).unwrap();
+        })));
+        complete_session(
+            u64::MAX,
+            "Cancelled",
+            Outcome::Cancelled,
+            CompletionMeta {
+                error: Some("Recovery at /tmp/staging".into()),
+                ..CompletionMeta::default()
+            },
+        );
+        assert_eq!(
+            rx.recv().unwrap().error.as_deref(),
+            Some("Recovery at /tmp/staging")
+        );
+    }
 }

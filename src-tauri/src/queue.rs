@@ -33,6 +33,16 @@ static QUEUE: OnceLock<Mutex<QueueState>> = OnceLock::new();
 /// against cancel/clear/stop, so a cancel can never land between the check and
 /// `start_download`. Never acquired while holding the queue lock.
 static START_GUARD: Mutex<()> = Mutex::new(());
+static RUNNER_CHANGED: Condvar = Condvar::new();
+
+struct RunnerFinished;
+
+impl Drop for RunnerFinished {
+    fn drop(&mut self) {
+        state().runner_alive = false;
+        RUNNER_CHANGED.notify_all();
+    }
+}
 static PERSIST_SIGNAL: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
 
 fn queue_path() -> std::path::PathBuf {
@@ -449,11 +459,8 @@ fn apply_completion(item: &mut QueueItem, completion: &DownloadCompletion) {
     item.filename = completion.filename.clone();
     item.output_path = completion.output_path.clone();
     item.size_bytes = completion.size_bytes;
-    item.error = (completion.outcome == Outcome::Failed).then(|| {
-        completion
-            .error
-            .clone()
-            .unwrap_or_else(|| completion.status_message.clone())
+    item.error = completion.error.clone().or_else(|| {
+        (completion.outcome == Outcome::Failed).then(|| completion.status_message.clone())
     });
 }
 
@@ -497,6 +504,7 @@ fn finish_unstarted_item(item: &QueueItem, request: &DownloadRequestOptions) {
 }
 
 fn run_queue() {
+    let _finished = RunnerFinished;
     loop {
         let next = {
             let mut queue = state();
@@ -515,7 +523,6 @@ fn run_queue() {
                     queue.running = false;
                     queue.cancelled = false;
                     queue.active_item_id = None;
-                    queue.runner_alive = false;
                     let snapshot = queue.items.clone();
                     drop(queue);
                     broadcast(snapshot);
@@ -741,6 +748,14 @@ pub fn stop() {
     }
     downloader::cancel_active_session(false);
     downloader::kill_all_processes();
+    // The claimed-but-unstarted item must acquire START_GUARD to finish.
+    drop(_guard);
+    let mut queue = state();
+    while queue.runner_alive {
+        queue = RUNNER_CHANGED
+            .wait(queue)
+            .unwrap_or_else(|p| p.into_inner());
+    }
 }
 
 #[derive(serde::Serialize)]

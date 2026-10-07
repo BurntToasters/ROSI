@@ -1395,7 +1395,7 @@ function renderActivity() {
     timeEl.className = 'history-time';
     timeEl.textContent = row.subtitle || formatRelativeTime(row.timestamp);
     info.append(filenameEl, timeEl);
-    if (row.outcome === 'failed' && row.error) {
+    if (row.error) {
       const errorEl = document.createElement('span');
       errorEl.className = 'history-error';
       renderStatusText(errorEl, row.error);
@@ -1998,6 +1998,11 @@ async function checkDenoInstallation(
                   });
                   return;
                 }
+                if (result?.success !== true) {
+                  throw new Error(
+                    result?.error || 'Deno installation did not complete successfully.'
+                  );
+                }
                 showModal({
                   title: 'Installation Complete',
                   message:
@@ -2305,6 +2310,9 @@ function launchSetupWizard(
       if (result && result.cancelled) {
         showDenoMissing();
         return;
+      }
+      if (result?.success !== true) {
+        throw new Error(result?.error || 'Deno installation did not complete successfully.');
       }
       setDenoStatus('installed', 'Deno is installed. Restart ROSI after setup to use it.');
       setDenoAction(null, null);
@@ -4199,6 +4207,11 @@ async function initializeRenderer() {
         ? readAdvancedFormatSelections(currentUrl)
         : {};
     try {
+      const built = buildQueueRequestOverrides(undefined, formatSelections);
+      if (!built.ok) {
+        setQueueStatusMessage('Fix the playlist range before adding to the queue.');
+        return false;
+      }
       const destination = await resolveQueueDestination();
       if (destination.cancelled) {
         setQueueStatusMessage('Nothing was queued because no folder was chosen.');
@@ -4213,10 +4226,8 @@ async function initializeRenderer() {
         showToast(message, { type: 'error' });
         return false;
       }
-      const built = buildQueueRequestOverrides(destination.outputPath, formatSelections);
-      if (!built.ok) {
-        setQueueStatusMessage('Fix the playlist range before adding to the queue.');
-        return false;
+      if (destination.outputPath) {
+        built.overrides = { ...built.overrides, outputPath: destination.outputPath };
       }
       // Omit the second argument entirely when there is nothing to override.
       const result = built.overrides
@@ -4900,6 +4911,7 @@ async function initializeRenderer() {
   if (exportSettingsBtn) {
     exportSettingsBtn.addEventListener('click', async () => {
       try {
+        if (!(await persistSettings(false, true))) return;
         const result = await window.api.exportSettings();
         if (result && result.ok) {
           showToast('Settings exported successfully.', { type: 'success' });
@@ -5416,6 +5428,28 @@ async function initializeRenderer() {
           return;
         }
 
+        // Capture URL-owned controls before a folder prompt or persistence wait.
+        const scopeVisible = isPlaylistScopeVisible();
+        const playlist = resolvePlaylistSelection();
+        if (scopeVisible && !playlist) {
+          failManualDownloadStart(operation);
+          isDownloading = false;
+          syncPrimaryActionState();
+          return;
+        }
+        const activePreset = getSelectedPreset();
+        const presetOverrides = activePreset
+          ? {
+              presetId: activePreset.id,
+              presetName: activePreset.name,
+              ...buildOnScreenPresetOverrides(formatSelections),
+            }
+          : {};
+        const ffmpegPath = settings.ffmpegPath;
+        const convertFormat = settings.convertEnabled
+          ? convertFormatSelect?.value.trim() || undefined
+          : undefined;
+        const keepOriginal = settings.convertEnabled ? keepOriginalToggle?.checked : undefined;
         let savePath = settings.askDownloadLocation
           ? null
           : settings.downloadFolder?.trim() || null;
@@ -5468,25 +5502,12 @@ async function initializeRenderer() {
         });
 
         const { videoFormat, audioFormat } = formatSelections;
-        const convertFormat = settings.convertEnabled
-          ? convertFormatSelect?.value.trim() || undefined
-          : undefined;
+
         applyActiveDownloadProgressPhases(settings, 'Starting download...', {
           videoFormat,
           audioFormat,
         });
-        const keepOriginal = settings.convertEnabled ? keepOriginalToggle?.checked : undefined;
-        const scopeVisible = isPlaylistScopeVisible();
-        const playlist = resolvePlaylistSelection();
-        if (scopeVisible && !playlist) {
-          failManualDownloadStart(operation);
-          isDownloading = false;
-          setButtonLoading(downloadBtn, false);
-          syncPrimaryActionState();
-          hideProgressBar();
-          return;
-        }
-        const activePreset = getSelectedPreset();
+
         prepareManualDownloadStart(operation);
         const startResult = await window.api.downloadVideo({
           url: url.trim(),
@@ -5495,16 +5516,10 @@ async function initializeRenderer() {
           outputPath: savePath,
           convertFormat,
           keepOriginal,
-          ffmpegPath: settings.ffmpegPath,
+          ffmpegPath,
           // When radios are hidden, omit playlist so a selected preset's All/Range applies.
           ...(scopeVisible && playlist ? { playlist } : {}),
-          ...(activePreset
-            ? {
-                presetId: activePreset.id,
-                presetName: activePreset.name,
-                ...buildOnScreenPresetOverrides(formatSelections),
-              }
-            : {}),
+          ...presetOverrides,
         });
         if (operation !== manualDownloadOperation) return;
         if (!startResult || startResult.ok !== true) {
