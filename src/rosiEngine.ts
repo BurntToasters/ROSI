@@ -73,6 +73,7 @@ interface RosiSettings {
 }
 
 interface RosiJobProgressEvent {
+  sessionId?: number;
   phase: 'download' | 'merge' | 'convert' | 'idle';
   phasePercent: number | null;
   itemOverallPercent: number;
@@ -308,14 +309,59 @@ function setMainContentInert(isInert: boolean) {
   const mainContent =
     document.getElementById('main-content') || document.querySelector('.main-content');
   if (!(mainContent instanceof HTMLElement)) return;
+  const shouldBeInert = isInert || getTopActiveOverlayId() !== null;
   if ('inert' in mainContent) {
-    (mainContent as HTMLElement & { inert: boolean }).inert = isInert;
+    (mainContent as HTMLElement & { inert: boolean }).inert = shouldBeInert;
   }
-  if (isInert) {
+  if (shouldBeInert) {
     mainContent.setAttribute('aria-hidden', 'true');
   } else {
     mainContent.removeAttribute('aria-hidden');
   }
+}
+
+function getTopActiveOverlayId(): string | null {
+  const overlayOrder = ['app-modal', 'licenses-overlay', 'setup-wizard', 'sidebar'];
+  for (const id of overlayOrder) {
+    const overlay = document.getElementById(id);
+    const active =
+      id === 'sidebar'
+        ? overlay?.classList.contains('open')
+        : overlay?.classList.contains('active');
+    if (active) return id;
+  }
+  return null;
+}
+
+function syncModalAccessibility() {
+  const topOverlayId = getTopActiveOverlayId();
+  for (const id of ['app-modal', 'licenses-overlay', 'setup-wizard']) {
+    const overlay = document.getElementById(id);
+    if (overlay) overlay.setAttribute('aria-modal', String(topOverlayId === id));
+  }
+}
+
+function focusTopOverlayOr(target: Element | null) {
+  const topOverlayId = getTopActiveOverlayId();
+  if (topOverlayId) {
+    const overlay = document.getElementById(topOverlayId);
+    if (focusFirstElement(overlay)) return;
+    if (overlay instanceof HTMLElement) overlay.focus();
+    return;
+  }
+
+  setMainContentInert(false);
+  if (!(target instanceof HTMLElement) || !target.isConnected || target.hasAttribute('disabled')) {
+    return;
+  }
+  if (target.closest('[aria-hidden="true"]')) {
+    const fallback = document.getElementById('url');
+    if (fallback instanceof HTMLElement && !fallback.closest('[aria-hidden="true"]')) {
+      fallback.focus();
+    }
+    return;
+  }
+  target.focus();
 }
 
 function applyTheme(preference: string) {
@@ -406,6 +452,7 @@ interface ModalButton {
 interface ModalData {
   title: string;
   message: unknown;
+  key?: string;
   buttons?: ModalButton[];
   priority?: boolean;
   busy?: boolean;
@@ -419,6 +466,23 @@ let previousFocus: Element | null = null;
 let modalTrapHandler: ((e: KeyboardEvent) => void) | null = null;
 let modalFocusinHandler: ((e: FocusEvent) => void) | null = null;
 let licensesFocusinHandler: ((e: FocusEvent) => void) | null = null;
+let modalHideTimer: ReturnType<typeof setTimeout> | null = null;
+let modalHideGeneration = 0;
+let modalHidingData: ModalData | null = null;
+
+function detachModalFocusHandlers(modal: HTMLElement | null) {
+  if (modal && modalTrapHandler) modal.removeEventListener('keydown', modalTrapHandler);
+  if (modalFocusinHandler) document.removeEventListener('focusin', modalFocusinHandler, true);
+  modalTrapHandler = null;
+  modalFocusinHandler = null;
+}
+
+function cancelModalHide() {
+  modalHideGeneration += 1;
+  if (modalHideTimer !== null) clearTimeout(modalHideTimer);
+  modalHideTimer = null;
+  modalHidingData = null;
+}
 
 function getFocusableElements(container: unknown): HTMLElement[] {
   if (!(container instanceof HTMLElement)) return [];
@@ -445,15 +509,26 @@ function focusFirstElement(container: unknown) {
   return false;
 }
 
-function showModal({ title, message, buttons = [], priority = false, extra = null }: ModalData) {
-  const modalData: ModalData = { title, message, buttons, priority, extra };
+function showModal({
+  title,
+  message,
+  key,
+  buttons = [],
+  priority = false,
+  extra = null,
+}: ModalData) {
+  const modalData: ModalData = { title, message, key, buttons, priority, extra };
   if (priority && isModalActive) {
+    cancelModalHide();
     const modal = document.getElementById('app-modal');
     if (modal) {
       modal.classList.remove('active', 'showing', 'hiding');
+      modal.setAttribute('aria-hidden', 'true');
+      detachModalFocusHandlers(modal);
     }
     isModalActive = false;
     currentModalData = null;
+    syncModalAccessibility();
   }
   if (priority) {
     modalQueue.unshift(modalData);
@@ -478,7 +553,8 @@ function displayNextModal() {
     isModalActive = false;
     return;
   }
-  const { title, message, buttons = [], extra } = currentModalData;
+  const displayedModalData = currentModalData;
+  const { title, message, buttons = [], extra } = displayedModalData;
 
   const modal = document.getElementById('app-modal');
   const titleEl = document.getElementById('modal-title');
@@ -514,11 +590,12 @@ function displayNextModal() {
   }
   modal.classList.add('showing');
   modal.classList.add('active');
+  syncModalAccessibility();
   setMainContentInert(true);
 
   void modal.offsetWidth;
   requestAnimationFrame(() => {
-    modal.classList.remove('showing');
+    if (currentModalData === displayedModalData) modal.classList.remove('showing');
   });
 
   buttons.forEach(({ label, icon, action, primary, danger, disabled }) => {
@@ -536,21 +613,20 @@ function displayNextModal() {
     }
     if (!disabled) {
       btn.onclick = () => {
+        if (currentModalData !== displayedModalData || !modal.classList.contains('active')) return;
         hideModal(modal, action);
       };
     }
     btnContainer.appendChild(btn);
   });
 
-  previousFocus = document.activeElement;
+  if (!previousFocus) previousFocus = document.activeElement;
 
-  if (modalTrapHandler) {
-    modal.removeEventListener('keydown', modalTrapHandler);
-  }
-  if (modalFocusinHandler) {
-    document.removeEventListener('focusin', modalFocusinHandler, true);
-  }
+  detachModalFocusHandlers(modal);
   modalTrapHandler = (e: KeyboardEvent) => {
+    if (currentModalData !== displayedModalData || getTopActiveOverlayId() !== 'app-modal') {
+      return;
+    }
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
@@ -577,7 +653,14 @@ function displayNextModal() {
   };
   modal.addEventListener('keydown', modalTrapHandler);
   modalFocusinHandler = (e: FocusEvent) => {
-    if (!isModalActive || !modal.classList.contains('active')) return;
+    if (
+      !isModalActive ||
+      currentModalData !== displayedModalData ||
+      !modal.classList.contains('active') ||
+      getTopActiveOverlayId() !== 'app-modal'
+    ) {
+      return;
+    }
     const target = e.target;
     if (target instanceof Node && modal.contains(target)) return;
     if (!focusFirstElement(modal) && typeof modal.focus === 'function') {
@@ -587,6 +670,9 @@ function displayNextModal() {
   document.addEventListener('focusin', modalFocusinHandler, true);
 
   requestAnimationFrame(() => {
+    if (currentModalData !== displayedModalData || getTopActiveOverlayId() !== 'app-modal') {
+      return;
+    }
     if (!focusFirstElement(modal) && typeof modal.focus === 'function') {
       modal.focus();
     }
@@ -594,45 +680,59 @@ function displayNextModal() {
 }
 
 function hideModal(modal: HTMLElement, action: (() => void) | null | undefined) {
+  if (!currentModalData || modalHideTimer !== null) return;
+  const closingModalData = currentModalData;
+  const hideGeneration = ++modalHideGeneration;
+  modalHidingData = closingModalData;
   modal.classList.add('hiding');
   currentModalData = null;
-  if (modalTrapHandler) {
-    modal.removeEventListener('keydown', modalTrapHandler);
-    modalTrapHandler = null;
-  }
-  if (modalFocusinHandler) {
-    document.removeEventListener('focusin', modalFocusinHandler, true);
-    modalFocusinHandler = null;
-  }
-  setTimeout(() => {
+  detachModalFocusHandlers(modal);
+  modalHideTimer = setTimeout(() => {
+    if (hideGeneration !== modalHideGeneration || modalHidingData !== closingModalData) return;
+    modalHideTimer = null;
+    modalHidingData = null;
     modal.classList.remove('active', 'hiding');
     modal.setAttribute('aria-hidden', 'true');
     modal.removeAttribute('aria-busy');
     isModalActive = false;
+    syncModalAccessibility();
     if (typeof action === 'function') action();
-    if (!isModalActive) {
-      displayNextModal();
-    }
-    const wizardActive = document.getElementById('setup-wizard')?.classList.contains('active');
-    const licensesActive = document
-      .getElementById('licenses-overlay')
-      ?.classList.contains('active');
-    if (!isModalActive && !wizardActive && !licensesActive) {
+    if (!isModalActive && modalQueue.length > 0) displayNextModal();
+    if (!isModalActive && modalQueue.length === 0) {
       setMainContentInert(false);
-    }
-    if (!isModalActive && previousFocus instanceof HTMLElement) {
-      // Prefer returning focus to the wizard when skip/confirm was opened from it.
-      if (wizardActive) {
-        const wizard = document.getElementById('setup-wizard');
-        if (wizard instanceof HTMLElement) {
-          focusFirstElement(wizard);
-        }
-      } else {
-        previousFocus.focus();
-      }
+      focusTopOverlayOr(previousFocus);
       previousFocus = null;
     }
   }, 200);
+}
+
+function retireModal(key: string) {
+  for (let index = modalQueue.length - 1; index >= 0; index -= 1) {
+    if (modalQueue[index]?.key === key) modalQueue.splice(index, 1);
+  }
+  const retiresVisibleModal = currentModalData?.key === key;
+  const retiresHidingModal = modalHidingData?.key === key && modalHideTimer !== null;
+  if (!retiresVisibleModal && !retiresHidingModal) return;
+
+  cancelModalHide();
+  const modal = document.getElementById('app-modal');
+  if (modal) {
+    modal.classList.remove('active', 'showing', 'hiding');
+    modal.setAttribute('aria-hidden', 'true');
+    modal.removeAttribute('aria-busy');
+  }
+  detachModalFocusHandlers(modal);
+  currentModalData = null;
+  isModalActive = false;
+  syncModalAccessibility();
+
+  if (modalQueue.length > 0) {
+    displayNextModal();
+    return;
+  }
+  setMainContentInert(false);
+  focusTopOverlayOr(previousFocus);
+  previousFocus = null;
 }
 
 function showKeyboardShortcuts() {
@@ -647,13 +747,37 @@ Alt+1 / Alt+2 / Alt+3 - Show Queue, Activity, or Console`,
 
 let isFetchingFormats = false;
 let fetchFormatsAbort: (() => void) | null = null;
+
+let formatRequestGeneration = 0;
+let formatRequestUrl: string | null = null;
+let formatSelectionsUrl: string | null = null;
+
+function clearAdvancedFormatSelections() {
+  const videoSelect = document.getElementById('videoFormat') as HTMLSelectElement | null;
+  const audioSelect = document.getElementById('audioFormat') as HTMLSelectElement | null;
+  if (videoSelect) videoSelect.innerHTML = '<option value="">Select Video Format</option>';
+  if (audioSelect) audioSelect.innerHTML = '<option value="">Select Audio Format</option>';
+  formatSelectionsUrl = null;
+}
+
+function invalidateFormatRequest() {
+  if (formatRequestUrl === null) return;
+  formatRequestGeneration += 1;
+  formatRequestUrl = null;
+  isFetchingFormats = false;
+  fetchFormatsAbort = null;
+  window.api.cancelFormats?.();
+  const btn = document.getElementById('fetchFormatsBtn') as HTMLButtonElement | null;
+  if (btn) setButtonLoading(btn, false);
+}
+
 async function fetchFormats() {
   const btn = document.getElementById('fetchFormatsBtn') as HTMLButtonElement | null;
   const urlInput = document.getElementById('url') as HTMLInputElement | null;
-  const videoUrl = urlInput ? urlInput.value : null;
+  const videoUrl = urlInput?.value.trim() || null;
 
   try {
-    if (!btn || !videoUrl || videoUrl.trim() === '') {
+    if (!btn || !videoUrl) {
       showModal({
         title: 'Input Error',
         message: 'Please enter a video URL first.',
@@ -663,7 +787,7 @@ async function fetchFormats() {
     }
 
     // Validate URL format
-    if (!isValidUrl(videoUrl.trim())) {
+    if (!isValidUrl(videoUrl)) {
       showModal({
         title: 'Invalid URL',
         message: 'Please enter a valid URL starting with http:// or https://',
@@ -674,10 +798,21 @@ async function fetchFormats() {
 
     if (isFetchingFormats) return;
     isFetchingFormats = true;
+    const requestGeneration = ++formatRequestGeneration;
+    formatRequestUrl = videoUrl;
+    formatSelectionsUrl = null;
+    const isCurrentRequest = () =>
+      requestGeneration === formatRequestGeneration && formatRequestUrl === videoUrl;
     let wasCancelled = false;
     fetchFormatsAbort = () => {
+      if (!isCurrentRequest()) return;
       wasCancelled = true;
+      formatRequestGeneration += 1;
+      formatRequestUrl = null;
+      formatSelectionsUrl = null;
       isFetchingFormats = false;
+      fetchFormatsAbort = null;
+      clearAdvancedFormatSelections();
       setButtonLoading(btn, false);
     };
     setButtonLoading(
@@ -697,7 +832,7 @@ async function fetchFormats() {
     if (audioSelect) audioSelect.innerHTML = '<option value="">Loading...</option>';
     try {
       const formatResult = await window.api.getFormats(videoUrl);
-      if (wasCancelled) return;
+      if (wasCancelled || !isCurrentRequest()) return;
       if (!formatResult || formatResult.ok !== true) {
         const errorMessage = formatResult?.error?.message || 'Unknown error';
         const cancelled =
@@ -762,7 +897,9 @@ async function fetchFormats() {
         videoSelect.innerHTML = '<option value="">No video formats found</option>';
       if (audioFormatsFound === 0 && audioSelect)
         audioSelect.innerHTML = '<option value="">No audio formats found</option>';
+      formatSelectionsUrl = videoUrl;
     } catch (e) {
+      if (!isCurrentRequest()) return;
       const errorMessage = typeof e === 'string' ? e : (e as Error)?.message || 'Unknown error';
       if (videoSelect) videoSelect.innerHTML = '<option value="">Error loading formats</option>';
       if (audioSelect) audioSelect.innerHTML = '<option value="">Error loading formats</option>';
@@ -772,8 +909,10 @@ async function fetchFormats() {
         buttons: [{ label: 'OK', primary: true }],
       });
     } finally {
-      if (!wasCancelled) {
+      if (isCurrentRequest()) {
         isFetchingFormats = false;
+        formatRequestUrl = null;
+        fetchFormatsAbort = null;
         setButtonLoading(btn, false);
       }
     }
@@ -817,6 +956,19 @@ interface RosiVideoInfo {
   isPlaylist: boolean;
   playlistCount: number | null;
   webpageUrl: string | null;
+}
+
+const MAX_PREVIEW_THUMBNAIL_BYTES = 2 * 1024 * 1024;
+const PREVIEW_THUMBNAIL_DATA_URL_PATTERN =
+  /^data:image\/(?:jpeg|png|webp);base64,((?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)$/i;
+
+function isSafePreviewThumbnail(value: string | null): value is string {
+  if (!value) return false;
+  const encoded = PREVIEW_THUMBNAIL_DATA_URL_PATTERN.exec(value)?.[1];
+  if (!encoded) return false;
+  const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0;
+  const decodedBytes = (encoded.length / 4) * 3 - padding;
+  return decodedBytes <= MAX_PREVIEW_THUMBNAIL_BYTES;
 }
 
 let isFetchingPreview = false;
@@ -864,7 +1016,7 @@ function renderVideoPreview(info: RosiVideoInfo) {
 
   if (thumb) {
     const wrap = thumb.parentElement as HTMLElement | null;
-    if (info.thumbnail) {
+    if (isSafePreviewThumbnail(info.thumbnail)) {
       thumb.src = info.thumbnail;
       thumb.alt = info.title || 'Video thumbnail';
       if (wrap) wrap.style.display = '';
@@ -1074,6 +1226,7 @@ interface ActivityRow {
   timestamp: number;
   url: string | null;
   outputPath?: string;
+  outputPaths?: string[];
   error?: string;
   request?: Record<string, unknown>;
 }
@@ -1104,10 +1257,17 @@ function describeActivityProfile(entry: RosiDownloadActivity) {
 function toActivityRows(): ActivityRow[] {
   if (activityEntries.length > 0) {
     return activityEntries.map((entry) => {
+      const successfulOutputs = entry.outputPaths?.length ?? (entry.outputPath ? 1 : 0);
+      const failedOutputs = entry.failedPaths?.length ?? 0;
       const parts = [
         hostFromUrl(entry.url),
         describeActivityProfile(entry),
         typeof entry.sizeBytes === 'number' ? formatBytes(entry.sizeBytes) : '',
+        failedOutputs > 0
+          ? `${successfulOutputs} of ${successfulOutputs + failedOutputs} entries completed`
+          : successfulOutputs > 1
+            ? `${successfulOutputs} files saved`
+            : '',
         formatRelativeTime(entry.completedAt),
       ].filter(Boolean);
       return {
@@ -1118,6 +1278,7 @@ function toActivityRows(): ActivityRow[] {
         timestamp: entry.completedAt,
         url: entry.url,
         outputPath: entry.outputPath,
+        outputPaths: entry.outputPaths,
         error: entry.error,
         request: entry.request,
       };
@@ -1176,6 +1337,8 @@ function createActivityActionButton(
   const svg = iconsModule?.icon(iconName, 16) ?? null;
   if (svg) button.appendChild(svg);
   else button.textContent = label;
+  button.addEventListener('focus', () => button.classList.add('is-focused'));
+  button.addEventListener('blur', () => button.classList.remove('is-focused'));
   button.addEventListener('click', (event) => {
     event.stopPropagation();
     action();
@@ -1277,7 +1440,7 @@ function renderActivity() {
         )
       );
     }
-    if (row.outcome === 'success' && row.outputPath) {
+    if (row.outputPath && (row.outcome === 'success' || row.outputPaths?.length)) {
       const filePath = row.outputPath;
       actions.appendChild(
         createActivityActionButton(
@@ -1318,27 +1481,33 @@ function setActivityFilter(filter: ActivityFilter) {
   renderActivity();
 }
 
-async function clearActivity() {
-  try {
-    localStorage.removeItem(HISTORY_KEY);
-  } catch {
-    /* ignore */
-  }
+async function clearActivity(): Promise<boolean> {
   if (typeof window.api.clearDownloadActivity !== 'function') {
+    try {
+      localStorage.removeItem(HISTORY_KEY);
+    } catch {
+      /* ignore */
+    }
     setActivityEntries([]);
-    return;
+    return true;
   }
   try {
     const result = await window.api.clearDownloadActivity();
     if (!result || !result.ok) {
       showToast(result?.error?.message || 'Could not clear activity.', { type: 'error' });
-      return;
+      return false;
     }
   } catch {
     showToast('Could not clear activity.', { type: 'error' });
-    return;
+    return false;
+  }
+  try {
+    localStorage.removeItem(HISTORY_KEY);
+  } catch {
+    /* ignore */
   }
   setActivityEntries([]);
+  return true;
 }
 
 let isManualUpdateCheck = false;
@@ -1433,6 +1602,7 @@ async function checkForUpdates() {
 }
 
 let updaterCleanupFunctions: Array<() => void> = [];
+let updaterCandidateId: number | null = null;
 
 function showUpdateBanner() {
   const banner = document.getElementById('update-banner');
@@ -1461,7 +1631,17 @@ function hideUpdateBanner() {
   }
 }
 
-function setupAutoUpdater() {
+function showRestartFailure(error: unknown) {
+  const detail = error instanceof Error ? error.message : String(error);
+  showModal({
+    title: 'Could Not Restart ROSI',
+    message: `ROSI could not complete the restart safely, so the app remains open.\n\n${detail}`,
+    buttons: [{ label: 'OK', primary: true }],
+    priority: true,
+  });
+}
+
+function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boolean>) {
   const cancelBtn = document.getElementById('update-banner-cancel');
   if (cancelBtn) {
     cancelBtn.addEventListener('click', () => {
@@ -1478,9 +1658,18 @@ function setupAutoUpdater() {
 
       switch (data.status) {
         case 'checking':
+          updaterCandidateId = null;
+          retireModal('updater-candidate');
+          retireModal('updater-downloaded');
           break;
 
         case 'available': {
+          const candidateId = data.candidateId;
+          if (typeof candidateId !== 'number') break;
+          updaterCandidateId = candidateId;
+          retireModal('updater-candidate');
+          retireModal('updater-downloaded');
+          hideUpdateBanner();
           const version = data.version ?? '';
           const isBetaUpdate =
             data.isBeta ||
@@ -1489,6 +1678,7 @@ function setupAutoUpdater() {
               : /-(beta|alpha|rc)/i.test(version));
           showModal({
             title: isBetaUpdate ? 'Beta Update Available!' : 'Update Available!',
+            key: 'updater-candidate',
             message: isBetaUpdate
               ? `A new beta version (v${data.version}) of ROSI is available!\n\nWould you like to download and install it?`
               : `A new version (v${data.version}) of ROSI is available!\n\nWould you like to download and install it?`,
@@ -1498,8 +1688,10 @@ function setupAutoUpdater() {
                 label: 'Download & Install',
                 primary: true,
                 action: async () => {
+                  if (updaterCandidateId !== candidateId) return;
                   showUpdateBanner();
-                  await window.api.downloadUpdate();
+                  const result = await window.api.downloadUpdate(candidateId);
+                  if (result?.cancelled || result?.error) hideUpdateBanner();
                 },
               },
               { label: 'Later' },
@@ -1509,6 +1701,10 @@ function setupAutoUpdater() {
         }
 
         case 'not-available':
+          updaterCandidateId = null;
+          retireModal('updater-candidate');
+          retireModal('updater-downloaded');
+          hideUpdateBanner();
           if (wasManualCheck) {
             showModal({
               title: 'ROSI is up to date!',
@@ -1520,18 +1716,23 @@ function setupAutoUpdater() {
           break;
 
         case 'error':
+          updaterCandidateId = null;
+          retireModal('updater-candidate');
+          retireModal('updater-downloaded');
           hideUpdateBanner();
-          if (wasManualCheck) {
-            showModal({
-              title: 'Update Error',
-              message: `An error occurred while checking for updates:\n${data.message}`,
-              buttons: [{ label: 'OK', primary: true }],
-              priority: true,
-            });
-          }
+          if (data.kind === 'feed' && !wasManualCheck) break;
+          showModal({
+            title: 'Update Error',
+            message: `An error occurred while checking or installing the update:\n${data.message}`,
+            buttons: [{ label: 'OK', primary: true }],
+            priority: true,
+          });
           break;
 
         case 'cancelled':
+          updaterCandidateId = null;
+          retireModal('updater-candidate');
+          retireModal('updater-downloaded');
           hideUpdateBanner();
           showModal({
             title: 'Download Cancelled',
@@ -1542,15 +1743,25 @@ function setupAutoUpdater() {
           break;
 
         case 'downloaded':
+          if (typeof data.candidateId !== 'number') break;
+          updaterCandidateId = data.candidateId;
+          retireModal('updater-candidate');
+          retireModal('updater-downloaded');
           hideUpdateBanner();
           showModal({
             title: 'Update Ready!',
+            key: 'updater-downloaded',
             message: `Version ${data.version} has been downloaded.\n\nThe update will be installed when you restart ROSI.`,
             buttons: [
               {
                 label: 'Restart Now',
                 primary: true,
-                action: () => window.api.installUpdate(),
+                action: async () => {
+                  if (updaterCandidateId !== data.candidateId) return;
+                  if (await flushSettingsBeforeRestart()) {
+                    await window.api.installUpdate(data.candidateId);
+                  }
+                },
               },
               { label: 'Later' },
             ],
@@ -1610,6 +1821,7 @@ function showLicenses() {
     licensesPreviousFocus = document.activeElement;
     licensesOverlay.classList.add('active');
     licensesOverlay.setAttribute('aria-hidden', 'false');
+    syncModalAccessibility();
     setMainContentInert(true);
     syncLicensesTheme(appliedTheme);
     document.body.classList.add('licenses-open');
@@ -1618,6 +1830,7 @@ function showLicenses() {
     const closeBtn = licensesOverlay.querySelector<HTMLElement>('#close-licenses');
     licensesOverlay.setAttribute('tabindex', '-1');
     requestAnimationFrame(() => {
+      if (getTopActiveOverlayId() !== 'licenses-overlay') return;
       if (closeBtn) {
         closeBtn.focus();
         return;
@@ -1628,6 +1841,7 @@ function showLicenses() {
     });
 
     licensesTrapHandler = (e: KeyboardEvent) => {
+      if (getTopActiveOverlayId() !== 'licenses-overlay') return;
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
@@ -1655,7 +1869,12 @@ function showLicenses() {
       document.removeEventListener('focusin', licensesFocusinHandler, true);
     }
     licensesFocusinHandler = (e: FocusEvent) => {
-      if (!licensesOverlay.classList.contains('active')) return;
+      if (
+        !licensesOverlay.classList.contains('active') ||
+        getTopActiveOverlayId() !== 'licenses-overlay'
+      ) {
+        return;
+      }
       const target = e.target;
       if (target instanceof Node && licensesOverlay.contains(target)) return;
       if (!focusFirstElement(licensesOverlay) && typeof licensesOverlay.focus === 'function') {
@@ -1679,19 +1898,18 @@ function hideLicenses() {
     }
     licensesOverlay.classList.remove('active');
     licensesOverlay.setAttribute('aria-hidden', 'true');
-    const wizardOverlay = document.getElementById('setup-wizard');
-    const wizardActive = wizardOverlay?.classList.contains('active');
-    if (!isModalActive && !wizardActive) {
-      setMainContentInert(false);
+    if (previousFocus instanceof Node && licensesOverlay.contains(previousFocus)) {
+      previousFocus = licensesPreviousFocus;
     }
+    const focusToRestore = licensesPreviousFocus;
+    licensesPreviousFocus = null;
+    syncModalAccessibility();
+    setMainContentInert(false);
     setTimeout(() => {
       document.body.style.overflow = '';
       document.body.classList.remove('licenses-open');
     }, 300);
-    if (licensesPreviousFocus instanceof HTMLElement) {
-      licensesPreviousFocus.focus();
-      licensesPreviousFocus = null;
-    }
+    focusTopOverlayOr(focusToRestore);
   }
 }
 
@@ -1718,7 +1936,11 @@ function isLinuxPlatform() {
 const DENO_INSTALL_DOCS = 'https://docs.deno.com/runtime/getting_started/installation/';
 
 // check for Deno
-async function checkDenoInstallation(settings: RosiSettings, persist: () => void) {
+async function checkDenoInstallation(
+  settings: RosiSettings,
+  persist: () => Promise<boolean>,
+  flushBeforeRestart: () => Promise<boolean>
+) {
   if (settings.denoReminderDismissed) {
     return;
   }
@@ -1742,7 +1964,7 @@ async function checkDenoInstallation(settings: RosiSettings, persist: () => void
             label: "No, don't remind me",
             action: () => {
               settings.denoReminderDismissed = true;
-              persist();
+              void persist();
             },
           },
         ],
@@ -1781,7 +2003,18 @@ async function checkDenoInstallation(settings: RosiSettings, persist: () => void
                   message:
                     'Deno has been successfully installed!\nRestarting the app can help pick up the updated environment.',
                   buttons: [
-                    { label: 'Restart Now', primary: true, action: () => window.api.restartApp() },
+                    {
+                      label: 'Restart Now',
+                      primary: true,
+                      action: async () => {
+                        if (!(await flushBeforeRestart())) return;
+                        try {
+                          await window.api.restartApp();
+                        } catch (error) {
+                          showRestartFailure(error);
+                        }
+                      },
+                    },
                     { label: 'Later' },
                   ],
                   priority: true,
@@ -1811,7 +2044,7 @@ async function checkDenoInstallation(settings: RosiSettings, persist: () => void
             label: "No, don't remind me",
             action: () => {
               settings.denoReminderDismissed = true;
-              persist();
+              void persist();
             },
           },
         ],
@@ -1860,7 +2093,7 @@ function applyFlatUi(isFlat: boolean) {
 function launchSetupWizard(
   settings: RosiSettings,
   applyThemeFn: (preference: string) => void,
-  persistSettingsFn: (silent?: boolean, immediate?: boolean) => Promise<boolean> | void,
+  persistSettingsFn: (silent?: boolean, immediate?: boolean) => Promise<boolean>,
   onComplete: (outcome: WizardOutcome) => void
 ) {
   let currentStep = 0;
@@ -1876,8 +2109,9 @@ function launchSetupWizard(
 
   if (!overlay || !progressBar || !backBtn || !nextBtn || !dotsContainer || steps.length === 0) {
     settings.firstLaunch = false;
-    void persistSettingsFn();
-    onComplete({ skipped: true, denoReviewed: false });
+    void persistSettingsFn(false, true).then((saved) => {
+      if (saved) onComplete({ skipped: true, denoReviewed: false });
+    });
     return;
   }
   const TOTAL_STEPS = steps.length;
@@ -2219,10 +2453,11 @@ function launchSetupWizard(
     updateBackgroundAnimation(settings.animateBackground ?? true);
   }
 
-  function finalizeWizard(skipped: boolean) {
+  async function finalizeWizard(skipped: boolean): Promise<boolean> {
     if (!skipped) gatherSettings();
     settings.firstLaunch = false;
-    void persistSettingsFn(false, true);
+    const saved = await persistSettingsFn(false, true);
+    if (!saved) return false;
 
     const themeSelect = document.getElementById('themeSelect') as HTMLSelectElement | null;
     if (themeSelect) themeSelect.value = settings.theme || 'system';
@@ -2241,7 +2476,7 @@ function launchSetupWizard(
     const folderSummary = document.getElementById('downloadFolderSummary');
     if (folderSummary) renderFolderSummary(folderSummary, settings.downloadFolder);
 
-    onComplete({ skipped, denoReviewed: !skipped && denoReviewed });
+    return true;
   }
 
   nextBtn.addEventListener('click', () => {
@@ -2250,7 +2485,7 @@ function launchSetupWizard(
       currentStep++;
       updateUI();
     } else {
-      closeWizard(false);
+      void closeWizard(false);
     }
   });
 
@@ -2274,18 +2509,33 @@ function launchSetupWizard(
 
   let wizardSkipping = false;
   let wizardClosed = false;
+  let wizardSaving = false;
 
   async function skipWizard() {
     if (wizardSkipping || wizardClosed) return;
     wizardSkipping = true;
     if (skipBtn) skipBtn.disabled = true;
     await applyWizardDefaults();
-    closeWizard(true);
+    await closeWizard(true);
   }
   skipBtn?.addEventListener('click', () => void skipWizard());
 
-  function closeWizard(skipped = false) {
-    if (wizardClosed) return;
+  async function closeWizard(skipped = false) {
+    if (wizardClosed || wizardSaving) return;
+    wizardSaving = true;
+    const nextButton = nextBtn as HTMLButtonElement;
+    nextButton.disabled = true;
+    backBtnEl.disabled = true;
+    if (skipBtn) skipBtn.disabled = true;
+    const saved = await finalizeWizard(skipped);
+    if (!saved) {
+      wizardSaving = false;
+      wizardSkipping = false;
+      nextButton.disabled = false;
+      backBtnEl.disabled = false;
+      if (skipBtn) skipBtn.disabled = false;
+      return;
+    }
     wizardClosed = true;
     if (wizardTrapHandler) {
       overlayEl.removeEventListener('keydown', wizardTrapHandler);
@@ -2297,12 +2547,11 @@ function launchSetupWizard(
     }
     overlayEl.classList.remove('active');
     overlayEl.setAttribute('aria-hidden', 'true');
+    syncModalAccessibility();
     setMainContentInert(false);
-    if (wizardPreviousFocus instanceof HTMLElement) {
-      wizardPreviousFocus.focus();
-      wizardPreviousFocus = null;
-    }
-    finalizeWizard(skipped);
+    focusTopOverlayOr(wizardPreviousFocus);
+    wizardPreviousFocus = null;
+    onComplete({ skipped, denoReviewed: !skipped && denoReviewed });
   }
 
   wizardPreviousFocus = document.activeElement;
@@ -2310,6 +2559,7 @@ function launchSetupWizard(
   setMainContentInert(true);
 
   wizardTrapHandler = (e: KeyboardEvent) => {
+    if (getTopActiveOverlayId() !== 'setup-wizard') return;
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
@@ -2342,9 +2592,9 @@ function launchSetupWizard(
   overlayEl.addEventListener('keydown', wizardTrapHandler);
 
   wizardFocusinHandler = (e: FocusEvent) => {
-    if (!overlayEl.classList.contains('active')) return;
-    // Skip/confirm modals sit above the wizard; do not steal focus back.
-    if (isModalActive) return;
+    if (!overlayEl.classList.contains('active') || getTopActiveOverlayId() !== 'setup-wizard') {
+      return;
+    }
     const target = e.target;
     if (target instanceof Node && overlayEl.contains(target)) return;
     if (!focusFirstElement(overlayEl) && typeof overlayEl.focus === 'function') {
@@ -2355,15 +2605,62 @@ function launchSetupWizard(
 
   updateUI();
   overlayEl.classList.add('active');
+  syncModalAccessibility();
   requestAnimationFrame(() => {
+    if (getTopActiveOverlayId() !== 'setup-wizard') return;
     if (!focusFirstElement(overlayEl)) {
       nextBtnEl.focus();
     }
   });
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
+type PrepareForCloseHandler = (generation: number) => Promise<void>;
+
+let resolveRendererStartupReady!: () => void;
+const rendererStartupReady = new Promise<void>((resolve) => {
+  resolveRendererStartupReady = resolve;
+});
+window.__ROSI_RENDERER_STARTUP_READY__ = rendererStartupReady;
+
+let resolvePrepareForCloseHandler!: (handler: PrepareForCloseHandler) => void;
+let prepareForCloseHandlerIsSet = false;
+const prepareForCloseHandlerReady = new Promise<PrepareForCloseHandler>((resolve) => {
+  resolvePrepareForCloseHandler = resolve;
+});
+
+function setPrepareForCloseHandler(handler: PrepareForCloseHandler) {
+  if (prepareForCloseHandlerIsSet) return;
+  prepareForCloseHandlerIsSet = true;
+  resolvePrepareForCloseHandler(handler);
+}
+
+async function initializeRenderer() {
+  const ipcCleanupFunctions: Array<() => void> = [];
+  ipcCleanupFunctions.push(
+    window.api.onPrepareForClose(async (generation) => {
+      try {
+        const handler = await prepareForCloseHandlerReady;
+        await handler(generation);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        showModal({
+          title: 'ROSI Could Not Close Safely',
+          message: `ROSI could not confirm that settings and the download queue were saved. The app will remain open so you can retry.\n\n${detail}`,
+          buttons: [{ label: 'OK', primary: true }],
+          priority: true,
+        });
+      }
+    })
+  );
+  let settingsRevision = 0;
   let settings: RosiSettings;
+  let manualDownloadOperation = 0;
+  let manualDownloadSessionId: number | null = null;
+  let manualSessionIdentityReceived = false;
+  let manualDownloadStartPending = false;
+  const pendingManualCompletions = new Map<number, RosiDownloadCompletion>();
+  let downloadResultTimer: ReturnType<typeof setTimeout> | null = null;
+  let progressHideTimer: ReturnType<typeof setTimeout> | null = null;
   try {
     settings = (await window.api.getSettings()) as RosiSettings;
   } catch (error) {
@@ -2411,6 +2708,38 @@ document.addEventListener('DOMContentLoaded', async () => {
       buttons: [{ label: 'OK', primary: true }],
     });
   }
+  let reconcilingSettings = false;
+  const trackSettings = (value: RosiSettings): RosiSettings =>
+    new Proxy(value, {
+      set(target, property, next, receiver) {
+        const previous = Reflect.get(target, property, receiver);
+        const applied = Reflect.set(target, property, next, receiver);
+        if (applied && !reconcilingSettings && !Object.is(previous, next)) {
+          settingsRevision += 1;
+        }
+        return applied;
+      },
+      deleteProperty(target, property) {
+        const existed = Object.prototype.hasOwnProperty.call(target, property);
+        const applied = Reflect.deleteProperty(target, property);
+        if (applied && existed && !reconcilingSettings) settingsRevision += 1;
+        return applied;
+      },
+    });
+  const reconcileSettingsInPlace = (value: RosiSettings) => {
+    const current = settings as unknown as Record<string, unknown>;
+    const next = value as unknown as Record<string, unknown>;
+    reconcilingSettings = true;
+    try {
+      Object.keys(current).forEach((key) => {
+        if (!Object.prototype.hasOwnProperty.call(next, key)) delete current[key];
+      });
+      Object.assign(current, next);
+    } finally {
+      reconcilingSettings = false;
+    }
+  };
+  settings = trackSettings(settings);
   applyTheme(settings.theme ?? 'system');
 
   try {
@@ -2461,7 +2790,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (window.api.getChannel() !== 'msstore') {
     try {
-      setupAutoUpdater();
+      setupAutoUpdater(() => persistSettings(false, true));
     } catch (e) {
       logError('Failed to setup auto-updater', e);
     }
@@ -2483,54 +2812,123 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   let persistDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-  let persistGeneration = 0;
+  let settingsSaveInFlight = false;
+  let settingsSaveWaiters: Array<{
+    revision: number;
+    immediate: boolean;
+    silent: boolean;
+    resolve: (saved: boolean) => void;
+  }> = [];
+
+  function settleSettingsSaveWaiters(revision: number, saved: boolean, latestRevision: number) {
+    const settled: typeof settingsSaveWaiters = [];
+    const remaining: typeof settingsSaveWaiters = [];
+    settingsSaveWaiters.forEach((waiter) => {
+      if (waiter.revision > revision) {
+        remaining.push(waiter);
+      } else if (waiter.immediate && latestRevision > revision) {
+        // Lifecycle callers need the latest revision, even if their original
+        // snapshot succeeded while a newer edit was waiting behind it.
+        waiter.revision = latestRevision;
+        remaining.push(waiter);
+      } else {
+        settled.push(waiter);
+      }
+    });
+    settingsSaveWaiters = remaining;
+    settled.forEach((waiter) => waiter.resolve(saved));
+    return settled;
+  }
+
+  async function drainSettingsSaves() {
+    if (settingsSaveInFlight || settingsSaveWaiters.length === 0) return;
+    settingsSaveInFlight = true;
+    const snapshotRevision = settingsRevision;
+    const snapshot = JSON.parse(JSON.stringify(settings)) as RosiSettings;
+    let saved = false;
+    let errorMessage = 'Could not save settings due to an unexpected error.';
+
+    try {
+      const result = await window.api.saveSettings(
+        snapshot as unknown as Parameters<typeof window.api.saveSettings>[0]
+      );
+      if (result?.ok === true) {
+        saved = true;
+        // The backend may normalize values. Reconcile only if this immutable
+        // snapshot is still the newest renderer revision.
+        if (snapshotRevision === settingsRevision) {
+          reconcileSettingsInPlace(result.data as RosiSettings);
+        }
+      } else {
+        errorMessage = result?.error?.message || 'Could not save settings.';
+      }
+    } catch {
+      // Keep the latest renderer state available for a later retry.
+    }
+
+    const latestRevision = settingsRevision;
+    const settled = settleSettingsSaveWaiters(snapshotRevision, saved, latestRevision);
+    if (!saved && snapshotRevision === latestRevision && settled.some((waiter) => !waiter.silent)) {
+      showSettingsSaveError(`${errorMessage}\nChanges may not persist after restart.`);
+    }
+    settingsSaveInFlight = false;
+
+    // A save requested during this request either fired its debounce already,
+    // or explicitly asked for an immediate flush. Preserve debounce spacing
+    // for ordinary edits while draining immediate lifecycle callers now.
+    const mustContinue = settingsSaveWaiters.some((waiter) => waiter.immediate);
+    if (settingsSaveWaiters.length > 0 && (mustContinue || !persistDebounceTimer)) {
+      void drainSettingsSaves();
+    }
+  }
 
   async function persistSettings(silent = false, immediate = false): Promise<boolean> {
-    if (persistDebounceTimer) clearTimeout(persistDebounceTimer);
-    const executeSave = async (resolve: (value: boolean) => void) => {
-      const generation = ++persistGeneration;
-      try {
-        const result = await window.api.saveSettings(
-          settings as unknown as Parameters<typeof window.api.saveSettings>[0]
-        );
-        // A newer save started while this one was in flight; do not clobber
-        // live prefs (including presets) with the older snapshot.
-        if (generation !== persistGeneration) {
-          resolve(true);
-          return;
-        }
-        if (!result || result.ok !== true) {
-          if (!silent) {
-            const message = result?.error?.message || 'Could not save settings.';
-            showSettingsSaveError(`${message}\nChanges may not persist after restart.`);
-          }
-          resolve(false);
-          return;
-        }
-        settings = result.data as RosiSettings;
-        resolve(true);
-      } catch {
-        if (generation !== persistGeneration) {
-          resolve(true);
-          return;
-        }
-        if (!silent) {
-          showSettingsSaveError('Could not save settings due to an unexpected error.');
-        }
-        resolve(false);
-      }
-    };
-    return new Promise<boolean>((resolve) => {
-      if (immediate) {
-        persistDebounceTimer = null;
-        void executeSave(resolve);
-        return;
-      }
+    if (persistDebounceTimer) {
+      clearTimeout(persistDebounceTimer);
+      persistDebounceTimer = null;
+    }
+    const promise = new Promise<boolean>((resolve) => {
+      settingsSaveWaiters.push({
+        revision: settingsRevision,
+        immediate,
+        silent,
+        resolve,
+      });
+    });
+    if (immediate) {
+      void drainSettingsSaves();
+    } else {
       persistDebounceTimer = setTimeout(() => {
         persistDebounceTimer = null;
-        void executeSave(resolve);
+        void drainSettingsSaves();
       }, 300);
-    });
+    }
+    return promise;
+  }
+
+  setPrepareForCloseHandler(async (generation) => {
+    try {
+      const saved = await persistSettings(false, true);
+      if (!saved) return;
+      await window.api.notifySettingsFlushed(generation);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      showModal({
+        title: 'ROSI Could Not Close Safely',
+        message: `ROSI could not confirm that settings and the download queue were saved. The app will remain open so you can retry.\n\n${detail}`,
+        buttons: [{ label: 'OK', primary: true }],
+        priority: true,
+      });
+    }
+  });
+
+  async function restartAfterSettingsFlush() {
+    if (!(await persistSettings(false, true))) return;
+    try {
+      await window.api.restartApp();
+    } catch (error) {
+      showRestartFailure(error);
+    }
   }
 
   const byId = <T extends HTMLElement = HTMLElement>(id: string) =>
@@ -2772,7 +3170,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       } else if (settings.downloadMode === 'custom') {
         downloadOutputSummary.textContent = 'Pick exact video and audio formats below';
       } else {
-        downloadOutputSummary.textContent = 'One MP4 file that plays everywhere';
+        downloadOutputSummary.textContent =
+          'Prefer MP4 when available; otherwise use the best available format';
       }
     }
     // disable convert when audio-only is enabled
@@ -3022,6 +3421,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // for the same URL (blur, download completion, ...) must not invalidate it.
   let previewTargetUrl: string | null = null;
   let previewRequestToken = 0;
+  let activePreviewRequestToken: number | null = null;
+  let pendingPreviewUrl: string | null = null;
 
   function readPreviewCache(url: string): RosiVideoInfo | null {
     const cached = previewCache.get(url);
@@ -3072,6 +3473,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       previewDebounceTimer = null;
     }
     previewTargetUrl = null;
+    pendingPreviewUrl = null;
     previewRequestToken += 1;
     setPreviewButtonLabel('Preview');
   }
@@ -3166,8 +3568,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     return candidate;
   }
 
-  function readAdvancedFormatSelections(): { videoFormat?: string; audioFormat?: string } {
+  function readAdvancedFormatSelections(targetUrl?: string): {
+    videoFormat?: string;
+    audioFormat?: string;
+  } {
     if (!settings.advancedOptions) return {};
+    const url =
+      targetUrl ?? (document.getElementById('url') as HTMLInputElement | null)?.value.trim();
+    if (!url || formatSelectionsUrl !== url) return {};
     const videoSelect = document.getElementById('videoFormat') as HTMLSelectElement | null;
     const audioSelect = document.getElementById('audioFormat') as HTMLSelectElement | null;
     const videoFormat = videoSelect?.value.trim() || undefined;
@@ -3244,7 +3652,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   /** On-screen download options that must beat a selected preset's stored values. */
-  function buildOnScreenPresetOverrides(): Record<string, unknown> {
+  function buildOnScreenPresetOverrides(formatSelections?: {
+    videoFormat?: string;
+    audioFormat?: string;
+  }): Record<string, unknown> {
     const overrides: Record<string, unknown> = {
       profile: settings.downloadMode,
       bestQuality: settings.bestQuality,
@@ -3262,13 +3673,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       sponsorblockRemove: settings.sponsorblockRemove,
       audioOutputFormat: settings.audioFormat,
     };
-    const formats = readAdvancedFormatSelections();
+    const formats = formatSelections ?? readAdvancedFormatSelections();
     if (formats.videoFormat) overrides.videoFormat = formats.videoFormat;
     if (formats.audioFormat) overrides.audioFormat = formats.audioFormat;
     return overrides;
   }
 
   function applyPresetToSettings(preset: RosiDownloadPreset) {
+    invalidateFormatRequest();
+    clearAdvancedFormatSelections();
     applyDownloadProfile(preset.profile);
     if (typeof preset.bestQuality === 'boolean') settings.bestQuality = preset.bestQuality;
     if (typeof preset.audioOnly === 'boolean') settings.audioOnly = preset.audioOnly;
@@ -3292,6 +3705,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateUIFromSettings();
     applyFormatIdToSelect('videoFormat', preset.videoFormat);
     applyFormatIdToSelect('audioFormat', preset.audioFormatId);
+    if (preset.videoFormat || preset.audioFormatId) {
+      formatSelectionsUrl =
+        (document.getElementById('url') as HTMLInputElement | null)?.value.trim() || null;
+    }
     applyPlaylistSelectionToRadios(preset.playlist);
   }
 
@@ -3304,7 +3721,8 @@ document.addEventListener('DOMContentLoaded', async () => {
    * so convert/GPU/profile toggles cannot be silently overwritten.
    */
   function buildQueueRequestOverrides(
-    outputPath?: string
+    outputPath?: string,
+    formatSelections?: { videoFormat?: string; audioFormat?: string }
   ): { ok: false } | { ok: true; overrides?: Record<string, unknown> } {
     const scopeVisible = isPlaylistScopeVisible();
     const playlist = resolvePlaylistSelection();
@@ -3312,14 +3730,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const overrides: Record<string, unknown> = {};
     if (outputPath) overrides.outputPath = outputPath;
-    const formats = readAdvancedFormatSelections();
+    const formats = formatSelections ?? readAdvancedFormatSelections();
     if (formats.videoFormat) overrides.videoFormat = formats.videoFormat;
     if (formats.audioFormat) overrides.audioFormat = formats.audioFormat;
     const preset = getSelectedPreset();
     if (preset) {
       overrides.presetId = preset.id;
       overrides.presetName = preset.name;
-      Object.assign(overrides, buildOnScreenPresetOverrides());
+      Object.assign(overrides, buildOnScreenPresetOverrides(formats));
       if (scopeVisible && playlist) overrides.playlist = playlist;
     } else if (scopeVisible && playlist && playlist.mode !== 'current') {
       overrides.playlist = playlist;
@@ -3630,9 +4048,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!outputPath) return;
     request.outputPath = outputPath;
 
+    const operation = beginManualDownloadOperation();
     isDownloading = true;
     if (outputEl) outputEl.textContent = '';
     downloadAbort = () => {
+      if (operation !== manualDownloadOperation) return;
       isDownloading = false;
       setButtonLoading(downloadBtn, false);
       syncPrimaryActionState();
@@ -3644,8 +4064,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
     applyActiveDownloadProgressPhases(settings, 'Starting download...');
     try {
+      prepareManualDownloadStart(operation);
       const result = await window.api.downloadVideo(request);
+      if (operation !== manualDownloadOperation) return;
       if (!result || result.ok !== true) {
+        failManualDownloadStart(operation);
         isDownloading = false;
         setButtonLoading(downloadBtn, false);
         syncPrimaryActionState();
@@ -3653,8 +4076,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         showToast(result?.error?.message || 'Could not start that download again.', {
           type: 'error',
         });
+      } else {
+        receiveManualDownloadStart(result.data, operation);
       }
     } catch (error) {
+      if (operation !== manualDownloadOperation) return;
+      failManualDownloadStart(operation);
       logError('Failed to replay download', error);
       isDownloading = false;
       setButtonLoading(downloadBtn, false);
@@ -3666,6 +4093,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   let hasUrlValidationIntent = false;
   let lastPreviewUrl: string | null = null;
+  let lastFormatUrl: string | null = null;
   let pendingBatchUrls: string[] = [];
 
   function setDownloadButtonLabel(label: string) {
@@ -3684,6 +4112,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!hasInput || !hasPrimaryButton || !urlInput || !downloadBtn) return;
     const raw = urlInput.value || '';
     const trimmed = raw.trim();
+    if (trimmed !== lastFormatUrl) {
+      lastFormatUrl = trimmed;
+      invalidateFormatRequest();
+      clearAdvancedFormatSelections();
+    }
     const hasValue = trimmed.length > 0;
     const extracted = extractHttpUrls(raw);
     pendingBatchUrls = extracted.urls.length > 1 ? extracted.urls : [];
@@ -3759,6 +4192,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // awaited, and without the lock a second click could queue the batch twice.
     if (queueActionLocks > 0) return false;
     const endQueueAction = beginQueueAction();
+    const currentUrl =
+      (document.getElementById('url') as HTMLInputElement | null)?.value.trim() ?? '';
+    const formatSelections =
+      urls.length === 1 && urls[0]?.trim() === currentUrl
+        ? readAdvancedFormatSelections(currentUrl)
+        : {};
     try {
       const destination = await resolveQueueDestination();
       if (destination.cancelled) {
@@ -3774,7 +4213,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         showToast(message, { type: 'error' });
         return false;
       }
-      const built = buildQueueRequestOverrides(destination.outputPath);
+      const built = buildQueueRequestOverrides(destination.outputPath, formatSelections);
       if (!built.ok) {
         setQueueStatusMessage('Fix the playlist range before adding to the queue.');
         return false;
@@ -3910,15 +4349,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
     if (isFetchingPreview) {
-      if (auto) return;
+      if (auto) {
+        pendingPreviewUrl = url;
+        return;
+      }
       // Supersede the in-flight lookup so its cleanup cannot clear the loading
       // state we are about to set.
+      pendingPreviewUrl = null;
       window.api.cancelVideoInfo();
       previewAbort?.();
     }
     // Stale in-flight replies are ignored via this generation token.
     previewRequestToken += 1;
     const requestToken = previewRequestToken;
+    activePreviewRequestToken = requestToken;
     isFetchingPreview = true;
 
     const card = document.getElementById('preview-card');
@@ -3927,7 +4371,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     let wasCancelled = false;
     previewAbort = () => {
       wasCancelled = true;
+      if (activePreviewRequestToken !== requestToken) return;
+      activePreviewRequestToken = null;
       isFetchingPreview = false;
+      previewAbort = null;
       setButtonLoading(previewBtn, false);
     };
     setButtonLoading(
@@ -3935,6 +4382,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       true,
       () => {
         if (window.api.cancelVideoInfo) window.api.cancelVideoInfo();
+        pendingPreviewUrl = null;
         previewAbort?.();
         hideVideoPreview();
       },
@@ -3972,10 +4420,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         logError('Video preview failed', e);
       }
     } finally {
-      if (!wasCancelled) {
+      if (activePreviewRequestToken === requestToken) {
+        activePreviewRequestToken = null;
         isFetchingPreview = false;
+        previewAbort = null;
         setButtonLoading(previewBtn, false);
         restorePreviewButtonLabel();
+        const queuedUrl = pendingPreviewUrl;
+        pendingPreviewUrl = null;
+        if (queuedUrl && urlInput.value.trim() === queuedUrl) {
+          void runVideoPreview(true);
+        }
       }
     }
   }
@@ -4038,8 +4493,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             label: 'Clear',
             danger: true,
             action: () => {
-              void clearActivity().then(() => {
-                showToast('Download activity cleared.', { type: 'info' });
+              void clearActivity().then((cleared) => {
+                if (cleared) showToast('Download activity cleared.', { type: 'info' });
               });
             },
           },
@@ -4397,9 +4852,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (updateChannelSelect) {
     updateChannelSelect.addEventListener('change', (e) => {
+      const previousChannel = settings.updateChannel ?? 'auto';
       settings.updateChannel = (e.target as HTMLSelectElement)
         .value as RosiSettings['updateChannel'];
-      void persistSettings();
+      // Retire the old update identity before the async settings write can
+      // complete; the updater holds that save before its target recheck.
+      const save = persistSettings(false, true);
+      if (window.api.getChannel() !== 'msstore') {
+        window.api.notifyUpdaterChannelChanged?.(settings.updateChannel, save, previousChannel);
+      }
     });
   }
 
@@ -4413,10 +4874,23 @@ document.addEventListener('DOMContentLoaded', async () => {
           {
             label: '⟳ Reset & Restart',
             danger: true,
-            action: () => {
+            action: async () => {
+              if (!(await persistSettings(false, true))) return;
               localStorage.removeItem('rosi-flat-ui');
               localStorage.removeItem('rosi-theme');
-              window.api.resetSettings();
+              try {
+                await window.api.resetSettings();
+              } catch (error) {
+                localStorage.setItem('rosi-flat-ui', settings.flatUi ? 'true' : 'false');
+                if (settings.theme) localStorage.setItem('rosi-theme', settings.theme);
+                const detail = error instanceof Error ? error.message : String(error);
+                showModal({
+                  title: 'Reset Did Not Complete',
+                  message: `ROSI could not confirm durable state and complete the reset. Your settings were not reset, and the app remains open.\n\n${detail}`,
+                  buttons: [{ label: 'OK', primary: true }],
+                  priority: true,
+                });
+              }
             },
           },
         ],
@@ -4450,6 +4924,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             primary: true,
             action: async () => {
               try {
+                if (!(await persistSettings(false, true))) return;
                 const result = await window.api.importSettings();
                 if (result && result.ok) {
                   showToast('Settings imported successfully.', { type: 'success' });
@@ -4882,9 +5357,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // download button
   if (downloadBtn) {
     downloadBtn._originalClick = async function () {
+      let operation = -1;
       try {
         if (isDownloading) return;
 
+        operation = beginManualDownloadOperation();
         isDownloading = true;
         hasUrlValidationIntent = true;
         syncPrimaryActionState();
@@ -4892,6 +5369,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const urlInput = document.getElementById('url') as HTMLInputElement | null;
         const url = urlInput ? urlInput.value : null;
         if (!url || url.trim() === '') {
+          failManualDownloadStart(operation);
           isDownloading = false;
           syncPrimaryActionState();
           showToast('Please enter a video URL.', { type: 'warning' });
@@ -4901,6 +5379,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Multiple links go to the queue instead of the single-download path.
         const batch = extractHttpUrls(url);
         if (batch.urls.length > 1) {
+          failManualDownloadStart(operation);
           isDownloading = false;
           const added = await addUrlsToQueue(batch.urls, batch.rejected);
           if (added && urlInput) {
@@ -4914,6 +5393,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Validate URL format
         if (!isValidUrl(url.trim())) {
+          failManualDownloadStart(operation);
           isDownloading = false;
           syncPrimaryActionState();
           showToast('Please enter a valid URL starting with http:// or https://', {
@@ -4922,12 +5402,12 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
-        const videoSelect = document.getElementById('videoFormat') as HTMLSelectElement | null;
-        const audioSelect = document.getElementById('audioFormat') as HTMLSelectElement | null;
+        const formatSelections = readAdvancedFormatSelections(url.trim());
         if (
           settings.advancedOptions &&
-          (!videoSelect || !audioSelect || !videoSelect.value || !audioSelect.value)
+          (!formatSelections.videoFormat || !formatSelections.audioFormat)
         ) {
+          failManualDownloadStart(operation);
           isDownloading = false;
           syncPrimaryActionState();
           showToast('Please check resolutions and select video/audio formats first.', {
@@ -4943,6 +5423,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           try {
             savePath = await window.api.selectDownloadLocation();
           } catch (dialogError) {
+            failManualDownloadStart(operation);
             logError('Error opening save dialog', dialogError);
             isDownloading = false;
             syncPrimaryActionState();
@@ -4954,6 +5435,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         if (!savePath) {
+          failManualDownloadStart(operation);
           isDownloading = false;
           syncPrimaryActionState();
           if (outputEl) {
@@ -4966,6 +5448,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateUIFromSettings();
         const saved = await persistSettings(true, true);
         if (!saved) {
+          failManualDownloadStart(operation);
           isDownloading = false;
           syncPrimaryActionState();
           showToast('Could not save download settings. Please try again.', { type: 'error' });
@@ -4973,6 +5456,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         if (outputEl) outputEl.textContent = '';
         downloadAbort = () => {
+          if (operation !== manualDownloadOperation) return;
           isDownloading = false;
           setButtonLoading(downloadBtn, false);
           syncPrimaryActionState();
@@ -4983,7 +5467,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           hideProgressBar();
         });
 
-        const { videoFormat, audioFormat } = readAdvancedFormatSelections();
+        const { videoFormat, audioFormat } = formatSelections;
         const convertFormat = settings.convertEnabled
           ? convertFormatSelect?.value.trim() || undefined
           : undefined;
@@ -4995,6 +5479,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const scopeVisible = isPlaylistScopeVisible();
         const playlist = resolvePlaylistSelection();
         if (scopeVisible && !playlist) {
+          failManualDownloadStart(operation);
           isDownloading = false;
           setButtonLoading(downloadBtn, false);
           syncPrimaryActionState();
@@ -5002,6 +5487,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
         const activePreset = getSelectedPreset();
+        prepareManualDownloadStart(operation);
         const startResult = await window.api.downloadVideo({
           url: url.trim(),
           videoFormat,
@@ -5016,11 +5502,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             ? {
                 presetId: activePreset.id,
                 presetName: activePreset.name,
-                ...buildOnScreenPresetOverrides(),
+                ...buildOnScreenPresetOverrides(formatSelections),
               }
             : {}),
         });
+        if (operation !== manualDownloadOperation) return;
         if (!startResult || startResult.ok !== true) {
+          failManualDownloadStart(operation);
           isDownloading = false;
           setButtonLoading(downloadBtn, false);
           syncPrimaryActionState();
@@ -5029,8 +5517,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             startResult?.error?.message || 'Download request was rejected before starting.',
             { type: 'error' }
           );
+        } else {
+          receiveManualDownloadStart(startResult.data, operation);
         }
       } catch (downloadError) {
+        if (operation < 0 || operation !== manualDownloadOperation) return;
+        failManualDownloadStart(operation);
         logError('Unexpected error starting download', downloadError);
         isDownloading = false;
         setButtonLoading(downloadBtn, false);
@@ -5047,20 +5539,76 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (checkUpdateBtn) {
     checkUpdateBtn.onclick = checkForUpdates;
   }
-  const ipcCleanupFunctions: Array<() => void> = [];
 
   // After a download the button briefly offers the result ("Open File
   // Location" / "Download complete") with its own click handler.
-  let downloadResultTimer: ReturnType<typeof setTimeout> | null = null;
-
-  function showDownloadResult(ms: number) {
+  function beginManualDownloadOperation(): number {
+    manualDownloadOperation += 1;
+    manualDownloadSessionId = null;
+    manualSessionIdentityReceived = false;
+    manualDownloadStartPending = true;
+    pendingManualCompletions.clear();
     if (downloadResultTimer !== null) clearTimeout(downloadResultTimer);
-    downloadResultTimer = setTimeout(clearDownloadResult, ms);
+    if (progressHideTimer !== null) clearTimeout(progressHideTimer);
+    downloadResultTimer = null;
+    progressHideTimer = null;
+    lastDownloadedFilePath = null;
+    downloadAbort = null;
+    if (downloadBtn) downloadBtn.onclick = downloadBtn._originalClick ?? null;
+    return manualDownloadOperation;
+  }
+
+  function prepareManualDownloadStart(operation: number) {
+    if (operation !== manualDownloadOperation) return;
+    manualDownloadStartPending = true;
+    manualSessionIdentityReceived = false;
+  }
+
+  function receiveManualDownloadStart(
+    started: { started: boolean; sessionId?: number },
+    operation: number
+  ) {
+    if (operation !== manualDownloadOperation) return;
+    manualDownloadStartPending = false;
+    manualSessionIdentityReceived = true;
+    manualDownloadSessionId =
+      typeof started.sessionId === 'number' && Number.isSafeInteger(started.sessionId)
+        ? started.sessionId
+        : null;
+    const earlyCompletion =
+      manualDownloadSessionId === null
+        ? undefined
+        : pendingManualCompletions.get(manualDownloadSessionId);
+    pendingManualCompletions.clear();
+    if (earlyCompletion) showManualDownloadCompletion(earlyCompletion, operation);
+  }
+
+  function failManualDownloadStart(operation: number) {
+    if (operation !== manualDownloadOperation) return;
+    manualDownloadStartPending = false;
+    manualSessionIdentityReceived = true;
+    manualDownloadSessionId = null;
+    pendingManualCompletions.clear();
+  }
+
+  function showDownloadResult(ms: number, operation: number) {
+    if (operation !== manualDownloadOperation) return;
+    if (downloadResultTimer !== null) clearTimeout(downloadResultTimer);
+    downloadResultTimer = setTimeout(() => clearDownloadResult(operation), ms);
+  }
+
+  function scheduleProgressHide(operation: number) {
+    if (progressHideTimer !== null) clearTimeout(progressHideTimer);
+    progressHideTimer = setTimeout(() => {
+      if (operation !== manualDownloadOperation) return;
+      progressHideTimer = null;
+      hideProgressBar();
+    }, 2000);
   }
 
   /** Put the Download button back, click handler included. */
-  function clearDownloadResult() {
-    if (downloadResultTimer === null) return;
+  function clearDownloadResult(operation = manualDownloadOperation) {
+    if (operation !== manualDownloadOperation || downloadResultTimer === null) return;
     clearTimeout(downloadResultTimer);
     downloadResultTimer = null;
     lastDownloadedFilePath = null;
@@ -5068,12 +5616,118 @@ document.addEventListener('DOMContentLoaded', async () => {
     syncPrimaryActionState();
   }
 
+  function showManualDownloadCompletion(
+    completion: Pick<
+      RosiDownloadCompletion,
+      'outcome' | 'statusMessage' | 'outputPath' | 'outputPaths'
+    >,
+    operation: number
+  ) {
+    if (operation !== manualDownloadOperation) return;
+    if (!downloadBtn) return;
+    isDownloading = false;
+    manualDownloadStartPending = false;
+    downloadAbort = null;
+    setButtonLoading(downloadBtn, false);
+    syncPrimaryActionState();
+
+    const outputPaths = completion.outputPaths;
+    const outputPath =
+      completion.outputPath ??
+      (outputPaths && outputPaths.length > 0 ? outputPaths[outputPaths.length - 1] : null) ??
+      null;
+    const isSuccess = completion.outcome === 'success';
+    if (isSuccess) {
+      lastDownloadedFilePath = outputPath;
+      updateProgressBar(100, 'Complete!', '');
+      showProgressComplete();
+      if (settings.notifications) {
+        void window.api.showNotification({
+          title: 'Download Complete!',
+          body: outputPath
+            ? `Saved: ${outputPath.split(/[/\\]/).pop()}`
+            : 'Your download has finished.',
+          filePath: outputPath ?? undefined,
+        });
+      }
+
+      if (outputPath) {
+        setButtonIconLabel(downloadBtn, 'folder-open', 'Open File Location');
+        downloadBtn.disabled = false;
+        downloadBtn.onclick = () => {
+          void window.api.openFileLocation(outputPath);
+        };
+        showDownloadResult(8000, operation);
+      } else {
+        setButtonIconLabel(downloadBtn, 'check', 'Download complete');
+        downloadBtn.disabled = false;
+        showDownloadResult(2500, operation);
+      }
+    } else {
+      lastDownloadedFilePath = null;
+      downloadBtn.onclick = downloadBtn._originalClick ?? null;
+    }
+    scheduleProgressHide(operation);
+  }
+
+  function handleManualDownloadCompletion(completion: RosiDownloadCompletion) {
+    if (completion.owner !== 'manual') return;
+    if (manualDownloadStartPending) {
+      if (typeof completion.sessionId === 'number') {
+        if (pendingManualCompletions.size >= 4) {
+          const oldest = pendingManualCompletions.keys().next().value;
+          if (typeof oldest === 'number') pendingManualCompletions.delete(oldest);
+        }
+        pendingManualCompletions.set(completion.sessionId, completion);
+      }
+      return;
+    }
+    if (!manualSessionIdentityReceived) return;
+    if (
+      manualDownloadSessionId !== null
+        ? completion.sessionId !== manualDownloadSessionId
+        : completion.sessionId !== undefined && completion.sessionId !== null
+    ) {
+      return;
+    }
+    showManualDownloadCompletion(completion, manualDownloadOperation);
+  }
+
+  function handleLegacyManualCompletion(statusMessage: string) {
+    if (
+      manualDownloadStartPending ||
+      !manualSessionIdentityReceived ||
+      manualDownloadSessionId !== null ||
+      !isDownloading
+    ) {
+      return;
+    }
+    const normalizedStatus = String(statusMessage || '').toLowerCase();
+    const isCancelled = normalizedStatus.includes('cancel');
+    const isSuccess =
+      !isCancelled && (statusMessage.includes('✅') || normalizedStatus.includes('complete'));
+    showManualDownloadCompletion(
+      {
+        outcome: isSuccess ? 'success' : isCancelled ? 'cancelled' : 'failed',
+        statusMessage,
+        outputPath: isSuccess ? (lastDownloadedFilePath ?? undefined) : undefined,
+      },
+      manualDownloadOperation
+    );
+  }
+
   ipcCleanupFunctions.push(
     window.api.onProgress((message) => {
       if (!outputEl) return;
       appendConsoleOutput(outputEl, message);
 
-      if (message.includes('Identified file:') || message.includes('Successfully converted to')) {
+      if (
+        !manualDownloadStartPending &&
+        manualSessionIdentityReceived &&
+        manualDownloadSessionId === null &&
+        isDownloading &&
+        (message.includes('Identified file:') || message.includes('Successfully converted to'))
+      ) {
         const fileMatch = message.match(/(?:Identified file:|Successfully converted to)\s*(.+)$/);
         if (fileMatch && fileMatch[1]) {
           lastDownloadedFilePath = fileMatch[1].trim();
@@ -5084,6 +5738,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   ipcCleanupFunctions.push(
     window.api.onJobProgress((event) => {
+      if (
+        !event.queueItemId &&
+        (manualDownloadStartPending ||
+          !manualSessionIdentityReceived ||
+          (event.sessionId ?? null) !== manualDownloadSessionId)
+      ) {
+        return;
+      }
+      if (
+        event.queueItemId &&
+        isDownloading &&
+        manualDownloadSessionId !== null &&
+        event.sessionId !== manualDownloadSessionId
+      ) {
+        return;
+      }
       const container = document.getElementById('progress-container');
       if (container && !container.classList.contains('visible') && event.phase !== 'idle') {
         showProgressBar(event.status);
@@ -5121,62 +5791,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   ipcCleanupFunctions.push(
     window.api.onComplete((statusMessage) => {
-      if (downloadBtn) {
-        isDownloading = false;
-        setButtonLoading(downloadBtn, false);
-        syncPrimaryActionState();
-
-        const normalizedStatus = String(statusMessage || '').toLowerCase();
-        const isCancelled = normalizedStatus.includes('cancel');
-        const isSuccess =
-          !isCancelled && (statusMessage.includes('✅') || normalizedStatus.includes('complete'));
-
-        if (isSuccess) {
-          updateProgressBar(100, 'Complete!', '');
-          showProgressComplete();
-
-          if (settings.notifications) {
-            void window.api.showNotification({
-              title: 'Download Complete!',
-              body: lastDownloadedFilePath
-                ? `Saved: ${lastDownloadedFilePath.split(/[/\\]/).pop()}`
-                : 'Your download has finished.',
-              filePath: lastDownloadedFilePath ?? undefined,
-            });
-          }
-        }
-
-        setTimeout(() => {
-          hideProgressBar();
-        }, 2000);
-
-        // Activity records now come from the main process via download-complete.
-        const restoreDefaultDownloadButton = () => {
-          setButtonLoading(downloadBtn, false);
-          syncPrimaryActionState();
-        };
-
-        if (isSuccess && lastDownloadedFilePath) {
-          const filePath = lastDownloadedFilePath;
-          setButtonIconLabel(downloadBtn, 'folder-open', 'Open File Location');
-          downloadBtn.disabled = false;
-          downloadBtn.onclick = () => {
-            void window.api.openFileLocation(filePath);
-          };
-          showDownloadResult(8000);
-        } else if (isSuccess) {
-          setButtonIconLabel(downloadBtn, 'check', 'Download complete');
-          downloadBtn.disabled = false;
-          showDownloadResult(2500);
-        } else {
-          restoreDefaultDownloadButton();
-          lastDownloadedFilePath = null;
-        }
-      }
       if (fetchFormatsBtn) setButtonLoading(fetchFormatsBtn, false);
-      if (outputEl) {
-        appendConsoleOutput(outputEl, statusMessage);
-      }
+      if (outputEl) appendConsoleOutput(outputEl, statusMessage);
+      handleLegacyManualCompletion(statusMessage);
+    })
+  );
+
+  ipcCleanupFunctions.push(
+    window.api.onDownloadComplete((completion) => {
+      handleManualDownloadCompletion(completion);
     })
   );
 
@@ -5196,7 +5819,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   ipcCleanupFunctions.push(
     window.api.onSettingsImported((importedSettings) => {
-      settings = importedSettings;
+      const previousChannel = settings.updateChannel ?? 'auto';
+      settingsRevision += 1;
+      reconcileSettingsInPlace(importedSettings);
+      if (window.api.getChannel() !== 'msstore') {
+        window.api.notifyUpdaterChannelChanged?.(
+          settings.updateChannel ?? 'auto',
+          undefined,
+          previousChannel
+        );
+      }
       try {
         updateUIFromSettings();
         syncDockFromSettings();
@@ -5206,20 +5838,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       } catch (e) {
         logError('Failed to refresh UI after settings import', e);
       }
-    })
-  );
-
-  let closePreparationInProgress = false;
-  ipcCleanupFunctions.push(
-    window.api.onPrepareForClose(async () => {
-      if (closePreparationInProgress) {
-        return;
-      }
-      closePreparationInProgress = true;
-      try {
-        await persistSettings(true, true);
-      } catch {}
-      window.api.notifySettingsFlushed();
     })
   );
 
@@ -5261,12 +5879,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     launchSetupWizard(settings, applyTheme, persistSettings, (outcome) => {
       updateUIFromSettings();
       if (!outcome.denoReviewed) {
-        void checkDenoInstallation(settings, () => void persistSettings());
+        void checkDenoInstallation(
+          settings,
+          () => persistSettings(),
+          () => persistSettings(false, true)
+        );
       }
       void checkUpdatesOnStartup();
     });
   } else {
-    void checkDenoInstallation(settings, () => void persistSettings());
+    void checkDenoInstallation(
+      settings,
+      () => persistSettings(),
+      () => persistSettings(false, true)
+    );
     void checkUpdatesOnStartup();
     setTimeout(maybeShowSupportModal, 1500);
   }
@@ -5293,25 +5919,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     const licensesActive = licensesOverlay?.classList.contains('active');
 
     if (event.key === 'Escape') {
-      if (licensesActive) {
+      const topOverlayId = getTopActiveOverlayId();
+      if (topOverlayId === 'app-modal') {
+        const appModal = document.getElementById('app-modal');
+        if (appModal) hideModal(appModal, null);
+        return;
+      }
+      if (topOverlayId === 'licenses-overlay') {
         hideLicenses();
         return;
       }
-
+      if (topOverlayId === 'setup-wizard') return;
+      if (topOverlayId === 'sidebar') {
+        closeSidebar();
+        return;
+      }
       if (isPresetPopoverOpen()) {
         setPresetPopoverOpen(false);
-        return;
-      }
-
-      const appModal = document.getElementById('app-modal');
-      if (appModal && appModal.classList.contains('active')) {
-        hideModal(appModal, null);
-        return;
-      }
-
-      const sidebar = document.getElementById('sidebar');
-      if (sidebar && sidebar.classList.contains('open')) {
-        closeSidebar();
         return;
       }
     }
@@ -5327,7 +5951,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         message: 'Are you sure you want to restart ROSI?',
         buttons: [
           { label: 'Cancel' },
-          { label: 'Restart', primary: true, action: () => window.api.restartApp() },
+          { label: 'Restart', primary: true, action: () => void restartAfterSettingsFlush() },
         ],
       });
     }
@@ -5378,4 +6002,21 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (sidebar && !sidebar.classList.contains('open')) toggleSidebar();
     }
   });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  void initializeRenderer()
+    .catch((error: unknown) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      logError('Renderer startup failed', error);
+      setPrepareForCloseHandler(async () => {
+        showModal({
+          title: 'ROSI Could Not Close Safely',
+          message: `ROSI could not finish startup and will remain open.\n\n${detail}`,
+          buttons: [{ label: 'OK', primary: true }],
+          priority: true,
+        });
+      });
+    })
+    .finally(resolveRendererStartupReady);
 });

@@ -7,10 +7,13 @@
  *   REQUIRE_LINUX_AARCH64=1 npm run release:verify:draft
  */
 
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import {
@@ -40,6 +43,7 @@ const {
   assertReleaseTagName,
   isExpectedRelease,
 } = require("./release-draft-metadata.cjs");
+const { assertReleaseTagMatchesHead } = require("./release-git-tag.cjs");
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RETIRED_LINUX_PACKAGE_ASSET =
@@ -124,25 +128,234 @@ export function requiredDraftBetaManifestNames({
 export function requiredDraftChecksumNames({
   requireLinuxAarch64 = false,
 } = {}) {
-  const keys = [
-    "windows-x86_64",
-    "windows-aarch64",
-    "darwin-x86_64",
-    "darwin-aarch64",
-    "linux-x86_64",
-    "windows-beta-x86_64",
-    "windows-beta-aarch64",
-    "darwin-beta-x86_64",
-    "darwin-beta-aarch64",
-    "linux-beta-x86_64",
+  const manifestNames = [
+    ...requiredDraftStableManifestNames({ requireLinuxAarch64 }),
+    ...requiredDraftBetaManifestNames({ requireLinuxAarch64 }),
   ];
-  if (requireLinuxAarch64) {
-    keys.push("linux-aarch64", "linux-beta-aarch64");
+  const keys = new Set(
+    manifestNames.map((name) =>
+      name.replace(/^latest-/, "").replace(/\.json$/i, ""),
+    ),
+  );
+  return [...keys].sort().flatMap((key) => {
+    const checksumName = "SHA256SUMS-" + key + ".txt";
+    return [checksumName, checksumName + ".asc"];
+  });
+}
+
+function parseSha256Sums(checksumName, text) {
+  if (typeof text !== "string" || !text.trim()) {
+    throw new Error(`${checksumName} is empty.`);
   }
-  return keys.flatMap((key) => [
-    `SHA256SUMS-${key}.txt`,
-    `SHA256SUMS-${key}.txt.asc`,
-  ]);
+  const lines = text.replace(/\r\n/gu, "\n").split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  const entries = [];
+  const seen = new Set();
+  for (const [index, line] of lines.entries()) {
+    const match = line.match(/^([0-9a-f]{64})  (.+)$/iu);
+    if (!match) {
+      throw new Error(
+        `${checksumName}:${index + 1} is not a SHA-256 checksum entry.`,
+      );
+    }
+    const name = match[2];
+    if (
+      !name ||
+      name !== path.posix.basename(name) ||
+      name !== path.win32.basename(name) ||
+      /[\0\r\n]/u.test(name) ||
+      name === "." ||
+      name === ".."
+    ) {
+      throw new Error(`${checksumName}:${index + 1} has an unsafe asset name.`);
+    }
+    if (seen.has(name)) {
+      throw new Error(`${checksumName} repeats checksum entry ${name}.`);
+    }
+    seen.add(name);
+    entries.push({ name, digest: match[1].toLowerCase() });
+  }
+  if (entries.length === 0) throw new Error(`${checksumName} has no entries.`);
+  return entries;
+}
+
+export function validateSha256Sums({ checksumName, text, assets }) {
+  if (!(assets instanceof Map)) {
+    throw new Error("Released asset bytes must be supplied as a Map.");
+  }
+  const entries = parseSha256Sums(checksumName, text);
+  for (const { name, digest } of entries) {
+    const contents = assets.get(name);
+    if (
+      !Buffer.isBuffer(contents) &&
+      !(contents instanceof Uint8Array) &&
+      typeof contents !== "string"
+    ) {
+      throw new Error(
+        `${checksumName} references missing released asset ${name}.`,
+      );
+    }
+    const actual = sha256Contents(contents);
+    if (actual !== digest) {
+      throw new Error(
+        `${checksumName} has the wrong SHA-256 for ${name}: expected ${digest}, actual ${actual}.`,
+      );
+    }
+  }
+  return entries.map((entry) => entry.name);
+}
+
+function sha256Contents(contents) {
+  const hash = crypto.createHash("sha256");
+  if (Buffer.isBuffer(contents) || contents instanceof Uint8Array) {
+    hash.update(contents);
+    return hash.digest("hex");
+  }
+  const descriptor = fs.openSync(contents, "r");
+  const chunk = Buffer.allocUnsafe(1024 * 1024);
+  try {
+    let bytesRead;
+    do {
+      bytesRead = fs.readSync(descriptor, chunk, 0, chunk.length, null);
+      if (bytesRead > 0) hash.update(chunk.subarray(0, bytesRead));
+    } while (bytesRead > 0);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  return hash.digest("hex");
+}
+
+function keyIdentifierMatches(identifier, keyId) {
+  const normalized = String(identifier || "").toUpperCase();
+  return normalized === keyId || normalized.endsWith(keyId);
+}
+
+export function resolveExpectedGpgSigner({
+  keyId = process.env.GPG_KEY_ID,
+  spawn = spawnSync,
+} = {}) {
+  const normalizedKeyId = String(keyId || "")
+    .trim()
+    .replace(/^0X/iu, "")
+    .toUpperCase();
+  if (
+    !/^(?:[0-9A-F]{8,16}|[0-9A-F]{40}|[0-9A-F]{64})$/u.test(normalizedKeyId)
+  ) {
+    throw new Error(
+      "GPG_KEY_ID must identify the trusted release signer; verification fails closed.",
+    );
+  }
+  const result = spawn(
+    "gpg",
+    [
+      "--batch",
+      "--with-colons",
+      "--fingerprint",
+      "--list-keys",
+      normalizedKeyId,
+    ],
+    { encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024 },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(
+      `GPG_KEY_ID ${normalizedKeyId} is not present in the trusted GPG keyring.`,
+    );
+  }
+  const matches = new Set();
+  let primaryKeyId = "";
+  let primaryFingerprint = "";
+  let currentRecord = "";
+  let selected = false;
+  for (const line of String(result.stdout || "").split(/\r?\n/u)) {
+    const fields = line.split(":");
+    if (fields[0] === "pub") {
+      currentRecord = "pub";
+      primaryKeyId = fields[4] || "";
+      primaryFingerprint = "";
+      selected = keyIdentifierMatches(primaryKeyId, normalizedKeyId);
+    } else if (fields[0] === "sub") {
+      currentRecord = "sub";
+      selected = keyIdentifierMatches(fields[4], normalizedKeyId);
+    } else if (fields[0] === "fpr") {
+      const fingerprint = String(fields[9] || "").toUpperCase();
+      if (!/^(?:[0-9A-F]{40}|[0-9A-F]{64})$/u.test(fingerprint)) continue;
+      if (currentRecord === "pub") {
+        primaryFingerprint = fingerprint;
+        selected =
+          selected || keyIdentifierMatches(fingerprint, normalizedKeyId);
+      } else if (currentRecord === "sub") {
+        selected =
+          selected || keyIdentifierMatches(fingerprint, normalizedKeyId);
+      }
+      if (selected && primaryFingerprint) matches.add(primaryFingerprint);
+    }
+  }
+  if (matches.size !== 1) {
+    throw new Error(
+      matches.size === 0
+        ? `GPG_KEY_ID ${normalizedKeyId} did not resolve to a trusted primary fingerprint.`
+        : `GPG_KEY_ID ${normalizedKeyId} resolves to multiple primary fingerprints.`,
+    );
+  }
+  return [...matches][0];
+}
+
+export function assertGpgValidSignature({ statusOutput, expectedFingerprint }) {
+  const expected = String(expectedFingerprint || "").toUpperCase();
+  if (!/^(?:[0-9A-F]{40}|[0-9A-F]{64})$/u.test(expected)) {
+    throw new Error(
+      "Expected trusted GPG signer fingerprint is missing or invalid.",
+    );
+  }
+  const signatures = String(statusOutput || "")
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith("[GNUPG:] VALIDSIG "));
+  if (signatures.length !== 1) {
+    throw new Error(
+      "GPG did not report exactly one cryptographically valid detached signature.",
+    );
+  }
+  const fields = signatures[0].split(/\s+/u).slice(2);
+  const signerFingerprint = String(fields[0] || "").toUpperCase();
+  const primaryFingerprint = String(
+    fields[9] || signerFingerprint,
+  ).toUpperCase();
+  if (primaryFingerprint !== expected) {
+    throw new Error(
+      `Detached GPG signature belongs to ${primaryFingerprint}, not trusted signer ${expected}.`,
+    );
+  }
+}
+
+export function verifyGpgDetachedSignature({
+  signaturePath,
+  signedPath,
+  expectedFingerprint,
+  spawn = spawnSync,
+}) {
+  const result = spawn(
+    "gpg",
+    [
+      "--batch",
+      "--no-auto-key-retrieve",
+      "--status-fd=1",
+      "--verify",
+      signaturePath,
+      signedPath,
+    ],
+    { encoding: "utf8", timeout: 120_000, maxBuffer: 1024 * 1024 },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(
+      `GPG detached signature verification failed for ${path.basename(signedPath)}.`,
+    );
+  }
+  assertGpgValidSignature({
+    statusOutput: result.stdout,
+    expectedFingerprint,
+  });
 }
 
 export function requiredDraftAssetNames(options = {}) {
@@ -166,6 +379,7 @@ export function assertDraftReleaseShape({
   assetNames,
   version,
   headCommit,
+  tagCommit,
   requireLinuxAarch64 = false,
 }) {
   const tag = `v${version}`;
@@ -183,6 +397,15 @@ export function assertDraftReleaseShape({
   if (headCommit && release.target_commitish !== headCommit) {
     throw new Error(
       `Release ${tag} targets ${release.target_commitish || "an unknown commit"}, not HEAD ${headCommit}.`,
+    );
+  }
+  if (
+    headCommit &&
+    tagCommit &&
+    String(tagCommit).toLowerCase() !== String(headCommit).toLowerCase()
+  ) {
+    throw new Error(
+      `Release tag ${tag} resolves to commit ${tagCommit}, not HEAD ${headCommit}.`,
     );
   }
   const present = new Set(assetNames);
@@ -419,9 +642,154 @@ async function downloadDraftAsset(
       `Download ${asset.name} failed with HTTP ${response.status}.`,
     );
   }
-  fs.writeFileSync(destination, Buffer.from(await response.arrayBuffer()), {
-    flag: "wx",
+  if (!response.body) {
+    throw new Error(`Download ${asset.name} returned an empty response body.`);
+  }
+  await pipeline(
+    Readable.fromWeb(response.body),
+    fs.createWriteStream(destination, { flags: "wx" }),
+  );
+  if (fs.statSync(destination).size === 0) {
+    throw new Error(`Download ${asset.name} returned an empty file.`);
+  }
+}
+
+async function verifyDraftGpgAndChecksums({
+  repoOwner,
+  repoName,
+  listedAssets,
+  requireLinuxAarch64 = false,
+}) {
+  const expectedFingerprint = resolveExpectedGpgSigner({
+    keyId: process.env.GPG_KEY_ID,
   });
+  const assetsByName = new Map();
+  for (const asset of listedAssets) {
+    if (!asset || typeof asset.name !== "string") continue;
+    if (assetsByName.has(asset.name)) {
+      throw new Error(`Draft contains duplicate asset name ${asset.name}.`);
+    }
+    assetsByName.set(asset.name, asset);
+  }
+  const installers = requiredDraftInstallerNames({ requireLinuxAarch64 });
+  const requiredChecksumNames = requiredDraftChecksumNames({
+    requireLinuxAarch64,
+  })
+    .filter((name) => name.endsWith(".txt"))
+    .sort();
+  const checksumNames = listedAssets
+    .map((asset) => asset?.name)
+    .filter(
+      (name) =>
+        typeof name === "string" &&
+        /^SHA256SUMS(?:-[a-z0-9_-]+)?\.txt$/i.test(name),
+    )
+    .sort();
+  const missingChecksums = requiredChecksumNames.filter(
+    (name) => !assetsByName.has(name),
+  );
+  if (missingChecksums.length > 0) {
+    throw new Error(
+      "Draft is missing required SHA256SUMS asset(s): " +
+        missingChecksums.join(", ") +
+        ".",
+    );
+  }
+  const expectedSignatureNames = [
+    ...requiredDraftSidecarNames(installers).filter((name) =>
+      name.endsWith(".asc"),
+    ),
+    ...checksumNames.map((name) => `${name}.asc`),
+  ];
+  const signatureNames = listedAssets
+    .map((asset) => asset?.name)
+    .filter((name) => typeof name === "string" && name.endsWith(".asc"));
+  const missingSignatures = expectedSignatureNames.filter(
+    (name) => !assetsByName.has(name),
+  );
+  if (missingSignatures.length > 0) {
+    throw new Error(
+      `Draft is missing GPG signature asset(s): ${missingSignatures.join(", ")}.`,
+    );
+  }
+
+  const token = githubAuthToken();
+  if (!token)
+    throw new Error("gh returned an empty GitHub authentication token.");
+  const temporaryDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "rosi-draft-gpg-verify-"),
+  );
+  try {
+    const downloaded = new Map();
+    const downloadByName = async (name) => {
+      if (downloaded.has(name)) return downloaded.get(name);
+      if (
+        typeof name !== "string" ||
+        name !== path.posix.basename(name) ||
+        name !== path.win32.basename(name) ||
+        /[\\/:\0]/u.test(name) ||
+        name === "." ||
+        name === ".."
+      ) {
+        throw new Error(
+          `Draft references an unsafe asset name ${JSON.stringify(name)}.`,
+        );
+      }
+      const asset = assetsByName.get(name);
+      if (!asset)
+        throw new Error(`Draft checksum references missing asset ${name}.`);
+      const destination = path.join(temporaryDirectory, name);
+      await downloadDraftAsset(repoOwner, repoName, asset, destination, token);
+      downloaded.set(name, destination);
+      return destination;
+    };
+
+    for (const name of checksumNames) await downloadByName(name);
+    for (const name of checksumNames) {
+      const text = fs.readFileSync(downloaded.get(name), "utf8");
+      const entries = parseSha256Sums(name, text);
+      for (const { name: payloadName } of entries) {
+        await downloadByName(payloadName);
+      }
+    }
+
+    const verifiedAssets = new Map(
+      [...downloaded].map(([name, filePath]) => [name, filePath]),
+    );
+    const covered = new Set();
+    for (const name of checksumNames) {
+      const listed = validateSha256Sums({
+        checksumName: name,
+        text: fs.readFileSync(downloaded.get(name), "utf8"),
+        assets: verifiedAssets,
+      });
+      for (const payloadName of listed) covered.add(payloadName);
+    }
+    const requiredPayloadNames = [
+      ...installers,
+      ...requiredDraftStableManifestNames({ requireLinuxAarch64 }),
+      ...requiredDraftBetaManifestNames({ requireLinuxAarch64 }),
+    ];
+    const unhashed = requiredPayloadNames.filter((name) => !covered.has(name));
+    if (unhashed.length > 0) {
+      throw new Error(
+        `Required draft assets are absent from every SHA256SUMS file: ${unhashed.join(", ")}.`,
+      );
+    }
+
+    for (const signatureName of signatureNames) {
+      const signedName = signatureName.slice(0, -4);
+      const signaturePath = await downloadByName(signatureName);
+      const signedPath = await downloadByName(signedName);
+      verifyGpgDetachedSignature({
+        signaturePath,
+        signedPath,
+        expectedFingerprint,
+      });
+    }
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
 }
 
 async function verifyDraftUpdaterArtifacts({
@@ -521,6 +889,15 @@ async function main() {
   assertGitHubCliAuthenticated();
   const headCommit = currentHeadCommit();
   const release = await loadDraftRelease(repoOwner, repoName, tag);
+  const tagCommit = assertReleaseTagMatchesHead({
+    owner: repoOwner,
+    repo: repoName,
+    tag,
+    headCommit,
+    api: githubApi,
+    // GitHub draft releases may not create the tag ref until publication.
+    allowMissing: true,
+  });
   const listedAssets = await listDraftReleaseAssets(
     repoOwner,
     repoName,
@@ -532,6 +909,7 @@ async function main() {
     assetNames: assets,
     version,
     headCommit,
+    tagCommit,
     requireLinuxAarch64,
   });
   const manifestAssets = listedAssets.filter((asset) =>
@@ -576,26 +954,30 @@ async function main() {
     );
     validateLegacyFeed({ name, text: legacyFeed[name], sourceTag });
   }
-  if (process.argv.includes("--verify-artifacts")) {
-    const source = assertLegacySourceRelease(
-      githubApi(
-        "GET",
-        `/repos/${repoOwner}/${repoName}/releases/tags/${sourceTag}`,
-      ),
-      sourceTag,
-    );
-    assertLegacyFeedAssets({
-      feed: legacyFeed,
-      sourceTag,
-      assets: source.assets,
-    });
-    await verifyDraftUpdaterArtifacts({
-      repoOwner,
-      repoName,
-      listedAssets,
-      manifests,
-    });
-  }
+  const source = assertLegacySourceRelease(
+    githubApi(
+      "GET",
+      `/repos/${repoOwner}/${repoName}/releases/tags/${sourceTag}`,
+    ),
+    sourceTag,
+  );
+  assertLegacyFeedAssets({
+    feed: legacyFeed,
+    sourceTag,
+    assets: source.assets,
+  });
+  await verifyDraftUpdaterArtifacts({
+    repoOwner,
+    repoName,
+    listedAssets,
+    manifests,
+  });
+  await verifyDraftGpgAndChecksums({
+    repoOwner,
+    repoName,
+    listedAssets,
+    requireLinuxAarch64,
+  });
   console.log(
     `verify-draft: ok (${tag}, draft, HEAD ${headCommit.slice(0, 12)}, ${assets.length} assets, prerelease=${isPrereleaseVersion(version)}, ROSI 4 feed -> ${sourceTag})`,
   );

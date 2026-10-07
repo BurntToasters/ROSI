@@ -134,16 +134,33 @@ fn parse_web_url(value: &str) -> Option<url::Url> {
     matches!(url.scheme(), "http" | "https").then_some(url)
 }
 
-pub fn is_safe_http_url(value: &str) -> bool {
+/// Checks stable URL syntax and literal-host policy without consulting DNS.
+/// Persistence and metadata parsing use this so temporary resolver failures
+/// cannot erase user data or unparse otherwise valid extractor output.
+pub fn is_syntactically_safe_http_url(value: &str) -> bool {
     let Some(url) = parse_web_url(value) else {
         return false;
     };
-    match url.host() {
-        Some(host) => e2e_allows_loopback(&host) || !is_private_or_local_host(&host),
-        None => false,
+    if !url.username().is_empty() || url.password().is_some() {
+        return false;
     }
+    let Some(host) = url.host() else {
+        return false;
+    };
+    e2e_allows_loopback(&host) || !is_private_or_local_host(&host)
 }
 
+/// Accepts a syntactically safe internal HTTP(S) URL. DNS is deliberately
+/// deferred until a cancellable operation is reserved and the pinned proxy is
+/// ready to connect to the exact vetted address set.
+pub fn is_safe_http_url(value: &str) -> bool {
+    is_syntactically_safe_http_url(value)
+}
+
+/// Validates DNS answers immediately before handing a URL to the system
+/// browser/opener. ROSI cannot control DNS resolution or redirects performed
+/// after the external application receives the URL; internal preview, formats,
+/// and downloads use the pinned `network_security` proxy instead.
 pub fn is_safe_external_url(value: &str) -> bool {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -154,16 +171,18 @@ pub fn is_safe_external_url(value: &str) -> bool {
     };
     match url.scheme() {
         "mailto" | "ms-windows-store" => true,
-        "http" | "https" => url
-            .host()
-            .is_some_and(|host| !is_private_or_local_host(&host)),
+        "http" | "https" => {
+            url.host()
+                .is_some_and(|host| !is_private_or_local_host(&host))
+                && crate::network_security::is_public_http_destination(trimmed, false)
+        }
         _ => false,
     }
 }
 
 /// Canonical queue URL: a safe http(s) URL without its fragment.
 pub fn normalize_queue_url(value: &str) -> Option<String> {
-    if !is_safe_http_url(value) {
+    if !is_syntactically_safe_http_url(value) {
         return None;
     }
     let mut url = url::Url::parse(value.trim()).ok()?;
@@ -531,7 +550,7 @@ fn validate_preset_list(value: &Value) -> Result<Vec<DownloadPreset>, IpcError> 
                 None | Some(Value::Null) => {}
                 Some(Value::Bool(value)) => set_preset_bool(&mut preset, key, *value),
                 Some(_) => {
-                    return Err(validation_error(format!("Preset {key} must be a boolean.")))
+                    return Err(validation_error(format!("Preset {key} must be a boolean.")));
                 }
             }
         }
@@ -631,12 +650,12 @@ const REQUEST_BOOLEAN_FIELDS: &[&str] = &[
 pub fn validate_download_request(value: &Value) -> Result<DownloadRequestOptions, IpcError> {
     let object = as_object(value, "Download payload must be an object.")?;
     let url = match object.get("url").and_then(Value::as_str) {
-        Some(url) if is_safe_http_url(url) => url.trim().to_string(),
+        Some(url) if is_syntactically_safe_http_url(url) => url.trim().to_string(),
         _ => {
             return Err(IpcError::new(
                 INVALID_URL,
                 "Download URL must be a valid http/https URL.",
-            ))
+            ));
         }
     };
     let output_path = match object.get("outputPath").and_then(Value::as_str) {
@@ -644,7 +663,7 @@ pub fn validate_download_request(value: &Value) -> Result<DownloadRequestOptions
         _ => {
             return Err(path_error(
                 "Download outputPath must be a non-empty string path.",
-            ))
+            ));
         }
     };
     let ffmpeg_path = validate_ffmpeg_path_value(
@@ -827,8 +846,8 @@ pub fn validate_settings_patch(value: &Value) -> Result<Map<String, Value>, IpcE
                 }
                 _ => {
                     return Err(validation_error(format!(
-                    "settingsVersion must be an integer between 1 and {CURRENT_SETTINGS_VERSION}."
-                )))
+                        "settingsVersion must be an integer between 1 and {CURRENT_SETTINGS_VERSION}."
+                    )));
                 }
             },
             "downloadPresets" => {
@@ -877,9 +896,11 @@ pub fn validate_settings_patch(value: &Value) -> Result<Map<String, Value>, IpcE
                 Some(langs) if langs.len() <= 256 && is_subtitle_langs(langs) => {
                     Value::String(langs.to_string())
                 }
-                _ => return Err(validation_error(
-                    "subtitleLangs must be a comma-separated list of language codes (e.g. en,es).",
-                )),
+                _ => {
+                    return Err(validation_error(
+                        "subtitleLangs must be a comma-separated list of language codes (e.g. en,es).",
+                    ));
+                }
             },
             "browserChoice" => {
                 let Some(choice) = raw.as_str() else {
@@ -932,7 +953,7 @@ pub fn validate_notification(value: &Value) -> Result<NotificationRequest, IpcEr
         _ => {
             return Err(validation_error(
                 "Notification title, body, and filePath must be strings when provided.",
-            ))
+            ));
         }
     };
     if title.is_some_and(|value| value.chars().count() > 256)

@@ -13,6 +13,15 @@ const REVIEWED_ADVISORIES = new Map([
   ["GHSA-7PQW-9J4J-H8Q3", "extract-zip"],
   ["GHSA-5C6J-R48X-RMVQ", "serialize-javascript"],
   ["GHSA-QJ8W-GFJ5-8C6V", "serialize-javascript"],
+  // GHSA-C475-QRG2-PJ4R is fixed through the get-uri-scoped basic-ftp 6.2.1
+  // override in package.json; this version is outside the affected range.
+  ["GHSA-VFJ7-8CJW-P6XM", "braces"],
+]);
+const REVIEWED_ADVISORY_RATIONALES = new Map([
+  [
+    "GHSA-VFJ7-8CJW-P6XM",
+    "The advisory affects braces <=3.0.3; npm reports no patched release. The affected node is node_modules/braces, reachable only through @wdio/mocha-framework > mocha > chokidar in this development-only toolchain. Exploitation requires a deeply nested brace pattern; this repository's suite uses fixed, reviewed spec paths and never derives globs from downloaded content or user input. Re-review by 2026-12-01 or sooner when a patched compatible release appears.",
+  ],
 ]);
 
 function advisoryId(via) {
@@ -174,7 +183,12 @@ function main() {
   }
   const details = [
     reviewed.length > 0
-      ? `reviewed ${reviewed.map(([id]) => id).join(", ")}`
+      ? `reviewed ${reviewed
+          .map(([id, name]) => {
+            const rationale = REVIEWED_ADVISORY_RATIONALES.get(id);
+            return rationale ? `${id} (${name}: ${rationale})` : id;
+          })
+          .join("; ")}`
       : null,
     unreviewed.length > 0
       ? `unreviewed ${unreviewed.map(([id]) => id).join(", ")}`
@@ -206,6 +220,7 @@ if (require.main === module) {
 module.exports = {
   REVIEW_EXPIRES,
   REVIEWED_ADVISORIES,
+  REVIEWED_ADVISORY_RATIONALES,
   advisoryId,
   collectAdvisories,
   evaluateAudit,

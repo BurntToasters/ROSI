@@ -17,6 +17,10 @@
   transition: opacity 0.2s ease;
 }
 
+#app-modal {
+  z-index: calc(var(--z-modal) + 1);
+}
+
 .modal-overlay.active {
   display: flex;
   opacity: 1;

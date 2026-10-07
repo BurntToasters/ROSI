@@ -2,9 +2,9 @@
 
 use crate::constants::*;
 use crate::ipc::{self, IpcResult, INTERNAL_ERROR, INVALID_URL, NOT_AVAILABLE, VALIDATION_ERROR};
-use crate::process_util::{TrackedError, TrackedSlot};
+use crate::process_util::{TrackedError, TrackedReservation, TrackedSlot};
 use crate::types::VideoInfo;
-use crate::validation::is_safe_http_url;
+use crate::validation::{is_safe_http_url, is_syntactically_safe_http_url};
 use serde_json::{Map, Value};
 
 static FORMATS: TrackedSlot = TrackedSlot::new();
@@ -26,7 +26,7 @@ fn pick_number(value: Option<&Value>) -> Option<f64> {
 fn pick_web_url(value: Option<&Value>) -> Option<String> {
     value
         .and_then(Value::as_str)
-        .filter(|url| is_safe_http_url(url))
+        .filter(|url| is_syntactically_safe_http_url(url))
         .map(str::to_string)
 }
 
@@ -93,8 +93,36 @@ fn resolve_playlist_mode(url: &str, requested: Option<&str>) -> &'static str {
     }
 }
 
+fn insert_common_args(
+    args: &mut Vec<String>,
+    settings: &crate::types::Settings,
+    guard: &crate::network_security::NetworkSecurityGuard,
+    ffmpeg_guard: &crate::ffmpeg_guard::FfmpegToolGuard,
+) {
+    let index = args
+        .iter()
+        .position(|argument| argument == "--")
+        .unwrap_or(args.len());
+    let mut common = crate::command_builders::build_ytdlp_runtime_args();
+    common.extend(crate::command_builders::build_browser_cookie_args(
+        settings.hook_browser,
+        &settings.browser_choice,
+    ));
+    common.extend(["--proxy".into(), guard.proxy_url().to_string()]);
+    common.extend([
+        "--ffmpeg-location".into(),
+        ffmpeg_guard.location().to_string_lossy().into_owned(),
+    ]);
+    args.splice(index..index, common);
+}
+
 fn ytdlp_command(args: Vec<String>) -> std::process::Command {
-    crate::process_util::command(crate::sidecars::ytdlp_path(), &args, &[], true)
+    let certificate = crate::command_builders::ytdlp_e2e_ca_path();
+    let extra_env = certificate
+        .as_deref()
+        .map(|certificate| vec![("SSL_CERT_FILE", certificate)])
+        .unwrap_or_default();
+    crate::process_util::command(crate::sidecars::ytdlp_path(), &args, &extra_env, true)
 }
 
 fn error_result<T: serde::Serialize>(message: String) -> IpcResult<T> {
@@ -105,27 +133,73 @@ fn error_result<T: serde::Serialize>(message: String) -> IpcResult<T> {
     }
 }
 
-fn fetch_formats(url: String) -> Result<String, String> {
+fn fetch_formats(url: String, reservation: TrackedReservation<'static>) -> Result<String, String> {
+    if reservation.is_cancelled() {
+        return Err("Format fetch cancelled.".into());
+    }
     let ytdlp = crate::sidecars::ytdlp_path();
+    if reservation.is_cancelled() {
+        return Err("Format fetch cancelled.".into());
+    }
     if !ytdlp.exists() {
         return Err(format!("yt-dlp binary not found at {}", ytdlp.display()));
     }
-    let command = ytdlp_command(vec!["-F".into(), "--".into(), url]);
-    match FORMATS.run(
+    let guard = crate::network_security::NetworkSecurityGuard::start_with_cancellation(
+        reservation.cancellation_flag(),
+    )
+    .map_err(|error| {
+        if reservation.is_cancelled() {
+            "Format fetch cancelled.".to_string()
+        } else {
+            error
+        }
+    })?;
+    if reservation.is_cancelled() {
+        return Err("Format fetch cancelled.".into());
+    }
+    let settings = crate::settings::load();
+    let ffmpeg_guard = crate::ffmpeg_guard::FfmpegToolGuard::create(Some(&settings.ffmpeg_path))
+        .map_err(|error| {
+            if reservation.is_cancelled() {
+                "Format fetch cancelled.".to_string()
+            } else {
+                error
+            }
+        })?;
+    if reservation.is_cancelled() {
+        return Err("Format fetch cancelled.".into());
+    }
+    let mut args = vec!["-F".into(), "--".into(), url];
+    insert_common_args(&mut args, &settings, &guard, &ffmpeg_guard);
+    let command = ytdlp_command(args);
+    match FORMATS.run_reserved_with(
+        reservation,
         command,
         FORMAT_FETCH_TIMEOUT,
         MAX_OUTPUT_BUFFER,
         MAX_ERROR_BUFFER,
+        |output| {
+            if output.code == Some(0) {
+                Ok(output
+                    .stdout
+                    .replace(guard.proxy_url(), "<ephemeral proxy credentials>"))
+            } else {
+                Err(format!(
+                    "yt-dlp exited with code {}.\nOutput:\n{}\nError:\n{}",
+                    output
+                        .code
+                        .map_or("null".to_string(), |code| code.to_string()),
+                    output
+                        .stdout
+                        .replace(guard.proxy_url(), "<ephemeral proxy credentials>"),
+                    output
+                        .stderr
+                        .replace(guard.proxy_url(), "<ephemeral proxy credentials>")
+                ))
+            }
+        },
     ) {
-        Ok(output) if output.code == Some(0) => Ok(output.stdout),
-        Ok(output) => Err(format!(
-            "yt-dlp exited with code {}.\nOutput:\n{}\nError:\n{}",
-            output
-                .code
-                .map_or("null".to_string(), |code| code.to_string()),
-            output.stdout,
-            output.stderr
-        )),
+        Ok(result) => result,
         Err(TrackedError::Cancelled) => Err("Format fetch cancelled.".into()),
         Err(TrackedError::TimedOut) => Err(
             "Format fetch timed out after 60 seconds. The server may be slow or unresponsive."
@@ -135,12 +209,48 @@ fn fetch_formats(url: String) -> Result<String, String> {
     }
 }
 
-fn fetch_video_info(url: String, playlist_mode: Option<String>) -> Result<VideoInfo, String> {
+fn fetch_video_info(
+    url: String,
+    playlist_mode: Option<String>,
+    reservation: TrackedReservation<'static>,
+) -> Result<VideoInfo, String> {
+    if reservation.is_cancelled() {
+        return Err("Video info request cancelled.".into());
+    }
     let ytdlp = crate::sidecars::ytdlp_path();
+    if reservation.is_cancelled() {
+        return Err("Video info request cancelled.".into());
+    }
     if !ytdlp.exists() {
         return Err(format!("yt-dlp binary not found at {}", ytdlp.display()));
     }
     let mode = resolve_playlist_mode(&url, playlist_mode.as_deref());
+    let cancellation = reservation.cancellation_flag();
+    let guard = crate::network_security::NetworkSecurityGuard::start_with_cancellation(
+        std::sync::Arc::clone(&cancellation),
+    )
+    .map_err(|error| {
+        if reservation.is_cancelled() {
+            "Video info request cancelled.".to_string()
+        } else {
+            error
+        }
+    })?;
+    if reservation.is_cancelled() {
+        return Err("Video info request cancelled.".into());
+    }
+    let settings = crate::settings::load();
+    let ffmpeg_guard = crate::ffmpeg_guard::FfmpegToolGuard::create(Some(&settings.ffmpeg_path))
+        .map_err(|error| {
+            if reservation.is_cancelled() {
+                "Video info request cancelled.".to_string()
+            } else {
+                error
+            }
+        })?;
+    if reservation.is_cancelled() {
+        return Err("Video info request cancelled.".into());
+    }
     let mut args = vec!["--dump-single-json".to_string()];
     if mode == "all" {
         args.extend([
@@ -158,23 +268,48 @@ fn fetch_video_info(url: String, playlist_mode: Option<String>) -> Result<VideoI
         "--".to_string(),
         url,
     ]);
-    match VIDEO_INFO.run(
+    insert_common_args(&mut args, &settings, &guard, &ffmpeg_guard);
+    match VIDEO_INFO.run_reserved_with(
+        reservation,
         ytdlp_command(args),
         FORMAT_FETCH_TIMEOUT,
         MAX_OUTPUT_BUFFER * 20,
         MAX_ERROR_BUFFER,
+        |output| {
+            if cancellation.load(std::sync::atomic::Ordering::Acquire) {
+                return Err("Video info request cancelled.".into());
+            }
+            if output.code != Some(0) {
+                return Err(format!(
+                    "yt-dlp exited with code {}.\n{}",
+                    output
+                        .code
+                        .map_or("null".to_string(), |code| code.to_string()),
+                    output
+                        .stderr
+                        .replace(guard.proxy_url(), "<ephemeral proxy credentials>")
+                ));
+            }
+            let mut info = parse_video_info(&output.stdout, PLAYLIST_PREVIEW_ENTRY_LIMIT)
+                .ok_or_else(|| "Could not parse video information.".to_string())?;
+            if let Some(thumbnail_url) = info.thumbnail.as_deref() {
+                // This metadata worker is itself a Tokio blocking task. Drive
+                // the async thumbnail client from a plain scoped thread so it
+                // does not nest another runtime on the worker. The shared
+                // guard still closes its proxy sockets when cancelled.
+                info.thumbnail = std::thread::scope(|scope| {
+                    scope
+                        .spawn(|| {
+                            crate::network_security::fetch_thumbnail_data_url(&guard, thumbnail_url)
+                        })
+                        .join()
+                        .unwrap_or_default()
+                });
+            }
+            Ok(info)
+        },
     ) {
-        Ok(output) if output.code == Some(0) => {
-            parse_video_info(&output.stdout, PLAYLIST_PREVIEW_ENTRY_LIMIT)
-                .ok_or_else(|| "Could not parse video information.".to_string())
-        }
-        Ok(output) => Err(format!(
-            "yt-dlp exited with code {}.\n{}",
-            output
-                .code
-                .map_or("null".to_string(), |code| code.to_string()),
-            output.stderr
-        )),
+        Ok(result) => result,
         Err(TrackedError::Cancelled) => Err("Video info request cancelled.".into()),
         Err(TrackedError::TimedOut) => {
             Err("Video info request timed out. The server may be slow or unresponsive.".into())
@@ -185,6 +320,7 @@ fn fetch_video_info(url: String, playlist_mode: Option<String>) -> Result<VideoI
 
 #[tauri::command]
 pub async fn get_formats(url: Value) -> IpcResult<String> {
+    let reservation = FORMATS.reserve();
     let Some(url) = url
         .as_str()
         .filter(|url| is_safe_http_url(url))
@@ -192,7 +328,7 @@ pub async fn get_formats(url: Value) -> IpcResult<String> {
     else {
         return ipc::err(INVALID_URL, "Invalid URL provided.");
     };
-    match tauri::async_runtime::spawn_blocking(move || fetch_formats(url)).await {
+    match tauri::async_runtime::spawn_blocking(move || fetch_formats(url, reservation)).await {
         Ok(Ok(formats)) => ipc::ok(formats),
         Ok(Err(message)) => error_result(message),
         Err(error) => ipc::err(INTERNAL_ERROR, error.to_string()),
@@ -206,6 +342,7 @@ pub fn cancel_formats() {
 
 #[tauri::command]
 pub async fn get_video_info(url: Value, playlist_mode: Option<Value>) -> IpcResult<VideoInfo> {
+    let reservation = VIDEO_INFO.reserve();
     let Some(url) = url
         .as_str()
         .filter(|url| is_safe_http_url(url))
@@ -223,7 +360,11 @@ pub async fn get_video_info(url: Value, playlist_mode: Option<Value>) -> IpcResu
             )
         }
     };
-    match tauri::async_runtime::spawn_blocking(move || fetch_video_info(url, playlist_mode)).await {
+    match tauri::async_runtime::spawn_blocking(move || {
+        fetch_video_info(url, playlist_mode, reservation)
+    })
+    .await
+    {
         Ok(Ok(info)) => ipc::ok(info),
         Ok(Err(message)) => error_result(message),
         Err(error) => ipc::err(INTERNAL_ERROR, error.to_string()),

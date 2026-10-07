@@ -403,6 +403,7 @@ function main({
   skipE2e = false,
 } = {}) {
   // A failed or interrupted run must invalidate any earlier release proof.
+  const gateStartedAt = Date.now();
   clearProof(root);
   const results = createInitialResults();
   const npm = getNpmCommand();
@@ -540,15 +541,17 @@ function main({
 
   const exitCode = printSummary(results);
   if (exitCode === 0) {
-    const qualityGate = recordProof(root);
+    const qualityGate = recordProof(root, { skipE2e, gateStartedAt });
     if (qualityGate.recorded) {
-      console.log("Release quality-gate proof recorded for this clean commit.");
+      console.log(
+        `Release quality-gate proof recorded (scope: ${skipE2e ? "build-vm-partial with hosted ci-gate" : "full local E2E"}).`,
+      );
     } else {
       console.error(
-        `${colors.red}Release quality-gate proof NOT recorded because the working tree is dirty. Commit generated files (e.g. run.rosie.rosi.metainfo.xml from workspace:bootstrap) and re-run test:all before any release step.${colors.reset}`,
+        `${colors.red}Release quality-gate proof NOT recorded. Resolve the reported issue and re-run test:all before any release step.${colors.reset}`,
       );
       if (qualityGate.dirtyFiles) {
-        console.log("Dirty files:");
+        console.log("Proof rejection reason:");
         console.log(qualityGate.dirtyFiles);
       }
       if (requireCleanProof) return 1;

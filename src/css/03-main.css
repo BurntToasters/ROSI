@@ -348,8 +348,8 @@
   --btn-bg-hover: var(--surface-3);
   --btn-border: var(--border-default);
   --btn-border-hover: var(--border-default);
-  --btn-fg: var(--text-muted);
-  --btn-fg-hover: var(--text-muted);
+  --btn-fg: var(--text-secondary);
+  --btn-fg-hover: var(--text-secondary);
   cursor: not-allowed;
   box-shadow: none;
 }

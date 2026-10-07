@@ -1,6 +1,6 @@
 // Main window entry. Order matters: the bridge must define window.api before
 // the renderer modules and engine evaluate.
-import './tauri-bridge';
+import { waitForPrepareForCloseListener } from './tauri-bridge';
 import './modules/icons';
 import './modules/ui';
 import './modules/downloads';
@@ -23,13 +23,16 @@ function hideStoreManagedUpdateControls(): void {
 document.addEventListener('DOMContentLoaded', hideStoreManagedUpdateControls);
 
 window.addEventListener('load', () => {
-  void installE2eHookIfEnabled()
-    .catch((error: unknown) => {
+  void (async () => {
+    await window.__ROSI_RENDERER_STARTUP_READY__;
+    await waitForPrepareForCloseListener();
+    try {
+      await installE2eHookIfEnabled();
+    } catch (error) {
       console.error('[rosi] E2E hook failed', error);
-    })
-    .finally(() => {
-      invoke('mark_main_window_ready').catch((error: unknown) => {
-        console.error('[rosi] mark_main_window_ready failed', error);
-      });
-    });
+    }
+    await invoke('mark_main_window_ready');
+  })().catch((error: unknown) => {
+    console.error('[rosi] main renderer readiness failed', error);
+  });
 });

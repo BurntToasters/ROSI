@@ -5,13 +5,19 @@
 use crate::app_state::{MAIN_WINDOW, SPLASH_WINDOW};
 use crate::constants::{SETTINGS_FLUSH_TIMEOUT, SPLASH_FADE_DELAY};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 pub static MAIN_READY: AtomicBool = AtomicBool::new(false);
 static CLOSE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static CLOSE_CONFIRMING: AtomicBool = AtomicBool::new(false);
+static CLOSE_ACKNOWLEDGED: AtomicBool = AtomicBool::new(false);
 static CLOSE_GENERATION: AtomicU64 = AtomicU64::new(0);
+// Native dialogs are asynchronous. Keep one timeout warning visible even if
+// the user retries close repeatedly while the previous warning is open.
+static CLOSE_TIMEOUT_DIALOG_VISIBLE: AtomicBool = AtomicBool::new(false);
+static CLOSE_STATE_LOCK: Mutex<()> = Mutex::new(());
 pub static APP_QUITTING: AtomicBool = AtomicBool::new(false);
 
 pub fn create_splash(app: &AppHandle) {
@@ -244,24 +250,150 @@ pub fn mark_main_window_ready(app: AppHandle, window: WebviewWindow) {
     });
 }
 
-fn destroy_main(app: &AppHandle) {
-    CLOSE_IN_PROGRESS.store(false, Ordering::SeqCst);
-    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-        let _ = window.destroy();
+fn destroy_main(app: &AppHandle) -> Result<(), String> {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
+        cancel_close();
+        return Err("The main window was unavailable after state flush.".into());
+    };
+    if let Err(error) = window.destroy() {
+        cancel_close();
+        return Err(format!("Could not close the main window: {error}"));
     }
+    Ok(())
+}
+
+fn cancel_close() {
+    let _state = CLOSE_STATE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    cancel_close_locked();
+}
+
+fn cancel_close_locked() {
+    CLOSE_IN_PROGRESS.store(false, Ordering::SeqCst);
+    CLOSE_CONFIRMING.store(false, Ordering::SeqCst);
+    CLOSE_ACKNOWLEDGED.store(false, Ordering::SeqCst);
+    CLOSE_GENERATION.fetch_add(1, Ordering::SeqCst);
+    APP_QUITTING.store(false, Ordering::SeqCst);
+    crate::logging::warn("Close cancelled because durable state could not be confirmed.");
+}
+
+fn cancel_close_generation(generation: u64) -> bool {
+    let _state = CLOSE_STATE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if CLOSE_GENERATION.load(Ordering::SeqCst) != generation
+        || !CLOSE_IN_PROGRESS.load(Ordering::SeqCst)
+    {
+        return false;
+    }
+    cancel_close_locked();
+    true
+}
+
+fn expire_unacknowledged_close_generation(generation: u64) -> bool {
+    let _state = CLOSE_STATE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if CLOSE_GENERATION.load(Ordering::SeqCst) != generation
+        || !CLOSE_IN_PROGRESS.load(Ordering::SeqCst)
+        || CLOSE_ACKNOWLEDGED.load(Ordering::SeqCst)
+    {
+        return false;
+    }
+    cancel_close_locked();
+    true
+}
+
+fn acknowledge_close_generation(generation: u64) -> bool {
+    let _state = CLOSE_STATE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if CLOSE_GENERATION.load(Ordering::SeqCst) != generation
+        || !CLOSE_IN_PROGRESS.load(Ordering::SeqCst)
+    {
+        return false;
+    }
+    CLOSE_ACKNOWLEDGED.store(true, Ordering::SeqCst);
+    true
+}
+
+#[cfg(feature = "e2e")]
+#[tauri::command]
+pub fn e2e_cancel_close_request(window: WebviewWindow, generation: u64) -> Result<(), String> {
+    if window.label() != MAIN_WINDOW {
+        return Err("Only the main window may cancel an E2E close request.".into());
+    }
+    let _state = CLOSE_STATE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if CLOSE_GENERATION.load(Ordering::SeqCst) != generation
+        || !CLOSE_IN_PROGRESS.load(Ordering::SeqCst)
+    {
+        return Err("The E2E close request is no longer current.".into());
+    }
+    CLOSE_IN_PROGRESS.store(false, Ordering::SeqCst);
+    CLOSE_CONFIRMING.store(false, Ordering::SeqCst);
+    CLOSE_ACKNOWLEDGED.store(false, Ordering::SeqCst);
+    CLOSE_GENERATION.fetch_add(1, Ordering::SeqCst);
+    APP_QUITTING.store(false, Ordering::SeqCst);
+    crate::logging::info("E2E close request retired after renderer flush acknowledgement.");
+    Ok(())
+}
+
+fn close_generation_is_current(generation: u64) -> bool {
+    let _state = CLOSE_STATE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    CLOSE_IN_PROGRESS.load(Ordering::SeqCst)
+        && CLOSE_GENERATION.load(Ordering::SeqCst) == generation
+}
+
+fn consume_close_generation(generation: u64) -> bool {
+    let _state = CLOSE_STATE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !CLOSE_IN_PROGRESS.load(Ordering::SeqCst)
+        || !CLOSE_ACKNOWLEDGED.load(Ordering::SeqCst)
+        || CLOSE_GENERATION.load(Ordering::SeqCst) != generation
+    {
+        return false;
+    }
+    // Retire the token before releasing the lock so a late timeout cannot
+    // cancel this close after durability has been confirmed.
+    CLOSE_GENERATION.fetch_add(1, Ordering::SeqCst);
+    CLOSE_ACKNOWLEDGED.store(false, Ordering::SeqCst);
+    true
 }
 
 fn begin_flush_and_close(app: AppHandle) {
-    CLOSE_IN_PROGRESS.store(true, Ordering::SeqCst);
-    let generation = CLOSE_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
-    crate::app_state::emit("prepare-for-close", ());
+    let generation = {
+        let _state = CLOSE_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        CLOSE_IN_PROGRESS.store(true, Ordering::SeqCst);
+        CLOSE_ACKNOWLEDGED.store(false, Ordering::SeqCst);
+        CLOSE_GENERATION.fetch_add(1, Ordering::SeqCst) + 1
+    };
+    crate::app_state::emit("prepare-for-close", generation);
     std::thread::spawn(move || {
         std::thread::sleep(SETTINGS_FLUSH_TIMEOUT);
-        if CLOSE_IN_PROGRESS.load(Ordering::SeqCst)
-            && CLOSE_GENERATION.load(Ordering::SeqCst) == generation
-        {
-            crate::logging::warn("Timed out waiting for renderer settings flush. Closing window.");
-            destroy_main(&app);
+        if expire_unacknowledged_close_generation(generation) {
+            crate::logging::warn(
+                "Timed out waiting for renderer settings flush; leaving the app open.",
+            );
+            if CLOSE_TIMEOUT_DIALOG_VISIBLE
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                app.dialog()
+                    .message("ROSI could not confirm that settings and the download queue were saved. The app will stay open. Try closing it again after the save finishes.")
+                    .title("Save Still Pending")
+                    .kind(MessageDialogKind::Warning)
+                    .show(|_| {
+                        CLOSE_TIMEOUT_DIALOG_VISIBLE.store(false, Ordering::SeqCst);
+                    });
+            }
         }
     });
 }
@@ -304,18 +436,58 @@ pub fn on_main_close_requested(app: &AppHandle, api: &tauri::CloseRequestApi) {
 }
 
 #[tauri::command]
-pub fn notify_settings_flushed(app: AppHandle, window: WebviewWindow) {
-    if window.label() == MAIN_WINDOW && CLOSE_IN_PROGRESS.load(Ordering::SeqCst) {
-        crate::logging::info("Settings flushed; closing main window.");
-        destroy_main(&app);
+pub async fn notify_settings_flushed(
+    app: AppHandle,
+    window: WebviewWindow,
+    generation: u64,
+) -> Result<(), String> {
+    if window.label() != MAIN_WINDOW {
+        return Err("Only the main window can complete a close request.".into());
     }
+    if !acknowledge_close_generation(generation) {
+        return Err("The close request expired before its state flush completed.".into());
+    }
+    let shutdown = tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(feature = "e2e")]
+        if let Some(delay) = std::env::var("ROSI_E2E_CLOSE_SHUTDOWN_DELAY_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .map(|milliseconds| milliseconds.min(10_000))
+        {
+            std::thread::sleep(std::time::Duration::from_millis(delay));
+        }
+        shutdown_for_close(generation)
+    })
+    .await;
+    let shutdown = match shutdown {
+        Ok(result) => result,
+        Err(error) => Err(format!("Could not finish application shutdown: {error}")),
+    };
+    if let Err(error) = shutdown {
+        cancel_close_generation(generation);
+        return Err(format!(
+            "Could not durably save application state before closing: {error}"
+        ));
+    }
+    if !consume_close_generation(generation) {
+        return Err("The close request expired before its state flush completed.".into());
+    }
+    destroy_main(&app)?;
+    crate::logging::info("Settings and download queue flushed; closing main window.");
+    Ok(())
 }
 
 pub fn on_main_destroyed(app: &AppHandle) {
     crate::logging::info("Main window closed.");
     MAIN_READY.store(false, Ordering::SeqCst);
-    CLOSE_IN_PROGRESS.store(false, Ordering::SeqCst);
-    CLOSE_GENERATION.fetch_add(1, Ordering::SeqCst);
+    {
+        let _state = CLOSE_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        CLOSE_IN_PROGRESS.store(false, Ordering::SeqCst);
+        CLOSE_ACKNOWLEDGED.store(false, Ordering::SeqCst);
+        CLOSE_GENERATION.fetch_add(1, Ordering::SeqCst);
+    }
     close_splash(app);
     if cfg!(target_os = "macos") && !APP_QUITTING.load(Ordering::SeqCst) {
         // macOS keeps the app in the Dock; a closed window still stops work.
@@ -333,11 +505,27 @@ pub fn request_quit(app: &AppHandle) {
     APP_QUITTING.store(true, Ordering::SeqCst);
     match app.get_webview_window(MAIN_WINDOW) {
         Some(window) => {
-            if window.close().is_err() {
-                app.exit(0);
+            if let Err(error) = window.close() {
+                cancel_close();
+                crate::logging::error(&format!("Could not begin a durable quit: {error}"));
+                app.dialog()
+                    .message(format!("ROSI could not begin quitting safely: {error}"))
+                    .title("Could Not Quit ROSI")
+                    .kind(MessageDialogKind::Error)
+                    .show(|_| {});
             }
         }
-        None => app.exit(0),
+        None => match shutdown() {
+            Ok(()) => app.exit(0),
+            Err(error) => {
+                APP_QUITTING.store(false, Ordering::SeqCst);
+                app.dialog()
+                    .message(format!("ROSI could not save the download queue, so it will remain open.\n\n{error}"))
+                    .title("Could Not Quit ROSI")
+                    .kind(MessageDialogKind::Error)
+                    .show(|_| {});
+            }
+        },
     }
 }
 
@@ -346,19 +534,52 @@ pub fn stop_active_work() {
     crate::media_info::cancel_all();
 }
 
-/// Final cleanup on process exit.
-pub fn shutdown() {
+/// Flush once before stopping work so a failed write leaves it running, then
+/// flush the post-cancellation queue state before the process exits.
+fn shutdown_with_close_generation(generation: Option<u64>) -> Result<(), String> {
+    crate::queue::flush().map_err(|error| {
+        crate::logging::error(&format!(
+            "Could not confirm the queue before shutdown: {error}"
+        ));
+        error
+    })?;
+    if let Some(generation) = generation {
+        if !close_generation_is_current(generation) {
+            return Err("The close request expired before shutdown completed.".into());
+        }
+    }
     stop_active_work();
-    crate::queue::flush();
+    crate::queue::flush().map_err(|error| {
+        crate::logging::error(&format!("Could not confirm the final queue state: {error}"));
+        error
+    })
 }
 
-pub fn restart(app: &AppHandle) -> ! {
+fn shutdown_for_close(generation: u64) -> Result<(), String> {
+    shutdown_with_close_generation(Some(generation))
+}
+
+pub fn shutdown() -> Result<(), String> {
+    shutdown_with_close_generation(None)
+}
+
+pub fn restart_with(
+    app: &AppHandle,
+    before_restart: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
     APP_QUITTING.store(true, Ordering::SeqCst);
-    shutdown();
+    if let Err(error) = shutdown().and_then(|()| before_restart()) {
+        APP_QUITTING.store(false, Ordering::SeqCst);
+        return Err(error);
+    }
     app.restart()
 }
 
+pub fn restart(app: &AppHandle) -> Result<(), String> {
+    restart_with(app, || Ok(()))
+}
+
 #[tauri::command(async)]
-pub fn restart_app(app: AppHandle) {
-    restart(&app);
+pub fn restart_app(app: AppHandle) -> Result<(), String> {
+    restart(&app)
 }

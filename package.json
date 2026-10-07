@@ -38,7 +38,7 @@
     "test:e2e": "node scripts/test-e2e.js",
     "test:e2e:stability": "node scripts/test-e2e.js --repeat 5",
     "test:all": "node scripts/test-all.js",
-    "test:cargo-safe-update": "node --test scripts/cargo-safe-update.test.mjs scripts/check-cargo-update-policy.test.mjs scripts/test-all.test.js scripts/run-release.test.js scripts/github-cli.test.cjs scripts/release-branch-protection.test.cjs scripts/release-licenses.test.mjs scripts/npm-dev-audit.test.cjs scripts/generate-cargo-licenses.test.mjs scripts/check-rustsec-ignore-policy.test.mjs scripts/legacy-v4-feed.test.mjs",
+    "test:cargo-safe-update": "node --test scripts/cargo-safe-update.test.mjs scripts/check-cargo-update-policy.test.mjs scripts/test-all.test.js scripts/run-release.test.js scripts/github-cli.test.cjs scripts/release-branch-protection.test.cjs scripts/release-licenses.test.mjs scripts/npm-dev-audit.test.cjs scripts/generate-cargo-licenses.test.mjs scripts/check-rustsec-ignore-policy.test.mjs scripts/legacy-v4-feed.test.mjs scripts/security-release-repairs.test.mjs scripts/round2-release-updater.test.mjs scripts/test-e2e-round2.test.mjs",
     "check:cargo-update-policy": "node scripts/check-cargo-update-policy.mjs",
     "audit:dev-reviewed": "node scripts/npm-dev-audit.cjs",
     "check:rustsec-ignore-policy": "node scripts/check-rustsec-ignore-policy.mjs",
@@ -46,7 +46,7 @@
     "validate:updater": "node scripts/validate-updater-manifest.js",
     "validate:updater:live": "node scripts/validate-updater-live.js --shape-only",
     "release:verify:published": "node scripts/validate-updater-live.js --expected-version=current",
-    "release:verify:draft": "node scripts/verify-release-draft.js",
+    "release:verify:draft": "dotenv -e .env -- node scripts/verify-release-draft.js --verify-artifacts",
     "validate:changelog": "node scripts/validate-changelog-version.js",
     "validate:no-em-dash": "node scripts/validate-no-em-dash.js",
     "validate:flatpak": "node scripts/validate-flatpak-dry-run.js",
@@ -182,5 +182,10 @@
     "typescript": "6.0.3",
     "vite": "8.3.0",
     "vitest": "4.1.11"
+  },
+  "overrides": {
+    "get-uri": {
+      "basic-ftp": "6.2.1"
+    }
   }
 }

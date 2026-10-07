@@ -405,6 +405,30 @@
           "markdownDescription": "Enables the download_video command without any pre-configured scope."
         },
         {
+          "description": "Enables the e2e_cancel_close_request command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-e2e-cancel-close-request",
+          "markdownDescription": "Enables the e2e_cancel_close_request command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the e2e_emit_stale_download_events command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-e2e-emit-stale-download-events",
+          "markdownDescription": "Enables the e2e_emit_stale_download_events command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the e2e_network_pipelining_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-e2e-network-pipelining-probe",
+          "markdownDescription": "Enables the e2e_network_pipelining_probe command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the e2e_updater_install_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-e2e-updater-install-probe",
+          "markdownDescription": "Enables the e2e_updater_install_probe command without any pre-configured scope."
+        },
+        {
           "description": "Enables the export_settings command without any pre-configured scope.",
           "type": "string",
           "const": "allow-export-settings",
@@ -643,6 +667,30 @@
           "type": "string",
           "const": "deny-download-video",
           "markdownDescription": "Denies the download_video command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the e2e_cancel_close_request command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-e2e-cancel-close-request",
+          "markdownDescription": "Denies the e2e_cancel_close_request command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the e2e_emit_stale_download_events command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-e2e-emit-stale-download-events",
+          "markdownDescription": "Denies the e2e_emit_stale_download_events command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the e2e_network_pipelining_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-e2e-network-pipelining-probe",
+          "markdownDescription": "Denies the e2e_network_pipelining_probe command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the e2e_updater_install_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-e2e-updater-install-probe",
+          "markdownDescription": "Denies the e2e_updater_install_probe command without any pre-configured scope."
         },
         {
           "description": "Denies the export_settings command without any pre-configured scope.",

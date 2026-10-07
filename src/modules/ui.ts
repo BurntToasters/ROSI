@@ -226,6 +226,18 @@
 
   let sidebarTrapHandler: ((event: KeyboardEvent) => void) | null = null;
   let sidebarFocusinHandler: ((event: FocusEvent) => void) | null = null;
+
+  function getTopActiveOverlayId() {
+    for (const id of ['app-modal', 'licenses-overlay', 'setup-wizard', 'sidebar']) {
+      const overlay = document.getElementById(id);
+      const active =
+        id === 'sidebar'
+          ? overlay?.classList.contains('open')
+          : overlay?.classList.contains('active');
+      if (active) return id;
+    }
+    return null;
+  }
   let previousSidebarFocus: HTMLElement | null = null;
 
   function getSidebarFocusableElements(sidebar: HTMLElement): HTMLElement[] {
@@ -261,10 +273,11 @@
     const mainContent =
       document.getElementById('main-content') || document.querySelector('.main-content');
     if (!(mainContent instanceof HTMLElement)) return;
+    const shouldBeInert = isInert || getTopActiveOverlayId() !== null;
     if ('inert' in mainContent) {
-      (mainContent as HTMLElement & { inert: boolean }).inert = isInert;
+      (mainContent as HTMLElement & { inert: boolean }).inert = shouldBeInert;
     }
-    if (isInert) {
+    if (shouldBeInert) {
       mainContent.setAttribute('aria-hidden', 'true');
     } else {
       mainContent.removeAttribute('aria-hidden');
@@ -289,12 +302,12 @@
     if (overlay) overlay.classList.remove('active');
     document.body.classList.remove('sidebar-open');
     setMainContentInert(false);
-    if (previousSidebarFocus && typeof previousSidebarFocus.focus === 'function') {
-      previousSidebarFocus.focus();
-    } else {
-      const settingsBtn = document.getElementById('settingsBtn');
-      if (settingsBtn instanceof HTMLElement) {
-        settingsBtn.setAttribute('aria-expanded', 'false');
+    const settingsBtn = document.getElementById('settingsBtn');
+    if (settingsBtn instanceof HTMLElement) settingsBtn.setAttribute('aria-expanded', 'false');
+    if (!getTopActiveOverlayId()) {
+      if (previousSidebarFocus && typeof previousSidebarFocus.focus === 'function') {
+        previousSidebarFocus.focus();
+      } else if (settingsBtn instanceof HTMLElement) {
         settingsBtn.focus();
       }
     }
@@ -331,6 +344,7 @@
     }
 
     sidebarTrapHandler = (event: KeyboardEvent) => {
+      if (getTopActiveOverlayId() !== 'sidebar') return;
       if (event.key === 'Escape') {
         event.preventDefault();
         closeSidebar();
@@ -360,7 +374,7 @@
     sidebar.addEventListener('keydown', sidebarTrapHandler);
 
     sidebarFocusinHandler = (event: FocusEvent) => {
-      if (!sidebar.classList.contains('open')) return;
+      if (!sidebar.classList.contains('open') || getTopActiveOverlayId() !== 'sidebar') return;
       const target = event.target;
       if (target instanceof Node && sidebar.contains(target)) return;
       focusFirstSidebarElement(sidebar);

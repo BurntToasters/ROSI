@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-e2e-network-pipelining-probe"
+description = "Enables the e2e_network_pipelining_probe command without any pre-configured scope."
+commands.allow = ["e2e_network_pipelining_probe"]
+
+[[permission]]
+identifier = "deny-e2e-network-pipelining-probe"
+description = "Denies the e2e_network_pipelining_probe command without any pre-configured scope."
+commands.deny = ["e2e_network_pipelining_probe"]

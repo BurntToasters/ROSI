@@ -23,6 +23,7 @@ export function assertDraftReleaseShape(options: {
   assetNames: string[];
   version: string;
   headCommit?: string;
+  tagCommit?: string | null;
   requireLinuxAarch64?: boolean;
 }): { tag: string; missing: string[] };
 export interface GitHubReleaseRef {

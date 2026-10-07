@@ -61,7 +61,8 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), String> {
             .map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
         drop(file);
-        rename_replacing(&temp, path)
+        rename_replacing(&temp, path)?;
+        sync_directory(parent)
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&temp);
@@ -75,7 +76,11 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), String> {
 pub fn rename_replacing(from: &Path, to: &Path) -> Result<(), String> {
     let mut attempt = 0;
     loop {
-        match std::fs::rename(from, to) {
+        #[cfg(windows)]
+        let rename = windows_rename_replacing(from, to);
+        #[cfg(not(windows))]
+        let rename = std::fs::rename(from, to);
+        match rename {
             Ok(()) => return Ok(()),
             Err(error)
                 if cfg!(windows)
@@ -88,6 +93,51 @@ pub fn rename_replacing(from: &Path, to: &Path) -> Result<(), String> {
             }
             Err(error) => return Err(error.to_string()),
         }
+    }
+}
+
+/// Flush a directory entry after a completed atomic rename. Windows uses the
+/// `MOVEFILE_WRITE_THROUGH` rename flag because Rust does not expose a portable
+/// directory handle flush there.
+pub fn sync_directory(directory: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        std::fs::File::open(directory)
+            .and_then(|file| file.sync_all())
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(windows)]
+    {
+        let _ = directory;
+        Ok(())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = directory;
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn windows_rename_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let from: Vec<u16> = from.as_os_str().encode_wide().chain(Some(0)).collect();
+    let to: Vec<u16> = to.as_os_str().encode_wide().chain(Some(0)).collect();
+    let result = unsafe {
+        MoveFileExW(
+            from.as_ptr(),
+            to.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result != 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
     }
 }
 

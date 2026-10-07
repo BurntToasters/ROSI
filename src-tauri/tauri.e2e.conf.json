@@ -19,7 +19,11 @@
             "core:window:allow-close",
             "core:window:allow-set-size",
             "core:window:allow-theme",
-            "core:event:allow-emit"
+            "core:event:allow-emit",
+            "allow-e2e-emit-stale-download-events",
+            "allow-e2e-network-pipelining-probe",
+            "allow-e2e-updater-install-probe",
+            "allow-e2e-cancel-close-request"
           ]
         }
       ]

@@ -29,23 +29,13 @@
     ],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'; frame-src 'self'; worker-src 'none'",
-      "dangerousDisableAssetCspModification": [
-        "style-src"
-      ],
-      "capabilities": [
-        "default",
-        "splash"
-      ]
+      "dangerousDisableAssetCspModification": ["style-src"],
+      "capabilities": ["default", "splash"]
     }
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "dmg",
-      "app",
-      "nsis",
-      "appimage"
-    ],
+    "targets": ["dmg", "app", "nsis", "appimage"],
     "publisher": "BurntToasters",
     "copyright": "Copyright (c) BurntToasters",
     "category": "Utility",
@@ -59,13 +49,10 @@
       "icons/icon.ico",
       "icons/icon.icns"
     ],
-    "externalBin": [
-      "binaries/rosi-yt-dlp",
-      "binaries/rosi-ffmpeg",
-      "binaries/rosi-ffprobe"
-    ],
+    "externalBin": ["binaries/rosi-yt-dlp", "binaries/rosi-ffmpeg", "binaries/rosi-ffprobe"],
     "resources": {
       "../assets/YT-DLP-NOTICES.txt": "yt-dlp/YT-DLP-NOTICES.txt",
+      "../assets/yt-dlp-2026.08.19-THIRD_PARTY_LICENSES.txt": "yt-dlp/THIRD_PARTY_LICENSES.txt",
       "../resources/ffmpeg/NOTICE.txt": "ffmpeg/NOTICE.txt",
       "../resources/ffmpeg/ffmpeg_license.txt": "ffmpeg/LICENSE.txt",
       "../resources/ffmpeg/SOURCE_OFFER.txt": "ffmpeg/SOURCE_OFFER.txt"

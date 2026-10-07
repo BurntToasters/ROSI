@@ -5,10 +5,20 @@ use crate::constants::{
     DENO_CHECK_TIMEOUT, DENO_INSTALL_TIMEOUT, MAX_ERROR_BUFFER, MAX_OUTPUT_BUFFER,
 };
 use serde::Serialize;
+use std::collections::HashSet;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 fn search_paths() -> Vec<PathBuf> {
+    #[cfg(feature = "e2e")]
+    if let Some(directory) = std::env::var_os("ROSI_E2E_DENO_PROBE_DIR") {
+        return vec![PathBuf::from(directory).join(if cfg!(windows) {
+            "deno.exe"
+        } else {
+            "deno"
+        })];
+    }
     if cfg!(windows) {
         let profile = std::env::var_os("USERPROFILE")
             .map(PathBuf::from)
@@ -41,14 +51,61 @@ fn search_paths() -> Vec<PathBuf> {
 }
 
 fn installed() -> bool {
-    if search_paths().iter().any(|path| path.exists()) {
-        return true;
+    let executable_name = if cfg!(windows) { "deno.exe" } else { "deno" };
+    let mut seen = HashSet::new();
+    let mut candidates = search_paths();
+    #[cfg(feature = "e2e")]
+    let isolated_probe = std::env::var_os("ROSI_E2E_DENO_PROBE_DIR").is_some();
+    #[cfg(not(feature = "e2e"))]
+    let isolated_probe = false;
+    if !isolated_probe {
+        candidates.extend(
+            std::env::split_paths(&crate::process_util::enhanced_path())
+                .map(|directory| directory.join(executable_name)),
+        );
     }
-    let lookup = if cfg!(windows) { "where" } else { "which" };
-    let mut command = crate::process_util::command(lookup, &["deno".to_string()], &[], false);
-    crate::process_util::run_with_timeout(&mut command, DENO_CHECK_TIMEOUT, 4096, 4096)
-        .map(|output| !output.timed_out && output.code == Some(0))
-        .unwrap_or(false)
+    candidates.retain(|path| seen.insert(crate::validation::resolve_path(path)));
+    candidates.truncate(64);
+
+    let deadline = Instant::now() + DENO_CHECK_TIMEOUT;
+    for candidate in candidates {
+        if !std::fs::metadata(&candidate).is_ok_and(|metadata| metadata.file_type().is_file()) {
+            continue;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return false;
+        }
+        let timeout = remaining.min(Duration::from_secs(2));
+        let mut command =
+            crate::process_util::command(candidate, &["--version".to_string()], &[], true);
+        let Ok(output) = crate::process_util::run_with_timeout(&mut command, timeout, 4096, 4096)
+        else {
+            continue;
+        };
+        if !output.timed_out && output.code == Some(0) && has_version_line(&output.stdout) {
+            return true;
+        }
+    }
+    false
+}
+
+fn has_version_line(stdout: &str) -> bool {
+    stdout.lines().any(|line| {
+        let mut words = line.split_whitespace();
+        let Some(runtime) = words.next() else {
+            return false;
+        };
+        let Some(version) = words.next() else {
+            return false;
+        };
+        runtime.eq_ignore_ascii_case("deno")
+            && version.split(['.', '-', '+']).take(3).count() == 3
+            && version
+                .split(['.', '-', '+'])
+                .take(3)
+                .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+    })
 }
 
 #[tauri::command]

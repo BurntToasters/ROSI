@@ -232,6 +232,12 @@
     opacity var(--transition-fast);
 }
 
+.history-item-actions .btn--icon:focus,
+.history-item-actions .btn--icon:focus-visible,
+.history-item-actions .btn--icon.is-focused {
+  opacity: 1 !important;
+}
+
 .history-item:hover .history-item-actions .btn--icon,
 .history-item:focus-within .history-item-actions .btn--icon {
   opacity: 1;

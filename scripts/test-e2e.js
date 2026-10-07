@@ -22,7 +22,7 @@ import {
 import { usesWindowsCmdShell } from "./npm-safe-update.mjs";
 
 const ARTIFACT_DIR = path.join(REPO_ROOT, "e2e", "artifacts");
-const EXPECTED_SCENARIOS = [
+export const EXPECTED_SCENARIOS = [
   "legacy-v4-import",
   "legacy-v4-corrupt-settings",
   "launch",
@@ -36,6 +36,24 @@ const EXPECTED_SCENARIOS = [
   "no-overscroll",
   "sidebar-glass",
   "url-safety",
+  "loopback-exception-and-thumbnail-data",
+  "loopback-download",
+  "proxy-delayed-http-response",
+  "proxy-cancels-streamed-response",
+  "private-dns-alias",
+  "dns-rebinding-connection-time",
+  "redirect-and-extractor-handoffs",
+  "verified-https-connect-proxy",
+  "untrusted-https-certificate-rejected",
+  "credential-bearing-urls",
+  "guarded-hls-fragments",
+  "bracketed-ipv6-classification",
+  "proxy-cancellation-closes-active-sockets",
+  "thumbnail-fetch-cancellation",
+  "dns-cancellation-reserved-ipc",
+  "proxy-rejects-unreviewed-pipelined-destination",
+  "bounded-dns-cancellation",
+  "persisted-offline-queue",
   "manual-download",
   "unicode-download",
   "queue",
@@ -74,6 +92,16 @@ const EXPECTED_SCENARIOS = [
   "settings-search-reset",
   "settings-controls",
   "settings-reset-all",
+  "settings-response-revision",
+  "settings-lifecycle-latest-revision",
+  "settings-captured-wizard-deno",
+  "compatible-profile-wording",
+  "guarded-preview-thumbnail",
+  "queue-latest-snapshot",
+  "updater-generation-retry",
+  "queue-flush-backup-failure",
+  "close-pending-timeout",
+  "download-session-isolation",
   "external-links",
   "menu-actions",
   "update-check",
@@ -87,9 +115,207 @@ const EXPECTED_SCENARIOS = [
   "save-location",
   "notifications",
   "download-again-quickly",
+  "download-process-repairs",
   "activity-clear",
   "close-flow",
+  "round2-renderer",
+  "round2-native",
 ];
+export const ROUND2_RENDERER_OBSERVATIONS = Object.freeze([
+  "renderer-startup-settings-ready",
+  "updater-channel-and-singleflight",
+  "activity-clear-commits-after-backend",
+]);
+export const ROUND2_NATIVE_OBSERVATIONS = Object.freeze([
+  "download-staging-preserves-arrival",
+  "source-identity-preserves-replacement",
+  "deno-version-probe",
+  "activity-clear-persist-failure-preserves-memory",
+  "activity-clear-durable-retry",
+  "activity-byte-budget-preserves-newest",
+  "close-ack-survives-async-shutdown",
+  "download-only-final-placement",
+  "download-failure-cleans-staging",
+  "download-cancel-cleans-staging",
+  "download-retry-cleans-staging",
+  "windows-job-object-leader-exit",
+]);
+export const ALLOWED_E2E_SKIPS = Object.freeze({
+  "download-process-repairs": Object.freeze(["win32"]),
+  "xdg-download-dir": Object.freeze(["darwin", "win32"]),
+});
+
+export function scenarioOutcomeProblems(scenarios, platform) {
+  const problems = [];
+  const names = scenarios.map((scenario) => scenario?.name);
+  for (const name of EXPECTED_SCENARIOS) {
+    const count = names.filter((candidate) => candidate === name).length;
+    if (count !== 1) {
+      problems.push(`${name} reported ${count} times`);
+      continue;
+    }
+    const scenario = scenarios.find((candidate) => candidate?.name === name);
+    if (scenario.status === "passed") continue;
+    const allowedPlatforms = ALLOWED_E2E_SKIPS[name] ?? [];
+    if (scenario.status === "skipped" && allowedPlatforms.includes(platform)) {
+      continue;
+    }
+    problems.push(`${name} has unacceptable status ${scenario.status}`);
+  }
+  for (const name of names) {
+    if (!EXPECTED_SCENARIOS.includes(name)) {
+      problems.push(`unexpected scenario ${name}`);
+    }
+  }
+  return problems;
+}
+
+export function round2RendererResultProblems(results) {
+  if (!Array.isArray(results))
+    return ["renderer observations are not an array"];
+  const problems = [];
+  const names = results.map((result) => result?.name);
+  for (const name of ROUND2_RENDERER_OBSERVATIONS) {
+    const count = names.filter((candidate) => candidate === name).length;
+    if (count !== 1) {
+      problems.push(`${name} reported ${count} times`);
+      continue;
+    }
+    const result = results.find((candidate) => candidate?.name === name);
+    if (result.status !== "passed") {
+      problems.push(`${name} has unacceptable status ${result.status}`);
+    }
+  }
+  for (const name of names) {
+    if (!ROUND2_RENDERER_OBSERVATIONS.includes(name)) {
+      problems.push(`unexpected renderer observation ${name}`);
+    }
+  }
+  return problems;
+}
+
+export function round2NativeReportProblems(report, expected) {
+  const problems = [];
+  if (!report || typeof report !== "object") {
+    return ["native report is not an object"];
+  }
+  const suite = report.suite ?? report.scenario;
+  if (report.app !== "ROSI")
+    problems.push("native report app identity differs");
+  if (report.schemaVersion !== undefined && report.schemaVersion !== 1) {
+    problems.push("native report schema version is unsupported");
+  }
+  if (suite !== "round2-native") {
+    problems.push("native report suite identity differs");
+  }
+  if (typeof report.runId !== "string" || report.runId.length === 0) {
+    problems.push("native report run id is missing");
+  }
+  if (report.version !== expected.version) {
+    problems.push("native report version differs");
+  }
+  if (report.platform !== expected.platform || report.arch !== expected.arch) {
+    problems.push("native report host identity differs");
+  }
+  if (report.binary !== expected.binary) {
+    problems.push("native report E2E binary path differs");
+  }
+  if (report.binarySha256 !== expected.binarySha256) {
+    problems.push("native report E2E binary hash differs");
+  }
+  if (report.ffmpegSha256 !== expected.ffmpegSha256) {
+    problems.push("native report FFmpeg hash differs");
+  }
+  const sourceHashes = report.probeSources ?? report.sourceHashes;
+  for (const [file, hash] of Object.entries(expected.probeSources)) {
+    if (sourceHashes?.[file] !== hash) {
+      problems.push(`native report source hash differs for ${file}`);
+    }
+  }
+  if (
+    !/^[a-f0-9]{64}$/i.test(
+      report.toneFixtureSha256 ?? report.fixtureHash ?? "",
+    )
+  ) {
+    problems.push("native report tone fixture hash is missing or malformed");
+  }
+  if (typeof report.isolatedProfile !== "string" || !report.isolatedProfile) {
+    problems.push("native report isolated profile is missing");
+  }
+  const startedAt = Date.parse(report.startedAt);
+  const finishedAt = Date.parse(report.finishedAt);
+  const suiteStartedAt = Date.parse(expected.suiteStartedAt);
+  if (
+    !Number.isFinite(startedAt) ||
+    !Number.isFinite(finishedAt) ||
+    !Number.isFinite(suiteStartedAt) ||
+    startedAt < suiteStartedAt ||
+    finishedAt < startedAt
+  ) {
+    problems.push("native report timestamps are stale or invalid");
+  }
+  if (report.wdioExitCode !== 0 || report.wdioError) {
+    problems.push("native WebdriverIO run did not pass");
+  }
+  if (report.passed !== true) problems.push("native report does not pass");
+  if (!Array.isArray(report.failures) || report.failures.length > 0) {
+    problems.push("native report lists failed observations");
+  }
+  if (!Array.isArray(report.observations)) {
+    problems.push("native observations are not an array");
+  } else {
+    const names = report.observations.map((observation) => observation?.name);
+    for (const name of ROUND2_NATIVE_OBSERVATIONS) {
+      const matches = report.observations.filter(
+        (observation) => observation?.name === name,
+      );
+      if (matches.length !== 1) {
+        problems.push(`${name} reported ${matches.length} times`);
+        continue;
+      }
+      const passed = matches[0].passed ?? matches[0].invariantPassed;
+      if (passed !== true) {
+        problems.push(`${name} did not pass`);
+      }
+      if (
+        name === "windows-job-object-leader-exit" &&
+        matches[0].skipped !== true
+      ) {
+        problems.push(`${name} must remain explicitly unproven`);
+      }
+      if (matches[0].skipped === true) {
+        const supportedWindowsSkip =
+          expected.platform === "win32" &&
+          [
+            "source-identity-preserves-replacement",
+            "deno-version-probe",
+          ].includes(name) &&
+          typeof matches[0].skipReason === "string" &&
+          matches[0].skipReason.length > 0;
+        const documentedLeaderExitGap =
+          name === "windows-job-object-leader-exit" &&
+          typeof matches[0].skipReason === "string" &&
+          matches[0].skipReason.length > 0;
+        if (!supportedWindowsSkip && !documentedLeaderExitGap) {
+          problems.push(`${name} has an unsupported platform skip`);
+        }
+      }
+    }
+    for (const name of names) {
+      if (!ROUND2_NATIVE_OBSERVATIONS.includes(name)) {
+        problems.push(`unexpected native observation ${name}`);
+      }
+    }
+  }
+  const { reportSha256, ...reportBody } = report;
+  const actualReportSha256 = sha256(
+    Buffer.from(JSON.stringify(reportBody, null, 2)),
+  );
+  if (reportSha256 !== actualReportSha256) {
+    problems.push("native report self-hash differs");
+  }
+  return problems;
+}
 
 function npmCommand() {
   return process.platform === "win32" ? "npm.cmd" : "npm";
@@ -203,6 +429,10 @@ function e2eBinaryIsFresh() {
   if (fs.readFileSync(stamp, "utf8") !== STAMP) return false;
   // cargo test / clippy rebuild target/debug/rosi without --features e2e.
   return fs.statSync(stamp).mtimeMs >= fs.statSync(binary).mtimeMs;
+}
+
+export function mayReuseE2eBinary({ onlySpec, reuseRequested, binaryFresh }) {
+  return onlySpec === true && reuseRequested === true && binaryFresh === true;
 }
 
 function snapshotGeneratedSchemas() {
@@ -445,6 +675,14 @@ function gitCommit() {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
+function gitSourceTree() {
+  const result = spawnSync("git", ["rev-parse", "HEAD^{tree}"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  });
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
 function cleanupProfile(profileDir) {
   try {
     fs.rmSync(profileDir, {
@@ -489,6 +727,273 @@ function verifyScreenshots(scenarios, directory) {
   return { screenshots, problems };
 }
 
+function round2RendererScenario(pass, runnerFailure = null) {
+  const scenario = {
+    name: "round2-renderer",
+    status: "failed",
+    reportPath: path
+      .relative(REPO_ROOT, pass.resultsPath)
+      .split(path.sep)
+      .join("/"),
+  };
+  try {
+    const bytes = fs.readFileSync(pass.resultsPath);
+    const results = JSON.parse(bytes.toString("utf8"));
+    const problems = round2RendererResultProblems(results);
+    if (runnerFailure) problems.unshift(runnerFailure);
+    if (problems.length > 0) {
+      return { ...scenario, reason: problems.join("; ") };
+    }
+    return {
+      ...scenario,
+      status: "passed",
+      resultsSha256: sha256(bytes),
+      observations: results.length,
+    };
+  } catch (error) {
+    return {
+      ...scenario,
+      reason: runnerFailure
+        ? `${runnerFailure}; ${error instanceof Error ? error.message : String(error)}`
+        : error instanceof Error
+          ? error.message
+          : String(error),
+    };
+  }
+}
+
+function runRound2NativeRepairs({ ffmpeg, binary, suiteStartedAt }) {
+  const scenario = { name: "round2-native", status: "failed" };
+  if (!ffmpeg) {
+    return {
+      ...scenario,
+      reason: "The round-two native pass requires a real FFmpeg executable.",
+    };
+  }
+
+  const runnerPath = path.join(REPO_ROOT, "e2e", "round2-native-run.mjs");
+  let result;
+  try {
+    result = spawnSync(process.execPath, [runnerPath], {
+      cwd: REPO_ROOT,
+      env: e2eChildEnv({ ROSI_ROUND2_NATIVE_FFMPEG: ffmpeg.binary }),
+      encoding: "utf8",
+      windowsHide: true,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch (error) {
+    return {
+      ...scenario,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  const reportedPath = output
+    .match(/^Round 2 native evidence: (.+)$/m)?.[1]
+    ?.trim();
+  const artifactsDirectory = path.resolve(ARTIFACT_DIR, "round2-native");
+  if (!reportedPath) {
+    return {
+      ...scenario,
+      reason:
+        result.error?.message ??
+        `Native runner did not report its artifact (exit ${result.status ?? result.signal}).`,
+      runnerExitCode: result.status,
+    };
+  }
+  const reportPath = path.resolve(reportedPath);
+  if (!reportPath.startsWith(`${artifactsDirectory}${path.sep}`)) {
+    return {
+      ...scenario,
+      reason:
+        "Native runner reported an artifact outside its evidence directory.",
+      reportPath: path
+        .relative(REPO_ROOT, reportPath)
+        .split(path.sep)
+        .join("/"),
+    };
+  }
+  scenario.reportPath = path
+    .relative(REPO_ROOT, reportPath)
+    .split(path.sep)
+    .join("/");
+  try {
+    const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+    const packageJson = JSON.parse(
+      fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
+    );
+    const expected = {
+      version: packageJson.version,
+      platform: process.platform,
+      arch: process.arch,
+      binary: path.relative(REPO_ROOT, binary).split(path.sep).join("/"),
+      binarySha256: sha256(fs.readFileSync(binary)),
+      ffmpegSha256: sha256(fs.readFileSync(fs.realpathSync(ffmpeg.binary))),
+      probeSources: Object.fromEntries(
+        ["e2e/round2-native.spec.js", "e2e/round2-native-failure-modes.md"].map(
+          (file) => [file, sha256(fs.readFileSync(path.join(REPO_ROOT, file)))],
+        ),
+      ),
+      suiteStartedAt,
+    };
+    const problems = round2NativeReportProblems(report, expected);
+    const observationsPath = path.join(
+      path.dirname(reportPath),
+      "observations.json",
+    );
+    const observations = JSON.parse(fs.readFileSync(observationsPath, "utf8"));
+    if (JSON.stringify(observations) !== JSON.stringify(report.observations)) {
+      problems.push(
+        "native observation artifact differs from the hashed report",
+      );
+    }
+    if (result.status !== 0 || result.error) {
+      problems.push(
+        result.error?.message ?? `native runner exited with ${result.status}`,
+      );
+    }
+    if (problems.length > 0) {
+      return {
+        ...scenario,
+        reason: problems.join("; "),
+        runnerExitCode: result.status,
+      };
+    }
+    return {
+      ...scenario,
+      status: "passed",
+      reportSha256: report.reportSha256,
+      binarySha256: report.binarySha256,
+      sourceHashes: report.probeSources ?? report.sourceHashes,
+      observations: report.observations.length,
+      startedAt: report.startedAt,
+      finishedAt: report.finishedAt,
+    };
+  } catch (error) {
+    return {
+      ...scenario,
+      reason: error instanceof Error ? error.message : String(error),
+      runnerExitCode: result.status,
+    };
+  }
+}
+
+function runDownloadProcessRepairs({ ffmpeg, binary, suiteStartedAt }) {
+  const repairArtifactDir = path.join(
+    ARTIFACT_DIR,
+    `download-process-repairs-${Date.now()}-${process.pid}`,
+  );
+  const reportPath = path.join(repairArtifactDir, "repair-report.json");
+  if (process.platform === "win32") {
+    return {
+      name: "download-process-repairs",
+      status: "skipped",
+      reason:
+        "The isolated signal and oversized-output wrapper probe currently supports macOS and Linux.",
+      platform: process.platform,
+    };
+  }
+
+  let runnerFailure = null;
+  try {
+    run(process.execPath, ["e2e/run-download-process-repairs.mjs"], {
+      env: {
+        ROSI_REPAIRS_FFMPEG: ffmpeg?.binary ?? "",
+        ROSI_AUDIT3_ARTIFACT_DIR: repairArtifactDir,
+        ROSI_REPAIRS_SPEC: "./download-process-repairs.spec.js",
+      },
+    });
+  } catch (error) {
+    runnerFailure = error instanceof Error ? error.message : String(error);
+  }
+
+  const scenario = {
+    name: "download-process-repairs",
+    status: "failed",
+    reportPath: path.relative(REPO_ROOT, reportPath).split(path.sep).join("/"),
+  };
+  try {
+    const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+    const { reportSha256, ...reportBody } = report;
+    const actualReportSha256 = sha256(
+      Buffer.from(JSON.stringify(reportBody, null, 2)),
+    );
+    const startedAt = Date.parse(report.startedAt);
+    const finishedAt = Date.parse(report.finishedAt);
+    const suiteStart = Date.parse(suiteStartedAt);
+    const binarySha256 = sha256(fs.readFileSync(binary));
+    const selectedFfmpegSha256 = ffmpeg
+      ? sha256(fs.readFileSync(fs.realpathSync(ffmpeg.binary)))
+      : null;
+    const mismatch =
+      report.app !== "ROSI" ||
+      report.version !==
+        JSON.parse(
+          fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
+        ).version ||
+      report.commit !== gitCommit() ||
+      report.platform !== process.platform ||
+      report.arch !== process.arch ||
+      report.exitCode !== 0 ||
+      report.binarySha256 !== binarySha256 ||
+      report.probeSourceSha256?.runner !==
+        sha256(
+          fs.readFileSync(
+            path.join(REPO_ROOT, "e2e", "run-download-process-repairs.mjs"),
+          ),
+        ) ||
+      report.probeSourceSha256?.spec !==
+        sha256(
+          fs.readFileSync(
+            path.join(REPO_ROOT, "e2e", "download-process-repairs.spec.js"),
+          ),
+        ) ||
+      report.probeSourceSha256?.failureModes !==
+        sha256(
+          fs.readFileSync(
+            path.join(REPO_ROOT, "e2e", "download-process-repairs.failures.md"),
+          ),
+        ) ||
+      report.probeSourceSha256?.audit3FailureModes !==
+        sha256(
+          fs.readFileSync(
+            path.join(REPO_ROOT, "e2e", "audit3-native-failure-modes.md"),
+          ),
+        ) ||
+      (selectedFfmpegSha256 !== null &&
+        report.realFfmpegSha256 !== selectedFfmpegSha256) ||
+      !Number.isFinite(startedAt) ||
+      !Number.isFinite(finishedAt) ||
+      !Number.isFinite(suiteStart) ||
+      startedAt < suiteStart ||
+      finishedAt < startedAt ||
+      reportSha256 !== actualReportSha256;
+    if (mismatch) {
+      throw new Error(
+        "The process-repair report failed identity, freshness, result, or self-hash verification.",
+      );
+    }
+    if (runnerFailure) throw new Error(runnerFailure);
+    return {
+      ...scenario,
+      status: "passed",
+      reportSha256,
+      binarySha256,
+      startedAt: report.startedAt,
+      finishedAt: report.finishedAt,
+      observations: report.observations?.length ?? 0,
+    };
+  } catch (error) {
+    return {
+      ...scenario,
+      reason: error instanceof Error ? error.message : String(error),
+      runnerFailure,
+    };
+  }
+}
+
 function writeEvidence(report) {
   fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
   const body = { ...report };
@@ -513,10 +1018,16 @@ async function main() {
     );
   }
   reexecUnderXvfb();
-  // Always rebuild (Cargo and Vite are incremental) so a stale binary can
-  // never pass for current sources. ROSI_E2E_REUSE=1 skips it for fast local
-  // spec iteration only.
-  if (process.env.ROSI_E2E_REUSE !== "1" || !e2eBinaryIsFresh()) {
+  // The full suite is release evidence and must always run against a freshly
+  // compiled binary. Reuse is limited to an explicitly selected ad-hoc spec.
+  const reuseRequested = process.env.ROSI_E2E_REUSE === "1";
+  if (
+    !mayReuseE2eBinary({
+      onlySpec: Boolean(process.env.ROSI_E2E_ONLY),
+      reuseRequested,
+      binaryFresh: !reuseRequested || e2eBinaryIsFresh(),
+    })
+  ) {
     buildE2eBinary();
   }
 
@@ -590,8 +1101,57 @@ async function main() {
     ROSI_E2E_MEDIA_URL: server.baseUrl,
     ROSI_E2E_FIXTURES: JSON.stringify(fixtures),
     ROSI_E2E_HAS_FFMPEG: ffmpeg ? "1" : "0",
+    ROSI_E2E_FFMPEG: ffmpeg?.binary ?? "",
+    ROSI_E2E_TLS_CA: path.join(
+      REPO_ROOT,
+      "e2e",
+      "fixtures",
+      "security-test-ca.pem",
+    ),
+    ROSI_E2E_TLS_CERT: path.join(
+      REPO_ROOT,
+      "e2e",
+      "fixtures",
+      "security-test-server.pem",
+    ),
+    ROSI_E2E_TLS_KEY: path.join(
+      REPO_ROOT,
+      "e2e",
+      "fixtures",
+      "security-test-server-key.pem",
+    ),
+    ROSI_E2E_TLS_UNTRUSTED_CERT: path.join(
+      REPO_ROOT,
+      "e2e",
+      "fixtures",
+      "security-untrusted-server.pem",
+    ),
+    ROSI_E2E_TLS_UNTRUSTED_KEY: path.join(
+      REPO_ROOT,
+      "e2e",
+      "fixtures",
+      "security-untrusted-server-key.pem",
+    ),
+    ROSI_E2E_ALLOW_LOOPBACK: "1",
     ROSI_E2E_FFPROBE: ffmpeg ? (companionFfprobe(ffmpeg.binary) ?? "") : "",
+    // Resolve this deterministic E2E-only alias to loopback. The Rust
+    // override is compiled only with the `e2e` feature and is never present
+    // in production builds.
+    ROSI_E2E_DNS_MAP: "private.test=127.0.0.1,rebinding.test=93.184.216.34",
+    ROSI_E2E_PROXY_DNS_MAP: "private.test=127.0.0.1,rebinding.test=127.0.0.1",
+    ROSI_E2E_PROXY_TRACE: path.join(
+      ARTIFACT_DIR,
+      "security-release-repairs",
+      `${process.platform}-${process.arch}`,
+      "proxy-decisions.jsonl",
+    ),
+    ROSI_SECURITY_REPAIR_DIRECTORY: path.join(
+      ARTIFACT_DIR,
+      "security-release-repairs",
+      `${process.platform}-${process.arch}`,
+    ),
   };
+  fs.rmSync(sharedEnv.ROSI_E2E_PROXY_TRACE, { force: true });
   const runPass = (pass, env) =>
     runAsync(npxCommand(), ["wdio", "run", "e2e/wdio.conf.js"], {
       env: {
@@ -627,7 +1187,93 @@ async function main() {
     // must be ignored.
     seed: seedLegacyV4Data(profile),
     resultsPath: path.join(profile.profileDir, "results.json"),
+    stateRepairResultsPath: path.join(
+      profile.profileDir,
+      "state-repairs-results.json",
+    ),
   };
+  // Security downloads intentionally populate stats/activity and can exercise
+  // renderer state that the main UI suite expects to start fresh. Keep the
+  // security proof in its own profile while aggregating both result files.
+  const securityPass = process.env.ROSI_E2E_ONLY
+    ? null
+    : (() => {
+        const securityProfile = createE2eProfile({
+          ffmpegPath: ffmpeg?.customPath ?? "",
+        });
+        return {
+          profile: securityProfile,
+          resultsPath: path.join(
+            securityProfile.profileDir,
+            "security-repairs-results.json",
+          ),
+        };
+      })();
+  // State-repair close-failure scenarios deliberately leave native warning
+  // dialogs open. Run them in their own profile before the security and main
+  // specs, whose final close-flow scenario closes this app window.
+  const stateRepairPass = process.env.ROSI_E2E_ONLY
+    ? null
+    : (() => {
+        const stateProfile = createE2eProfile({
+          ffmpegPath: ffmpeg?.customPath ?? "",
+        });
+        return {
+          profile: stateProfile,
+          resultsPath: path.join(
+            stateProfile.profileDir,
+            "state-repairs-results.json",
+          ),
+        };
+      })();
+  const offlineQueuePass = process.env.ROSI_E2E_ONLY
+    ? null
+    : (() => {
+        const offlineProfile = createE2eProfile({
+          ffmpegPath: ffmpeg?.customPath ?? "",
+        });
+        fs.writeFileSync(
+          path.join(offlineProfile.dataDir, "download-queue.json"),
+          `${JSON.stringify(
+            [
+              {
+                id: "offline-dns-queue",
+                url: "http://offline-repair.invalid/video.mp4",
+                status: "pending",
+                addedAt: Date.now(),
+                request: null,
+              },
+            ],
+            null,
+            2,
+          )}\n`,
+        );
+        return {
+          profile: offlineProfile,
+          resultsPath: path.join(
+            offlineProfile.profileDir,
+            "offline-queue-results.json",
+          ),
+        };
+      })();
+  const round2RendererPass = process.env.ROSI_E2E_ONLY
+    ? null
+    : (() => {
+        const rendererProfile = createE2eProfile({
+          ffmpegPath: ffmpeg?.customPath ?? "",
+        });
+        const resultsDirectory = path.join(
+          ARTIFACT_DIR,
+          "round2-renderer",
+          `${process.platform}-${process.arch}`,
+        );
+        fs.mkdirSync(resultsDirectory, { recursive: true });
+        const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`;
+        const resultsPath = path.join(resultsDirectory, `${runId}.json`);
+        fs.rmSync(resultsPath, { force: true });
+        return { profile: rendererProfile, resultsPath };
+      })();
+  let round2RendererFailure = null;
   let failure = null;
   try {
     for (const pass of legacyPasses) {
@@ -637,10 +1283,46 @@ async function main() {
         ROSI_E2E_LEGACY_V4: JSON.stringify(pass.seed),
       });
     }
+    if (offlineQueuePass) {
+      await runPass(offlineQueuePass, {
+        ROSI_E2E_SPECS: "./specs/security-release-offline-queue.spec.js",
+        ROSI_OFFLINE_QUEUE_RESULTS: path.join(
+          offlineQueuePass.profile.profileDir,
+          "offline-queue-results.json",
+        ),
+      });
+    }
+    if (stateRepairPass) {
+      await runPass(stateRepairPass, {
+        ROSI_E2E_SPECS: "./state-updater-repairs.spec.js",
+        ROSI_STATE_REPAIR_RESULTS: stateRepairPass.resultsPath,
+      });
+    }
+    if (securityPass) {
+      await runPass(securityPass, {
+        ROSI_E2E_SPECS: "./specs/security-release-repairs.spec.js",
+        ROSI_SECURITY_REPAIR_RESULTS: securityPass.resultsPath,
+      });
+    }
+    if (round2RendererPass) {
+      try {
+        await runPass(round2RendererPass, {
+          ROSI_E2E_SPECS: "./round2-renderer-repairs.spec.js",
+          ROSI_ROUND2_RENDERER_RESULTS: round2RendererPass.resultsPath,
+        });
+      } catch (error) {
+        round2RendererFailure =
+          error instanceof Error ? error.message : String(error);
+        throw error;
+      }
+    }
     await runPass(mainPass, {
       // ROSI_E2E_ONLY runs a single ad-hoc spec while debugging; the full
       // gate always runs main.spec.js and requires every scenario.
       ROSI_E2E_SPECS: process.env.ROSI_E2E_ONLY ?? "./specs/main.spec.js",
+      // Preserve this path for ROSI_E2E_ONLY debugging when the selected spec
+      // is the state-repair suite. The full gate uses the isolated pass above.
+      ROSI_STATE_REPAIR_RESULTS: mainPass.stateRepairResultsPath,
       ROSI_E2E_LEGACY_V4: JSON.stringify(mainPass.seed),
       ROSI_E2E_SCREENSHOTS: screenshotDir,
     });
@@ -648,6 +1330,46 @@ async function main() {
     failure = error instanceof Error ? error.message : String(error);
   } finally {
     await server.close();
+  }
+
+  const processRepairScenarios = process.env.ROSI_E2E_ONLY
+    ? []
+    : [
+        runDownloadProcessRepairs({
+          ffmpeg,
+          binary: e2eBinaryPath(),
+          suiteStartedAt: startedAt,
+        }),
+      ];
+  const round2NativeScenarios = process.env.ROSI_E2E_ONLY
+    ? []
+    : [
+        runRound2NativeRepairs({
+          ffmpeg,
+          binary: e2eBinaryPath(),
+          suiteStartedAt: startedAt,
+        }),
+      ];
+  const round2RendererScenarios = round2RendererPass
+    ? [round2RendererScenario(round2RendererPass, round2RendererFailure)]
+    : [];
+  if (
+    round2RendererScenarios.some((scenario) => scenario.status === "failed")
+  ) {
+    const detail = `${round2RendererScenarios[0].name}: ${round2RendererScenarios[0].reason}`;
+    failure = failure ? `${failure}; ${detail}` : detail;
+  }
+  for (const scenario of processRepairScenarios) {
+    if (scenario.status === "failed") {
+      const detail = `${scenario.name}: ${scenario.reason}`;
+      failure = failure ? `${failure}; ${detail}` : detail;
+    }
+  }
+  for (const scenario of round2NativeScenarios) {
+    if (scenario.status === "failed") {
+      const detail = `${scenario.name}: ${scenario.reason}`;
+      failure = failure ? `${failure}; ${detail}` : detail;
+    }
   }
 
   const readResults = (file) =>
@@ -658,9 +1380,21 @@ async function main() {
       ? fs.readFileSync(file, "utf8").split(/\r?\n/).slice(-lines)
       : [];
   };
-  const scenarios = [...legacyPasses, mainPass].flatMap((pass) =>
-    readResults(pass.resultsPath),
-  );
+  const scenarios = [
+    ...legacyPasses,
+    ...(offlineQueuePass ? [offlineQueuePass] : []),
+    ...(stateRepairPass ? [stateRepairPass] : []),
+    ...(securityPass ? [securityPass] : []),
+    mainPass,
+  ].flatMap((pass) => [
+    ...readResults(pass.resultsPath),
+    ...(pass === mainPass && !stateRepairPass
+      ? readResults(pass.stateRepairResultsPath)
+      : []),
+  ]);
+  scenarios.push(...round2RendererScenarios);
+  scenarios.push(...processRepairScenarios);
+  scenarios.push(...round2NativeScenarios);
   const seen = new Set(scenarios.map((scenario) => scenario.name));
   const missing = EXPECTED_SCENARIOS.filter((name) => !seen.has(name));
   const legacyImportCoverage = Object.fromEntries(
@@ -686,13 +1420,24 @@ async function main() {
   const packageJson = JSON.parse(
     fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
   );
+  const scenarioProblems = scenarioOutcomeProblems(scenarios, process.platform);
   const evidence = writeEvidence({
     app: "ROSI",
+    fullSuite: !process.env.ROSI_E2E_ONLY,
+    expectedScenarios: [...EXPECTED_SCENARIOS],
     version: packageJson.version,
     commit: gitCommit(),
+    sourceTree: gitSourceTree(),
+    packageLockSha256: sha256(
+      fs.readFileSync(path.join(REPO_ROOT, "package-lock.json")),
+    ),
+    cargoLockSha256: sha256(
+      fs.readFileSync(path.join(REPO_ROOT, "src-tauri", "Cargo.lock")),
+    ),
     platform: process.platform,
     arch: process.arch,
     node: process.version,
+    binarySha256: sha256(fs.readFileSync(e2eBinaryPath())),
     startedAt,
     finishedAt: new Date().toISOString(),
     ffmpeg: ffmpeg
@@ -702,6 +1447,7 @@ async function main() {
     fixtures,
     scenarios,
     missingScenarios: missing,
+    scenarioProblems,
     legacyImportCoverage,
     uncoveredLegacyImportFailureModes: uncovered,
     screenshots,
@@ -710,6 +1456,7 @@ async function main() {
     passed:
       !failure &&
       missing.length === 0 &&
+      scenarioProblems.length === 0 &&
       uncovered.length === 0 &&
       screenshotProblems.length === 0,
     mediaRequests: server.requests.length,
@@ -718,13 +1465,25 @@ async function main() {
     ),
     appLogTail: readLogTail(mainPass, 40),
   });
-  for (const pass of [...legacyPasses, mainPass]) {
+  for (const pass of [
+    ...legacyPasses,
+    ...(offlineQueuePass ? [offlineQueuePass] : []),
+    ...(stateRepairPass ? [stateRepairPass] : []),
+    ...(securityPass ? [securityPass] : []),
+    ...(round2RendererPass ? [round2RendererPass] : []),
+    mainPass,
+  ]) {
     cleanupProfile(pass.profile.profileDir);
   }
   if (failure) throw new Error(`${failure} (evidence: ${evidence})`);
   if (missing.length > 0) {
     throw new Error(
       `E2E scenarios did not report: ${missing.join(", ")} (evidence: ${evidence})`,
+    );
+  }
+  if (scenarioProblems.length > 0) {
+    throw new Error(
+      `E2E scenario outcomes are incomplete or unsuccessful: ${scenarioProblems.join(", ")} (evidence: ${evidence})`,
     );
   }
   if (uncovered.length > 0) {

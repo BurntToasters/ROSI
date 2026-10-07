@@ -22,6 +22,7 @@ tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 shared_child = "1.1"
 getrandom = "0.3"
 url = "2"
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
@@ -29,6 +30,15 @@ tauri-plugin-updater = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Storage_FileSystem",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }
 
 [features]
 default = []

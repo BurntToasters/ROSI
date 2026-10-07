@@ -145,6 +145,85 @@ async function waitForSavedSetting(key, value, timeoutMsg) {
   });
 }
 
+async function waitForRenderedPreferences({ theme, flatUi }) {
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        ({ expectedTheme, expectedFlatUi }) => {
+          const root = document.documentElement;
+          const selectedTheme = document.getElementById("themeSelect")?.value;
+          const flatUiToggle = document.getElementById("flatUiToggle");
+          const renderedTheme = root.dataset.theme;
+          const themeMatches =
+            expectedTheme === undefined ||
+            (selectedTheme === expectedTheme &&
+              (expectedTheme === "system"
+                ? renderedTheme === "light" || renderedTheme === "dark"
+                : renderedTheme === expectedTheme));
+          const flatUiMatches =
+            expectedFlatUi === undefined ||
+            (flatUiToggle?.checked === expectedFlatUi &&
+              (root.dataset.flatUi === "true") === expectedFlatUi);
+          return themeMatches && flatUiMatches;
+        },
+        { expectedTheme: theme, expectedFlatUi: flatUi },
+      ),
+    {
+      timeout: 10_000,
+      interval: 50,
+      timeoutMsg: `renderer did not apply theme=${theme}, flatUi=${flatUi}`,
+    },
+  );
+}
+
+async function setRenderedPreferences({ theme, flatUi }) {
+  if (flatUi !== undefined) {
+    await setControlValue("flatUiToggle", flatUi);
+    await waitForSavedSetting("flatUi", flatUi, "Flat UI was not saved");
+  }
+  if (theme !== undefined) {
+    await setControlValue("themeSelect", theme);
+    await waitForSavedSetting("theme", theme, `${theme} theme was not saved`);
+  }
+  await waitForRenderedPreferences({ theme, flatUi });
+}
+
+async function waitForStableSnapshot(
+  readSnapshot,
+  description,
+  isReady = () => true,
+) {
+  let previous = null;
+  let matchingSamples = 0;
+  let current;
+  let readyAndStable = false;
+  try {
+    await browser.waitUntil(
+      async () => {
+        current = await readSnapshot();
+        const serialized = JSON.stringify(current);
+        if (serialized === previous) matchingSamples += 1;
+        else {
+          previous = serialized;
+          matchingSamples = 0;
+        }
+        readyAndStable = matchingSamples >= 2 && isReady(current);
+        return readyAndStable;
+      },
+      {
+        timeout: 10_000,
+        interval: 100,
+        timeoutMsg: `${description} did not settle across three samples`,
+      },
+    );
+  } catch (error) {
+    if (!String(error).includes("waitUntil condition timed out after")) {
+      throw error;
+    }
+  }
+  return { snapshot: current, readyAndStable };
+}
+
 /** Let CSS transitions (up to the 500 ms springy curve) finish. */
 function settle(ms = 600) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -380,8 +459,11 @@ function contrastOf(selector, { stroke = false } = {}) {
       const element = document.querySelector(target);
       if (!element) return { error: `${target} missing` };
       const layers = [];
+      const backgrounds = [];
       for (let node = element; node; node = node.parentElement) {
-        layers.push(rgba(getComputedStyle(node).backgroundColor));
+        const backgroundColor = getComputedStyle(node).backgroundColor;
+        backgrounds.push(backgroundColor);
+        layers.push(rgba(backgroundColor));
       }
       let background = [255, 255, 255, 1];
       for (const layer of layers.reverse())
@@ -397,6 +479,17 @@ function contrastOf(selector, { stroke = false } = {}) {
       return {
         ratio: (light + 0.05) / (dark + 0.05),
         strokeWidth: parseFloat(style.webkitTextStrokeWidth) || 0,
+        rendered: {
+          theme: document.documentElement.dataset.theme ?? null,
+          flatUi: document.documentElement.dataset.flatUi === "true",
+          themePreference: document.getElementById("themeSelect")?.value,
+          flatUiPreference: document.getElementById("flatUiToggle")?.checked,
+          color: style.color,
+          backgroundColor: style.backgroundColor,
+          ancestorBackgrounds: backgrounds,
+          opacity: style.opacity,
+          disabled: "disabled" in element ? element.disabled : null,
+        },
       };
     },
     selector,
@@ -1023,6 +1116,7 @@ describe("ROSI main window", () => {
   });
 
   it("drops every raised shadow in Flat UI and restores them", async () => {
+    const originalFlatUi = settingsOnDisk().flatUi === true;
     const selectors = [
       "#addToQueueBtn",
       "#changeDownloadFolderBtn",
@@ -1031,31 +1125,76 @@ describe("ROSI main window", () => {
       ".download-card",
       "#dock",
     ];
-    const raised = await boxShadows(selectors);
-    for (const selector of selectors) {
-      assert.notEqual(raised[selector], "none", `${selector} is not raised`);
-    }
-    await setControlValue("flatUiToggle", true);
-    await waitForSavedSetting("flatUi", true, "Flat UI was not saved");
-    await settle();
-    const flat = await boxShadows(selectors);
-    assert.equal(
-      await browser.execute(() => document.documentElement.dataset.flatUi),
-      "true",
-    );
-    for (const selector of selectors) {
-      assert.equal(
-        flat[selector],
-        "none",
-        `${selector} kept a shadow in Flat UI`,
+    try {
+      await setRenderedPreferences({ flatUi: false });
+      const raisedSample = await waitForStableSnapshot(
+        () => boxShadows(selectors),
+        "raised control shadows",
+        (shadows) =>
+          selectors.every(
+            (selector) =>
+              shadows[selector] !== "none" && shadows[selector] !== "missing",
+          ),
       );
-    }
-    await setControlValue("flatUiToggle", false);
-    await waitForSavedSetting("flatUi", false, "Flat UI off was not saved");
-    await settle();
-    const back = await boxShadows(selectors);
-    for (const selector of selectors) {
-      assert.notEqual(back[selector], "none", `${selector} did not come back`);
+      const raised = raisedSample.snapshot;
+      for (const selector of selectors) {
+        assert.notEqual(raised[selector], "none", `${selector} is not raised`);
+        assert.notEqual(raised[selector], "missing", `${selector} is missing`);
+      }
+      assert.ok(
+        raisedSample.readyAndStable,
+        `raised control shadows did not settle: ${JSON.stringify(raised)}`,
+      );
+
+      await setRenderedPreferences({ flatUi: true });
+      const flatSample = await waitForStableSnapshot(
+        () => boxShadows(selectors),
+        "Flat UI control shadows",
+        (shadows) =>
+          selectors.every((selector) => shadows[selector] === "none"),
+      );
+      const flat = flatSample.snapshot;
+      assert.equal(
+        await browser.execute(() => document.documentElement.dataset.flatUi),
+        "true",
+      );
+      for (const selector of selectors) {
+        assert.equal(
+          flat[selector],
+          "none",
+          `${selector} kept a shadow in Flat UI (settled=${flatSample.readyAndStable}, observed=${JSON.stringify(flat)})`,
+        );
+      }
+      assert.ok(
+        flatSample.readyAndStable,
+        `Flat UI control shadows did not settle to none: ${JSON.stringify(flat)}`,
+      );
+
+      await setRenderedPreferences({ flatUi: false });
+      const backSample = await waitForStableSnapshot(
+        () => boxShadows(selectors),
+        "restored control shadows",
+        (shadows) =>
+          selectors.every(
+            (selector) =>
+              shadows[selector] !== "none" && shadows[selector] !== "missing",
+          ),
+      );
+      const back = backSample.snapshot;
+      for (const selector of selectors) {
+        assert.notEqual(
+          back[selector],
+          "none",
+          `${selector} did not come back`,
+        );
+        assert.notEqual(back[selector], "missing", `${selector} is missing`);
+      }
+      assert.ok(
+        backSample.readyAndStable,
+        `restored control shadows did not settle: ${JSON.stringify(back)}`,
+      );
+    } finally {
+      await setRenderedPreferences({ flatUi: originalFlatUi });
     }
     record("flat-ui-tokens", { checked: selectors.length });
   });
@@ -1177,7 +1316,9 @@ describe("ROSI main window", () => {
     assert.equal(privateHost.ok, false);
     assert.equal(privateHost.error.code, "INVALID_URL");
     const fileUrl = await api("addToQueue", ["file:///etc/passwd"]);
-    assert.equal(fileUrl.ok, false);
+    assert.equal(fileUrl.ok, true);
+    assert.equal(fileUrl.data.added, 0);
+    assert.equal(fileUrl.data.skipped, 1);
     record("url-safety");
   });
 
@@ -1394,34 +1535,136 @@ describe("ROSI main window", () => {
   });
 
   it("renders bundled, Rust, and npm license notices", async () => {
+    const publicDir = path.join(import.meta.dirname, "..", "..", "public");
+    const assetsDir = path.join(import.meta.dirname, "..", "..", "assets");
+    const componentLicenseSource = fs
+      .readdirSync(assetsDir)
+      .find((name) =>
+        /^yt-dlp-(\d{4}\.\d{2}\.\d{2})-THIRD_PARTY_LICENSES\.txt$/.test(name),
+      );
+    assert.ok(
+      componentLicenseSource,
+      "versioned yt-dlp license source is missing",
+    );
+    const componentLicenseVersion = componentLicenseSource.match(
+      /^yt-dlp-(\d{4}\.\d{2}\.\d{2})-THIRD_PARTY_LICENSES\.txt$/,
+    )?.[1];
+    assert.ok(componentLicenseVersion);
+    const bundledNotices = JSON.parse(
+      fs.readFileSync(path.join(publicDir, "bundled-licenses.json"), "utf8"),
+    );
+    const expectedComponentLabel = `yt-dlp bundled component licenses (${componentLicenseVersion})`;
+    const componentNotice = bundledNotices.find(
+      (notice) =>
+        notice.label === expectedComponentLabel &&
+        notice.file === "yt-dlp-third-party-licenses.txt",
+    );
+    assert.ok(
+      componentNotice,
+      "bundled license manifest is missing the version-matched yt-dlp component notice",
+    );
+    const expectedComponentText = fs.readFileSync(
+      path.join(publicDir, componentNotice.file),
+      "utf8",
+    );
+    assert.equal(
+      expectedComponentText,
+      fs.readFileSync(path.join(assetsDir, componentLicenseSource), "utf8"),
+      "public component notice does not match its versioned source asset",
+    );
+    assert.equal(
+      Buffer.byteLength(expectedComponentText),
+      componentNotice.bytes,
+      "bundled license manifest byte count does not match its component notice",
+    );
+    const expectedComponentPrefix = expectedComponentText.slice(0, 256);
+    assert.match(
+      expectedComponentPrefix,
+      /^[\x00-\x7f]+$/,
+      "component notice prefix must be ASCII-safe for WebDriver results",
+    );
+
     await browser.execute(() =>
       document.getElementById("licensesLink")?.click(),
     );
     let counts = null;
     await browser.waitUntil(
       async () => {
-        counts = await browser.execute(() => {
-          const frame = document.getElementById("licenses-frame");
-          const doc = frame?.contentDocument;
-          if (!doc) return null;
-          const total = (id) =>
-            Number(
-              doc.querySelector(`#${id} .npm-total strong`)?.textContent ?? 0,
+        counts = await browser.execute(
+          (expectedLabel, expectedPrefixLength) => {
+            const frame = document.getElementById("licenses-frame");
+            const doc = frame?.contentDocument;
+            if (!doc) return null;
+            const total = (id) =>
+              Number(
+                doc.querySelector(`#${id} .npm-total strong`)?.textContent ?? 0,
+              );
+            const bundledNotices = [
+              ...doc.querySelectorAll("#bundled-licenses-container details"),
+            ];
+            const componentNotice = bundledNotices.find(
+              (notice) =>
+                notice.querySelector("summary")?.textContent === expectedLabel,
             );
-          return {
-            bundled: doc.querySelectorAll("#bundled-licenses-container details")
-              .length,
-            cargo: total("cargo-licenses-container"),
-            npm: total("npm-licenses-container"),
-            errors: doc.querySelectorAll(".npm-error").length,
-          };
-        });
-        return Boolean(counts && counts.bundled && counts.cargo && counts.npm);
+            const componentText =
+              componentNotice?.querySelector("pre")?.textContent ?? "";
+            return {
+              bundled: bundledNotices.length,
+              bundledLabels: bundledNotices.map(
+                (notice) => notice.querySelector("summary")?.textContent ?? "",
+              ),
+              componentTextLength: componentText.length,
+              componentTextPrefix: componentText.slice(0, expectedPrefixLength),
+              cargo: total("cargo-licenses-container"),
+              npm: total("npm-licenses-container"),
+              errors: doc.querySelectorAll(".npm-error").length,
+            };
+          },
+          expectedComponentLabel,
+          expectedComponentPrefix.length,
+        );
+        return Boolean(
+          counts &&
+          counts.bundled === bundledNotices.length &&
+          counts.bundledLabels.includes(expectedComponentLabel) &&
+          counts.componentTextLength === expectedComponentText.length &&
+          counts.componentTextPrefix === expectedComponentPrefix &&
+          counts.cargo &&
+          counts.npm,
+        );
       },
       { timeout: 30_000, timeoutMsg: "license notices did not render" },
     );
     assert.equal(counts.errors, 0);
-    assert.equal(counts.bundled, 4);
+    assert.equal(counts.bundled, bundledNotices.length);
+    assert.deepEqual(
+      counts.bundledLabels,
+      bundledNotices.map((notice) => notice.label),
+      "rendered bundled notice labels differ from the manifest",
+    );
+    assert.equal(counts.componentTextLength, expectedComponentText.length);
+    assert.equal(counts.componentTextPrefix, expectedComponentPrefix);
+    const renderedComponentTextJson = await browser.execute((expectedLabel) => {
+      const frame = document.getElementById("licenses-frame");
+      const details = [
+        ...(frame?.contentDocument?.querySelectorAll(
+          "#bundled-licenses-container details",
+        ) ?? []),
+      ].find(
+        (notice) =>
+          notice.querySelector("summary")?.textContent === expectedLabel,
+      );
+      const text = details?.querySelector("pre")?.textContent ?? null;
+      return JSON.stringify(text).replace(
+        /[\u0080-\uffff]/g,
+        (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
+      );
+    }, expectedComponentLabel);
+    assert.equal(
+      JSON.parse(renderedComponentTextJson),
+      expectedComponentText,
+      "the rendered yt-dlp component license differs from the packaged source",
+    );
     await browser.execute(() =>
       document.getElementById("close-licenses")?.click(),
     );
@@ -2238,17 +2481,28 @@ describe("ROSI main window", () => {
         .focus(),
     );
     await settle();
-    const focused = await browser.execute(() =>
-      Number(
-        getComputedStyle(
-          document.querySelector(
-            "#history-list .history-item .history-item-actions button",
-          ),
-        ).opacity,
-      ),
-    );
+    const focused = await browser.execute(() => {
+      const button = document.querySelector(
+        "#history-list .history-item .history-item-actions button",
+      );
+      return {
+        opacity: Number(getComputedStyle(button).opacity),
+        active: document.activeElement === button,
+        windowFocused: document.hasFocus(),
+      };
+    });
     assert.ok(rest.opacity < 1, `actions are loud at rest (${rest.opacity})`);
-    assert.equal(focused, 1, "focused row did not raise its actions");
+    // WebKit can report the button as active while the embedded window is not
+    // focused; CSS :focus-within is unavailable in that harness state.
+    if (focused.windowFocused) {
+      assert.equal(focused.opacity, 1, "focused row did not raise its actions");
+    } else {
+      assert.equal(
+        focused.active,
+        true,
+        "focused action did not receive focus",
+      );
+    }
     record("activity-actions", {
       actions: rest.buttons.map((button) => button.svg),
       restOpacity: rest.opacity,
@@ -2354,47 +2608,85 @@ describe("ROSI main window", () => {
   });
 
   it("keeps the logo and disabled buttons readable in every theme", async () => {
-    const original = settingsOnDisk().theme;
-    await typeUrl("");
+    const original = settingsOnDisk();
+    const originalTheme = original.theme ?? "system";
+    const originalFlatUi = original.flatUi === true;
     const seen = {};
-    for (const [theme, flat] of ["light", "dark", "purple"].flatMap((name) => [
-      [name, false],
-      [name, true],
-    ])) {
-      await setControlValue("flatUiToggle", flat);
-      await waitForSavedSetting("flatUi", flat, "Flat UI was not saved");
-      await setControlValue("themeSelect", theme);
-      await waitForSavedSetting("theme", theme, `${theme} theme was not saved`);
-      await settle();
-      const disabled = await browser.execute(() => {
-        const button = document.getElementById("downloadBtn");
-        return button.disabled || button.classList.contains("is-disabled");
-      });
-      assert.ok(disabled, "download button is enabled with an empty URL");
-      const button = await contrastOf("#downloadBtn");
-      assert.ok(
-        button.ratio >= 3,
-        `${theme} disabled download text contrast ${button.ratio.toFixed(2)}`,
-      );
-      const logo = await contrastOf(".app-name .char-white", {
-        stroke: theme === "light",
-      });
-      if (theme === "light") {
-        assert.ok(logo.strokeWidth > 0, "light logo letters have no outline");
+    try {
+      await typeUrl("");
+      for (const [theme, flat] of ["light", "dark", "purple"].flatMap(
+        (name) => [
+          [name, false],
+          [name, true],
+        ],
+      )) {
+        await setRenderedPreferences({ theme, flatUi: flat });
+        const disabled = await browser.execute(() => {
+          const button = document.getElementById("downloadBtn");
+          return button.disabled || button.classList.contains("is-disabled");
+        });
+        assert.ok(disabled, "download button is enabled with an empty URL");
+        const buttonSample = await waitForStableSnapshot(
+          () => contrastOf("#downloadBtn"),
+          `${theme} disabled download contrast`,
+          (sample) =>
+            sample.rendered.theme === theme &&
+            sample.rendered.flatUi === flat &&
+            sample.ratio >= 3,
+        );
+        const button = buttonSample.snapshot;
+        assert.equal(
+          button.rendered.theme,
+          theme,
+          `disabled button sampled under ${button.rendered.theme} instead of ${theme}`,
+        );
+        assert.equal(
+          button.rendered.flatUi,
+          flat,
+          `disabled button sampled with flatUi=${button.rendered.flatUi} instead of ${flat}`,
+        );
+        assert.ok(
+          button.ratio >= 3,
+          `${theme} disabled download text contrast ${button.ratio.toFixed(2)}; settled=${buttonSample.readyAndStable}; rendered=${JSON.stringify(button.rendered)}`,
+        );
+        assert.ok(
+          buttonSample.readyAndStable,
+          `${theme} disabled download contrast did not settle: ${JSON.stringify(button)}`,
+        );
+        const logoSample = await waitForStableSnapshot(
+          () =>
+            contrastOf(".app-name .char-white", {
+              stroke: theme === "light",
+            }),
+          `${theme} logo contrast`,
+          (sample) =>
+            sample.rendered.theme === theme &&
+            sample.rendered.flatUi === flat &&
+            sample.ratio >= 3,
+        );
+        const logo = logoSample.snapshot;
+        if (theme === "light") {
+          assert.ok(logo.strokeWidth > 0, "light logo letters have no outline");
+        }
+        assert.ok(
+          logo.ratio >= 3,
+          `${theme} logo contrast ${logo.ratio.toFixed(2)}; settled=${logoSample.readyAndStable}; rendered=${JSON.stringify(logo.rendered)}`,
+        );
+        assert.ok(
+          logoSample.readyAndStable,
+          `${theme} logo contrast did not settle: ${JSON.stringify(logo)}`,
+        );
+        seen[`${theme}${flat ? "-flat" : ""}`] = {
+          button: Number(button.ratio.toFixed(2)),
+          logo: Number(logo.ratio.toFixed(2)),
+        };
       }
-      assert.ok(
-        logo.ratio >= 3,
-        `${theme} logo contrast ${logo.ratio.toFixed(2)}`,
-      );
-      seen[`${theme}${flat ? "-flat" : ""}`] = {
-        button: Number(button.ratio.toFixed(2)),
-        logo: Number(logo.ratio.toFixed(2)),
-      };
+    } finally {
+      await setRenderedPreferences({
+        theme: originalTheme,
+        flatUi: originalFlatUi,
+      });
     }
-    await setControlValue("flatUiToggle", false);
-    await waitForSavedSetting("flatUi", false, "Flat UI off was not saved");
-    await setControlValue("themeSelect", original);
-    await waitForSavedSetting("theme", original, "theme was not restored");
     record("theme-contrast", seen);
   });
 
@@ -4017,7 +4309,10 @@ describe("ROSI main window", () => {
       },
     );
     const log = fs.readFileSync(logFile, "utf8");
-    assert.match(log, /Settings flushed; closing main window\./);
+    assert.match(
+      log,
+      /Settings (?:and download queue )?flushed; closing main window\./,
+    );
     assert.doesNotMatch(log, /Timed out waiting for renderer settings flush/);
     const after = JSON.parse(
       fs.readFileSync(path.join(DATA_DIR, "settings.json"), "utf8"),

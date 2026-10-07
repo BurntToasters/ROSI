@@ -21,7 +21,11 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 
 ## Changes in `v5.0.0-beta.2:`
 
-- **Fix:** (add release notes)
+- **UI:** Added docked Downloads and Queue controls, expanded the first-run setup flow, refreshed status icons, and improved keyboard focus and small-window layouts.
+- **Platform:** Synchronized the app theme with the native window and refined scrolling behavior.
+- **Security:** Downloads, previews, and format discovery now route requests through a destination-checking proxy that blocks private network targets across redirects and extractor-provided URLs. Preview thumbnails are fetched by ROSI, size-limited, and embedded only when they are PNG, JPEG, or WebP images.
+- **Release checks:** Release evidence now distinguishes full E2E acceptance from build-VM checks that rely on successful hosted CI for the exact source revision. Strict Cargo notices cover the updated dependency graph, and the reviewed development-tool advisories are recorded with a targeted dependency fix where available.
+- **Quality:** Refreshed package and sidecar metadata and expanded native E2E coverage for the updated UI and security boundaries.
 
 ## Changes in `v5.0.0-beta.1:`
 

@@ -542,3 +542,14 @@ html[data-flat-ui='true'] *::after {
   --segmented-selected-bg: var(--surface-3);
   --segmented-selected-shadow: none;
 }
+
+/* A flat surface must win over component-level hover and active shadows too. */
+:root[data-flat-ui='true'] .btn {
+  box-shadow: none !important;
+  transition: none !important;
+}
+
+:root[data-flat-ui='true'] .download-card,
+:root[data-flat-ui='true'] .dock {
+  transition: none !important;
+}

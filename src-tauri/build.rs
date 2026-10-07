@@ -46,6 +46,55 @@ const COMMANDS: &[&str] = &[
     "mark_main_window_ready",
 ];
 
+// Tauri's AppManifest requires a 'static command slice. Keep this list in
+// sync with COMMANDS and append only commands gated by the `e2e` feature.
+const COMMANDS_WITH_E2E: &[&str] = &[
+    "get_settings",
+    "get_default_settings",
+    "save_settings",
+    "reset_settings",
+    "export_settings",
+    "import_settings",
+    "get_stats",
+    "reset_stats",
+    "get_download_activity",
+    "clear_download_activity",
+    "get_formats",
+    "cancel_formats",
+    "get_video_info",
+    "cancel_video_info",
+    "download_video",
+    "cancel_download",
+    "add_to_queue",
+    "remove_from_queue",
+    "retry_queue_item",
+    "reorder_queue_item",
+    "clear_queue",
+    "get_queue",
+    "start_queue",
+    "cancel_queue",
+    "select_download_location",
+    "open_external",
+    "open_file_location",
+    "show_notification",
+    "check_deno_installed",
+    "install_deno",
+    "detect_gpu",
+    "is_packaged",
+    "is_flatpak",
+    "get_app_platform",
+    "get_distribution_channel",
+    "get_beta_updater_target",
+    "restart_app",
+    "log_error",
+    "notify_settings_flushed",
+    "mark_main_window_ready",
+    "e2e_emit_stale_download_events",
+    "e2e_network_pipelining_probe",
+    "e2e_updater_install_probe",
+    "e2e_cancel_close_request",
+];
+
 fn sha256_file(path: &Path) -> String {
     use std::io::Read;
     let mut file = std::fs::File::open(path)
@@ -298,10 +347,16 @@ fn verify_sidecars() {
 
 fn main() {
     println!("cargo:rerun-if-env-changed=ROSI_DISTRIBUTION_CHANNEL");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_E2E");
     verify_sidecars();
+    let commands = if std::env::var_os("CARGO_FEATURE_E2E").is_some() {
+        COMMANDS_WITH_E2E
+    } else {
+        COMMANDS
+    };
     tauri_build::try_build(
         tauri_build::Attributes::new()
-            .app_manifest(tauri_build::AppManifest::new().commands(COMMANDS)),
+            .app_manifest(tauri_build::AppManifest::new().commands(commands)),
     )
     .expect("failed to build Tauri application metadata");
 }

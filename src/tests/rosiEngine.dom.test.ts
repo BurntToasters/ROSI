@@ -389,13 +389,23 @@ describe('rosiEngine DOM wiring', () => {
           advancedOptions: true,
         })
       ) as unknown as ReturnType<typeof vi.fn>,
+      getFormats: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          data: '137 mp4 1920x1080 video only\n140 m4a audio only',
+        })
+      ) as unknown as ReturnType<typeof vi.fn>,
     });
     await loadEngine(api);
 
+    const urlInput = document.getElementById('url') as HTMLInputElement;
+    urlInput.value = 'https://example.com/watch';
+    urlInput.dispatchEvent(new Event('input', { bubbles: true }));
+    (document.getElementById('fetchFormatsBtn') as HTMLButtonElement).click();
+    await flush();
+
     const videoSelect = document.getElementById('videoFormat') as HTMLSelectElement;
     const audioSelect = document.getElementById('audioFormat') as HTMLSelectElement;
-    videoSelect.appendChild(new Option('137', '137'));
-    audioSelect.appendChild(new Option('140', '140'));
     videoSelect.value = '137';
     audioSelect.value = '140';
 
@@ -437,13 +447,23 @@ describe('rosiEngine DOM wiring', () => {
           advancedOptions: true,
         })
       ) as unknown as ReturnType<typeof vi.fn>,
+      getFormats: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          data: '137 mp4 1920x1080 video only\n140 m4a audio only',
+        })
+      ) as unknown as ReturnType<typeof vi.fn>,
     });
     await loadEngine(api);
 
+    const urlInput = document.getElementById('url') as HTMLInputElement;
+    urlInput.value = 'https://example.com/watch';
+    urlInput.dispatchEvent(new Event('input', { bubbles: true }));
+    (document.getElementById('fetchFormatsBtn') as HTMLButtonElement).click();
+    await flush();
+
     const videoSelect = document.getElementById('videoFormat') as HTMLSelectElement;
     const audioSelect = document.getElementById('audioFormat') as HTMLSelectElement;
-    videoSelect.appendChild(new Option('137', '137'));
-    audioSelect.appendChild(new Option('140', '140'));
     videoSelect.value = '137';
     audioSelect.value = '140';
 
@@ -666,9 +686,9 @@ describe('rosiEngine DOM wiring', () => {
   });
 
   it('persists settings and notifies the main process before close', async () => {
-    let prepareForCloseCb = null as (() => Promise<void>) | null;
+    let prepareForCloseCb = null as ((generation: number) => Promise<void>) | null;
     const api = buildMockApi({
-      onPrepareForClose: ((cb: () => Promise<void>) => {
+      onPrepareForClose: ((cb: (generation: number) => Promise<void>) => {
         prepareForCloseCb = cb;
         return () => {};
       }) as unknown as ReturnType<typeof vi.fn>,
@@ -676,10 +696,10 @@ describe('rosiEngine DOM wiring', () => {
     await loadEngine(api);
 
     expect(typeof prepareForCloseCb).toBe('function');
-    await prepareForCloseCb?.();
+    await prepareForCloseCb?.(7);
 
     expect(api.saveSettings).toHaveBeenCalled();
-    expect(api.notifySettingsFlushed).toHaveBeenCalled();
+    expect(api.notifySettingsFlushed).toHaveBeenCalledWith(7);
   });
 
   it('refreshes the visible theme when settings are imported', async () => {
@@ -803,7 +823,8 @@ describe('rosiEngine DOM wiring', () => {
             title: 'Test Clip',
             uploader: 'Test Channel',
             durationSeconds: 65,
-            thumbnail: 'https://example.com/t.jpg',
+            thumbnail:
+              'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+cRbkAAAAASUVORK5CYII=',
             ext: 'mp4',
             viewCount: 2000,
             isPlaylist: false,
@@ -828,7 +849,9 @@ describe('rosiEngine DOM wiring', () => {
     expect(document.getElementById('preview-title')?.textContent).toBe('Test Clip');
     expect(document.getElementById('preview-duration')?.textContent).toBe('1:05');
     const thumb = document.getElementById('preview-thumb') as HTMLImageElement;
-    expect(thumb.getAttribute('src')).toBe('https://example.com/t.jpg');
+    expect(thumb.getAttribute('src')).toBe(
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+cRbkAAAAASUVORK5CYII='
+    );
   });
 
   it('shows the enhancements subtitle-language field only when subtitles are enabled', async () => {

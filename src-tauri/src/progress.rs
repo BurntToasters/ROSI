@@ -275,6 +275,7 @@ pub fn build_event(
     };
     JobProgressEvent {
         phase,
+        session_id: None,
         phase_percent: phase_percent.is_finite().then_some(phase_percent),
         item_overall_percent,
         overall_percent,
@@ -292,6 +293,7 @@ pub fn build_event(
 pub fn idle_event(queue: Option<&QueueProgress>) -> JobProgressEvent {
     JobProgressEvent {
         phase: Phase::Idle,
+        session_id: None,
         phase_percent: Some(0.0),
         item_overall_percent: 0.0,
         overall_percent: 0.0,

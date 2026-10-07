@@ -200,6 +200,10 @@ pub struct DownloadCompletion {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_paths: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed_paths: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub size_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
@@ -222,6 +226,8 @@ pub enum Phase {
 #[serde(rename_all = "camelCase")]
 pub struct JobProgressEvent {
     pub phase: Phase,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<u64>,
     /// `null` when the phase has no determinate percentage.
     pub phase_percent: Option<f64>,
     /// Progress for only the active item, before queue weighting.

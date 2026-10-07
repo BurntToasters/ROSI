@@ -527,13 +527,9 @@ pub fn save_settings(settings: Value) -> IpcResult<Settings> {
 }
 
 #[tauri::command(async)]
-pub fn reset_settings(app: tauri::AppHandle) {
-    if let Err(error) = save_all(&default_settings()) {
-        crate::logging::error(&format!(
-            "Failed to save default settings during reset: {error}"
-        ));
-    }
-    crate::window::restart(&app);
+pub fn reset_settings(app: tauri::AppHandle) -> Result<(), String> {
+    let defaults = default_settings();
+    crate::window::restart_with(&app, || save_all(&defaults))
 }
 
 #[derive(serde::Serialize)]

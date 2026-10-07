@@ -10,12 +10,15 @@ import {
   checkForUpdates,
   downloadUpdate,
   installUpdate,
+  notifyUpdaterChannelChanged,
   onUpdaterProgress,
   onUpdaterStatus,
 } from './updater';
 
 const CHANNEL: 'github' | 'msstore' =
   import.meta.env.VITE_ROSI_CHANNEL === 'msstore' ? 'msstore' : 'github';
+
+let prepareForCloseRegistration: Promise<void> = Promise.resolve();
 
 function reportBridgeError(context: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
@@ -29,19 +32,32 @@ function fire(command: string, args?: Record<string, unknown>): void {
 function subscribe<T>(event: string, callback: (payload: T) => void): () => void {
   let disposed = false;
   let unlisten: UnlistenFn | null = null;
-  listen<T>(event, (message) => {
+  const registration = listen<T>(event, (message) => {
     if (!disposed) callback(message.payload);
   })
     .then((stop) => {
       if (disposed) stop();
       else unlisten = stop;
     })
-    .catch((error: unknown) => reportBridgeError(`listen ${event}`, error));
+    .catch((error: unknown) => {
+      reportBridgeError(`listen ${event}`, error);
+      throw error;
+    });
+  if (event === 'prepare-for-close') {
+    prepareForCloseRegistration = registration.then(() => undefined);
+    void prepareForCloseRegistration.catch(() => {});
+  } else {
+    void registration.catch(() => {});
+  }
   return () => {
     disposed = true;
     unlisten?.();
     unlisten = null;
   };
+}
+
+export function waitForPrepareForCloseListener(): Promise<void> {
+  return prepareForCloseRegistration;
 }
 
 const api: RosiRendererApi = {
@@ -55,7 +71,7 @@ const api: RosiRendererApi = {
   getSettings: () => invoke('get_settings'),
   getDefaultSettings: () => invoke('get_default_settings'),
   saveSettings: (settings) => invoke('save_settings', { settings }),
-  resetSettings: () => fire('reset_settings'),
+  resetSettings: () => invoke('reset_settings'),
   openExternal: (url) => invoke('open_external', { url }),
   downloadVideo: (options) => invoke('download_video', { options }),
   cancelDownload: () => fire('cancel_download'),
@@ -67,11 +83,11 @@ const api: RosiRendererApi = {
   detectGpu: () => invoke('detect_gpu'),
   isPackaged: () => invoke('is_packaged'),
   checkForUpdates: () => checkForUpdates(),
-  downloadUpdate: () => downloadUpdate(),
+  notifyUpdaterChannelChanged: (channel, save, previousChannel) =>
+    notifyUpdaterChannelChanged(channel, save, previousChannel),
+  downloadUpdate: (candidateId) => downloadUpdate(candidateId),
   cancelUpdateDownload: () => cancelUpdateDownload(),
-  installUpdate: () => {
-    void installUpdate();
-  },
+  installUpdate: (candidateId) => installUpdate(candidateId),
   onUpdaterStatus: (callback) => onUpdaterStatus(callback),
   onUpdaterProgress: (callback) => onUpdaterProgress(callback),
   onProgress: (callback) => subscribe('progress', callback),
@@ -94,7 +110,7 @@ const api: RosiRendererApi = {
       .setTheme(theme)
       .catch((error: unknown) => reportBridgeError('setTheme', error));
   },
-  notifySettingsFlushed: () => fire('notify_settings_flushed'),
+  notifySettingsFlushed: (generation) => invoke('notify_settings_flushed', { generation }),
   addToQueue: (urls, options) => invoke('add_to_queue', { urls, options: options ?? null }),
   removeFromQueue: (id) => invoke('remove_from_queue', { id }),
   retryQueueItem: (id) => invoke('retry_queue_item', { id }),
@@ -104,8 +120,8 @@ const api: RosiRendererApi = {
   startQueue: () => invoke('start_queue'),
   cancelQueue: () => invoke('cancel_queue'),
   onPrepareForClose: (callback) =>
-    subscribe<null>('prepare-for-close', () => {
-      void callback();
+    subscribe<number>('prepare-for-close', (generation) => {
+      void callback(generation);
     }),
   onQueueUpdate: (callback) => subscribe('queue-update', callback),
   onSettingsImported: (callback) => subscribe('settings-imported', callback),

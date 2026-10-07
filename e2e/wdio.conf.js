@@ -4,8 +4,14 @@ if (!binary) {
 }
 
 const specs = process.env.ROSI_E2E_SPECS
-  ? [process.env.ROSI_E2E_SPECS]
+  ? process.env.ROSI_E2E_SPECS.split(",")
+      .map((spec) => spec.trim())
+      .filter(Boolean)
   : ["./specs/**/*.spec.js"];
+const processRepairRun =
+  process.env.ROSI_E2E_PROCESS_REPAIRS === "1" &&
+  specs.length === 1 &&
+  specs[0] === "./download-process-repairs.spec.js";
 
 async function requestGracefulAppShutdown() {
   const activeBrowser = globalThis.browser;
@@ -89,7 +95,10 @@ export const config = {
   reporters: ["spec"],
   mochaOpts: {
     ui: "bdd",
-    timeout: 180_000,
+    // The isolated process-repair batch records each failure independently;
+    // give that one spec a bounded six-minute ceiling without changing the
+    // timeout for the rest of the GUI suite.
+    timeout: processRepairRun ? 360_000 : 180_000,
   },
   after: requestGracefulAppShutdown,
 };

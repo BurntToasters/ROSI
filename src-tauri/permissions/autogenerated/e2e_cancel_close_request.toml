@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-e2e-cancel-close-request"
+description = "Enables the e2e_cancel_close_request command without any pre-configured scope."
+commands.allow = ["e2e_cancel_close_request"]
+
+[[permission]]
+identifier = "deny-e2e-cancel-close-request"
+description = "Denies the e2e_cancel_close_request command without any pre-configured scope."
+commands.deny = ["e2e_cancel_close_request"]

@@ -41,6 +41,31 @@ use crate::{
     Config,
 };
 
+#[cfg(any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "macos"
+))]
+#[path = "appimage_install.rs"]
+mod appimage_install;
+
+#[cfg(all(
+    feature = "zip",
+    any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "macos"
+    )
+))]
+#[path = "appimage_archive.rs"]
+mod appimage_archive;
+
 const UPDATER_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
 
 #[derive(Copy, Clone)]
@@ -126,9 +151,79 @@ impl RemoteRelease {
     }
 }
 
-pub type OnBeforeExit = Arc<dyn Fn() + Send + Sync + 'static>;
+pub type OnBeforeExit = Arc<dyn Fn() -> std::result::Result<(), String> + Send + Sync + 'static>;
+type OnWindowsInstallerLaunched = Arc<dyn Fn() + Send + Sync + 'static>;
 pub type OnBeforeRequest = Arc<dyn Fn(ClientBuilder) -> ClientBuilder + Send + Sync + 'static>;
 pub type VersionComparator = Arc<dyn Fn(Version, RemoteRelease) -> bool + Send + Sync>;
+fn run_preinstall_flush(
+    hook: Option<&OnBeforeExit>,
+    install: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    if let Some(hook) = hook {
+        hook().map_err(Error::BeforeExit)?;
+    }
+    install()
+}
+
+#[cfg(any(windows, test))]
+fn finish_windows_installer_launch(
+    shell_result: isize,
+    cleanup: impl FnOnce(),
+    exit: impl FnOnce(),
+) -> Result<()> {
+    if !crate::install_safety::shell_execute_launch_ok(shell_result) {
+        return Err(Error::Io(std::io::Error::other(format!(
+            "failed to launch updater installer (ShellExecuteW={shell_result})"
+        ))));
+    }
+    cleanup();
+    exit();
+    Ok(())
+}
+
+const MAX_UPDATE_PACKAGE_BYTES: u64 = 512 * 1024 * 1024;
+
+fn validate_download_content_length(content_length: Option<u64>, limit: u64) -> Result<()> {
+    if content_length.is_some_and(|length| length > limit) {
+        return Err(Error::Network(format!(
+            "update package exceeds the {} byte download limit",
+            limit
+        )));
+    }
+    Ok(())
+}
+
+fn append_download_chunk(
+    buffer: &mut Vec<u8>,
+    chunk: &[u8],
+    content_length: Option<u64>,
+    limit: u64,
+) -> Result<()> {
+    validate_download_content_length(content_length, limit)?;
+    let current = u64::try_from(buffer.len()).map_err(|_| {
+        Error::Network("update package size exceeds the supported limit".to_string())
+    })?;
+    let chunk_size = u64::try_from(chunk.len()).map_err(|_| {
+        Error::Network("update package size exceeds the supported limit".to_string())
+    })?;
+    let next = current.checked_add(chunk_size).ok_or_else(|| {
+        Error::Network("update package size exceeds the supported limit".to_string())
+    })?;
+    if next > limit {
+        return Err(Error::Network(format!(
+            "update package exceeds the {} byte download limit",
+            limit
+        )));
+    }
+    if content_length.is_some_and(|length| next > length) {
+        return Err(Error::Network(
+            "update response exceeded its Content-Length".to_string(),
+        ));
+    }
+    buffer.extend_from_slice(chunk);
+    Ok(())
+}
+
 type MainThreadClosure = Box<dyn FnOnce() + Send + Sync + 'static>;
 type RunOnMainThread =
     Box<dyn Fn(MainThreadClosure) -> std::result::Result<(), tauri::Error> + Send + Sync + 'static>;
@@ -137,6 +232,7 @@ pub struct UpdaterBuilder {
     #[allow(dead_code)]
     run_on_main_thread: RunOnMainThread,
     app_name: String,
+    bundle_identifier: String,
     current_version: Version,
     config: Config,
     pub(crate) version_comparator: Option<VersionComparator>,
@@ -150,6 +246,7 @@ pub struct UpdaterBuilder {
     installer_args: Vec<OsString>,
     current_exe_args: Vec<OsString>,
     on_before_exit: Option<OnBeforeExit>,
+    on_windows_installer_launched: Option<OnWindowsInstallerLaunched>,
     configure_client: Option<OnBeforeRequest>,
 }
 
@@ -166,6 +263,7 @@ impl UpdaterBuilder {
                 .unwrap_or_default(),
             current_exe_args: Vec::new(),
             app_name: app.package_info().name.clone(),
+            bundle_identifier: app.config().identifier.clone(),
             current_version: app.package_info().version.clone(),
             config,
             version_comparator: None,
@@ -177,6 +275,7 @@ impl UpdaterBuilder {
             proxy: None,
             no_proxy: false,
             on_before_exit: None,
+            on_windows_installer_launched: None,
             configure_client: None,
         }
     }
@@ -285,9 +384,21 @@ impl UpdaterBuilder {
         self
     }
 
-    /// Function to run before we run the installer and exit the app through `std::process::exit(0)` on Windows
-    pub fn on_before_exit<F: Fn() + Send + Sync + 'static>(mut self, f: F) -> Self {
+    /// Fallible preparation to run before installing an update. Returning an
+    /// error aborts installation and keeps the downloaded update retryable.
+    pub fn on_before_exit<F: Fn() -> std::result::Result<(), String> + Send + Sync + 'static>(
+        mut self,
+        f: F,
+    ) -> Self {
         self.on_before_exit.replace(Arc::new(f));
+        self
+    }
+
+    pub(crate) fn on_windows_installer_launched<F: Fn() + Send + Sync + 'static>(
+        mut self,
+        f: F,
+    ) -> Self {
+        self.on_windows_installer_launched = Some(Arc::new(f));
         self
     }
 
@@ -315,6 +426,10 @@ impl UpdaterBuilder {
         let arch = updater_arch().ok_or(Error::UnsupportedArch)?;
 
         let executable_path = self.executable_path.clone().unwrap_or(current_exe()?);
+        let executable_name = executable_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_owned);
 
         // Get the extract_path from the provided executable_path
         let extract_path = if cfg!(target_os = "linux") {
@@ -327,6 +442,8 @@ impl UpdaterBuilder {
             run_on_main_thread: Arc::new(self.run_on_main_thread),
             config: self.config,
             app_name: self.app_name,
+            bundle_identifier: self.bundle_identifier,
+            executable_name,
             current_version: self.current_version,
             version_comparator: self.version_comparator,
             timeout: self.timeout,
@@ -340,6 +457,7 @@ impl UpdaterBuilder {
             headers: self.headers,
             extract_path,
             on_before_exit: self.on_before_exit,
+            on_windows_installer_launched: self.on_windows_installer_launched,
             configure_client: self.configure_client,
         })
     }
@@ -362,6 +480,8 @@ pub struct Updater {
     run_on_main_thread: Arc<RunOnMainThread>,
     config: Config,
     app_name: String,
+    bundle_identifier: String,
+    executable_name: Option<String>,
     current_version: Version,
     version_comparator: Option<VersionComparator>,
     timeout: Option<Duration>,
@@ -375,6 +495,7 @@ pub struct Updater {
     headers: HeaderMap,
     extract_path: PathBuf,
     on_before_exit: Option<OnBeforeExit>,
+    on_windows_installer_launched: Option<OnWindowsInstallerLaunched>,
     configure_client: Option<OnBeforeRequest>,
     #[allow(unused)]
     installer_args: Vec<OsString>,
@@ -548,7 +669,10 @@ impl Updater {
                 run_on_main_thread: self.run_on_main_thread.clone(),
                 config: self.config.clone(),
                 on_before_exit: self.on_before_exit.clone(),
+                on_windows_installer_launched: self.on_windows_installer_launched.clone(),
                 app_name: self.app_name.clone(),
+                bundle_identifier: self.bundle_identifier.clone(),
+                executable_name: self.executable_name.clone(),
                 current_version: self.current_version.to_string(),
                 target: target.to_owned(),
                 extract_path: self.extract_path.clone(),
@@ -613,6 +737,8 @@ pub struct Update {
     config: Config,
     #[allow(unused)]
     on_before_exit: Option<OnBeforeExit>,
+    #[allow(unused)]
+    on_windows_installer_launched: Option<OnWindowsInstallerLaunched>,
     /// Update description
     pub body: Option<String>,
     /// Version used to check for update
@@ -644,6 +770,10 @@ pub struct Update {
     /// App name, used for creating named tempfiles on Windows
     #[allow(unused)]
     app_name: String,
+    #[allow(unused)]
+    bundle_identifier: String,
+    #[allow(unused)]
+    executable_name: Option<String>,
     #[allow(unused)]
     installer_args: Vec<OsString>,
     #[allow(unused)]
@@ -706,14 +836,20 @@ impl Update {
             .get("Content-Length")
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse().ok());
+        validate_download_content_length(content_length, MAX_UPDATE_PACKAGE_BYTES)?;
 
         let mut buffer = Vec::new();
 
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
+            append_download_chunk(
+                &mut buffer,
+                chunk.as_ref(),
+                content_length,
+                MAX_UPDATE_PACKAGE_BYTES,
+            )?;
             on_chunk(chunk.len(), content_length);
-            buffer.extend(chunk);
         }
         on_download_finish();
 
@@ -724,7 +860,9 @@ impl Update {
 
     /// Installs the updater package downloaded by [`Update::download`]
     pub fn install(&self, bytes: impl AsRef<[u8]>) -> Result<()> {
-        self.install_inner(bytes.as_ref())
+        run_preinstall_flush(self.on_before_exit.as_ref(), || {
+            self.install_inner(bytes.as_ref())
+        })
     }
 
     /// Downloads and installs the updater package
@@ -864,18 +1002,15 @@ impl Update {
                 SW_SHOW,
             )
         } as isize;
-        if !crate::install_safety::shell_execute_launch_ok(launched) {
-            return Err(Error::Io(std::io::Error::other(format!(
-                "failed to launch updater installer (ShellExecuteW={launched})"
-            ))));
-        }
-
-        if let Some(on_before_exit) = self.on_before_exit.as_ref() {
-            log::debug!("running on_before_exit hook");
-            on_before_exit();
-        }
-
-        std::process::exit(0);
+        finish_windows_installer_launch(
+            launched,
+            || {
+                if let Some(cleanup) = &self.on_windows_installer_launched {
+                    cleanup();
+                }
+            },
+            || std::process::exit(0),
+        )
     }
 
     fn installer_args(&self) -> Vec<&OsStr> {
@@ -987,76 +1122,34 @@ impl Update {
     }
 
     fn install_appimage(&self, bytes: &[u8]) -> Result<()> {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        let extract_path_metadata = self.extract_path.metadata()?;
+        #[cfg(feature = "zip")]
+        let payload = if infer::archive::is_gz(bytes) {
+            log::debug!("extracting AppImage update archive");
+            appimage_archive::extract_appimage_from_archive(bytes, MAX_UPDATE_PACKAGE_BYTES)?
+        } else {
+            bytes.to_vec()
+        };
+        #[cfg(not(feature = "zip"))]
+        let payload = bytes.to_vec();
 
-        let tmp_dir_locations = vec![
-            Box::new(|| Some(std::env::temp_dir())) as Box<dyn FnOnce() -> Option<PathBuf>>,
-            Box::new(dirs::cache_dir),
-            Box::new(|| Some(self.extract_path.parent().unwrap().to_path_buf())),
-        ];
-
-        for tmp_dir_location in tmp_dir_locations {
-            if let Some(tmp_dir_location) = tmp_dir_location() {
-                let tmp_dir = tempfile::Builder::new()
-                    .prefix("tauri_current_app")
-                    .tempdir_in(tmp_dir_location)?;
-                let tmp_dir_metadata = tmp_dir.path().metadata()?;
-
-                if extract_path_metadata.dev() == tmp_dir_metadata.dev() {
-                    let mut perms = tmp_dir_metadata.permissions();
-                    perms.set_mode(0o700);
-                    std::fs::set_permissions(tmp_dir.path(), perms)?;
-
-                    let tmp_app_image = &tmp_dir.path().join("current_app.AppImage");
-
-                    let permissions = std::fs::metadata(&self.extract_path)?.permissions();
-
-                    // create a backup of our current app image
-                    std::fs::rename(&self.extract_path, tmp_app_image)?;
-
-                    #[cfg(feature = "zip")]
-                    if infer::archive::is_gz(bytes) {
-                        log::debug!("extracting AppImage");
-                        // extract the buffer to the tmp_dir
-                        // we extract our signed archive into our final directory without any temp file
-                        let archive = Cursor::new(bytes);
-                        let decoder = flate2::read::GzDecoder::new(archive);
-                        let mut archive = tar::Archive::new(decoder);
-                        for mut entry in archive.entries()?.flatten() {
-                            if let Ok(path) = entry.path() {
-                                if path.extension() == Some(OsStr::new("AppImage")) {
-                                    // if something went wrong during the extraction, we should restore previous app
-                                    if let Err(err) = entry.unpack(&self.extract_path) {
-                                        std::fs::rename(tmp_app_image, &self.extract_path)?;
-                                        return Err(err.into());
-                                    }
-                                    // early finish we have everything we need here
-                                    return Ok(());
-                                }
-                            }
-                        }
-                        // if we have not returned early we should restore the backup
-                        std::fs::rename(tmp_app_image, &self.extract_path)?;
-                        return Err(Error::BinaryNotFoundInArchive);
-                    }
-
-                    log::debug!("rewriting AppImage");
-                    return match std::fs::write(&self.extract_path, bytes)
-                        .and_then(|_| std::fs::set_permissions(&self.extract_path, permissions))
-                    {
-                        Err(err) => {
-                            // if something went wrong during the extraction, we should restore previous app
-                            std::fs::rename(tmp_app_image, &self.extract_path)?;
-                            Err(err.into())
-                        }
-                        Ok(_) => Ok(()),
-                    };
-                }
-            }
+        // Keep the recovery copy beside the installed image when possible so
+        // it survives ordinary `/tmp` cleanup and remains on the install
+        // filesystem for an atomic replacement.
+        let mut temporary_roots = Vec::new();
+        if let Some(parent) = self.extract_path.parent() {
+            temporary_roots.push(parent.to_path_buf());
         }
-
-        Err(Error::TempDirNotOnSameMountPoint)
+        if let Some(cache_directory) = dirs::cache_dir() {
+            temporary_roots.push(cache_directory);
+        }
+        temporary_roots.push(std::env::temp_dir());
+        let backup =
+            appimage_install::install_appimage_at(&self.extract_path, &payload, &temporary_roots)?;
+        log::info!(
+            "installed validated AppImage; previous image is recoverable at {}",
+            backup.display()
+        );
+        Ok(())
     }
 
     fn install_deb(&self, bytes: &[u8]) -> Result<()> {
@@ -1311,9 +1404,14 @@ impl Update {
     /// │          └── ...
     /// └── ...
     fn install_inner(&self, bytes: &[u8]) -> Result<()> {
+        crate::install_safety::with_macos_update_install_lock(|| self.install_inner_locked(bytes))
+    }
+
+    fn install_inner_locked(&self, bytes: &[u8]) -> Result<()> {
         use crate::install_safety::{
-            is_cross_device, macos_app_bundle_complete, macos_update_backup_path,
-            move_dir_replacing, MACOS_PRIVILEGED_INSTALL_SCRIPT,
+            is_cross_device, macos_app_bundle_complete, macos_app_bundle_identity,
+            macos_update_backup_path, move_dir_replacing, MacosBundleIdentity,
+            MACOS_PRIVILEGED_INSTALL_SCRIPT,
         };
 
         let app_parent = self
@@ -1323,8 +1421,26 @@ impl Update {
         let backup_path = macos_update_backup_path(&self.extract_path)
             .ok_or(Error::FailedToDetermineExtractPath)?;
 
+        let expected_identity = MacosBundleIdentity {
+            bundle_identifier: self.bundle_identifier.clone(),
+            executable: self.executable_name.clone().ok_or_else(|| {
+                Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "could not determine the installed app executable name",
+                ))
+            })?,
+        };
+        if !macos_bundle_matches(&self.extract_path, &expected_identity)
+            && !macos_bundle_matches(&backup_path, &expected_identity)
+        {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "neither the installed app nor its recovery backup matches the configured app identity",
+            )));
+        }
+
         let tmp_extract_dir = match tempfile::Builder::new()
-            .prefix(".zinnia-updated-app-")
+            .prefix(".rosi-updated-app-")
             .tempdir_in(app_parent)
         {
             Ok(dir) => dir,
@@ -1340,49 +1456,71 @@ impl Update {
         };
 
         extract_macos_app_archive(bytes, tmp_extract_dir.path())?;
-        if !macos_app_bundle_complete(tmp_extract_dir.path()) {
-            return Err(Error::BinaryNotFoundInArchive);
-        }
-
-        if !macos_app_bundle_complete(&self.extract_path) && macos_app_bundle_complete(&backup_path)
+        let staged_identity = macos_app_bundle_identity(tmp_extract_dir.path());
+        if !macos_app_bundle_complete(tmp_extract_dir.path())
+            || staged_identity.as_ref() != Some(&expected_identity)
         {
-            if self.extract_path.exists() {
-                let _ = std::fs::remove_dir_all(&self.extract_path);
-            }
-            if let Err(err) = std::fs::rename(&backup_path, &self.extract_path) {
-                if err.kind() != std::io::ErrorKind::PermissionDenied {
-                    return Err(err.into());
-                }
-            }
-        } else if macos_app_bundle_complete(&self.extract_path) && backup_path.exists() {
-            let _ = std::fs::remove_dir_all(&backup_path);
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "staged updater bundle is incomplete or has a different app identity",
+            )));
         }
 
-        let unprivileged = (|| -> std::io::Result<()> {
-            std::fs::rename(&self.extract_path, &backup_path)?;
-            match move_dir_replacing(tmp_extract_dir.path(), &self.extract_path) {
-                Ok(()) => {
-                    if !macos_app_bundle_complete(&self.extract_path) {
-                        if self.extract_path.exists() {
-                            let _ = std::fs::remove_dir_all(&self.extract_path);
+        // Recovery can mutate a protected install tree. Delay it until the
+        // downloaded bundle has passed identity and completeness validation,
+        // then route only permission failures through the existing admin path.
+        let recovery =
+            recover_macos_live_bundle(&self.extract_path, &backup_path, &expected_identity)?;
+
+        let unprivileged = if matches!(recovery, MacosRecoveryDisposition::RequiresPrivilegedSwap) {
+            // A validated recovery entry can live in a protected install
+            // directory. Keep it untouched until the staged bundle is fully
+            // validated above, then let the privileged script perform the
+            // recovery and replacement as one checked transition.
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "validated app recovery requires a privileged bundle transition",
+            ))
+        } else {
+            (|| -> std::io::Result<()> {
+                std::fs::rename(&self.extract_path, &backup_path)?;
+                match move_dir_replacing(tmp_extract_dir.path(), &self.extract_path) {
+                    Ok(()) => {
+                        if !macos_bundle_matches(&self.extract_path, &expected_identity) {
+                            restore_macos_live_bundle(
+                                &self.extract_path,
+                                &backup_path,
+                                &expected_identity,
+                            )?;
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "installed app bundle failed identity validation",
+                            ));
                         }
-                        std::fs::rename(&backup_path, &self.extract_path)?;
-                        return Err(std::io::Error::other(
-                            "new app bundle is missing Contents after install",
-                        ));
+                        // The backup was validated before the swap and remains a
+                        // complete recovery point until the new live bundle passes
+                        // the same identity check.
+                        if let Err(error) =
+                            remove_validated_macos_backup(&backup_path, &expected_identity)
+                        {
+                            // The new live bundle is already complete. Keep
+                            // installation successful and leave the validated
+                            // rollback entry for the next recovery pass.
+                            log::warn!("could not remove validated updater backup: {error}");
+                        }
+                        Ok(())
                     }
-                    let _ = std::fs::remove_dir_all(&backup_path);
-                    Ok(())
-                }
-                Err(err) => {
-                    if self.extract_path.exists() {
-                        let _ = std::fs::remove_dir_all(&self.extract_path);
+                    Err(err) => {
+                        restore_macos_live_bundle(
+                            &self.extract_path,
+                            &backup_path,
+                            &expected_identity,
+                        )?;
+                        Err(err)
                     }
-                    let _ = std::fs::rename(&backup_path, &self.extract_path);
-                    Err(err)
                 }
-            }
-        })();
+            })()
+        };
 
         match unprivileged {
             Ok(()) => {
@@ -1395,6 +1533,8 @@ impl Update {
                 let src = self.extract_path.to_string_lossy().into_owned();
                 let new = tmp_extract_dir.path().to_string_lossy().into_owned();
                 let backup = backup_path.to_string_lossy().into_owned();
+                let bundle_identifier = expected_identity.bundle_identifier.clone();
+                let executable = expected_identity.executable.clone();
                 let (tx, rx) = std::sync::mpsc::channel();
                 let res = (self.run_on_main_thread)(Box::new(move || {
                     let mut script = osakit::Script::new_from_source(
@@ -1415,6 +1555,8 @@ impl Update {
                                         osakit::Value::String(src),
                                         osakit::Value::String(new),
                                         osakit::Value::String(backup),
+                                        osakit::Value::String(bundle_identifier),
+                                        osakit::Value::String(executable),
                                     ],
                                 )
                                 .map_err(|error| error.to_string())
@@ -1435,11 +1577,15 @@ impl Update {
                     ))
                 })?;
 
-                if result.is_err() {
+                if result.is_err() || !macos_bundle_matches(&self.extract_path, &expected_identity)
+                {
                     return Err(Error::Io(std::io::Error::new(
                         std::io::ErrorKind::PermissionDenied,
-                        "Failed to move the new app into place",
+                        "Failed to install a complete app bundle with the expected identity",
                     )));
+                }
+                if let Err(error) = remove_macos_bundle_entry(&backup_path) {
+                    log::warn!("could not remove validated updater backup: {error}");
                 }
                 let _ = tmp_extract_dir.keep();
             }
@@ -1452,6 +1598,179 @@ impl Update {
 
         Ok(())
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_bundle_matches(
+    path: &Path,
+    expected: &crate::install_safety::MacosBundleIdentity,
+) -> bool {
+    crate::install_safety::macos_app_bundle_complete(path)
+        && crate::install_safety::macos_app_bundle_identity(path).as_ref() == Some(expected)
+}
+
+#[cfg(target_os = "macos")]
+fn remove_macos_bundle_entry(path: &Path) -> std::io::Result<()> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        std::fs::remove_file(path)
+    } else {
+        std::fs::remove_dir_all(path)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn remove_validated_macos_backup(
+    backup: &Path,
+    expected: &crate::install_safety::MacosBundleIdentity,
+) -> std::io::Result<()> {
+    if !macos_bundle_matches(backup, expected) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "refusing to retire an incomplete or identity-mismatched updater backup",
+        ));
+    }
+    let parent = backup.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "updater backup has no parent directory",
+        )
+    })?;
+    let retired_dir = tempfile::Builder::new()
+        .prefix(".rosi-update-retired-backup-")
+        .tempdir_in(parent)?;
+    let retired_path = retired_dir.path().join("backup");
+
+    // Move the complete backup atomically before recursive cleanup. A denied
+    // rename leaves the recovery entry at its canonical path; a partial
+    // recursive deletion cannot damage the live bundle or future recovery.
+    std::fs::rename(backup, &retired_path)?;
+    if !macos_bundle_matches(&retired_path, expected) {
+        let restore = std::fs::rename(&retired_path, backup);
+        if let Err(error) = restore {
+            let retired_dir_path = retired_dir.keep();
+            log::warn!(
+                "could not restore updater backup from {}: {error}",
+                retired_dir_path.display()
+            );
+            return Err(error);
+        }
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "updater backup identity changed during retirement",
+        ));
+    }
+
+    if let Err(error) = remove_macos_bundle_entry(&retired_path) {
+        if macos_bundle_matches(&retired_path, expected) {
+            // No partial deletion occurred. Put the validated recovery entry
+            // back so PermissionDenied can be handled by the admin installer.
+            if let Err(restore_error) = std::fs::rename(&retired_path, backup) {
+                let retired_dir_path = retired_dir.keep();
+                log::warn!(
+                    "could not restore updater backup from {}: {restore_error}",
+                    retired_dir_path.display()
+                );
+                return Err(restore_error);
+            }
+            return Err(error);
+        }
+
+        // The live bundle is still complete and will become the canonical
+        // backup before it is replaced. Preserve any partly retired data for
+        // diagnosis instead of letting TempDir drop retry recursive deletion.
+        let retired_dir_path = retired_dir.keep();
+        log::warn!(
+            "updater backup cleanup was incomplete at {}: {error}",
+            retired_dir_path.display()
+        );
+        if error.kind() == std::io::ErrorKind::PermissionDenied {
+            return Ok(());
+        }
+        return Err(error);
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn restore_macos_live_bundle(
+    live: &Path,
+    backup: &Path,
+    expected: &crate::install_safety::MacosBundleIdentity,
+) -> std::io::Result<()> {
+    if !macos_bundle_matches(backup, expected) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "refusing to restore an incomplete or identity-mismatched updater backup",
+        ));
+    }
+    remove_macos_bundle_entry(live)?;
+    std::fs::rename(backup, live)?;
+    if !macos_bundle_matches(live, expected) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "restored updater backup failed identity validation",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MacosRecoveryDisposition {
+    ReadyForUnprivilegedSwap,
+    RequiresPrivilegedSwap,
+}
+
+#[cfg(target_os = "macos")]
+fn recover_macos_live_bundle(
+    live: &Path,
+    backup: &Path,
+    expected: &crate::install_safety::MacosBundleIdentity,
+) -> Result<MacosRecoveryDisposition> {
+    let live_complete = macos_bundle_matches(live, expected);
+    let backup_complete = macos_bundle_matches(backup, expected);
+    let backup_exists = match std::fs::symlink_metadata(backup) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error.into()),
+    };
+    if live_complete {
+        if backup_exists {
+            if !backup_complete {
+                return Err(Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "refusing to remove an incomplete or identity-mismatched updater backup",
+                )));
+            }
+            return match remove_validated_macos_backup(backup, expected) {
+                Ok(()) => Ok(MacosRecoveryDisposition::ReadyForUnprivilegedSwap),
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                    Ok(MacosRecoveryDisposition::RequiresPrivilegedSwap)
+                }
+                Err(error) => Err(error.into()),
+            };
+        }
+        return Ok(MacosRecoveryDisposition::ReadyForUnprivilegedSwap);
+    }
+    if backup_complete {
+        return match restore_macos_live_bundle(live, backup, expected) {
+            Ok(()) => Ok(MacosRecoveryDisposition::ReadyForUnprivilegedSwap),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                Ok(MacosRecoveryDisposition::RequiresPrivilegedSwap)
+            }
+            Err(error) => Err(error.into()),
+        };
+    }
+    Err(Error::Io(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "installed app is incomplete and no complete matching recovery backup exists",
+    )))
 }
 
 #[cfg(target_os = "macos")]
@@ -1789,6 +2108,109 @@ fn escape_msi_property_arg(arg: impl AsRef<OsStr>) -> String {
 #[cfg(test)]
 mod tests {
 
+    use super::{finish_windows_installer_launch, OnBeforeExit, Update};
+    use crate::{Config, Error};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    fn round2_update_with_hook(before_exit: OnBeforeExit, cleanup: Arc<AtomicUsize>) -> Update {
+        Update {
+            run_on_main_thread: Arc::new(Box::new(|_| Ok(()))),
+            config: Config::default(),
+            on_before_exit: Some(before_exit),
+            on_windows_installer_launched: Some(Arc::new(move || {
+                cleanup.fetch_add(1, Ordering::SeqCst);
+            })),
+            body: None,
+            current_version: "1.0.0".to_string(),
+            version: "1.0.1".to_string(),
+            date: None,
+            target: "test".to_string(),
+            download_url: url::Url::parse("https://example.invalid/update").unwrap(),
+            signature: String::new(),
+            raw_json: serde_json::Value::Null,
+            timeout: None,
+            proxy: None,
+            no_proxy: false,
+            headers: Default::default(),
+            extract_path: std::path::PathBuf::from("/unused/round2-app"),
+            app_name: "ROSI".to_string(),
+            bundle_identifier: "run.rosie.rosi".to_string(),
+            executable_name: Some("rosi".to_string()),
+            installer_args: Vec::new(),
+            current_exe_args: Vec::new(),
+            configure_client: None,
+        }
+    }
+
+    #[test]
+    fn round2_actual_update_install_hook_failure_keeps_update_and_skips_cleanup() {
+        let hook_calls = Arc::new(AtomicUsize::new(0));
+        let hook_calls_in = Arc::clone(&hook_calls);
+        let cleanup_calls = Arc::new(AtomicUsize::new(0));
+        let update = round2_update_with_hook(
+            Arc::new(move || {
+                hook_calls_in.fetch_add(1, Ordering::SeqCst);
+                Err("round2 forced durable-state flush failure".to_string())
+            }),
+            Arc::clone(&cleanup_calls),
+        );
+
+        let error = update
+            .install(b"invalid installer bytes")
+            .expect_err("a failed pre-install hook must reject the actual install call");
+        assert!(matches!(
+            error,
+            Error::BeforeExit(message) if message == "round2 forced durable-state flush failure"
+        ));
+        assert_eq!(hook_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(cleanup_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn round2_windows_cleanup_runs_only_after_a_successful_installer_launch() {
+        let events = std::cell::RefCell::new(Vec::new());
+        let failure = finish_windows_installer_launch(
+            32,
+            || events.borrow_mut().push("cleanup"),
+            || events.borrow_mut().push("exit"),
+        );
+        assert!(failure.is_err());
+        assert!(
+            events.borrow().is_empty(),
+            "failed launch must preserve Tauri resources"
+        );
+
+        finish_windows_installer_launch(
+            33,
+            || events.borrow_mut().push("cleanup"),
+            || events.borrow_mut().push("exit"),
+        )
+        .expect("successful launch must finish cleanup and exit sequence");
+        assert_eq!(&*events.borrow(), &["cleanup", "exit"]);
+    }
+
+    #[test]
+    fn round2_download_cap_rejects_oversize_chunks_without_content_length() {
+        let mut received = Vec::new();
+        super::append_download_chunk(&mut received, b"123", None, 4)
+            .expect("under-limit chunk should be accepted without a length header");
+        let error = super::append_download_chunk(&mut received, b"45", None, 4)
+            .expect_err("actual streamed size must be capped without Content-Length");
+        assert!(error.to_string().contains("package exceeds"));
+        assert_eq!(received, b"123", "over-limit bytes must not be buffered");
+    }
+
+    #[test]
+    fn round2_download_cap_rejects_declared_oversize_and_actual_oversize() {
+        let mut received = Vec::new();
+        assert!(super::validate_download_content_length(Some(5), 4).is_err());
+        assert!(super::append_download_chunk(&mut received, b"12345", Some(1), 4).is_err());
+        assert!(received.is_empty(), "rejected bytes must not be buffered");
+    }
+
     #[test]
     #[cfg(windows)]
     fn it_wraps_correctly() {
@@ -1902,6 +2324,16 @@ mod tests {
         assert!(
             MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("backupPath"),
             "privileged install must restore from a sibling backup"
+        );
+        assert!(
+            MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("CFBundleIdentifier")
+                && MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("CFBundleExecutable"),
+            "privileged install must validate bundle identity and executable"
+        );
+        assert!(
+            MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("Contents/Resources")
+                && MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("Contents/MacOS"),
+            "privileged install must validate required bundle resources"
         );
         assert!(
             MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/bin/test -d \\\"$SRC/Contents\\\""),
