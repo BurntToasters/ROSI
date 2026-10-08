@@ -38,14 +38,17 @@ automatically through `npm run prepare:sidecars`. See build-setup.md.
 
 ## Re-syncing an existing clone
 
-Existing clones still hold the old history. Either clone again, or for each
-branch you use:
+Existing clones still hold the old history. From the repository root, run:
 
 ```sh
-git fetch --force --prune --tags origin
-git checkout <branch>
-git reset --hard origin/<branch>
+npm run git:reset:dry   # show what would change
+npm run git:reset
 ```
 
-`reset --hard` discards uncommitted changes: commit or stash work first. The
-yt-dlp binaries in `assets/` are untracked and are not affected.
+It fetches branches and tags, moves every local branch that tracks `origin` to
+its rewritten remote commit, then frees the old history's space. It never
+touches untracked files, so downloaded yt-dlp binaries in `assets/` stay. It
+refuses (and skips cleanup) if you have uncommitted changes to tracked files or
+local commits that are not on the remote; `--force` stashes those changes and
+keeps such commits on a `backup/git-reset-*` branch first. Cloning again also
+works.

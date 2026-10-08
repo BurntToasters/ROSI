@@ -38,7 +38,7 @@
     "test:e2e": "node scripts/test-e2e.js",
     "test:e2e:stability": "node scripts/test-e2e.js --repeat 5",
     "test:all": "node scripts/test-all.js",
-    "test:cargo-safe-update": "node --test scripts/cargo-safe-update.test.mjs scripts/check-cargo-update-policy.test.mjs scripts/test-all.test.js scripts/run-release.test.js scripts/github-cli.test.cjs scripts/release-branch-protection.test.cjs scripts/release-licenses.test.mjs scripts/npm-dev-audit.test.cjs scripts/generate-cargo-licenses.test.mjs scripts/check-rustsec-ignore-policy.test.mjs scripts/legacy-v4-feed.test.mjs scripts/security-release-repairs.test.mjs scripts/round2-release-updater.test.mjs scripts/test-e2e-round2.test.mjs",
+    "test:cargo-safe-update": "node --test scripts/cargo-safe-update.test.mjs scripts/check-cargo-update-policy.test.mjs scripts/test-all.test.js scripts/run-release.test.js scripts/github-cli.test.cjs scripts/release-branch-protection.test.cjs scripts/release-licenses.test.mjs scripts/npm-dev-audit.test.cjs scripts/generate-cargo-licenses.test.mjs scripts/check-rustsec-ignore-policy.test.mjs scripts/legacy-v4-feed.test.mjs scripts/security-release-repairs.test.mjs scripts/round2-release-updater.test.mjs scripts/test-e2e-round2.test.mjs scripts/git-reset.test.mjs",
     "check:cargo-update-policy": "node scripts/check-cargo-update-policy.mjs",
     "audit:dev-reviewed": "node scripts/npm-dev-audit.cjs",
     "check:rustsec-ignore-policy": "node scripts/check-rustsec-ignore-policy.mjs",
@@ -153,7 +153,9 @@
     "setup:deb": "sudo apt update && sudo apt install -y build-essential curl wget file libgtk-3-dev libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libglib2.0-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils xvfb 7zip flatpak flatpak-builder && sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo && sudo flatpak install -y flathub org.gnome.Platform//50 org.gnome.Sdk//50 org.freedesktop.Sdk.Extension.node22//25.08 org.freedesktop.Sdk.Extension.rust-stable//25.08",
     "gitprune": "node scripts/git-prune-local-branches.js",
     "gitprune:dry": "node scripts/git-prune-local-branches.js --dry-run",
-    "gitprune:force": "node scripts/git-prune-local-branches.js --force"
+    "gitprune:force": "node scripts/git-prune-local-branches.js --force",
+    "git:reset": "node scripts/git-reset.js",
+    "git:reset:dry": "node scripts/git-reset.js --dry-run"
   },
   "dependencies": {
     "@tauri-apps/api": "2.12.0",
