@@ -456,7 +456,43 @@ pub fn load() -> Settings {
 }
 
 fn write_unlocked(settings: &Settings) -> Result<(), String> {
+    protect_existing_settings()?;
     crate::fs_util::write_json(&settings_path(), settings)
+}
+
+fn check_schema(value: &Value) -> Result<(), String> {
+    if value
+        .get("settingsVersion")
+        .and_then(Value::as_f64)
+        .is_some_and(|version| version > f64::from(CURRENT_SETTINGS_VERSION))
+    {
+        return Err("These settings belong to a newer ROSI version. Reopen that version to change settings; this version will preserve the original file.".into());
+    }
+    Ok(())
+}
+
+/// Preserve damaged bytes before a defaults-based save, and never downgrade
+/// a newer schema or replace settings that cannot be read safely.
+fn protect_existing_settings() -> Result<(), String> {
+    let path = settings_path();
+    let Some(raw) = crate::fs_util::read_bounded(&path, MAX_SETTINGS_FILE_BYTES)? else {
+        return Ok(());
+    };
+    match serde_json::from_str::<Value>(&raw) {
+        Ok(value @ Value::Object(_)) => check_schema(&value),
+        _ => {
+            let recovery = path.with_file_name(format!(
+                "settings.recovery-{}.json",
+                crate::fs_util::uuid_v4()
+            ));
+            crate::fs_util::atomic_write(&recovery, raw.as_bytes())?;
+            crate::logging::warn(&format!(
+                "Damaged settings preserved at {} before recovery.",
+                recovery.display()
+            ));
+            Ok(())
+        }
+    }
 }
 
 /// Merge a validated patch into the persisted settings.
@@ -487,6 +523,7 @@ pub fn save_all(settings: &Settings) -> Result<(), String> {
 
 /// Validate a ROSI 4 settings object and save it as the ROSI 5 settings.
 pub fn import_legacy(raw: &Value) -> Result<(), String> {
+    check_schema(raw)?;
     save_all(&normalized(migrate_settings(raw)))
 }
 
@@ -502,6 +539,25 @@ fn show_save_error(message: &str) {
 
 #[tauri::command(async)]
 pub fn get_settings() -> Settings {
+    static REPORTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    if let Ok(Some(raw)) = crate::fs_util::read_bounded(&settings_path(), MAX_SETTINGS_FILE_BYTES) {
+        let problem = match serde_json::from_str::<Value>(&raw) {
+            Ok(value @ Value::Object(_)) => check_schema(&value).err(),
+            _ => Some("Your settings file is damaged. ROSI is showing defaults and will preserve a recovery copy before saving changes.".to_string()),
+        }.or_else(crate::legacy::recovery_message);
+        if let Some(message) = problem {
+            REPORTED.get_or_init(|| {
+                crate::logging::warn(&message);
+                if let Some(app) = crate::app_state::app() {
+                    app.dialog()
+                        .message(message)
+                        .title("ROSI Profile Recovery")
+                        .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
+                        .show(|_| {});
+                }
+            });
+        }
+    }
     load()
 }
 
@@ -521,7 +577,7 @@ pub fn save_settings(settings: Value) -> IpcResult<Settings> {
         Err(error) => {
             crate::logging::error(&format!("Failed to save settings: {error}"));
             show_save_error(&error);
-            ipc::err(INTERNAL_ERROR, "Failed to persist settings.")
+            ipc::err(INTERNAL_ERROR, error)
         }
     }
 }
@@ -598,6 +654,7 @@ pub async fn import_settings(app: tauri::AppHandle) -> IpcResult<Imported> {
         if !parsed.is_object() {
             return Err("Imported settings file has invalid structure.".to_string());
         }
+        check_schema(&parsed)?;
         let migrated = normalized(migrate_settings(&parsed));
         save_all(&migrated)?;
         crate::gpu::clear_cache();

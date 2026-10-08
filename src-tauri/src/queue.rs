@@ -29,6 +29,10 @@ struct QueueState {
 }
 
 static QUEUE: OnceLock<Mutex<QueueState>> = OnceLock::new();
+const MAX_QUEUE_FILE_BYTES: usize = 32 * 1024 * 1024;
+// Reserve space for completion paths, filenames, and error messages.
+const MAX_QUEUE_ADMISSION_BYTES: usize = 24 * 1024 * 1024;
+const MAX_QUEUE_URL_BYTES: usize = 64 * 1024;
 /// Serializes the runner's "is the queue still running? then start" step
 /// against cancel/clear/stop, so a cancel can never land between the check and
 /// `start_download`. Never acquired while holding the queue lock.
@@ -115,13 +119,24 @@ fn persist_queue_files(
     backup: &Path,
     snapshot: &[QueueItem],
 ) -> Result<(), String> {
-    crate::fs_util::write_json(primary, &snapshot).map_err(|error| {
+    let encoded = serde_json::to_vec_pretty(snapshot).map_err(|error| error.to_string())?;
+    if encoded.len() > MAX_QUEUE_FILE_BYTES {
+        return Err(
+            "Queue exceeds its durable storage limit; the previous files were preserved.".into(),
+        );
+    }
+    for path in [primary, backup] {
+        if crate::fs_util::file_size(path).is_some_and(|size| size > MAX_QUEUE_FILE_BYTES as u64) {
+            return Err(format!("Saved queue {} exceeds the reader limit; preserve and repair that file before saving.", path.display()));
+        }
+    }
+    crate::fs_util::atomic_write(primary, &encoded).map_err(|error| {
         format!(
             "Could not atomically write queue file {}: {error}",
             primary.display()
         )
     })?;
-    crate::fs_util::write_json(backup, &snapshot).map_err(|error| {
+    crate::fs_util::atomic_write(backup, &encoded).map_err(|error| {
         format!(
             "Could not atomically write queue backup {}: {error}",
             backup.display()
@@ -230,7 +245,7 @@ fn normalize_item(value: &Value, used_ids: &mut HashSet<String>) -> Option<Queue
 }
 
 fn read_queue(path: &std::path::Path) -> Option<Vec<QueueItem>> {
-    let Value::Array(list) = crate::fs_util::read_json(path, 32 * 1024 * 1024)? else {
+    let Value::Array(list) = crate::fs_util::read_json(path, MAX_QUEUE_FILE_BYTES as u64)? else {
         return None;
     };
     let mut used_ids = HashSet::new();
@@ -788,6 +803,12 @@ pub fn add_to_queue(urls: Value, options: Option<Value>) -> IpcResult<AddResult>
     let mut valid = 0;
     let mut skipped = 0;
     for raw in urls {
+        if raw
+            .as_str()
+            .is_some_and(|url| url.len() > MAX_QUEUE_URL_BYTES)
+        {
+            return ipc::err(VALIDATION_ERROR, "Queue URLs must not exceed 64 KiB.");
+        }
         let Some(url) = raw.as_str().and_then(normalize_queue_url) else {
             skipped += 1;
             continue;
@@ -837,6 +858,12 @@ pub fn add_to_queue(urls: Value, options: Option<Value>) -> IpcResult<AddResult>
     }
     let added = pending.len();
     if added > 0 {
+        let candidate: Vec<&QueueItem> = queue.items.iter().chain(pending.iter()).collect();
+        match serde_json::to_vec_pretty(&candidate) {
+            Ok(encoded) if encoded.len() <= MAX_QUEUE_ADMISSION_BYTES => {}
+            Ok(_) => return ipc::err(VALIDATION_ERROR, "Queue storage limit reached. Remove items or shorten URLs before adding this batch."),
+            Err(_) => return ipc::err(VALIDATION_ERROR, "Could not encode the queue; no items were added."),
+        }
         queue.items.extend(pending);
         let snapshot = queue.items.clone();
         drop(queue);

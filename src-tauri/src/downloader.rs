@@ -1896,6 +1896,25 @@ fn recover_staged_downloads(exit: &mut YtdlpExit) -> (Vec<PathBuf>, Vec<PathBuf>
     let staged = match downloaded_file_paths(exit) {
         Ok(paths) => paths,
         Err(error) => {
+            // Early failures have no media. Explicit cancellation may discard
+            // unfinished owned parts only after helper diagnostics drain.
+            // The destructor still verifies identity and contents on removal.
+            let discard_cancelled_parts = exit.diagnostics_complete
+                && with_session(exit.id, |session| session.cancelled).unwrap_or(false);
+            if exit.stage.owned_entries.as_ref().is_some_and(|entries| {
+                entries.keys().all(|relative| {
+                    let path = exit.stage.directory.join(relative);
+                    path == exit.path_output_file
+                        || (discard_cancelled_parts
+                            && path.extension().is_some_and(|extension| {
+                                extension.to_string_lossy().eq_ignore_ascii_case("part")
+                            })
+                            && std::fs::symlink_metadata(&path)
+                                .is_ok_and(|metadata| metadata.file_type().is_file()))
+                })
+            }) {
+                return (Vec::new(), Vec::new(), Vec::new());
+            }
             exit.stage.preserve_on_drop = true;
             return (
                 Vec::new(),

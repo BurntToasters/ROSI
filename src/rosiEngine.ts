@@ -4983,8 +4983,16 @@ async function initializeRenderer() {
             {
               label: 'Reset Stats',
               action: async () => {
-                await window.api.resetStats();
-                showToast('Statistics reset.', { type: 'info' });
+                try {
+                  const result = await window.api.resetStats();
+                  if (!result.ok) {
+                    showToast('Could not reset statistics. Please try again.', { type: 'error' });
+                    return;
+                  }
+                  showToast('Statistics reset.', { type: 'info' });
+                } catch {
+                  showToast('Could not reset statistics. Please try again.', { type: 'error' });
+                }
               },
             },
             { label: 'Close', primary: true },

@@ -120,6 +120,7 @@ export const EXPECTED_SCENARIOS = [
   "close-flow",
   "round2-renderer",
   "round2-native",
+  "long-term-persistence",
 ];
 export const ROUND2_RENDERER_OBSERVATIONS = Object.freeze([
   "renderer-startup-settings-ready",
@@ -453,7 +454,7 @@ function restoreGeneratedSchemas(snapshots) {
   }
 }
 
-function buildE2eBinary() {
+export function buildE2eBinary() {
   // Development stubs are acceptable: E2E uses a debug build and supplies a
   // real FFmpeg through the custom-path setting when one is available.
   run(npmCommand(), ["run", "prepare:rust-tests"]);
@@ -758,6 +759,79 @@ function round2RendererScenario(pass, runnerFailure = null) {
         : error instanceof Error
           ? error.message
           : String(error),
+    };
+  }
+}
+
+function runLongTermPersistenceRepairs() {
+  const relative = path.join(
+    "e2e",
+    "artifacts",
+    "long-term-v5-repairs",
+    `gate-${Date.now()}-${process.pid}`,
+  );
+  const directory = path.join(REPO_ROOT, relative);
+  const scenario = {
+    name: "long-term-persistence",
+    status: "failed",
+    reportPath: `${relative}/report.json`,
+  };
+  const result = spawnSync(
+    process.execPath,
+    ["e2e/long-term-v5-audit-run.mjs"],
+    {
+      cwd: REPO_ROOT,
+      env: { ...process.env, ROSI_LONG_TERM_ARTIFACT_ROOT: relative },
+      encoding: "utf8",
+      timeout: 240_000,
+      maxBuffer: 8 * 1024 * 1024,
+    },
+  );
+  console.log(result.stdout || "");
+  if (result.stderr) console.error(result.stderr);
+  try {
+    const bytes = fs.readFileSync(path.join(directory, "report.json"));
+    const report = JSON.parse(bytes);
+    const { reportSha256, ...body } = report;
+    if (
+      result.status !== 0 ||
+      report.suite !== "long-term-v5-audit" ||
+      report.observations.length !== 15 ||
+      report.observations.some(
+        (item) => item.runnerExitCode !== 0 || item.invariantPassed !== true,
+      ) ||
+      report.binarySha256 !== sha256(fs.readFileSync(e2eBinaryPath())) ||
+      reportSha256 !== sha256(Buffer.from(JSON.stringify(body, null, 2)))
+    ) {
+      throw new Error(
+        "Native persistence acceptance or report identity failed.",
+      );
+    }
+    for (const [file, expected] of Object.entries(report.sourceSha256)) {
+      if (sha256(fs.readFileSync(path.join(REPO_ROOT, file))) !== expected) {
+        throw new Error(`Persistence source changed: ${file}`);
+      }
+    }
+    for (const file of report.artifacts) {
+      const artifact = path.resolve(directory, file.path);
+      if (!artifact.startsWith(`${directory}${path.sep}`))
+        throw new Error("Invalid persistence artifact path.");
+      const contents = fs.readFileSync(artifact);
+      if (contents.length !== file.bytes || sha256(contents) !== file.sha256) {
+        throw new Error(`Persistence artifact changed: ${file.path}`);
+      }
+    }
+    return {
+      ...scenario,
+      status: "passed",
+      observations: 15,
+      reportSha256: sha256(bytes),
+    };
+  } catch (error) {
+    return {
+      ...scenario,
+      reason: error instanceof Error ? error.message : String(error),
+      runnerExitCode: result.status,
     };
   }
 }
@@ -1353,6 +1427,9 @@ async function main() {
   const round2RendererScenarios = round2RendererPass
     ? [round2RendererScenario(round2RendererPass, round2RendererFailure)]
     : [];
+  const persistenceScenarios = process.env.ROSI_E2E_ONLY
+    ? []
+    : [runLongTermPersistenceRepairs()];
   if (
     round2RendererScenarios.some((scenario) => scenario.status === "failed")
   ) {
@@ -1366,6 +1443,12 @@ async function main() {
     }
   }
   for (const scenario of round2NativeScenarios) {
+    if (scenario.status === "failed") {
+      const detail = `${scenario.name}: ${scenario.reason}`;
+      failure = failure ? `${failure}; ${detail}` : detail;
+    }
+  }
+  for (const scenario of persistenceScenarios) {
     if (scenario.status === "failed") {
       const detail = `${scenario.name}: ${scenario.reason}`;
       failure = failure ? `${failure}; ${detail}` : detail;
@@ -1395,6 +1478,7 @@ async function main() {
   scenarios.push(...round2RendererScenarios);
   scenarios.push(...processRepairScenarios);
   scenarios.push(...round2NativeScenarios);
+  scenarios.push(...persistenceScenarios);
   const seen = new Set(scenarios.map((scenario) => scenario.name));
   const missing = EXPECTED_SCENARIOS.filter((name) => !seen.has(name));
   const legacyImportCoverage = Object.fromEntries(
