@@ -183,3 +183,29 @@ outside `file,pipe`, but quiet mode removes the protocol-whitelist diagnostic
 needed to prove the rejection in the native trace. The fixture must preserve
 the production argument list while using an explicitly recorded, test-only
 diagnostic override for this assertion.
+
+## Re-audit: one path in both result lists (written before the fix)
+
+- A playlist entry whose conversion fails keeps its original file. By design
+  (audit 3, `conversion-failure-records-preserved-final-original`) that retained
+  original is reported in BOTH the output list (so Open folder and sizes reach a
+  real file) and the failed list. This suite's older partial-playlist check still
+  required one output, so it failed and left a retained stage that broke every
+  later case ("found 2" stages). Expected: the check accepts the retained
+  original in both lists and requires the delivered entry plus the retained
+  failure to exist on disk.
+- Activity summarises "N of M entries completed" as outputs over outputs plus
+  failures, so the retained original is counted twice ("2 of 3" for a two-entry
+  playlist). Expected: paths present in both lists count as failed only.
+- A case that plants a fixture inside ROSI's staging folder (the ffprobe guard
+  cases) makes ROSI correctly retain that folder: it holds a file ROSI does not
+  own. The staged-sibling helper then counts every `.rosi-download-*` folder and
+  fails later cases with "found 2". Expected: the helper identifies the stage
+  its own download created (new since the call) and ignores retained stages
+  from earlier cases; it still fails if the download creates more than one.
+- Cancelling during the codec probe of a later same-extension entry leaves that
+  entry's complete original published in the download folder (cancellation
+  preserves complete downloads). The completion reports it, so the result names
+  every file ROSI left on disk. The older check required exactly one output and
+  failed. Expected: the first entry's final path is reported, every reported
+  path is a final public path that exists, and sizes match the reported files.

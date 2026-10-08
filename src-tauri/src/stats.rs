@@ -1,10 +1,21 @@
 //! Lifetime download statistics (`download-stats.json`).
 
-use crate::constants::MAX_FORMAT_COUNTS;
+use crate::constants::{CURRENT_PERSISTED_SCHEMA_VERSION, MAX_FORMAT_COUNTS};
 use crate::ipc::{self, IpcResult, INTERNAL_ERROR};
 use crate::types::{DownloadStats, Outcome};
+use serde::Serialize;
 use serde_json::Value;
 use std::sync::Mutex;
+
+const MAX_STATS_FILE_BYTES: u64 = 4 * 1024 * 1024;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StatsFile<'a> {
+    schema_version: u32,
+    #[serde(flatten)]
+    stats: &'a DownloadStats,
+}
 
 static STATS_LOCK: Mutex<()> = Mutex::new(());
 
@@ -20,7 +31,8 @@ fn number(value: Option<&Value>) -> Option<u64> {
 }
 
 fn load_unlocked() -> DownloadStats {
-    let Some(Value::Object(raw)) = crate::fs_util::read_json(&stats_path(), 4 * 1024 * 1024) else {
+    let Some(Value::Object(raw)) = crate::fs_util::read_json(&stats_path(), MAX_STATS_FILE_BYTES)
+    else {
         return DownloadStats::default();
     };
     let mut stats = DownloadStats {
@@ -44,7 +56,17 @@ fn load_unlocked() -> DownloadStats {
 }
 
 fn save_unlocked(stats: &DownloadStats) -> Result<(), String> {
-    crate::fs_util::write_json(&stats_path(), stats)
+    let path = stats_path();
+    crate::fs_util::guard_before_replace(&path, MAX_STATS_FILE_BYTES, Value::is_object, |value| {
+        crate::fs_util::ensure_schema_not_newer(value, "Download stats")
+    })?;
+    crate::fs_util::write_json(
+        &path,
+        &StatsFile {
+            schema_version: CURRENT_PERSISTED_SCHEMA_VERSION,
+            stats,
+        },
+    )
 }
 
 pub fn record(outcome: Outcome, format: Option<&str>, bytes: Option<u64>) {

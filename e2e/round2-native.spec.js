@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { browser } from "@wdio/globals";
 import { api, waitForAppReady } from "./helpers/app-bridge.js";
+import { readListFile } from "./helpers/persisted.js";
 
 const env = process.env;
 const downloads = env.ROSI_E2E_DOWNLOADS;
@@ -629,7 +630,7 @@ describe("ROSI round 2 native repairs", () => {
       "Completed native downloads are missing from Activity",
     );
     const activityBytes = fs.statSync(activityPath).size;
-    const persistedActivity = JSON.parse(fs.readFileSync(activityPath, "utf8"));
+    const persistedActivity = readListFile(activityPath);
     const remainingSeedRecords = persistedActivity.filter((entry) =>
       entry.id.startsWith("round2-seed-"),
     ).length;
@@ -688,7 +689,7 @@ describe("ROSI round 2 native repairs", () => {
     fs.renameSync(backupActivity, activityPath);
     const successfulClear = await api("clearDownloadActivity");
     const cleared = await api("getDownloadActivity");
-    const diskActivity = JSON.parse(fs.readFileSync(activityPath, "utf8"));
+    const diskActivity = readListFile(activityPath);
     const clearPassed =
       successfulClear.ok === true &&
       cleared.data.length === 0 &&

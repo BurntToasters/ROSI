@@ -7,13 +7,12 @@
 //! address. The proxy uses a fixed worker pool and closes active sockets when
 //! its owning operation ends.
 
+use crate::ip_policy::is_public_ip;
 use reqwest::redirect::Policy;
 use reqwest::Client;
 use std::collections::{HashMap, VecDeque};
 use std::io::{self, Read, Write};
-use std::net::{
-    IpAddr, Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs,
-};
+use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -1261,54 +1260,6 @@ fn e2e_allows_literal_loopback(host: &str, address: IpAddr) -> bool {
     }
 }
 
-pub fn is_public_ip(address: IpAddr) -> bool {
-    match address {
-        IpAddr::V4(ip) => is_public_ipv4(ip),
-        IpAddr::V6(ip) => is_public_ipv6(ip),
-    }
-}
-
-fn is_public_ipv4(ip: Ipv4Addr) -> bool {
-    let octets = ip.octets();
-    let [a, b, c, _] = octets;
-    !(a == 0
-        || a == 10
-        || (a == 100 && (64..=127).contains(&b))
-        || a == 127
-        || (a == 169 && b == 254)
-        || (a == 172 && (16..=31).contains(&b))
-        || (a == 192 && b == 0 && c == 0)
-        || (a == 192 && b == 0 && c == 2)
-        || (a == 192 && b == 88 && c == 99)
-        || (a == 192 && b == 168)
-        || (a == 198 && (b == 18 || b == 19))
-        || (a == 198 && b == 51 && c == 100)
-        || (a == 203 && b == 0 && c == 113)
-        || a >= 224)
-}
-
-fn is_public_ipv6(ip: Ipv6Addr) -> bool {
-    if ip.to_ipv4_mapped().is_some() || ip.to_ipv4().is_some() {
-        return false;
-    }
-    let segments = ip.segments();
-    // Only global unicast 2000::/3 is permitted. This excludes unspecified,
-    // loopback, unique-local, link-local, multicast, and future-use ranges.
-    if (segments[0] & 0xe000) != 0x2000 {
-        return false;
-    }
-    // Special-purpose 2001::/23, documentation 2001:db8::/32, 6to4
-    // 2002::/16, and documentation 3fff::/20 are not public destinations.
-    if (segments[0] == 0x2001 && (segments[1] & 0xfe00) == 0)
-        || (segments[0] == 0x2001 && segments[1] == 0x0db8)
-        || segments[0] == 0x2002
-        || (segments[0] == 0x3fff && (segments[1] & 0xfff0) == 0)
-    {
-        return false;
-    }
-    true
-}
-
 /// Resolves a web URL and requires every returned address to be public. The
 /// E2E-only exception applies to an explicit literal loopback address when the
 /// runner opted in; DNS aliases to loopback are never granted it.
@@ -1812,6 +1763,7 @@ pub fn e2e_pipelining_probe() -> Result<serde_json::Value, String> {
         "publicBracketedIsPublic": parse_ip_host("[2606:4700:4700::1111]").is_some_and(is_public_ip),
         "uniqueLocalBracketedIsPrivate": parse_ip_host("[fd00::1]").is_some_and(|address| !is_public_ip(address)),
     });
+    let policy_matrix = e2e_policy_matrix();
     Ok(serde_json::json!({
         "requests": requests,
         "responseStatus": response_status,
@@ -1819,5 +1771,90 @@ pub fn e2e_pipelining_probe() -> Result<serde_json::Value, String> {
         "secondTargetForwarded": requests.iter().any(|line| line.contains("/blocked") || line.contains("private.test")),
         "dnsResolution": dns_resolution,
         "ipv6Classification": ipv6_classification,
+        "policyMatrix": policy_matrix,
     }))
+}
+
+/// Fixed literals with expected verdicts, checked by the V5 network policy
+/// E2E spec. NAT64 rows are public only when the embedded IPv4 is public.
+#[cfg(feature = "e2e")]
+fn e2e_policy_matrix() -> serde_json::Value {
+    const ADDRESSES: [(&str, bool); 44] = [
+        ("8.8.8.8", true),
+        ("1.1.1.1", true),
+        ("2606:4700:4700::1111", true),
+        ("64:ff9b::808:808", true),
+        ("64:ff9b::101:101", true),
+        ("0.0.0.0", false),
+        ("10.0.0.1", false),
+        ("100.64.0.1", false),
+        ("127.0.0.1", false),
+        ("169.254.169.254", false),
+        ("172.16.0.1", false),
+        ("192.0.0.1", false),
+        ("192.0.2.1", false),
+        ("192.88.99.1", false),
+        ("192.168.1.1", false),
+        ("198.18.0.1", false),
+        ("198.51.100.1", false),
+        ("203.0.113.1", false),
+        ("224.0.0.1", false),
+        ("255.255.255.255", false),
+        ("::", false),
+        ("::1", false),
+        ("::ffff:8.8.8.8", false),
+        ("::8.8.8.8", false),
+        ("fe80::1", false),
+        ("fd00::1", false),
+        ("fc00::1", false),
+        ("ff02::1", false),
+        ("2001::1", false),
+        ("2001:db8::1", false),
+        ("2002::1", false),
+        ("3fff::1", false),
+        ("64:ff9b::7f00:1", false),
+        ("64:ff9b::a00:1", false),
+        ("64:ff9b::c0a8:101", false),
+        ("64:ff9b::a9fe:a9fe", false),
+        ("64:ff9b::ffff:ffff", false),
+        ("64:ff9b::6440:1", false),
+        ("64:ff9b::", false),
+        ("64:ff9b::1", false),
+        ("64:ff9b::e000:1", false),
+        ("64:ff9b:1::1", false),
+        ("64:ff9b::c000:201", false),
+        ("64:ff9b::ac10:1", false),
+    ];
+    let loopback_allowed = std::env::var("ROSI_E2E_ALLOW_LOOPBACK").as_deref() == Ok("1");
+    let urls: [(&str, bool); 14] = [
+        ("https://8.8.8.8/", true),
+        ("https://[2606:4700:4700::1111]/", true),
+        ("https://[64:ff9b::808:808]/", true),
+        ("https://[64:ff9b::7f00:1]/", false),
+        ("http://100.64.0.1/", false),
+        ("http://198.18.0.1/", false),
+        ("http://192.0.2.1/", false),
+        ("http://240.0.0.1/", false),
+        ("http://[::ffff:8.8.8.8]/", false),
+        ("http://10.0.0.1/", false),
+        ("http://localhost/", false),
+        ("http://localtest.me/", false),
+        ("http://127.0.0.1:9/", loopback_allowed),
+        ("http://0x7f000001/", loopback_allowed),
+    ];
+    let address_rows: Vec<_> = ADDRESSES
+        .iter()
+        .map(|(text, expected)| {
+            let actual = parse_ip_host(text).is_some_and(is_public_ip);
+            serde_json::json!({ "address": text, "expected": expected, "actual": actual })
+        })
+        .collect();
+    let url_rows: Vec<_> = urls
+        .iter()
+        .map(|(url, expected)| {
+            let actual = crate::validation::is_syntactically_safe_http_url(url);
+            serde_json::json!({ "url": url, "expected": expected, "actual": actual })
+        })
+        .collect();
+    serde_json::json!({ "addresses": address_rows, "urls": url_rows })
 }

@@ -10,6 +10,7 @@ mod downloader;
 mod ffmpeg_guard;
 mod fs_util;
 mod gpu;
+mod ip_policy;
 mod ipc;
 mod legacy;
 mod logging;
@@ -21,6 +22,7 @@ mod progress;
 mod queue;
 mod settings;
 mod sidecars;
+mod staging;
 mod stats;
 mod types;
 mod validation;
@@ -167,6 +169,7 @@ macro_rules! generate_app_handler {
 }
 
 fn main() {
+    logging::install_panic_hook();
     if let Some(exit_code) = ffmpeg_guard::dispatch_from_argv() {
         std::process::exit(exit_code);
     }
@@ -249,6 +252,7 @@ fn main() {
                 return Ok(());
             }
             queue::init();
+            std::thread::spawn(staging::sweep_orphans_on_startup);
             std::thread::spawn(|| {
                 let _ = sidecars::ytdlp_path();
                 sidecars::verify_bundled();

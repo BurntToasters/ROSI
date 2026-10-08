@@ -13,13 +13,17 @@ use crate::command_builders::{
 use crate::constants::*;
 use crate::ipc::{self, IpcResult, INTERNAL_ERROR, NOT_AVAILABLE};
 use crate::progress::{self, Metrics, Reporter};
+use crate::staging::{
+    file_identity, install_no_replace, reserve_download_stage, reserve_path_output_file,
+    sync_staged_file, DownloadStage, FileIdentity,
+};
 use crate::types::{
     DownloadCompletion, DownloadRequestOptions, JobProgressEvent, Outcome, Owner, Phase,
     QueueProgress, Settings,
 };
 use crate::validation::{is_path_within, is_safe_http_url, resolve_path};
 use serde_json::{Map, Value};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -883,253 +887,6 @@ fn append_bounded(buffer: &Mutex<String>, line: &str, limit: usize, keep_tail: b
     text.push('\n');
 }
 
-struct DownloadStage {
-    directory: PathBuf,
-    preserve_on_drop: bool,
-    root_identity: FileIdentity,
-    owned_entries: Option<HashMap<PathBuf, FileIdentity>>,
-}
-
-impl Drop for DownloadStage {
-    fn drop(&mut self) {
-        if self.preserve_on_drop {
-            crate::logging::warn(&format!(
-                "Retaining staged original files for recovery in {}",
-                self.directory.display()
-            ));
-            return;
-        }
-
-        let Some(expected_entries) = self.owned_entries.as_ref() else {
-            crate::logging::warn(&format!(
-                "Retaining download staging without a complete ownership snapshot: {}",
-                self.directory.display()
-            ));
-            return;
-        };
-        let Some(parent) = self.directory.parent() else {
-            crate::logging::warn("Retaining download staging because its parent is unavailable.");
-            return;
-        };
-        for _ in 0..32 {
-            let quarantine = parent.join(format!(".rosi-retire-{}", crate::fs_util::uuid_v4()));
-            match install_no_replace(&self.directory, &quarantine) {
-                Ok(()) => {
-                    let verified = file_identity(&quarantine) == Some(self.root_identity)
-                        && stage_entries_match(&quarantine, expected_entries);
-                    if verified {
-                        if let Err(error) = std::fs::remove_dir_all(&quarantine) {
-                            crate::logging::warn(&format!(
-                                "Could not remove verified download staging {}: {error}",
-                                quarantine.display()
-                            ));
-                        }
-                    } else if install_no_replace(&quarantine, &self.directory).is_err() {
-                        crate::logging::warn(&format!(
-                            "Retaining changed download staging at {} because its original path was claimed.",
-                            quarantine.display()
-                        ));
-                    } else {
-                        crate::logging::warn(&format!(
-                            "Retaining changed download staging at {} after ownership verification failed.",
-                            self.directory.display()
-                        ));
-                    }
-                    return;
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-                Err(error) => {
-                    crate::logging::warn(&format!(
-                        "Could not quarantine owned download staging {}: {error}",
-                        self.directory.display()
-                    ));
-                    return;
-                }
-            }
-        }
-        crate::logging::warn(&format!(
-            "Could not reserve a retirement name for download staging {}; retaining it.",
-            self.directory.display()
-        ));
-    }
-}
-
-impl DownloadStage {
-    fn snapshot_owned_contents(&mut self) -> Result<(), String> {
-        match snapshot_stage_entries(&self.directory) {
-            Ok(entries) => {
-                self.owned_entries = Some(entries);
-                Ok(())
-            }
-            Err(error) => {
-                self.preserve_on_drop = true;
-                Err(error)
-            }
-        }
-    }
-
-    fn identity_for(&self, path: &Path) -> Option<FileIdentity> {
-        let relative = path.strip_prefix(&self.directory).ok()?;
-        self.owned_entries.as_ref()?.get(relative).copied()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct FileIdentity {
-    #[cfg(unix)]
-    device: u64,
-    #[cfg(unix)]
-    inode: u64,
-    #[cfg(windows)]
-    volume: u32,
-    #[cfg(windows)]
-    index: u64,
-}
-
-fn file_identity(path: &Path) -> Option<FileIdentity> {
-    let metadata = std::fs::symlink_metadata(path).ok()?;
-    if !metadata.is_file() && !metadata.is_dir() {
-        return None;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        Some(FileIdentity {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-        })
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        use std::ptr::{null, null_mut};
-        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-        use windows_sys::Win32::Storage::FileSystem::{
-            CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
-            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
-        };
-
-        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-        let handle = unsafe {
-            CreateFileW(
-                wide.as_ptr(),
-                FILE_READ_ATTRIBUTES,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                null(),
-                OPEN_EXISTING,
-                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-                null_mut(),
-            )
-        };
-        if handle == INVALID_HANDLE_VALUE {
-            return None;
-        }
-        let mut information = BY_HANDLE_FILE_INFORMATION::default();
-        let read = unsafe { GetFileInformationByHandle(handle, &mut information) } != 0;
-        unsafe {
-            CloseHandle(handle);
-        }
-        read.then_some(FileIdentity {
-            volume: information.dwVolumeSerialNumber,
-            index: (u64::from(information.nFileIndexHigh) << 32)
-                | u64::from(information.nFileIndexLow),
-        })
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = metadata;
-        None
-    }
-}
-
-fn snapshot_stage_entries(root: &Path) -> Result<HashMap<PathBuf, FileIdentity>, String> {
-    let mut entries = HashMap::new();
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(directory) = pending.pop() {
-        for entry in std::fs::read_dir(&directory).map_err(|error| error.to_string())? {
-            let path = entry.map_err(|error| error.to_string())?.path();
-            let metadata = std::fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
-            let identity = file_identity(&path)
-                .ok_or_else(|| format!("Could not verify staged entry {}", path.display()))?;
-            let relative = path
-                .strip_prefix(root)
-                .map_err(|error| error.to_string())?
-                .to_path_buf();
-            entries.insert(relative, identity);
-            if metadata.is_dir() {
-                pending.push(path);
-            }
-        }
-    }
-    Ok(entries)
-}
-
-fn stage_entries_match(root: &Path, expected: &HashMap<PathBuf, FileIdentity>) -> bool {
-    snapshot_stage_entries(root).is_ok_and(|current| {
-        current
-            .iter()
-            .all(|(path, identity)| expected.get(path) == Some(identity))
-    })
-}
-
-fn reserve_download_stage(download_dir: &Path) -> Result<DownloadStage, String> {
-    for _ in 0..32 {
-        let directory = download_dir.join(format!(".rosi-download-{}", crate::fs_util::uuid_v4()));
-        let mut builder = std::fs::DirBuilder::new();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
-        }
-        match builder.create(&directory) {
-            Ok(()) => {
-                let Some(root_identity) = file_identity(&directory) else {
-                    return Err(format!(
-                        "Could not verify the reserved staging directory {}; it was retained.",
-                        directory.display()
-                    ));
-                };
-                return Ok(DownloadStage {
-                    directory,
-                    preserve_on_drop: false,
-                    root_identity,
-                    owned_entries: Some(HashMap::new()),
-                });
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error.to_string()),
-        }
-    }
-    Err("Could not reserve a private download staging directory.".to_string())
-}
-
-fn reserve_path_output_file(download_dir: &Path, session_id: u64) -> Result<PathBuf, String> {
-    for _ in 0..32 {
-        let path = download_dir.join(format!(
-            ".rosi-path-{session_id}-{}.txt",
-            crate::fs_util::uuid_v4()
-        ));
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        match options.open(&path) {
-            Ok(file) => {
-                drop(file);
-                return Ok(path);
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error.to_string()),
-        }
-    }
-    Err("Could not reserve a unique yt-dlp path metadata file.".to_string())
-}
-
 /// Start a download. Validation failures are reported through the normal
 /// completion path; `Err` only means another owner holds the session slot.
 pub fn start_download(
@@ -1628,12 +1385,6 @@ fn install_download_output_named(
     Err("Could not find an unused name for a downloaded output.".to_string())
 }
 
-fn sync_staged_file(path: &Path) -> std::io::Result<()> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true).write(true);
-    options.open(path)?.sync_all()
-}
-
 const CAPTION_EXTENSIONS: &[&str] = &[
     "ass", "json3", "lrc", "srt", "ssa", "srv1", "srv2", "srv3", "ttml", "vtt",
 ];
@@ -1723,6 +1474,7 @@ fn publish_owned_caption_sidecar(
             ));
         match install_no_replace(sidecar, &quarantine) {
             Ok(()) => {
+                crate::staging::hide_on_windows(&quarantine);
                 quarantined = Some(quarantine);
                 break;
             }
@@ -2141,10 +1893,15 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
         Phase::Download
     };
     emit_phase(id, phase, 100.0, "Download complete", Some(false));
-    let final_path = downloaded
-        .last()
-        .cloned()
-        .expect("download paths validated");
+    let Some(final_path) = downloaded.last().cloned() else {
+        complete_session(
+            id,
+            "❌ Failed (No installed file).",
+            Outcome::Failed,
+            completion_meta_for_paths(downloaded, failed_paths, None),
+        );
+        return;
+    };
     let format = final_path
         .extension()
         .map(|ext| ext.to_string_lossy().to_lowercase())
@@ -2299,94 +2056,17 @@ fn reserve_conversion_temp(input: &Path, target: &str) -> Result<ConversionTemp,
         }
         match builder.create(&directory) {
             Ok(()) => {
+                crate::staging::hide_on_windows(&directory);
                 return Ok(ConversionTemp {
                     output: directory.join(format!("output.{target}")),
                     directory,
-                })
+                });
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error.to_string()),
         }
     }
     Err("Could not reserve a unique conversion staging path.".to_string())
-}
-
-#[cfg(unix)]
-fn path_cstring(path: &Path) -> std::io::Result<std::ffi::CString> {
-    use std::os::unix::ffi::OsStrExt;
-    std::ffi::CString::new(path.as_os_str().as_bytes())
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error.to_string()))
-}
-
-/// Move a complete staging file into place atomically without replacing an
-/// existing destination. The staging directory is beside the source, keeping
-/// this operation on the same volume even for removable filesystems.
-#[cfg(target_os = "linux")]
-fn install_no_replace(temp: &Path, destination: &Path) -> std::io::Result<()> {
-    let temp = path_cstring(temp)?;
-    let destination = path_cstring(destination)?;
-    let result = unsafe {
-        libc::renameat2(
-            libc::AT_FDCWD,
-            temp.as_ptr(),
-            libc::AT_FDCWD,
-            destination.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        )
-    };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn install_no_replace(temp: &Path, destination: &Path) -> std::io::Result<()> {
-    let temp = path_cstring(temp)?;
-    let destination = path_cstring(destination)?;
-    let result =
-        unsafe { libc::renamex_np(temp.as_ptr(), destination.as_ptr(), libc::RENAME_EXCL) };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
-    }
-}
-
-#[cfg(windows)]
-fn install_no_replace(temp: &Path, destination: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-
-    // `std::fs::rename` replaces an existing destination on Windows. Use the
-    // Win32 move primitive without MOVEFILE_REPLACE_EXISTING so an output
-    // collision fails atomically instead of overwriting a user's file.
-    #[link(name = "Kernel32")]
-    extern "system" {
-        fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
-    }
-
-    const MOVEFILE_WRITE_THROUGH: u32 = 0x0000_0008;
-    let temp: Vec<u16> = temp.as_os_str().encode_wide().chain(Some(0)).collect();
-    let destination: Vec<u16> = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
-    let result =
-        unsafe { MoveFileExW(temp.as_ptr(), destination.as_ptr(), MOVEFILE_WRITE_THROUGH) };
-    if result != 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
-    }
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-fn install_no_replace(temp: &Path, destination: &Path) -> std::io::Result<()> {
-    // Hard-link installation is also an atomic no-replace operation. Some
-    // filesystems do not support it; in that case conversion fails safely.
-    std::fs::hard_link(temp, destination)
 }
 
 fn install_conversion_output(
@@ -3007,7 +2687,7 @@ fn retire_staged_source(
         let quarantine_dir =
             parent.join(format!(".rosi-source-retire-{}", crate::fs_util::uuid_v4()));
         match builder.create(&quarantine_dir) {
-            Ok(()) => {}
+            Ok(()) => crate::staging::hide_on_windows(&quarantine_dir),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
                 stage.preserve_on_drop = input.exists();

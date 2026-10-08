@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { browser, $ } from "@wdio/globals";
 import { snapshotDir } from "../helpers/legacy-v4.js";
+import { readListFile } from "../helpers/persisted.js";
 
 const env = process.env;
 const DOWNLOADS = env.ROSI_E2E_DOWNLOADS;
@@ -1421,9 +1422,9 @@ describe("ROSI main window", () => {
     await browser.waitUntil(
       () =>
         fs.existsSync(path.join(DATA_DIR, "download-queue.json")) &&
-        JSON.parse(
-          fs.readFileSync(path.join(DATA_DIR, "download-queue.json"), "utf8"),
-        ).filter((item) => item.status === "completed").length === 2,
+        readListFile(path.join(DATA_DIR, "download-queue.json")).filter(
+          (item) => item.status === "completed",
+        ).length === 2,
       { timeout: 10_000, timeoutMsg: "queue was not persisted" },
     );
     record("queue", { files });
@@ -4273,9 +4274,7 @@ describe("ROSI main window", () => {
     assert.equal(cleared.ok, true);
     const activity = await api("getDownloadActivity");
     assert.deepEqual(activity.data, []);
-    const onDisk = JSON.parse(
-      fs.readFileSync(path.join(DATA_DIR, "download-activity.json"), "utf8"),
-    );
+    const onDisk = readListFile(path.join(DATA_DIR, "download-activity.json"));
     assert.deepEqual(onDisk, []);
     record("activity-clear");
   });

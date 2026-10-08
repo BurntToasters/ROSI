@@ -7,4 +7,8 @@
 .githooks/* text eol=lf
 
 # Bundled yt-dlp sidecars must never be newline-normalized.
-assets/yt-dlp* binary
+assets/yt-dlp.exe binary
+assets/yt-dlp_arm64.exe binary
+assets/yt-dlp_macos binary
+assets/yt-dlp_linux binary
+assets/yt-dlp_linux_aarch64 binary

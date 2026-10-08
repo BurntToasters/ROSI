@@ -119,24 +119,55 @@ fn persist_queue_files(
     backup: &Path,
     snapshot: &[QueueItem],
 ) -> Result<(), String> {
-    let encoded = serde_json::to_vec_pretty(snapshot).map_err(|error| error.to_string())?;
+    let encoded = crate::fs_util::encode_list(snapshot)?;
     if encoded.len() > MAX_QUEUE_FILE_BYTES {
         return Err(
             "Queue exceeds its durable storage limit; the previous files were preserved.".into(),
         );
     }
-    for path in [primary, backup] {
-        if crate::fs_util::file_size(path).is_some_and(|size| size > MAX_QUEUE_FILE_BYTES as u64) {
-            return Err(format!("Saved queue {} exceeds the reader limit; preserve and repair that file before saving.", path.display()));
-        }
-    }
+    crate::fs_util::guard_before_replace(
+        primary,
+        MAX_QUEUE_FILE_BYTES as u64,
+        crate::fs_util::is_list_file,
+        |value| crate::fs_util::ensure_schema_not_newer(value, "Download queue"),
+    )
+    .map_err(|error| format!("Queue file {} was not replaced: {error}", primary.display()))?;
+    // The previous good generation is read before the primary is replaced.
+    let previous = previous_generation(primary, backup)?;
     crate::fs_util::atomic_write(primary, &encoded).map_err(|error| {
         format!(
             "Could not atomically write queue file {}: {error}",
             primary.display()
         )
     })?;
-    crate::fs_util::atomic_write(backup, &encoded).map_err(|error| {
+    write_backup(backup, previous.as_deref().unwrap_or(&encoded))
+}
+
+fn parses_as_list(raw: &str) -> bool {
+    serde_json::from_str::<Value>(raw)
+        .ok()
+        .and_then(crate::fs_util::list_items)
+        .is_some()
+}
+
+/// The newest good bytes on disk before this flush: the primary when it
+/// parses, else the existing backup when it parses. A blocked or unreadable
+/// backup is not a good generation.
+fn previous_generation(primary: &Path, backup: &Path) -> Result<Option<Vec<u8>>, String> {
+    let good_primary = crate::fs_util::read_bounded(primary, MAX_QUEUE_FILE_BYTES as u64)?
+        .filter(|raw| parses_as_list(raw));
+    let good_backup = crate::fs_util::read_bounded(backup, MAX_QUEUE_FILE_BYTES as u64)
+        .ok()
+        .flatten()
+        .filter(|raw| parses_as_list(raw));
+    Ok(good_primary.or(good_backup).map(String::into_bytes))
+}
+
+/// Every flush writes the backup, and a failed backup write fails the flush.
+/// The backup holds the previous good generation, or the latest snapshot when
+/// no good generation exists yet.
+fn write_backup(backup: &Path, contents: &[u8]) -> Result<(), String> {
+    crate::fs_util::atomic_write(backup, contents).map_err(|error| {
         format!(
             "Could not atomically write queue backup {}: {error}",
             backup.display()
@@ -245,9 +276,10 @@ fn normalize_item(value: &Value, used_ids: &mut HashSet<String>) -> Option<Queue
 }
 
 fn read_queue(path: &std::path::Path) -> Option<Vec<QueueItem>> {
-    let Value::Array(list) = crate::fs_util::read_json(path, MAX_QUEUE_FILE_BYTES as u64)? else {
-        return None;
-    };
+    let list = crate::fs_util::list_items(crate::fs_util::read_json(
+        path,
+        MAX_QUEUE_FILE_BYTES as u64,
+    )?)?;
     let mut used_ids = HashSet::new();
     let mut nonterminal = HashSet::new();
     let mut items = Vec::new();
@@ -309,12 +341,22 @@ pub fn flush() -> Result<(), String> {
     persistence().flush(revision, snapshot)
 }
 
+/// Folders queued requests target, for the startup staging sweep.
+pub fn queued_output_folders() -> Vec<PathBuf> {
+    state()
+        .items
+        .iter()
+        .filter_map(|item| item.request.as_ref())
+        .map(|request| PathBuf::from(&request.output_path))
+        .collect()
+}
+
 /// Load the persisted queue eagerly at startup.
 pub fn init() {
     drop(state());
 }
 
-fn broadcast(_items: Vec<QueueItem>) {
+fn broadcast() {
     let (_, items) = revisioned_snapshot(true);
     crate::app_state::emit("queue-update", items);
     schedule_persist();
@@ -481,7 +523,7 @@ fn apply_completion(item: &mut QueueItem, completion: &DownloadCompletion) {
 
 /// Apply a completion to the matching item (if still present) and record it.
 fn finish_item(item_id: &str, completion: DownloadCompletion) {
-    let snapshot = {
+    {
         let mut queue = state();
         if let Some(item) = queue.items.iter_mut().find(|item| item.id == item_id) {
             apply_completion(item, &completion);
@@ -489,17 +531,16 @@ fn finish_item(item_id: &str, completion: DownloadCompletion) {
         if queue.active_item_id.as_deref() == Some(item_id) {
             queue.active_item_id = None;
         }
-        queue.items.clone()
-    };
+    }
     crate::activity::record(&completion);
-    broadcast(snapshot);
+    broadcast();
 }
 
 /// Record a cancelled outcome for an item the runner claimed but never
 /// started, if the item is still in the queue (a cleared queue records nothing).
 fn finish_unstarted_item(item: &QueueItem, request: &DownloadRequestOptions) {
     let completion = synthetic_completion(item, request, Outcome::Cancelled, "⏹️ Cancelled.");
-    let snapshot = {
+    {
         let mut queue = state();
         if queue.active_item_id.as_deref() == Some(item.id.as_str()) {
             queue.active_item_id = None;
@@ -512,10 +553,9 @@ fn finish_unstarted_item(item: &QueueItem, request: &DownloadRequestOptions) {
             return;
         };
         apply_completion(entry, &completion);
-        queue.items.clone()
-    };
+    }
     crate::activity::record(&completion);
-    broadcast(snapshot);
+    broadcast();
 }
 
 fn run_queue() {
@@ -532,23 +572,22 @@ fn run_queue() {
                     item.started_at = Some(crate::app_state::now_ms());
                     let item = item.clone();
                     queue.active_item_id = Some(item.id.clone());
-                    Some((item, queue.items.clone()))
+                    Some(item)
                 }
                 _ => {
                     queue.running = false;
                     queue.cancelled = false;
                     queue.active_item_id = None;
-                    let snapshot = queue.items.clone();
                     drop(queue);
-                    broadcast(snapshot);
+                    broadcast();
                     None
                 }
             }
         };
-        let Some((item, snapshot)) = next else {
+        let Some(item) = next else {
             return;
         };
-        broadcast(snapshot);
+        broadcast();
 
         let request = resolve_request(&item);
         let progress = {
@@ -709,19 +748,21 @@ mod persistence_tests {
             .expect("flush acknowledges the latest write")
             .expect("latest primary and backup writes succeed");
 
-        for path in [&primary, &backup] {
-            let saved: Vec<QueueItem> = serde_json::from_slice(
+        let ids = |path: &Path| -> Vec<String> {
+            let saved: Value = serde_json::from_slice(
                 &std::fs::read(path).expect("persisted queue file is readable"),
             )
             .expect("persisted queue JSON is complete");
-            assert_eq!(
-                saved
-                    .iter()
-                    .map(|entry| entry.id.as_str())
-                    .collect::<Vec<_>>(),
-                ["latest"]
-            );
-        }
+            crate::fs_util::list_items(saved)
+                .expect("persisted queue has an item list")
+                .iter()
+                .filter_map(|entry| entry.get("id").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect()
+        };
+        assert_eq!(ids(&primary), ["latest"]);
+        // The backup keeps the previous generation instead of copying the primary.
+        assert_eq!(ids(&backup), ["old"]);
     }
 
     #[test]
@@ -859,15 +900,14 @@ pub fn add_to_queue(urls: Value, options: Option<Value>) -> IpcResult<AddResult>
     let added = pending.len();
     if added > 0 {
         let candidate: Vec<&QueueItem> = queue.items.iter().chain(pending.iter()).collect();
-        match serde_json::to_vec_pretty(&candidate) {
+        match crate::fs_util::encode_list(&candidate) {
             Ok(encoded) if encoded.len() <= MAX_QUEUE_ADMISSION_BYTES => {}
             Ok(_) => return ipc::err(VALIDATION_ERROR, "Queue storage limit reached. Remove items or shorten URLs before adding this batch."),
             Err(_) => return ipc::err(VALIDATION_ERROR, "Could not encode the queue; no items were added."),
         }
         queue.items.extend(pending);
-        let snapshot = queue.items.clone();
         drop(queue);
-        broadcast(snapshot);
+        broadcast();
     }
     ipc::ok(AddResult { added, skipped })
 }
@@ -889,9 +929,8 @@ pub fn remove_from_queue(id: Value) -> IpcResult<()> {
         );
     }
     queue.items.remove(index);
-    let snapshot = queue.items.clone();
     drop(queue);
-    broadcast(snapshot);
+    broadcast();
     ipc::ok(())
 }
 
@@ -913,9 +952,8 @@ pub fn retry_queue_item(id: Value) -> IpcResult<()> {
     }
     clear_attempt(item);
     item.status = "pending".into();
-    let snapshot = queue.items.clone();
     drop(queue);
-    broadcast(snapshot);
+    broadcast();
     ipc::ok(())
 }
 
@@ -959,9 +997,8 @@ pub fn reorder_queue_item(request: Value) -> IpcResult<()> {
         );
     };
     queue.items.swap(index, destination);
-    let snapshot = queue.items.clone();
     drop(queue);
-    broadcast(snapshot);
+    broadcast();
     ipc::ok(())
 }
 
@@ -981,12 +1018,11 @@ pub fn clear_queue() -> IpcResult<()> {
     if was_running {
         downloader::cancel_active_session(true);
     }
-    let snapshot = {
+    {
         let mut queue = state();
         queue.items.clear();
-        queue.items.clone()
-    };
-    broadcast(snapshot);
+    }
+    broadcast();
     ipc::ok(())
 }
 
@@ -1051,7 +1087,7 @@ pub fn cancel_queue() -> IpcResult<()> {
             synthetic_completion(item, &request, Outcome::Cancelled, "⏹️ Cancelled."),
         ));
     }
-    let snapshot = {
+    {
         let mut queue = state();
         for (id, completion) in &completions {
             if let Some(item) = queue
@@ -1063,11 +1099,10 @@ pub fn cancel_queue() -> IpcResult<()> {
             }
         }
         queue.active_item_id = None;
-        queue.items.clone()
-    };
+    }
     for (_, completion) in &completions {
         crate::activity::record(completion);
     }
-    broadcast(snapshot);
+    broadcast();
     ipc::ok(())
 }

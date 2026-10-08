@@ -13,3 +13,8 @@ Write verification before production repairs. Preserve unrelated behavior and re
 9. Dependency: source-map-js must resolve outside the affected range; lock resolution, installed package, build and advisory report must agree.
 
 Native GUI E2E is preferred. Controlled renderer/native isolation is supplemental when native execution is unavailable; it does not certify signed installers or hosted CI.
+
+Gate wiring: `audit4-repairs-run.mjs` writes `result.json` under
+`e2e/artifacts/audit4-repairs/`. `scripts/test-e2e.js` runs it as the
+`audit4-repairs` scenario and checks the exit code, the binary hash, the spec
+hash, and the native observations file.

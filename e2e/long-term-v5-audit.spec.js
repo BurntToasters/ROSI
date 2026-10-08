@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
 import { api, waitForAppReady } from "./helpers/app-bridge.js";
+import { readListFile } from "./helpers/persisted.js";
 
 const mode = process.env.ROSI_LONG_TERM_MODE;
 const directory = process.env.ROSI_LONG_TERM_ARTIFACTS;
@@ -114,8 +115,7 @@ describe("long-term V5 observational audit", () => {
       observation.queueCount = (await api("getQueue")).length;
       await browser.waitUntil(
         () =>
-          fs.existsSync(queuePath) &&
-          JSON.parse(fs.readFileSync(queuePath)).length === 500,
+          fs.existsSync(queuePath) && readListFile(queuePath).length === 500,
         { timeout: 15000 },
       );
       observation.invariantPassed =
@@ -146,8 +146,7 @@ describe("long-term V5 observational audit", () => {
         () =>
           observation.add?.ok === false ||
           (fs.existsSync(queuePath) &&
-            JSON.parse(fs.readFileSync(queuePath)).length ===
-              observation.queueCount),
+            readListFile(queuePath).length === observation.queueCount),
         {
           timeout: 15000,
           interval: 100,

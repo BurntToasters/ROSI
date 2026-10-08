@@ -4,6 +4,7 @@ import { waitForPrepareForCloseListener } from './tauri-bridge';
 import './modules/icons';
 import './modules/ui';
 import './modules/downloads';
+import './modules/activity';
 import './modules/queue';
 import './modules/settings';
 import './modules/updates';

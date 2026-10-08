@@ -1,17 +1,43 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 const binary = process.env.ROSI_E2E_BINARY;
 if (!binary) {
   throw new Error("ROSI_E2E_BINARY is not set (run npm run test:e2e)");
 }
 
+const configDir = path.dirname(fileURLToPath(import.meta.url));
+// Areas with run.mjs are driven by their runner, which passes its own
+// ROSI_E2E_SPECS. The default pass covers only the other areas' specs so no
+// spec runs twice.
+const genericV5Specs = fs
+  .readdirSync(path.join(configDir, "v5-fixes"), { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .filter((entry) => {
+    const area = path.join(configDir, "v5-fixes", entry.name);
+    return (
+      !fs.existsSync(path.join(area, "run.mjs")) &&
+      fs.readdirSync(area).some((file) => file.endsWith(".spec.js"))
+    );
+  })
+  .map((entry) => `./v5-fixes/${entry.name}/*.spec.js`);
+// WDIO resolves these patterns relative to this config file's directory (e2e/).
 const specs = process.env.ROSI_E2E_SPECS
   ? process.env.ROSI_E2E_SPECS.split(",")
       .map((spec) => spec.trim())
       .filter(Boolean)
-  : ["./specs/**/*.spec.js"];
+  : ["./specs/**/*.spec.js", ...genericV5Specs];
+// Process-repair specs batch many native failure cases into one `it`, so they
+// get a longer ceiling than the rest of the GUI suite.
+const LONG_PROCESS_SPECS = new Set([
+  "./download-process-repairs.spec.js",
+  "./audit3-native-targeted.spec.js",
+]);
 const processRepairRun =
   process.env.ROSI_E2E_PROCESS_REPAIRS === "1" &&
   specs.length === 1 &&
-  specs[0] === "./download-process-repairs.spec.js";
+  LONG_PROCESS_SPECS.has(specs[0]);
 
 async function requestGracefulAppShutdown() {
   const activeBrowser = globalThis.browser;
@@ -95,9 +121,8 @@ export const config = {
   reporters: ["spec"],
   mochaOpts: {
     ui: "bdd",
-    // The isolated process-repair batch records each failure independently;
-    // give that one spec a bounded six-minute ceiling without changing the
-    // timeout for the rest of the GUI suite.
+    // Give the isolated process-repair specs a bounded six-minute ceiling
+    // without changing the timeout for the rest of the GUI suite.
     timeout: processRepairRun ? 360_000 : 180_000,
   },
   after: requestGracefulAppShutdown,

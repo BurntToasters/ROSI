@@ -474,25 +474,12 @@ fn check_schema(value: &Value) -> Result<(), String> {
 /// Preserve damaged bytes before a defaults-based save, and never downgrade
 /// a newer schema or replace settings that cannot be read safely.
 fn protect_existing_settings() -> Result<(), String> {
-    let path = settings_path();
-    let Some(raw) = crate::fs_util::read_bounded(&path, MAX_SETTINGS_FILE_BYTES)? else {
-        return Ok(());
-    };
-    match serde_json::from_str::<Value>(&raw) {
-        Ok(value @ Value::Object(_)) => check_schema(&value),
-        _ => {
-            let recovery = path.with_file_name(format!(
-                "settings.recovery-{}.json",
-                crate::fs_util::uuid_v4()
-            ));
-            crate::fs_util::atomic_write(&recovery, raw.as_bytes())?;
-            crate::logging::warn(&format!(
-                "Damaged settings preserved at {} before recovery.",
-                recovery.display()
-            ));
-            Ok(())
-        }
-    }
+    crate::fs_util::guard_before_replace(
+        &settings_path(),
+        MAX_SETTINGS_FILE_BYTES,
+        Value::is_object,
+        check_schema,
+    )
 }
 
 /// Merge a validated patch into the persisted settings.
@@ -540,23 +527,30 @@ fn show_save_error(message: &str) {
 #[tauri::command(async)]
 pub fn get_settings() -> Settings {
     static REPORTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    if let Ok(Some(raw)) = crate::fs_util::read_bounded(&settings_path(), MAX_SETTINGS_FILE_BYTES) {
-        let problem = match serde_json::from_str::<Value>(&raw) {
+    let path = settings_path();
+    let problem = match crate::fs_util::read_bounded(&path, MAX_SETTINGS_FILE_BYTES) {
+        Ok(Some(raw)) => match serde_json::from_str::<Value>(&raw) {
             Ok(value @ Value::Object(_)) => check_schema(&value).err(),
             _ => Some("Your settings file is damaged. ROSI is showing defaults and will preserve a recovery copy before saving changes.".to_string()),
-        }.or_else(crate::legacy::recovery_message);
-        if let Some(message) = problem {
-            REPORTED.get_or_init(|| {
-                crate::logging::warn(&message);
-                if let Some(app) = crate::app_state::app() {
-                    app.dialog()
-                        .message(message)
-                        .title("ROSI Profile Recovery")
-                        .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
-                        .show(|_| {});
-                }
-            });
-        }
+        },
+        Ok(None) => None,
+        Err(error) => Some(format!(
+            "ROSI could not read your settings file at {}: {error}. ROSI is showing defaults and will not overwrite it. Check that the file is readable and no larger than 2 MB, fix or move it, then restart ROSI.",
+            path.display()
+        )),
+    }
+    .or_else(crate::legacy::recovery_message);
+    if let Some(message) = problem {
+        REPORTED.get_or_init(|| {
+            crate::logging::warn(&message);
+            if let Some(app) = crate::app_state::app() {
+                app.dialog()
+                    .message(message)
+                    .title("ROSI Profile Recovery")
+                    .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
+                    .show(|_| {});
+            }
+        });
     }
     load()
 }

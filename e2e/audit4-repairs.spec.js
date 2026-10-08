@@ -1,3 +1,4 @@
+import { readListFile } from "./helpers/persisted.js";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -71,10 +72,8 @@ describe("audit four native repair acceptance", () => {
     });
     assert.equal(shutdown.ok, true, JSON.stringify(shutdown));
     const queue = await api("getQueue");
-    const persisted = JSON.parse(
-      fs.readFileSync(
-        path.join(process.env.ROSI_E2E_DATA_DIR, "download-queue.json"),
-      ),
+    const persisted = readListFile(
+      path.join(process.env.ROSI_E2E_DATA_DIR, "download-queue.json"),
     );
     record("shutdown-queue-drained", { queue, persisted });
     assert.ok(queue.every((item) => item.status !== "downloading"));

@@ -387,6 +387,18 @@ test("bundled notices copy version-matched yt-dlp text to frontend assets", () =
       path.join(temp, "assets", "yt-dlp-2026.08.19-THIRD_PARTY_LICENSES.txt"),
       "yt-dlp upstream bundled component licenses, 2026.08.19\n",
     );
+    // copy-bundled-licenses.js reads the pinned version from this manifest.
+    fs.writeFileSync(
+      path.join(temp, "assets", "ytdlp-checksums.json"),
+      JSON.stringify({
+        version: "2026.08.19",
+        files: {},
+        license: {
+          file: "yt-dlp-2026.08.19-THIRD_PARTY_LICENSES.txt",
+          sha256: "0".repeat(64),
+        },
+      }),
+    );
     for (const file of [
       "NOTICE.txt",
       "ffmpeg_license.txt",

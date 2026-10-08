@@ -175,7 +175,10 @@ function processes(marker) {
         profile: original.profile,
         outcome: original.outcome,
         filename: original.filename,
-        invariantPassed: original.filename.endsWith(".mp4"),
+        // The fixture offers only WebM; Compatible prefers MP4 when available
+        // and otherwise keeps the best available format.
+        sourceFormats: ["webm"],
+        invariantPassed: original.filename.endsWith(".webm"),
       });
       const completion = await download(
         url,

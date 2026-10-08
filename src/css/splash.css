@@ -1,3 +1,9 @@
+/* The splash window is opaque on every platform: a solid theme color behind
+   the content, so it reads correctly in light and dark without transparency. */
+html {
+  background: var(--bg-gradient-mid);
+}
+
 body.splash-screen {
   margin: 0;
   padding: 0;

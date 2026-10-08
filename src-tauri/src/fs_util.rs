@@ -1,7 +1,10 @@
 //! Atomic, private file writes and bounded reads for persisted JSON state.
 
+use crate::constants::CURRENT_PERSISTED_SCHEMA_VERSION;
+use serde::Serialize;
+use serde_json::Value;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub fn random_hex(bytes: usize) -> String {
     let mut buffer = vec![0u8; bytes];
@@ -192,4 +195,119 @@ pub fn file_size(path: &Path) -> Option<u64> {
         .ok()
         .filter(|metadata| metadata.is_file())
         .map(|metadata| metadata.len())
+}
+
+/// Recovery copy name for damaged bytes: `<stem>.recovery-<uuid>.json`.
+fn recovery_copy_path(path: &Path) -> PathBuf {
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("data");
+    path.with_file_name(format!("{stem}.recovery-{}.json", uuid_v4()))
+}
+
+/// Run before a save replaces the persisted JSON file at `path`. A missing
+/// file passes. An unreadable or oversized file refuses the write, and so does
+/// a file that `check_schema` rejects. Bytes that are damaged or have the
+/// wrong shape are copied to a recovery file first, so a save never discards
+/// them.
+pub fn guard_before_replace(
+    path: &Path,
+    max_bytes: u64,
+    has_expected_shape: fn(&Value) -> bool,
+    check_schema: impl FnOnce(&Value) -> Result<(), String>,
+) -> Result<(), String> {
+    let Some(raw) = read_bounded(path, max_bytes)? else {
+        return Ok(());
+    };
+    match serde_json::from_str::<Value>(&raw) {
+        Ok(value) if has_expected_shape(&value) => check_schema(&value),
+        _ => {
+            let recovery = recovery_copy_path(path);
+            atomic_write(&recovery, raw.as_bytes())?;
+            crate::logging::warn(&format!(
+                "Damaged file {} preserved at {} before it was replaced.",
+                path.display(),
+                recovery.display()
+            ));
+            Ok(())
+        }
+    }
+}
+
+/// Refuse to touch a file that declares a `schemaVersion` this build does not
+/// know. Such a file is read best-effort but never rewritten.
+pub fn ensure_schema_not_newer(value: &Value, what: &str) -> Result<(), String> {
+    let newer = value
+        .get("schemaVersion")
+        .and_then(Value::as_f64)
+        .is_some_and(|version| version > f64::from(CURRENT_PERSISTED_SCHEMA_VERSION));
+    if newer {
+        notify_newer_once(what);
+        return Err(format!(
+            "{what} was written by a newer ROSI version. This version will not overwrite it."
+        ));
+    }
+    Ok(())
+}
+
+/// One non-blocking warning per file kind per launch, so changes this version
+/// cannot save are never lost silently.
+fn notify_newer_once(what: &str) {
+    static NOTIFIED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    {
+        let mut notified = NOTIFIED.lock().unwrap_or_else(|p| p.into_inner());
+        if notified.iter().any(|kind| kind == what) {
+            return;
+        }
+        notified.push(what.to_string());
+    }
+    crate::logging::warn(&format!(
+        "Told the user that a newer ROSI version owns {what}; changes will not be saved."
+    ));
+    if let Some(app) = crate::app_state::app() {
+        use tauri_plugin_dialog::DialogExt;
+        app.dialog()
+            .message(format!(
+                "{what} was saved by a newer version of ROSI. This version will not overwrite it, so changes you make here will not be kept. Reopen the newer ROSI version to keep working with this data."
+            ))
+            .title("Newer ROSI Data")
+            .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
+            .show(|_| {});
+    }
+}
+
+/// Versioned list files are `{ "schemaVersion": n, "items": [...] }`. Files
+/// written before versioning are bare arrays, and both forms are accepted.
+pub fn is_list_file(value: &Value) -> bool {
+    value.is_array() || value.get("items").is_some_and(Value::is_array)
+}
+
+/// The items of a list file in either form.
+pub fn list_items(value: Value) -> Option<Vec<Value>> {
+    match value {
+        Value::Array(list) => Some(list),
+        Value::Object(mut object) => match object.remove("items") {
+            Some(Value::Array(list)) => Some(list),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ListFile<'a, T: Serialize> {
+    schema_version: u32,
+    items: &'a [T],
+}
+
+/// Pretty-printed versioned list file. Writers and size checks share this
+/// encoder so the measured size is the size on disk.
+pub fn encode_list<T: Serialize>(items: &[T]) -> Result<Vec<u8>, String> {
+    serde_json::to_vec_pretty(&ListFile {
+        schema_version: CURRENT_PERSISTED_SCHEMA_VERSION,
+        items,
+    })
+    .map_err(|error| error.to_string())
 }

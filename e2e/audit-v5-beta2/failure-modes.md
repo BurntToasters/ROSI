@@ -21,3 +21,17 @@ Failure modes to check:
 12. The Compatible profile advertises an MP4 output but a site offers only WebM. Record the actual successful output before testing subsequent conversion, so selection behavior is distinguishable from conversion failure.
 
 Probes record observed defects, controls, file hashes, and screenshots. A successful probe run means the observations completed; it does not mean ROSI passed the acceptance conditions above.
+
+## Re-audit when wired into the gate (written before the changes)
+
+13. The rebinding-host list matches only subdomains (`.localtest.me`), so the
+    bare apex `localtest.me`, which public DNS resolves to 127.0.0.1, passes
+    the URL pre-check. The per-operation proxy still refuses the loopback
+    connection, but the request is accepted first. Expected: apex and subdomains
+    of every listed rebinding domain are rejected before a download starts.
+14. Fix 12's contract changed after these probes were written: the Compatible
+    profile now promises "Prefer MP4 when available; otherwise use the best
+    available format" (`compatible-profile-wording`). A WebM-only source must
+    therefore produce WebM, not a failed or mislabelled download. Expected: the
+    probe records the actual extension and passes when it matches what the
+    source offers.

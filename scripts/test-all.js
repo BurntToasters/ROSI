@@ -32,7 +32,9 @@ const colors = {
 };
 const defaultTimeoutMs = 300_000;
 const rustTimeoutMs = process.platform === "win32" ? 1_200_000 : 600_000;
-const e2eTimeoutMs = process.platform === "win32" ? 1_200_000 : 900_000;
+// The gate runs every wired E2E suite in sequence, so it needs more headroom
+// than the single-pass budget it used before those suites were wired in.
+const e2eTimeoutMs = 2_700_000;
 
 function createInitialResults() {
   return {

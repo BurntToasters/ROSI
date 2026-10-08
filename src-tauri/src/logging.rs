@@ -68,6 +68,10 @@ fn write_line(level: &str, message: &str) {
     let Ok(_guard) = LOG_LOCK.lock() else {
         return;
     };
+    append_line(level, &line);
+}
+
+fn append_line(level: &str, line: &str) {
     let path = log_path();
     if let Some(parent) = path.parent() {
         if std::fs::create_dir_all(parent).is_err() {
@@ -89,6 +93,40 @@ fn write_line(level: &str, message: &str) {
             iso_timestamp(crate::app_state::now_ms())
         );
     }
+}
+
+thread_local! {
+    static IN_PANIC_HOOK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Record panics in the rosi log before the previous hook runs. The log lock
+/// may be held by the panicking thread, so the hook only try-locks and
+/// otherwise appends unlocked. Re-entrant panics are ignored.
+pub fn install_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let reentered = IN_PANIC_HOOK.with(|flag| flag.replace(true));
+        if !reentered {
+            let payload = info
+                .payload()
+                .downcast_ref::<&str>()
+                .map(|text| text.to_string())
+                .or_else(|| info.payload().downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "<non-string panic payload>".to_string());
+            let location = info
+                .location()
+                .map(|at| format!("{}:{}", at.file(), at.line()))
+                .unwrap_or_else(|| "<unknown location>".to_string());
+            let thread = std::thread::current();
+            let name = thread.name().unwrap_or("<unnamed>");
+            let message = format!("PANIC in thread '{name}' at {location}: {payload}")
+                .replace(['\r', '\n'], " ");
+            let _guard = LOG_LOCK.try_lock();
+            append_line("panic", &message);
+            IN_PANIC_HOOK.with(|flag| flag.set(false));
+        }
+        previous(info);
+    }));
 }
 
 pub fn info(message: &str) {

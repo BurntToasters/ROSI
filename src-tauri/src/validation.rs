@@ -3,40 +3,17 @@
 //! validation for download requests, settings patches, and queue operations.
 
 use crate::constants::*;
+use crate::ip_policy::{is_public_ipv4, is_public_ipv6};
 use crate::ipc::{IpcError, INVALID_PATH, INVALID_URL, VALIDATION_ERROR};
 use crate::types::{
     DownloadPreset, DownloadRequestOptions, NotificationRequest, PlaylistSelection,
 };
 use serde_json::{Map, Value};
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::Ipv4Addr;
 use std::path::{Component, Path, PathBuf};
 
 // ---------------------------------------------------------------------------
 // URLs
-
-fn is_private_ipv4(ip: Ipv4Addr) -> bool {
-    let [a, b, ..] = ip.octets();
-    a == 127
-        || a == 10
-        || a == 0
-        || (a == 172 && (16..=31).contains(&b))
-        || (a == 192 && b == 168)
-        || (a == 169 && b == 254)
-}
-
-fn is_private_ipv6(ip: Ipv6Addr) -> bool {
-    if ip.is_loopback() || ip.is_unspecified() {
-        return true;
-    }
-    if let Some(mapped) = ip.to_ipv4_mapped() {
-        if is_private_ipv4(mapped) {
-            return true;
-        }
-    }
-    let first = ip.segments()[0];
-    // fe80::/10 link-local and fc00::/7 unique-local.
-    (first & 0xffc0) == 0xfe80 || (first & 0xfe00) == 0xfc00
-}
 
 /// inet_aton-style IPv4 parsing (hex/octal/shorthand), matching how resolvers
 /// may interpret a hostname that the URL parser left as a domain.
@@ -96,20 +73,20 @@ fn is_rebinding_hostname(host: &str) -> bool {
         ".xip.io",
     ]
     .iter()
-    .any(|suffix| host.ends_with(suffix))
+    .any(|suffix| host.ends_with(suffix) || host == &suffix[1..])
 }
 
 pub fn is_private_or_local_host(host: &url::Host<&str>) -> bool {
     match host {
-        url::Host::Ipv4(ip) => is_private_ipv4(*ip),
-        url::Host::Ipv6(ip) => is_private_ipv6(*ip),
+        url::Host::Ipv4(ip) => !is_public_ipv4(*ip),
+        url::Host::Ipv6(ip) => !is_public_ipv6(*ip),
         url::Host::Domain(domain) => {
             let host = domain.trim().trim_end_matches('.').to_ascii_lowercase();
             host.is_empty()
                 || host == "localhost"
                 || host.ends_with(".localhost")
                 || is_rebinding_hostname(&host)
-                || canonical_ipv4(&host).is_some_and(is_private_ipv4)
+                || canonical_ipv4(&host).is_some_and(|ip| !is_public_ipv4(ip))
         }
     }
 }

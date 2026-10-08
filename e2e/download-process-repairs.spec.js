@@ -56,7 +56,19 @@ async function download(url, overrides = {}, oldId) {
   return activity(url, oldId);
 }
 
+function stageNames() {
+  return fs
+    .readdirSync(downloads, { withFileTypes: true })
+    .filter(
+      (entry) =>
+        entry.isDirectory() && entry.name.startsWith(".rosi-download-"),
+    )
+    .map((entry) => entry.name);
+}
+
 async function downloadWithStagedSibling(url, fixturePath, overrides = {}) {
+  // Earlier cases may correctly retain stages that hold foreign fixtures.
+  const existingStages = new Set(stageNames());
   const response = await api("downloadVideo", {
     url,
     outputPath: downloads,
@@ -69,19 +81,14 @@ async function downloadWithStagedSibling(url, fixturePath, overrides = {}) {
   let stageDirectory;
   await browser.waitUntil(
     () => {
-      const stages = fs
-        .readdirSync(downloads, { withFileTypes: true })
-        .filter(
-          (entry) =>
-            entry.isDirectory() && entry.name.startsWith(".rosi-download-"),
-        );
+      const stages = stageNames().filter((name) => !existingStages.has(name));
       if (stages.length > 1) {
         throw new Error(
           `Expected one active private download stage, found ${stages.length}`,
         );
       }
       if (stages.length !== 1) return false;
-      stageDirectory = path.join(downloads, stages[0].name);
+      stageDirectory = path.join(downloads, stages[0]);
       return true;
     },
     {
@@ -120,8 +127,12 @@ async function downloadWithStagedSibling(url, fixturePath, overrides = {}) {
   const stagedFixturePath = path.join(stageDirectory, fixtureName);
   fs.copyFileSync(fixturePath, stagedFixturePath);
   const stagedFixtureSha256 = hash(fs.readFileSync(stagedFixturePath));
+  const completion = await activity(url);
+  // ROSI must keep a stage that holds a file it does not own; later cases
+  // count only stages their own downloads create.
+  if (fs.existsSync(stageDirectory)) fixtureRetainedStages.add(stageDirectory);
   return {
-    completion: await activity(url),
+    completion,
     stageDirectory,
     stagedFixturePath,
     stagedFixtureSha256,
@@ -191,6 +202,8 @@ function readToolInvocations() {
     .map((line) => JSON.parse(line));
 }
 
+const fixtureRetainedStages = new Set();
+
 function downloadStageDirectories() {
   return fs
     .readdirSync(downloads, { withFileTypes: true })
@@ -198,7 +211,8 @@ function downloadStageDirectories() {
       (entry) =>
         entry.isDirectory() && entry.name.startsWith(".rosi-download-"),
     )
-    .map((entry) => path.join(downloads, entry.name));
+    .map((entry) => path.join(downloads, entry.name))
+    .filter((directory) => !fixtureRetainedStages.has(directory));
 }
 
 function filesUnder(directory) {
@@ -515,11 +529,14 @@ describe("ROSI downloader and process repairs", () => {
         outputPaths,
         failedPaths,
         sizeBytes: completion.sizeBytes,
+        // The failed entry's retained original is reported in both lists
+        // (see conversion-failure-records-preserved-final-original).
         invariantPassed:
           completion.outcome === "failed" &&
-          outputPaths.length === 1 &&
+          outputPaths.length === 2 &&
           outputPaths.every((outputPath) => fs.existsSync(outputPath)) &&
           failedPaths.length === 1 &&
+          outputPaths.includes(failedPaths[0]) &&
           typeof completion.sizeBytes === "number" &&
           completion.sizeBytes ===
             outputPaths.reduce(
@@ -1527,12 +1544,16 @@ describe("ROSI downloader and process repairs", () => {
         sizeBytes: completion.sizeBytes,
         outputBytes,
         invariantPassed:
+          // A complete later original preserved by the cancellation is also
+          // reported; every reported path must be final and public.
           completion.outcome === "cancelled" &&
           firstOutput.length === 1 &&
-          outputPaths.length === 1 &&
-          outputPaths[0] === firstOutput[0] &&
-          fs.existsSync(outputPaths[0]) &&
-          !outputPaths[0].includes(`${path.sep}.rosi-download-`) &&
+          outputPaths.includes(firstOutput[0]) &&
+          outputPaths.every(
+            (outputPath) =>
+              fs.existsSync(outputPath) &&
+              !outputPath.includes(`${path.sep}.rosi-download-`),
+          ) &&
           completion.sizeBytes === outputBytes,
       });
     } catch (error) {

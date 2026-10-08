@@ -53,9 +53,19 @@ Tauri ships three `externalBin` sidecars next to the ROSI executable:
 `npm run prepare:sidecars` copies them into `src-tauri/binaries/` using Tauri's
 `<name>-<target-triple>` names after verifying every source binary:
 
-- yt-dlp: committed `assets/yt-dlp*`, verified against
-  `assets/ytdlp-checksums.json`. When updating yt-dlp, verify new binaries
-  against upstream `SHA2-256SUMS`, then run `npm run ytdlp:check:generate`.
+- yt-dlp: not committed. `npm run ytdlp:fetch` (current platform) and
+  `npm run ytdlp:fetch:all` (every tracked binary) download the pinned release
+  from GitHub into `assets/`. Each download is checked three ways: the release's
+  `SHA2-256SUMS` must carry a GPG signature from the pinned yt-dlp key
+  (`assets/yt-dlp-public.asc`, fingerprint in `scripts/fetch-ytdlp.cjs`), the
+  committed manifest `assets/ytdlp-checksums.json` must agree with those sums,
+  and the bytes must match both. `npm run ytdlp:check` re-verifies the files on
+  disk offline. `prepare:sidecars`, `tauri:dev` and `tauri:build` fetch any
+  missing yt-dlp binary first. gpg must be installed. The script looks for
+  `gpg` on PATH, then (Windows only) Git for Windows' `usr\bin\gpg.exe`; set
+  `ROSI_GPG` to an explicit path to override both. `--allow-unsigned-sums`
+  exists only for offline development; it is refused when `CI` or
+  `ROSI_RELEASE` is set and with `--update`.
 - FFmpeg: never committed. `npm run get:ffmpeg` downloads them from
   `FFMPEG_DL_SERVER` (see `.env.example`) into `resources/ffmpeg/`; they are
   verified against `resources/ffmpeg/checksums.json`. The universal macOS
@@ -72,6 +82,50 @@ stubs when FFmpeg is absent. `build.rs` re-hashes the prepared sidecars and
 fails release-profile builds that contain stubs; `scripts/gpg-sign.js` also
 refuses to sign them. `ROSI_ALLOW_STUB_SIDECARS=1` only exists for CI compile
 smoke and is rejected for stable releases.
+
+## yt-dlp freshness
+
+yt-dlp breaks as sites change, so ROSI tracks upstream weekly.
+`.github/workflows/ytdlp-watch.yml` runs on Mondays (and on demand). When the
+latest upstream release is newer than the manifest, it runs
+`node scripts/fetch-ytdlp.cjs --update <version>`, downloads every upstream
+binary to prove the new manifest, and opens a PR against `beta` (or an issue if
+the repository does not allow Actions to open PRs). The PR updates the manifest,
+the bundled license file, the Tauri resource path, and the notices.
+
+A yt-dlp bump needs a patch release because the binaries ship inside the
+installers. Target turnaround: merge the watch PR and ship the patch release
+within five business days of it opening. Manual bump: run the `--update` command
+above, then `npm run ytdlp:fetch:all` and `npm run ytdlp:check`.
+
+`scripts/copy-bundled-licenses.js` reads the yt-dlp version and license file
+from `assets/ytdlp-checksums.json`, so a bump needs no script edit.
+
+### CI for watch PRs
+
+A PR opened with the default `GITHUB_TOKEN` gets no CI on its own: GitHub does
+not start push or pull_request workflows for events that token creates. The
+watch job therefore runs `gh workflow run ci.yml --ref <branch>` after it opens
+the PR. `workflow_dispatch` is the one event such a token may trigger, and the
+job holds `actions: write` only for that step.
+
+Maintainers must check that the required checks for the PR come from a CI run
+on the bump commit. If the dispatch failed (the job logs a `::warning::`), or
+the checks are missing or stale, re-run `ci.yml` on the branch from the Actions
+tab before merging. The alternative is a fine-grained PAT or GitHub App token
+stored as a secret and used for `gh pr create` and the dispatch, so the PR
+events trigger CI directly. Do not switch to `pull_request_target` to get
+around this.
+
+## yt-dlp binary history
+
+Earlier v5 builds committed the yt-dlp binaries (about 155 MB per bump), so
+`.git` is about 1.4 GB. The binaries are now untracked and gitignored, but the
+old blobs remain in history. History was not rewritten here. A maintainer can
+prune them later on a fresh mirror clone with
+`git filter-repo --invert-paths --path assets/yt-dlp.exe --path assets/yt-dlp_arm64.exe --path assets/yt-dlp_macos --path assets/yt-dlp_linux --path assets/yt-dlp_linux_aarch64`.
+That rewrites every commit SHA and tag, so do it only after release tags are
+archived, coordinate a force push with forks, and have every clone re-clone.
 
 ## Updater signing key
 

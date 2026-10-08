@@ -26,6 +26,12 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 - **Security:** Downloads, previews, and format discovery now route requests through a destination-checking proxy that blocks private network targets across redirects and extractor-provided URLs. Preview thumbnails are fetched by ROSI, size-limited, and embedded only when they are PNG, JPEG, or WebP images.
 - **Release checks:** Release evidence now distinguishes full E2E acceptance from build-VM checks that rely on successful hosted CI for the exact source revision. Strict Cargo notices cover the updated dependency graph, and the reviewed development-tool advisories are recorded with a targeted dependency fix where available.
 - **Quality:** Refreshed package and sidecar metadata and expanded native E2E coverage for the updated UI and security boundaries.
+- **Downloads:** Saving to drives that do not support no-overwrite renames (such as exFAT, FAT, SMB and NFS) now works without ever replacing an existing file.
+- **Recovery:** On startup, ROSI cleans up temporary download folders left by a crash or forced quit that are more than a day old, in your download folders. Complete media found there is moved next to your downloads as `<name> (recovered)`, and yt-dlp temporary files are removed. On Windows these temporary folders are now hidden while a download runs.
+- **Data safety:** Damaged download statistics or activity files are kept as a recovery copy instead of being reset. The queue backup now holds the previous saved copy. If a newer ROSI version saved your queue, activity or statistics, this version will not overwrite them and tells you once.
+- **Breaking - downgrades:** The queue and activity files now carry a version number. ROSI `v5.0.0-beta.1` cannot read them, so going back to beta.1 shows an empty queue and will overwrite it. ROSI 4 is not affected.
+- **Security:** Reserved and shared address ranges (such as `100.64.0.0/10`, `198.18.0.0/15` and `240.0.0.0/4`) are now rejected as soon as you paste a link, not only when downloading. On IPv6-only networks with NAT64, public sites reached through `64:ff9b::/96` now work.
+- **Startup:** The splash screen is now opaque, and ROSI no longer uses private macOS window APIs.
 
 ## Changes in `v5.0.0-beta.1:`
 

@@ -8,7 +8,7 @@ const REPO = path.resolve(__dirname, '..', '..');
 const RENDERER = path.join(REPO, 'src');
 const ENGINE_TS = path.join(RENDERER, 'rosiEngine.ts');
 const INDEX_HTML = path.join(RENDERER, 'index.html');
-const MODULE_FILES = ['ui', 'downloads', 'queue', 'settings', 'updates', 'dock'];
+const MODULE_FILES = ['ui', 'downloads', 'activity', 'queue', 'settings', 'updates', 'dock'];
 
 function transpile(tsSource: string): string {
   return ts.transpileModule(tsSource, {

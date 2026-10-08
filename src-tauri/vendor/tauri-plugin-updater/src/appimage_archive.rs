@@ -1,3 +1,7 @@
+// The AppImage helpers are compiled for macOS only because the shared module
+// list includes it; their callers are Linux and BSD only. Keep dead_code quiet there.
+#![cfg_attr(target_os = "macos", allow(dead_code))]
+
 use super::{appimage_install, Error, Result};
 use flate2::read::MultiGzDecoder;
 use std::io::{self, Cursor, Read};

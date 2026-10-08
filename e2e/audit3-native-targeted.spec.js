@@ -50,6 +50,10 @@ async function download(url, overrides = {}, oldId) {
   return activity(url, oldId);
 }
 
+// Stages a sidecar case retains on purpose (recovery after a failed caption
+// step). Later cases count only stages their own downloads leave behind.
+const retainedRecoveryStages = new Set();
+
 function stageDirectories() {
   return fs
     .readdirSync(downloads, { withFileTypes: true })
@@ -57,7 +61,8 @@ function stageDirectories() {
       (entry) =>
         entry.isDirectory() && entry.name.startsWith(".rosi-download-"),
     )
-    .map((entry) => path.join(downloads, entry.name));
+    .map((entry) => path.join(downloads, entry.name))
+    .filter((directory) => !retainedRecoveryStages.has(directory));
 }
 
 function filesUnder(directoryPath) {
@@ -89,6 +94,9 @@ function probeStreams(filePath) {
 }
 
 async function sidecarDownload(url, fixturePath, format, afterStaging) {
+  // Earlier cases may correctly retain recovery stages; use only the stage
+  // this download creates.
+  const existingStages = new Set(stageDirectories());
   const sidecarsBefore = fs
     .readdirSync(downloads)
     .filter((entry) => entry.endsWith(".en.srt")).length;
@@ -107,7 +115,9 @@ async function sidecarDownload(url, fixturePath, format, afterStaging) {
   let sidecar;
   await browser.waitUntil(
     () => {
-      const stages = stageDirectories();
+      const stages = stageDirectories().filter(
+        (directory) => !existingStages.has(directory),
+      );
       if (stages.length !== 1) return false;
       stage = stages[0];
       const mediaPath = filesUnder(stage).find((file) => file.endsWith(".mkv"));
@@ -123,6 +133,7 @@ async function sidecarDownload(url, fixturePath, format, afterStaging) {
   );
   await afterStaging?.({ sidecar, stage });
   const completion = await activity(url);
+  if (fs.existsSync(stage)) retainedRecoveryStages.add(stage);
   return {
     completion,
     stage,
@@ -262,12 +273,14 @@ describe("ROSI audit 3 native targeted repairs", () => {
             !name.startsWith(".rosi-"),
         )
         .map((name) => path.join(downloads, name));
+      await api("cancelDownload");
+      const completion = await activity(url, oldId);
+      // The cancelled entry's original is published while cancellation
+      // completes, so look for it afterwards.
       const secondOriginal = fs
         .readdirSync(downloads)
         .filter((name) => /\.webm$/i.test(name) && !name.startsWith(".rosi-"))
         .map((name) => path.join(downloads, name));
-      await api("cancelDownload");
-      const completion = await activity(url, oldId);
       const outputPaths = completion.outputPaths ?? [];
       const outputBytes = outputPaths.reduce(
         (total, file) => total + fs.statSync(file).size,
@@ -305,7 +318,10 @@ describe("ROSI audit 3 native targeted repairs", () => {
     }
 
     try {
-      const failingFfmpeg = path.join(directory, "conversion-failure-ffmpeg");
+      // Settings accept only an executable named ffmpeg.
+      const failingDirectory = path.join(directory, "conversion-failure");
+      fs.mkdirSync(failingDirectory, { recursive: true });
+      const failingFfmpeg = path.join(failingDirectory, "ffmpeg");
       fs.writeFileSync(failingFfmpeg, "#!/bin/sh\nexit 23\n", { mode: 0o700 });
       fs.chmodSync(failingFfmpeg, 0o700);
       const configured = await api("saveSettings", {
@@ -440,7 +456,9 @@ describe("ROSI audit 3 native targeted repairs", () => {
       [
         "conversion-excludes-attached-cover-art-from-video-selection",
         `${media}/cover-art-source.mp4?audit3-cover-art=1`,
-        "mkv",
+        // MKV is no longer a conversion target; MOV exercises the same
+        // video-stream selection.
+        "mov",
       ],
     ]) {
       try {
@@ -499,13 +517,25 @@ describe("ROSI audit 3 native targeted repairs", () => {
         const matches = fs
           .readdirSync(downloads)
           .filter((entry) => entry.endsWith(".en.srt"));
-        const sidecarExists = fs.existsSync(attempt.sidecar);
+        // The staged caption is published beside the final output.
+        const publishedSidecar = completion.outputPath
+          ? path.join(
+              downloads,
+              `${path.basename(
+                completion.outputPath,
+                path.extname(completion.outputPath),
+              )}.en.srt`,
+            )
+          : null;
+        const sidecarExists = Boolean(
+          publishedSidecar && fs.existsSync(publishedSidecar),
+        );
         record(name, {
           outcome: completion.outcome,
           outputPath: completion.outputPath,
-          sidecarPath: attempt.sidecar,
+          sidecarPath: publishedSidecar,
           sidecarSha256: sidecarExists
-            ? hash(fs.readFileSync(attempt.sidecar))
+            ? hash(fs.readFileSync(publishedSidecar))
             : null,
           expectedSidecarSha256: attempt.sidecarHash,
           matches,
@@ -515,7 +545,7 @@ describe("ROSI audit 3 native targeted repairs", () => {
               completion.outputPath && fs.existsSync(completion.outputPath),
             ) &&
             sidecarExists &&
-            hash(fs.readFileSync(attempt.sidecar)) === attempt.sidecarHash &&
+            hash(fs.readFileSync(publishedSidecar)) === attempt.sidecarHash &&
             matches.length === attempt.sidecarCountBefore + 1,
         });
       } catch (error) {

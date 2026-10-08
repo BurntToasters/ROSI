@@ -3,6 +3,7 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { browser } from "@wdio/globals";
 import { api, waitForAppReady } from "./helpers/app-bridge.js";
+import { readListFile } from "./helpers/persisted.js";
 
 const DATA_DIR = process.env.ROSI_E2E_DATA_DIR;
 const RESULT_PATH = process.env.ROSI_STATE_REPAIR_RESULTS;
@@ -527,8 +528,7 @@ describe("state and updater repair E2E", () => {
     await browser.waitUntil(
       () => {
         try {
-          const contents = JSON.parse(fs.readFileSync(queueFile, "utf8"));
-          return Array.isArray(contents) && contents.length === 0;
+          return readListFile(queueFile).length === 0;
         } catch {
           return false;
         }
@@ -541,7 +541,7 @@ describe("state and updater repair E2E", () => {
     );
     record("queue-latest-snapshot", {
       itemCountBeforeClear: queued.length,
-      persistedCount: JSON.parse(fs.readFileSync(queueFile, "utf8")).length,
+      persistedCount: readListFile(queueFile).length,
     });
   });
 
@@ -1078,7 +1078,7 @@ describe("state and updater repair E2E", () => {
       await browser.waitUntil(
         () => {
           try {
-            const onDisk = JSON.parse(fs.readFileSync(queueFile, "utf8"));
+            const onDisk = readListFile(queueFile);
             return onDisk.some((item) => item.id === latestQueueId);
           } catch {
             return false;
@@ -1110,9 +1110,7 @@ describe("state and updater repair E2E", () => {
       const stillRunning = await api("getQueue");
       assert.ok(stillRunning.some((item) => item.id === latestQueueId));
       assert.ok(
-        JSON.parse(fs.readFileSync(queueFile, "utf8")).some(
-          (item) => item.id === latestQueueId,
-        ),
+        readListFile(queueFile).some((item) => item.id === latestQueueId),
       );
 
       fs.rmSync(backupPath, { recursive: true, force: true });
@@ -1176,9 +1174,12 @@ describe("state and updater repair E2E", () => {
       await browser.waitUntil(
         () => {
           try {
-            const primary = JSON.parse(fs.readFileSync(queueFile, "utf8"));
-            const backup = JSON.parse(fs.readFileSync(backupPath, "utf8"));
-            return primary.length === 0 && backup.length === 0;
+            // The backup keeps the previous generation, so it may still hold the
+            // queue that was just cleared; it only has to be a readable list.
+            return (
+              readListFile(queueFile).length === 0 &&
+              Array.isArray(readListFile(backupPath))
+            );
           } catch {
             return false;
           }
@@ -1215,7 +1216,7 @@ describe("state and updater repair E2E", () => {
       await browser.waitUntil(
         () => {
           try {
-            const onDisk = JSON.parse(fs.readFileSync(queueFile, "utf8"));
+            const onDisk = readListFile(queueFile);
             return onDisk.length === 1 && onDisk[0].id === latestId;
           } catch {
             return false;
@@ -1254,7 +1255,7 @@ describe("state and updater repair E2E", () => {
       await assert.rejects(() => api("restartApp"), /backup|queue|durably/i);
       const stillRunning = await api("getQueue");
       assert.equal(stillRunning[0].id, latestId);
-      const primary = JSON.parse(fs.readFileSync(queueFile, "utf8"));
+      const primary = readListFile(queueFile);
       assert.equal(primary[0].id, latestId);
       record("queue-flush-backup-failure", {
         primaryCount: primary.length,
@@ -1275,9 +1276,10 @@ describe("state and updater repair E2E", () => {
       await browser.waitUntil(
         () => {
           try {
-            const queue = JSON.parse(fs.readFileSync(queueFile, "utf8"));
-            const backup = JSON.parse(fs.readFileSync(backupPath, "utf8"));
-            return queue.length === 0 && backup.length === 0;
+            return (
+              readListFile(queueFile).length === 0 &&
+              Array.isArray(readListFile(backupPath))
+            );
           } catch {
             return false;
           }

@@ -107,3 +107,8 @@ and its invariant.
     from that path. Force conversion to fail after downloading a valid source;
     verify the published original remains in `failedPaths` and also appears in
     `outputPaths` with accurate bytes and its actual format.
+
+Gate wiring: `scripts/test-e2e.js` runs `audit3-native-targeted.spec.js` through
+the isolated process-repair wrapper (`ROSI_REPAIRS_SPEC`) as the
+`audit3-native-targeted` scenario. Its result is verified by the same report
+identity checks as `download-process-repairs`.

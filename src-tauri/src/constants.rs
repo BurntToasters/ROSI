@@ -33,6 +33,8 @@ pub const MAX_DOWNLOAD_ACTIVITY: usize = 100;
 pub const MAX_FORMAT_COUNTS: usize = 10_000;
 pub const MAX_SETTINGS_IMPORT_BYTES: u64 = 1_048_576;
 pub const CURRENT_SETTINGS_VERSION: u32 = 7;
+/// `schemaVersion` written into queue, activity and stats files.
+pub const CURRENT_PERSISTED_SCHEMA_VERSION: u32 = 1;
 pub const PLAYLIST_PREVIEW_ENTRY_LIMIT: usize = 500;
 
 pub fn allowed(list: &[&str], value: &str) -> bool {

@@ -121,6 +121,10 @@ export const EXPECTED_SCENARIOS = [
   "round2-renderer",
   "round2-native",
   "long-term-persistence",
+  "audit3-native-targeted",
+  "audit4-repairs",
+  "audit-v5-beta2",
+  "round3-renderer-repairs",
 ];
 export const ROUND2_RENDERER_OBSERVATIONS = Object.freeze([
   "renderer-startup-settings-ready",
@@ -143,13 +147,19 @@ export const ROUND2_NATIVE_OBSERVATIONS = Object.freeze([
 ]);
 export const ALLOWED_E2E_SKIPS = Object.freeze({
   "download-process-repairs": Object.freeze(["win32"]),
+  "audit3-native-targeted": Object.freeze(["win32"]),
+  "audit-v5-beta2": Object.freeze(["linux", "win32"]),
   "xdg-download-dir": Object.freeze(["darwin", "win32"]),
 });
 
-export function scenarioOutcomeProblems(scenarios, platform) {
+export function scenarioOutcomeProblems(
+  scenarios,
+  platform,
+  expected = EXPECTED_SCENARIOS,
+) {
   const problems = [];
   const names = scenarios.map((scenario) => scenario?.name);
-  for (const name of EXPECTED_SCENARIOS) {
+  for (const name of expected) {
     const count = names.filter((candidate) => candidate === name).length;
     if (count !== 1) {
       problems.push(`${name} reported ${count} times`);
@@ -164,7 +174,7 @@ export function scenarioOutcomeProblems(scenarios, platform) {
     problems.push(`${name} has unacceptable status ${scenario.status}`);
   }
   for (const name of names) {
-    if (!EXPECTED_SCENARIOS.includes(name)) {
+    if (!expected.includes(name)) {
       problems.push(`unexpected scenario ${name}`);
     }
   }
@@ -954,15 +964,25 @@ function runRound2NativeRepairs({ ffmpeg, binary, suiteStartedAt }) {
   }
 }
 
-function runDownloadProcessRepairs({ ffmpeg, binary, suiteStartedAt }) {
+/**
+ * Runs one spec through the isolated process-repair wrapper. The wrapper
+ * writes repair-report.json; the gate verifies its identity and result.
+ */
+function runDownloadProcessRepairs({
+  ffmpeg,
+  binary,
+  suiteStartedAt,
+  name = "download-process-repairs",
+  spec = "./download-process-repairs.spec.js",
+}) {
   const repairArtifactDir = path.join(
     ARTIFACT_DIR,
-    `download-process-repairs-${Date.now()}-${process.pid}`,
+    `${name}-${Date.now()}-${process.pid}`,
   );
   const reportPath = path.join(repairArtifactDir, "repair-report.json");
   if (process.platform === "win32") {
     return {
-      name: "download-process-repairs",
+      name,
       status: "skipped",
       reason:
         "The isolated signal and oversized-output wrapper probe currently supports macOS and Linux.",
@@ -976,7 +996,7 @@ function runDownloadProcessRepairs({ ffmpeg, binary, suiteStartedAt }) {
       env: {
         ROSI_REPAIRS_FFMPEG: ffmpeg?.binary ?? "",
         ROSI_AUDIT3_ARTIFACT_DIR: repairArtifactDir,
-        ROSI_REPAIRS_SPEC: "./download-process-repairs.spec.js",
+        ROSI_REPAIRS_SPEC: spec,
       },
     });
   } catch (error) {
@@ -984,7 +1004,7 @@ function runDownloadProcessRepairs({ ffmpeg, binary, suiteStartedAt }) {
   }
 
   const scenario = {
-    name: "download-process-repairs",
+    name,
     status: "failed",
     reportPath: path.relative(REPO_ROOT, reportPath).split(path.sep).join("/"),
   };
@@ -1021,7 +1041,7 @@ function runDownloadProcessRepairs({ ffmpeg, binary, suiteStartedAt }) {
       report.probeSourceSha256?.spec !==
         sha256(
           fs.readFileSync(
-            path.join(REPO_ROOT, "e2e", "download-process-repairs.spec.js"),
+            path.join(REPO_ROOT, "e2e", spec.replace(/^\.\//, "")),
           ),
         ) ||
       report.probeSourceSha256?.failureModes !==
@@ -1066,6 +1086,380 @@ function runDownloadProcessRepairs({ ffmpeg, binary, suiteStartedAt }) {
       runnerFailure,
     };
   }
+}
+
+function relativeToRepo(file) {
+  return path.relative(REPO_ROOT, file).split(path.sep).join("/");
+}
+
+/** True when `report.reportSha256` matches the hash of the rest of the report. */
+export function reportSelfHashMatches(report) {
+  const { reportSha256, ...body } = report;
+  return reportSha256 === sha256(Buffer.from(JSON.stringify(body, null, 2)));
+}
+
+function runAudit4Repairs({ ffmpeg, binary, suiteStartedAt }) {
+  const scenario = { name: "audit4-repairs", status: "failed" };
+  if (!ffmpeg) {
+    return {
+      ...scenario,
+      reason: "The audit four repair pass requires a real FFmpeg executable.",
+    };
+  }
+  const artifactRoot = path.join(
+    ARTIFACT_DIR,
+    "audit4-repairs",
+    `${Date.now()}-${process.pid}`,
+  );
+  const reportPath = path.join(artifactRoot, "result.json");
+  const env = {
+    ROSI_AUDIT4_FFMPEG: ffmpeg.binary,
+    ROSI_AUDIT4_ARTIFACT_ROOT: artifactRoot,
+  };
+  const ffprobe = companionFfprobe(ffmpeg.binary);
+  if (ffprobe) env.ROSI_AUDIT4_FFPROBE = ffprobe;
+  const result = spawnSync(process.execPath, ["e2e/audit4-repairs-run.mjs"], {
+    cwd: REPO_ROOT,
+    env: e2eChildEnv(env),
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 600_000,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (result.stderr) process.stderr.write(result.stderr);
+  scenario.reportPath = relativeToRepo(reportPath);
+  const problems = [];
+  if (result.error || result.status !== 0) {
+    problems.push(
+      `audit four runner exited with ${result.status ?? result.signal ?? result.error?.message}`,
+    );
+  }
+  try {
+    const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+    if (!reportSelfHashMatches(report))
+      problems.push("result self-hash differs");
+    if (report.exitCode !== 0 || report.timedOut) {
+      problems.push(
+        `audit four spec exited ${report.exitCode}${report.timedOut ? " after timeout" : ""}`,
+      );
+    }
+    if (!report.observationsPresent) {
+      problems.push("audit four spec wrote no native observations");
+    }
+    if (report.binarySha256 !== sha256(fs.readFileSync(binary))) {
+      problems.push("E2E binary changed during the audit four run");
+    }
+    if (
+      report.specSha256 !==
+      sha256(
+        fs.readFileSync(path.join(REPO_ROOT, "e2e", "audit4-repairs.spec.js")),
+      )
+    ) {
+      problems.push("audit four spec changed during the run");
+    }
+    if (Date.parse(report.startedAt) < Date.parse(suiteStartedAt)) {
+      problems.push("audit four result predates this gate run");
+    }
+  } catch (error) {
+    problems.push(
+      `audit four result unreadable: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (problems.length > 0) return { ...scenario, reason: problems.join("; ") };
+  return { ...scenario, status: "passed" };
+}
+
+// Each mode is a separate launch of the same binary, as documented in
+// e2e/audit-v5-beta2/README.md. The spec enables one describe block per mode.
+const AUDIT_V5_MODES = Object.freeze([
+  { label: "default", args: [], directory: ["audit-v5-beta2"] },
+  {
+    label: "security",
+    args: ["--security"],
+    directory: ["audit-v5-beta2", "security-probe"],
+  },
+  { label: "ui", args: ["--ui"], directory: ["audit-v5-beta2", "ui-probe"] },
+  {
+    label: "termination",
+    args: ["--termination"],
+    directory: ["audit-v5-beta2", "termination-probe"],
+  },
+]);
+
+function runAuditV5Probes({ ffmpeg, binary, suiteStartedAt }) {
+  const scenario = { name: "audit-v5-beta2", status: "failed" };
+  if (process.platform !== "darwin") {
+    return {
+      ...scenario,
+      status: "skipped",
+      reason:
+        "The V5 beta 2 probes need macOS ps and /usr/bin/python3 for the termination probe.",
+      platform: process.platform,
+    };
+  }
+  if (!ffmpeg) {
+    return {
+      ...scenario,
+      reason: "The V5 beta 2 probes require a real FFmpeg executable.",
+    };
+  }
+  const binarySha256 = sha256(fs.readFileSync(binary));
+  const problems = [];
+  const reports = [];
+  for (const mode of AUDIT_V5_MODES) {
+    const reportFile = path.join(
+      ARTIFACT_DIR,
+      ...mode.directory,
+      "probe-report.json",
+    );
+    fs.rmSync(reportFile, { force: true });
+    const result = spawnSync(
+      process.execPath,
+      ["e2e/audit-v5-beta2/run-probes.mjs", ...mode.args],
+      {
+        cwd: REPO_ROOT,
+        env: e2eChildEnv({
+          PATH: `${path.dirname(ffmpeg.binary)}${path.delimiter}${process.env.PATH ?? ""}`,
+        }),
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 600_000,
+        maxBuffer: 64 * 1024 * 1024,
+      },
+    );
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+    if (result.error || result.status !== 0) {
+      problems.push(
+        `${mode.label} probes exited with ${result.status ?? result.signal ?? result.error?.message}`,
+      );
+    }
+    try {
+      const report = JSON.parse(fs.readFileSync(reportFile, "utf8"));
+      if (!reportSelfHashMatches(report)) {
+        problems.push(`${mode.label} report self-hash differs`);
+      }
+      if (report.binarySha256 !== binarySha256) {
+        problems.push(`${mode.label} binary changed during probes`);
+      }
+      if (Date.parse(report.startedAt) < Date.parse(suiteStartedAt)) {
+        problems.push(`${mode.label} report predates this gate run`);
+      }
+      const observations = Array.isArray(report.observations)
+        ? report.observations
+        : [];
+      if (observations.length === 0) {
+        problems.push(`${mode.label} recorded no observations`);
+      }
+      // The probes exit zero once observations complete. A false invariant is
+      // a reproduced product defect, so it fails the gate.
+      for (const item of observations) {
+        if (item.invariantPassed === false) {
+          problems.push(
+            `${mode.label}: ${item.name ?? item.id ?? "observation"} invariant failed`,
+          );
+        }
+      }
+      reports.push({
+        mode: mode.label,
+        reportPath: relativeToRepo(reportFile),
+        reportSha256: report.reportSha256,
+        observations: observations.length,
+      });
+    } catch (error) {
+      problems.push(
+        `${mode.label} report unreadable: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  const outcome = { ...scenario, reports };
+  if (problems.length > 0) return { ...outcome, reason: problems.join("; ") };
+  return { ...outcome, status: "passed" };
+}
+
+const ROUND3_CHECK_COUNT = 15;
+
+function runRound3Renderer() {
+  const scenario = { name: "round3-renderer-repairs", status: "failed" };
+  const artifact = path.join(
+    ARTIFACT_DIR,
+    "round3-renderer",
+    "renderer-repairs.json",
+  );
+  // Remove the previous record so a crashed run cannot be read as passing.
+  fs.rmSync(artifact, { force: true });
+  const result = spawnSync(
+    process.execPath,
+    ["e2e/round3-renderer-repairs/run.cjs"],
+    {
+      cwd: REPO_ROOT,
+      env: e2eChildEnv(),
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 300_000,
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  );
+  if (result.stderr) process.stderr.write(result.stderr);
+  scenario.reportPath = relativeToRepo(artifact);
+  const problems = [];
+  if (result.error || result.status !== 0) {
+    problems.push(
+      `renderer runner exited with ${result.status ?? result.signal ?? result.error?.message}`,
+    );
+  }
+  try {
+    const report = JSON.parse(fs.readFileSync(artifact, "utf8"));
+    const checks = Array.isArray(report.checks) ? report.checks : [];
+    if (checks.length !== ROUND3_CHECK_COUNT) {
+      problems.push(
+        `expected ${ROUND3_CHECK_COUNT} renderer checks, found ${checks.length}`,
+      );
+    }
+    for (const check of checks) {
+      if (check.status !== "passed") problems.push(`${check.name} failed`);
+    }
+  } catch (error) {
+    problems.push(
+      `renderer record unreadable: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (problems.length > 0) return { ...scenario, reason: problems.join("; ") };
+  return { ...scenario, status: "passed" };
+}
+
+const V5_FIXES_ROOT = path.join(REPO_ROOT, "e2e", "v5-fixes");
+const SKIP_OR_FOCUS_PATTERN =
+  /\b(?:describe|it|context|test)\.(?:skip|only)\s*\(|\b(?:xit|xdescribe|xtest)\s*\(|\bthis\.skip\s*\(/;
+
+/**
+ * Lists each e2e/v5-fixes/<area>/ with a *.spec.js file or a run.mjs runner.
+ * An area with run.mjs is runner-owned: its specs are driven by the runner and
+ * never get a generic wdio pass. Spec files that skip or focus tests are
+ * reported in skipFiles, which fails the area.
+ */
+export function discoverV5Fixes(root = V5_FIXES_ROOT) {
+  if (!fs.existsSync(root)) return [];
+  return fs
+    .readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
+      const directory = path.join(root, entry.name);
+      const specs = fs
+        .readdirSync(directory, { withFileTypes: true })
+        .filter((file) => file.isFile() && file.name.endsWith(".spec.js"))
+        .map((file) => file.name)
+        .sort();
+      const runnerPath = path.join(directory, "run.mjs");
+      const skipFiles = specs.filter((spec) =>
+        SKIP_OR_FOCUS_PATTERN.test(
+          fs.readFileSync(path.join(directory, spec), "utf8"),
+        ),
+      );
+      return {
+        area: entry.name,
+        directory,
+        specs,
+        skipFiles,
+        runner: fs.existsSync(runnerPath) ? runnerPath : null,
+      };
+    })
+    .filter((area) => area.specs.length > 0 || area.runner)
+    .sort((a, b) => a.area.localeCompare(b.area));
+}
+
+function runV5FixesRunner(area, binary, ffmpeg) {
+  // Runners timestamp their own report directories, so earlier runs stay in
+  // place and are told apart by report mtime.
+  const artifactDirectory = path.join(ARTIFACT_DIR, `v5-fixes-${area.area}`);
+  fs.mkdirSync(artifactDirectory, { recursive: true });
+  const result = spawnSync(process.execPath, [area.runner], {
+    cwd: REPO_ROOT,
+    env: e2eChildEnv({
+      ROSI_E2E_BINARY: binary,
+      ROSI_E2E_ARTIFACT_DIR: artifactDirectory,
+      ROSI_E2E_FFMPEG: ffmpeg?.binary ?? "",
+    }),
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 1_200_000,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  return result;
+}
+
+/**
+ * Finds the newest report.json a runner wrote during this gate run under
+ * e2e/artifacts/v5-fixes-<area>/<stamp>/. Returns { file, problem }.
+ */
+export function findRunnerReport(area, artifactDir, gateStartedMs) {
+  const root = path.join(artifactDir, `v5-fixes-${area.area}`);
+  if (!fs.existsSync(root)) {
+    return { file: null, problem: "no runner report directory was written" };
+  }
+  // One second of slack covers filesystems with coarse mtimes.
+  const since = gateStartedMs - 1000;
+  const candidates = fs
+    .readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(root, entry.name, "report.json"))
+    .filter((file) => fs.existsSync(file) && fs.statSync(file).mtimeMs >= since)
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+  if (candidates.length === 0) {
+    return { file: null, problem: "no report written during this run" };
+  }
+  const file = candidates[0];
+  let report;
+  try {
+    report = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (error) {
+    return {
+      file,
+      problem: `report unreadable: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  // Network and persistence runners use different verdict keys; both count.
+  const verdict = report.passed === true || report.allPassed === true;
+  if (!verdict) return { file, problem: "runner report did not pass" };
+  return { file, problem: null };
+}
+
+function v5AreaScenario(area, pass, runnerResult, gateStartedMs) {
+  const problems = [];
+  if (area.skipFiles.length > 0) {
+    problems.push(`skips or focuses tests in ${area.skipFiles.join(", ")}`);
+  }
+  let report = null;
+  if (area.runner) {
+    if (!runnerResult) {
+      problems.push("runner did not run");
+    } else if (runnerResult.error || runnerResult.status !== 0) {
+      problems.push(
+        `runner exited with ${runnerResult.status ?? runnerResult.signal ?? runnerResult.error?.message}`,
+      );
+    } else {
+      const found = findRunnerReport(area, ARTIFACT_DIR, gateStartedMs);
+      report = found.file ? relativeToRepo(found.file) : null;
+      if (found.problem) problems.push(found.problem);
+    }
+  } else if (
+    area.skipFiles.length === 0 &&
+    area.specs.length > 0 &&
+    pass?.status !== "passed"
+  ) {
+    problems.push(pass?.reason ? `specs: ${pass.reason}` : "specs did not run");
+  }
+  const scenario = {
+    name: `v5-fixes/${area.area}`,
+    status: problems.length > 0 ? "failed" : "passed",
+    specs: area.specs.map((spec) => `${area.area}/${spec}`),
+    runner: area.runner ? relativeToRepo(area.runner) : null,
+    report,
+  };
+  if (problems.length > 0) scenario.reason = problems.join("; ");
+  return scenario;
 }
 
 function writeEvidence(report) {
@@ -1347,6 +1741,25 @@ async function main() {
         fs.rmSync(resultsPath, { force: true });
         return { profile: rendererProfile, resultsPath };
       })();
+  // Each e2e/v5-fixes/<area>/ with *.spec.js and no run.mjs gets its own fresh
+  // profile. Areas that skip or focus tests fail before WebdriverIO starts.
+  const v5Areas = process.env.ROSI_E2E_ONLY ? [] : discoverV5Fixes();
+  // Runner-owned areas (run.mjs) get no generic wdio pass; the runner drives
+  // their specs.
+  const v5Passes = v5Areas
+    .filter((area) => area.specs.length > 0 && !area.runner)
+    .map((area) => {
+      const profile = createE2eProfile({
+        ffmpegPath: ffmpeg?.customPath ?? "",
+      });
+      return {
+        area,
+        profile,
+        resultsPath: path.join(profile.profileDir, "results.json"),
+        status: "pending",
+        reason: null,
+      };
+    });
   let round2RendererFailure = null;
   let failure = null;
   try {
@@ -1390,6 +1803,21 @@ async function main() {
         throw error;
       }
     }
+    for (const pass of v5Passes) {
+      // Skip-marker areas are reported as failed by v5AreaScenario.
+      if (pass.area.skipFiles.length > 0) continue;
+      try {
+        await runPass(pass, {
+          ROSI_E2E_SPECS: pass.area.specs
+            .map((spec) => `./v5-fixes/${pass.area.area}/${spec}`)
+            .join(","),
+        });
+        pass.status = "passed";
+      } catch (error) {
+        pass.reason = error instanceof Error ? error.message : String(error);
+        pass.status = "failed";
+      }
+    }
     await runPass(mainPass, {
       // ROSI_E2E_ONLY runs a single ad-hoc spec while debugging; the full
       // gate always runs main.spec.js and requires every scenario.
@@ -1406,6 +1834,8 @@ async function main() {
     await server.close();
   }
 
+  // Both specs share one isolated wrapper, which is the only code that starts
+  // WebdriverIO with the process-level probe fixtures.
   const processRepairScenarios = process.env.ROSI_E2E_ONLY
     ? []
     : [
@@ -1413,6 +1843,13 @@ async function main() {
           ffmpeg,
           binary: e2eBinaryPath(),
           suiteStartedAt: startedAt,
+        }),
+        runDownloadProcessRepairs({
+          ffmpeg,
+          binary: e2eBinaryPath(),
+          suiteStartedAt: startedAt,
+          name: "audit3-native-targeted",
+          spec: "./audit3-native-targeted.spec.js",
         }),
       ];
   const round2NativeScenarios = process.env.ROSI_E2E_ONLY
@@ -1430,30 +1867,47 @@ async function main() {
   const persistenceScenarios = process.env.ROSI_E2E_ONLY
     ? []
     : [runLongTermPersistenceRepairs()];
-  if (
-    round2RendererScenarios.some((scenario) => scenario.status === "failed")
-  ) {
-    const detail = `${round2RendererScenarios[0].name}: ${round2RendererScenarios[0].reason}`;
-    failure = failure ? `${failure}; ${detail}` : detail;
-  }
-  for (const scenario of processRepairScenarios) {
+  const binary = e2eBinaryPath();
+  const auditScenarios = process.env.ROSI_E2E_ONLY
+    ? []
+    : [
+        runAudit4Repairs({ ffmpeg, binary, suiteStartedAt: startedAt }),
+        runAuditV5Probes({ ffmpeg, binary, suiteStartedAt: startedAt }),
+        runRound3Renderer(),
+        ...v5Areas.map((area) => {
+          const pass = v5Passes.find((candidate) => candidate.area === area);
+          const runnerResult = area.runner
+            ? runV5FixesRunner(area, binary, ffmpeg)
+            : null;
+          return v5AreaScenario(
+            area,
+            pass,
+            runnerResult,
+            Date.parse(startedAt),
+          );
+        }),
+      ];
+  const gateScenarios = [
+    ...round2RendererScenarios,
+    ...processRepairScenarios,
+    ...round2NativeScenarios,
+    ...persistenceScenarios,
+    ...auditScenarios,
+  ];
+  for (const scenario of gateScenarios) {
     if (scenario.status === "failed") {
       const detail = `${scenario.name}: ${scenario.reason}`;
       failure = failure ? `${failure}; ${detail}` : detail;
     }
   }
-  for (const scenario of round2NativeScenarios) {
-    if (scenario.status === "failed") {
-      const detail = `${scenario.name}: ${scenario.reason}`;
-      failure = failure ? `${failure}; ${detail}` : detail;
-    }
-  }
-  for (const scenario of persistenceScenarios) {
-    if (scenario.status === "failed") {
-      const detail = `${scenario.name}: ${scenario.reason}`;
-      failure = failure ? `${failure}; ${detail}` : detail;
-    }
-  }
+  // Every suite declared in EXPECTED_SCENARIOS, plus each discovered v5-fixes
+  // area, must report exactly once with an acceptable status.
+  const expectedScenarios = process.env.ROSI_E2E_ONLY
+    ? [...EXPECTED_SCENARIOS]
+    : [
+        ...EXPECTED_SCENARIOS,
+        ...v5Areas.map((area) => `v5-fixes/${area.area}`),
+      ];
 
   const readResults = (file) =>
     fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
@@ -1475,12 +1929,9 @@ async function main() {
       ? readResults(pass.stateRepairResultsPath)
       : []),
   ]);
-  scenarios.push(...round2RendererScenarios);
-  scenarios.push(...processRepairScenarios);
-  scenarios.push(...round2NativeScenarios);
-  scenarios.push(...persistenceScenarios);
+  scenarios.push(...gateScenarios);
   const seen = new Set(scenarios.map((scenario) => scenario.name));
-  const missing = EXPECTED_SCENARIOS.filter((name) => !seen.has(name));
+  const missing = expectedScenarios.filter((name) => !seen.has(name));
   const legacyImportCoverage = Object.fromEntries(
     Object.entries(LEGACY_IMPORT_FAILURE_MODES).map(([id, description]) => [
       id,
@@ -1504,11 +1955,15 @@ async function main() {
   const packageJson = JSON.parse(
     fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
   );
-  const scenarioProblems = scenarioOutcomeProblems(scenarios, process.platform);
+  const scenarioProblems = scenarioOutcomeProblems(
+    scenarios,
+    process.platform,
+    expectedScenarios,
+  );
   const evidence = writeEvidence({
     app: "ROSI",
     fullSuite: !process.env.ROSI_E2E_ONLY,
-    expectedScenarios: [...EXPECTED_SCENARIOS],
+    expectedScenarios,
     version: packageJson.version,
     commit: gitCommit(),
     sourceTree: gitSourceTree(),
@@ -1555,6 +2010,7 @@ async function main() {
     ...(stateRepairPass ? [stateRepairPass] : []),
     ...(securityPass ? [securityPass] : []),
     ...(round2RendererPass ? [round2RendererPass] : []),
+    ...v5Passes,
     mainPass,
   ]) {
     cleanupProfile(pass.profile.profileDir);

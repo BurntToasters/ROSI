@@ -158,14 +158,15 @@ pub fn normalize_record(value: &Value) -> Option<DownloadCompletion> {
 }
 
 fn load() -> Vec<DownloadCompletion> {
-    match crate::fs_util::read_json(&activity_path(), 16 * 1024 * 1024) {
-        Some(Value::Array(list)) => list
-            .iter()
-            .filter_map(normalize_record)
-            .take(MAX_DOWNLOAD_ACTIVITY)
-            .collect(),
-        _ => Vec::new(),
-    }
+    crate::fs_util::read_json(&activity_path(), ACTIVITY_READ_LIMIT_BYTES as u64)
+        .and_then(crate::fs_util::list_items)
+        .map(|list| {
+            list.iter()
+                .filter_map(normalize_record)
+                .take(MAX_DOWNLOAD_ACTIVITY)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn state() -> &'static Mutex<Vec<DownloadCompletion>> {
@@ -173,7 +174,7 @@ fn state() -> &'static Mutex<Vec<DownloadCompletion>> {
 }
 
 fn encode(entries: &[DownloadCompletion]) -> Result<Vec<u8>, String> {
-    serde_json::to_vec_pretty(entries).map_err(|error| error.to_string())
+    crate::fs_util::encode_list(entries)
 }
 
 fn compact_paths(paths: &mut Option<Vec<String>>, keep: usize) -> usize {
@@ -282,7 +283,14 @@ fn persist(entries: &[DownloadCompletion]) -> Result<Vec<DownloadCompletion>, St
     if serialized.len() > ACTIVITY_READ_LIMIT_BYTES {
         return Err("Download activity exceeds the activity file size limit.".into());
     }
-    crate::fs_util::atomic_write(&activity_path(), &serialized)?;
+    let path = activity_path();
+    crate::fs_util::guard_before_replace(
+        &path,
+        ACTIVITY_READ_LIMIT_BYTES as u64,
+        crate::fs_util::is_list_file,
+        |value| crate::fs_util::ensure_schema_not_newer(value, "Download activity"),
+    )?;
+    crate::fs_util::atomic_write(&path, &serialized)?;
     Ok(bounded)
 }
 
@@ -311,6 +319,27 @@ pub fn record(completion: &DownloadCompletion) {
         entries.clone()
     };
     crate::app_state::emit("download-activity-update", snapshot);
+}
+
+/// Folders that recorded downloads wrote to or targeted, for the startup
+/// staging sweep. Callers validate each folder before reading it.
+pub fn recorded_output_folders() -> Vec<std::path::PathBuf> {
+    let entries = state().lock().unwrap_or_else(|p| p.into_inner());
+    let mut folders = Vec::new();
+    for entry in entries.iter() {
+        folders.push(std::path::PathBuf::from(&entry.request.output_path));
+        let files = entry
+            .output_path
+            .iter()
+            .chain(entry.output_paths.iter().flatten())
+            .chain(entry.failed_paths.iter().flatten());
+        for file in files {
+            if let Some(parent) = std::path::Path::new(file).parent() {
+                folders.push(parent.to_path_buf());
+            }
+        }
+    }
+    folders
 }
 
 #[tauri::command(async)]

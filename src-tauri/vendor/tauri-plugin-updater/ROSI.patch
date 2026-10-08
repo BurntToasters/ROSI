@@ -1,0 +1,3965 @@
+--- a/src/appimage_archive.rs
++++ b/src/appimage_archive.rs
+@@ -0,0 +1,391 @@
++// The AppImage helpers are compiled for macOS only because the shared module
++// list includes it; their callers are Linux and BSD only. Keep dead_code quiet there.
++#![cfg_attr(target_os = "macos", allow(dead_code))]
++
++use super::{appimage_install, Error, Result};
++use flate2::read::MultiGzDecoder;
++use std::io::{self, Cursor, Read};
++use tar::{Archive, EntryType};
++
++const MAX_ARCHIVE_ENTRIES: usize = 4096;
++const ARCHIVE_OVERHEAD_ALLOWANCE: u64 = 4 * 1024 * 1024;
++const TAR_BLOCK_SIZE: usize = 512;
++
++pub(crate) fn extract_appimage_from_archive(
++    bytes: &[u8],
++    max_payload_bytes: u64,
++) -> Result<Vec<u8>> {
++    extract_appimage_from_archive_with_limits(
++        bytes,
++        max_payload_bytes,
++        max_payload_bytes.saturating_add(ARCHIVE_OVERHEAD_ALLOWANCE),
++        MAX_ARCHIVE_ENTRIES,
++    )
++}
++
++fn extract_appimage_from_archive_with_limits(
++    bytes: &[u8],
++    max_payload_bytes: u64,
++    max_total_bytes: u64,
++    max_entries: usize,
++) -> Result<Vec<u8>> {
++    let decoder = MultiGzDecoder::new(Cursor::new(bytes));
++    let mut decompressed = BoundedArchiveReader::new(decoder, max_total_bytes);
++    let mut appimage = None;
++    {
++        let mut archive = Archive::new(&mut decompressed);
++        let entries = archive.entries().map_err(|_| Error::InvalidUpdaterFormat)?;
++        let mut entry_count = 0_usize;
++        for entry in entries {
++            entry_count = entry_count.saturating_add(1);
++            if entry_count > max_entries {
++                return Err(Error::InvalidUpdaterFormat);
++            }
++            let mut entry = entry.map_err(|_| Error::InvalidUpdaterFormat)?;
++            let path = entry
++                .path()
++                .map_err(|_| Error::InvalidUpdaterFormat)?
++                .into_owned();
++            if path.extension() != Some(std::ffi::OsStr::new("AppImage")) {
++                continue;
++            }
++            if entry.header().entry_type() != EntryType::Regular || appimage.is_some() {
++                return Err(Error::InvalidUpdaterFormat);
++            }
++            let expected_size = entry
++                .header()
++                .size()
++                .map_err(|_| Error::InvalidUpdaterFormat)?;
++            if expected_size == 0 || expected_size > max_payload_bytes {
++                return Err(Error::InvalidUpdaterFormat);
++            }
++            let capacity =
++                usize::try_from(expected_size).map_err(|_| Error::InvalidUpdaterFormat)?;
++            let mut contents = Vec::with_capacity(capacity);
++            let mut limited = (&mut entry).take(max_payload_bytes.saturating_add(1));
++            limited
++                .read_to_end(&mut contents)
++                .map_err(|_| Error::InvalidUpdaterFormat)?;
++            if contents.len() as u64 != expected_size || contents.len() as u64 > max_payload_bytes {
++                return Err(Error::InvalidUpdaterFormat);
++            }
++            appimage_install::validate_appimage_bytes(&contents)
++                .map_err(|_| Error::InvalidUpdaterFormat)?;
++            appimage = Some(contents);
++        }
++    }
++
++    // `tar::Archive` accepts EOF without an end marker. Drain the complete gzip
++    // stream, then require both tar zero blocks and validate CRC/trailer errors,
++    // hidden trailing entries, and decompression caps.
++    decompressed.begin_trailer_check();
++    io::copy(&mut decompressed, &mut io::sink()).map_err(|_| Error::InvalidUpdaterFormat)?;
++    if !decompressed.reached_eof
++        || decompressed.consecutive_zero_blocks < 2
++        || decompressed.trailing_nonzero
++    {
++        return Err(Error::InvalidUpdaterFormat);
++    }
++
++    appimage.ok_or(Error::BinaryNotFoundInArchive)
++}
++
++struct BoundedArchiveReader<R> {
++    inner: R,
++    max_bytes: u64,
++    bytes_read: u64,
++    block_bytes: usize,
++    block_is_zero: bool,
++    consecutive_zero_blocks: u8,
++    reached_eof: bool,
++    trailer_check: bool,
++    trailing_nonzero: bool,
++}
++
++impl<R> BoundedArchiveReader<R> {
++    fn new(inner: R, max_bytes: u64) -> Self {
++        Self {
++            inner,
++            max_bytes,
++            bytes_read: 0,
++            block_bytes: 0,
++            block_is_zero: true,
++            consecutive_zero_blocks: 0,
++            reached_eof: false,
++            trailer_check: false,
++            trailing_nonzero: false,
++        }
++    }
++
++    fn begin_trailer_check(&mut self) {
++        self.trailer_check = true;
++    }
++}
++
++impl<R: Read> Read for BoundedArchiveReader<R> {
++    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
++        if buffer.is_empty() {
++            return Ok(0);
++        }
++        if self.bytes_read >= self.max_bytes {
++            let mut probe = [0_u8; 1];
++            return match self.inner.read(&mut probe)? {
++                0 => {
++                    self.reached_eof = true;
++                    Ok(0)
++                }
++                _ => Err(io::Error::new(
++                    io::ErrorKind::InvalidData,
++                    "AppImage archive exceeds the decompressed size limit",
++                )),
++            };
++        }
++
++        let remaining = self.max_bytes - self.bytes_read;
++        let allowed = if remaining < buffer.len() as u64 {
++            remaining as usize
++        } else {
++            buffer.len()
++        };
++        let bytes_read = self.inner.read(&mut buffer[..allowed])?;
++        if bytes_read == 0 {
++            self.reached_eof = true;
++            return Ok(0);
++        }
++        if self.trailer_check && buffer[..bytes_read].iter().any(|byte| *byte != 0) {
++            self.trailing_nonzero = true;
++        }
++
++        self.bytes_read = self
++            .bytes_read
++            .checked_add(bytes_read as u64)
++            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "archive size overflows"))?;
++        for byte in &buffer[..bytes_read] {
++            self.block_is_zero &= *byte == 0;
++            self.block_bytes += 1;
++            if self.block_bytes == TAR_BLOCK_SIZE {
++                self.consecutive_zero_blocks = if self.block_is_zero {
++                    self.consecutive_zero_blocks.saturating_add(1)
++                } else {
++                    0
++                };
++                self.block_bytes = 0;
++                self.block_is_zero = true;
++            }
++        }
++        Ok(bytes_read)
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use flate2::{write::GzEncoder, Compression};
++    use std::io::Write;
++    use tar::{EntryType, Header};
++
++    struct ArchiveEntry<'a> {
++        name: &'a str,
++        kind: EntryType,
++        payload: &'a [u8],
++    }
++
++    fn host_machine() -> u16 {
++        #[cfg(target_arch = "x86_64")]
++        {
++            return 62;
++        }
++        #[cfg(target_arch = "aarch64")]
++        {
++            return 183;
++        }
++        #[cfg(target_arch = "x86")]
++        {
++            return 3;
++        }
++        #[cfg(target_arch = "arm")]
++        {
++            return 40;
++        }
++        panic!("add an AppImage archive fixture for this target architecture");
++    }
++
++    fn archive(entries: &[ArchiveEntry<'_>]) -> Vec<u8> {
++        let encoder = GzEncoder::new(Vec::new(), Compression::default());
++        let mut builder = tar::Builder::new(encoder);
++        for item in entries {
++            let regular = item.kind.is_file();
++            let mut header = Header::new_gnu();
++            header.set_entry_type(item.kind);
++            header.set_mode(0o755);
++            header.set_size(if regular {
++                item.payload.len() as u64
++            } else {
++                0
++            });
++            if item.kind.is_symlink() || item.kind.is_hard_link() {
++                header.set_link_name("target.AppImage").unwrap();
++            }
++            header.set_cksum();
++            builder
++                .append_data(
++                    &mut header,
++                    item.name,
++                    if regular { item.payload } else { &[][..] },
++                )
++                .unwrap();
++        }
++        builder.into_inner().unwrap().finish().unwrap()
++    }
++
++    fn compressed(raw: &[u8]) -> Vec<u8> {
++        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
++        encoder.write_all(raw).unwrap();
++        encoder.finish().unwrap()
++    }
++
++    fn truncated_candidate_archive(payload: &[u8]) -> Vec<u8> {
++        let declared_size = payload.len() as u64 + 512;
++        let mut header = Header::new_gnu();
++        header.set_path("ROSI.AppImage").unwrap();
++        header.set_entry_type(EntryType::Regular);
++        header.set_mode(0o755);
++        header.set_size(declared_size);
++        header.set_cksum();
++        let mut raw = header.as_bytes().to_vec();
++        raw.extend_from_slice(payload);
++        let padded_len = raw.len().div_ceil(512) * 512;
++        raw.resize(padded_len, 0);
++        compressed(&raw)
++    }
++
++    fn truncated_tar_end_archive(payload: &[u8]) -> Vec<u8> {
++        let mut header = Header::new_gnu();
++        header.set_path("ROSI.AppImage").unwrap();
++        header.set_entry_type(EntryType::Regular);
++        header.set_mode(0o755);
++        header.set_size(payload.len() as u64);
++        header.set_cksum();
++        let mut raw = header.as_bytes().to_vec();
++        raw.extend_from_slice(payload);
++        let padded_len = raw.len().div_ceil(512) * 512;
++        raw.resize(padded_len, 0);
++        compressed(&raw)
++    }
++
++    fn extract_with_limits(
++        bytes: &[u8],
++        max_payload_bytes: u64,
++        max_total_bytes: u64,
++        max_entries: usize,
++    ) -> crate::Result<Vec<u8>> {
++        super::extract_appimage_from_archive_with_limits(
++            bytes,
++            max_payload_bytes,
++            max_total_bytes,
++            max_entries,
++        )
++    }
++
++    #[test]
++    fn production_archive_extractor_accepts_one_regular_appimage_and_rejects_tar_links() {
++        let payload =
++            super::super::appimage_install::test_fixtures::valid_appimage(2, host_machine(), b'a');
++        let valid = archive(&[ArchiveEntry {
++            name: "ROSI.AppImage",
++            kind: EntryType::Regular,
++            payload: &payload,
++        }]);
++        assert_eq!(
++            extract_with_limits(&valid, 1 << 20, 2 << 20, 128).unwrap(),
++            payload
++        );
++
++        for kind in [EntryType::Directory, EntryType::Symlink, EntryType::Link] {
++            let invalid = archive(&[ArchiveEntry {
++                name: "ROSI.AppImage",
++                kind,
++                payload: &[],
++            }]);
++            assert!(extract_with_limits(&invalid, 1 << 20, 2 << 20, 128).is_err());
++        }
++    }
++
++    #[test]
++    fn production_archive_extractor_rejects_duplicate_invalid_and_truncated_candidates() {
++        let payload =
++            super::super::appimage_install::test_fixtures::valid_appimage(2, host_machine(), b'd');
++        let duplicate = archive(&[
++            ArchiveEntry {
++                name: "one.AppImage",
++                kind: EntryType::Regular,
++                payload: &payload,
++            },
++            ArchiveEntry {
++                name: "two.AppImage",
++                kind: EntryType::Regular,
++                payload: &payload,
++            },
++        ]);
++        assert!(extract_with_limits(&duplicate, 1 << 20, 2 << 20, 128).is_err());
++
++        let invalid_payload = b"not an ELF AppImage";
++        let invalid = archive(&[ArchiveEntry {
++            name: "bad.AppImage",
++            kind: EntryType::Regular,
++            payload: invalid_payload,
++        }]);
++        assert!(extract_with_limits(&invalid, 1 << 20, 2 << 20, 128).is_err());
++
++        let truncated = truncated_candidate_archive(&payload);
++        assert!(extract_with_limits(&truncated, 1 << 20, 2 << 20, 128).is_err());
++
++        let mut truncated_gzip = archive(&[ArchiveEntry {
++            name: "ROSI.AppImage",
++            kind: EntryType::Regular,
++            payload: &payload,
++        }]);
++        truncated_gzip.truncate(truncated_gzip.len() - 4);
++        assert!(extract_with_limits(&truncated_gzip, 1 << 20, 2 << 20, 128).is_err());
++
++        assert!(
++            extract_with_limits(&truncated_tar_end_archive(&payload), 1 << 20, 2 << 20, 128)
++                .is_err()
++        );
++    }
++
++    #[test]
++    fn production_archive_extractor_caps_total_decompression_and_entry_traversal() {
++        let payload =
++            super::super::appimage_install::test_fixtures::valid_appimage(2, host_machine(), b'l');
++        let expanded_non_candidate = archive(&[ArchiveEntry {
++            name: "notes.txt",
++            kind: EntryType::Regular,
++            payload: &[0_u8; 4096],
++        }]);
++        assert!(extract_with_limits(&expanded_non_candidate, 1 << 20, 2048, 128).is_err());
++
++        let too_many_entries = archive(&[
++            ArchiveEntry {
++                name: "one.txt",
++                kind: EntryType::Regular,
++                payload: &[],
++            },
++            ArchiveEntry {
++                name: "two.txt",
++                kind: EntryType::Regular,
++                payload: &[],
++            },
++            ArchiveEntry {
++                name: "three.txt",
++                kind: EntryType::Regular,
++                payload: &[],
++            },
++            ArchiveEntry {
++                name: "candidate.AppImage",
++                kind: EntryType::Regular,
++                payload: &payload,
++            },
++        ]);
++        assert!(extract_with_limits(&too_many_entries, 1 << 20, 2 << 20, 2).is_err());
++    }
++}
+--- a/src/appimage_install.rs
++++ b/src/appimage_install.rs
+@@ -0,0 +1,1110 @@
++// The AppImage helpers are compiled for macOS only because the shared module
++// list includes it; their callers are Linux and BSD only. Keep dead_code quiet there.
++#![cfg_attr(target_os = "macos", allow(dead_code))]
++
++use std::{
++    fs::{self, Metadata, OpenOptions},
++    io::{self, Write},
++    os::unix::fs::{MetadataExt, PermissionsExt},
++    path::{Path, PathBuf},
++    sync::atomic::{AtomicU64, Ordering},
++};
++
++static WORK_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
++
++fn invalid_appimage(message: &str) -> io::Error {
++    io::Error::new(io::ErrorKind::InvalidData, message.to_string())
++}
++
++fn expected_elf_target() -> Option<(u8, u16)> {
++    if cfg!(target_arch = "x86_64") {
++        Some((2, 62))
++    } else if cfg!(target_arch = "aarch64") {
++        Some((2, 183))
++    } else if cfg!(target_arch = "x86") {
++        Some((1, 3))
++    } else if cfg!(target_arch = "arm") {
++        Some((1, 40))
++    } else if cfg!(target_arch = "riscv64") {
++        Some((2, 243))
++    } else if cfg!(all(target_arch = "powerpc64", target_endian = "little")) {
++        Some((2, 21))
++    } else {
++        None
++    }
++}
++
++fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
++    let end = offset.checked_add(2)?;
++    Some(u16::from_le_bytes(bytes.get(offset..end)?.try_into().ok()?))
++}
++
++fn read_u32(bytes: &[u8], offset: usize) -> Option<u32> {
++    let end = offset.checked_add(4)?;
++    Some(u32::from_le_bytes(bytes.get(offset..end)?.try_into().ok()?))
++}
++
++fn read_u64(bytes: &[u8], offset: usize) -> Option<u64> {
++    let end = offset.checked_add(8)?;
++    Some(u64::from_le_bytes(bytes.get(offset..end)?.try_into().ok()?))
++}
++
++fn checked_end(start: u64, length: u64) -> Option<u64> {
++    start.checked_add(length)
++}
++
++fn both_endian_u16(bytes: &[u8], offset: usize) -> Option<u16> {
++    let little = u16::from_le_bytes(bytes.get(offset..offset + 2)?.try_into().ok()?);
++    let big = u16::from_be_bytes(bytes.get(offset + 2..offset + 4)?.try_into().ok()?);
++    (little == big).then_some(little)
++}
++
++fn both_endian_u32(bytes: &[u8], offset: usize) -> Option<u32> {
++    let little = u32::from_le_bytes(bytes.get(offset..offset + 4)?.try_into().ok()?);
++    let big = u32::from_be_bytes(bytes.get(offset + 4..offset + 8)?.try_into().ok()?);
++    (little == big).then_some(little)
++}
++
++fn elf_table_end(bytes: &[u8], class: u8, header_size: u16) -> io::Result<Option<u64>> {
++    let (section_offset, section_entry_size, section_count, min_entry_size) = if class == 2 {
++        (
++            read_u64(bytes, 40).unwrap_or(0),
++            read_u16(bytes, 58).unwrap_or(0),
++            read_u16(bytes, 60).unwrap_or(0),
++            64_u64,
++        )
++    } else {
++        (
++            u64::from(read_u32(bytes, 32).unwrap_or(0)),
++            read_u16(bytes, 46).unwrap_or(0),
++            read_u16(bytes, 48).unwrap_or(0),
++            40_u64,
++        )
++    };
++    if section_offset == 0 {
++        return Ok(None);
++    }
++    if u64::from(section_entry_size) < min_entry_size || section_offset < u64::from(header_size) {
++        return Err(invalid_appimage("AppImage ELF section table is invalid"));
++    }
++
++    let section_start = usize::try_from(section_offset)
++        .map_err(|_| invalid_appimage("AppImage ELF section offset overflows"))?;
++    let count = if section_count != 0 {
++        u64::from(section_count)
++    } else if class == 2 {
++        let extended_count_offset = section_start
++            .checked_add(32)
++            .ok_or_else(|| invalid_appimage("AppImage ELF section offset overflows"))?;
++        read_u64(bytes, extended_count_offset)
++            .ok_or_else(|| invalid_appimage("AppImage ELF extended section count is truncated"))?
++    } else {
++        let extended_count_offset = section_start
++            .checked_add(20)
++            .ok_or_else(|| invalid_appimage("AppImage ELF section offset overflows"))?;
++        u64::from(
++            read_u32(bytes, extended_count_offset).ok_or_else(|| {
++                invalid_appimage("AppImage ELF extended section count is truncated")
++            })?,
++        )
++    };
++    if count == 0 {
++        return Err(invalid_appimage("AppImage ELF section table is empty"));
++    }
++    let table_bytes = u64::from(section_entry_size)
++        .checked_mul(count)
++        .ok_or_else(|| invalid_appimage("AppImage ELF section table overflows"))?;
++    let end = checked_end(section_offset, table_bytes)
++        .ok_or_else(|| invalid_appimage("AppImage ELF section table overflows"))?;
++    if end > bytes.len() as u64 {
++        return Err(invalid_appimage("AppImage ELF section table is truncated"));
++    }
++    Ok(Some(end))
++}
++
++fn validate_elf_executable(bytes: &[u8], class: u8, expected_machine: u16) -> io::Result<u64> {
++    let minimum_header_size = if class == 2 { 64 } else { 52 };
++    if bytes.len() < minimum_header_size {
++        return Err(invalid_appimage("AppImage ELF header is truncated"));
++    }
++    let read16 = |offset| read_u16(bytes, offset).unwrap_or(0);
++    let read32 = |offset| read_u32(bytes, offset).unwrap_or(0);
++    let read64 = |offset| read_u64(bytes, offset).unwrap_or(0);
++
++    if !matches!(read16(16), 2 | 3) || read16(18) != expected_machine || read32(20) != 1 {
++        return Err(invalid_appimage(
++            "AppImage ELF type, target architecture, or version is invalid",
++        ));
++    }
++
++    let (entry, program_header_offset, header_size, program_header_size, program_header_count) =
++        if class == 2 {
++            (read64(24), read64(32), read16(52), read16(54), read16(56))
++        } else {
++            (
++                u64::from(read32(24)),
++                u64::from(read32(28)),
++                read16(40),
++                read16(42),
++                read16(44),
++            )
++        };
++    let minimum_program_header_size = if class == 2 { 56 } else { 32 };
++    let table_end = program_header_offset
++        .checked_add(u64::from(program_header_size) * u64::from(program_header_count));
++    if u64::from(header_size) < minimum_header_size as u64
++        || u64::from(program_header_size) < minimum_program_header_size
++        || program_header_count == 0
++        || program_header_offset < u64::from(header_size)
++        || table_end.map_or(true, |end| end > bytes.len() as u64)
++    {
++        return Err(invalid_appimage(
++            "AppImage ELF program-header table is truncated or incomplete",
++        ));
++    }
++
++    let mut runtime_end = table_end.unwrap_or(0);
++    let mut found_load = false;
++    let mut entry_is_mapped = false;
++    for index in 0..program_header_count {
++        let header_offset = program_header_offset
++            .checked_add(u64::from(index) * u64::from(program_header_size))
++            .and_then(|value| usize::try_from(value).ok())
++            .ok_or_else(|| invalid_appimage("AppImage ELF program-header offset overflows"))?;
++        let program_type = read_u32(bytes, header_offset).unwrap_or(0);
++        if program_type != 1 {
++            continue;
++        }
++
++        found_load = true;
++        let (flags, file_offset, virtual_address, file_size, memory_size, alignment) = if class == 2
++        {
++            (
++                read_u32(bytes, header_offset + 4).unwrap_or(0),
++                read_u64(bytes, header_offset + 8).unwrap_or(u64::MAX),
++                read_u64(bytes, header_offset + 16).unwrap_or(u64::MAX),
++                read_u64(bytes, header_offset + 32).unwrap_or(u64::MAX),
++                read_u64(bytes, header_offset + 40).unwrap_or(u64::MAX),
++                read_u64(bytes, header_offset + 48).unwrap_or(0),
++            )
++        } else {
++            (
++                read_u32(bytes, header_offset + 24).unwrap_or(0),
++                u64::from(read_u32(bytes, header_offset + 4).unwrap_or(u32::MAX)),
++                u64::from(read_u32(bytes, header_offset + 8).unwrap_or(u32::MAX)),
++                u64::from(read_u32(bytes, header_offset + 16).unwrap_or(u32::MAX)),
++                u64::from(read_u32(bytes, header_offset + 20).unwrap_or(u32::MAX)),
++                u64::from(read_u32(bytes, header_offset + 28).unwrap_or(0)),
++            )
++        };
++        if file_size > memory_size {
++            return Err(invalid_appimage(
++                "AppImage ELF load segment has p_filesz greater than p_memsz",
++            ));
++        }
++        let file_end = checked_end(file_offset, file_size)
++            .ok_or_else(|| invalid_appimage("AppImage ELF load segment overflows"))?;
++        let virtual_end = checked_end(virtual_address, memory_size)
++            .ok_or_else(|| invalid_appimage("AppImage ELF virtual segment overflows"))?;
++        if file_end > bytes.len() as u64
++            || (alignment > 1
++                && (!alignment.is_power_of_two()
++                    || file_offset % alignment != virtual_address % alignment))
++        {
++            return Err(invalid_appimage(
++                "AppImage ELF load segment is invalid or truncated",
++            ));
++        }
++        runtime_end = runtime_end.max(file_end);
++
++        if flags & 1 != 0
++            && entry >= virtual_address
++            && entry < virtual_end
++            && entry - virtual_address < file_size
++        {
++            let entry_file_offset = file_offset
++                .checked_add(entry - virtual_address)
++                .ok_or_else(|| invalid_appimage("AppImage ELF entry point overflows"))?;
++            entry_is_mapped = entry_file_offset < file_end;
++        }
++    }
++    if !found_load || !entry_is_mapped {
++        return Err(invalid_appimage(
++            "AppImage ELF entry point is not file-backed by an executable PT_LOAD segment",
++        ));
++    }
++    if let Some(section_end) = elf_table_end(bytes, class, header_size)? {
++        runtime_end = runtime_end.max(section_end);
++    }
++    Ok(runtime_end)
++}
++
++fn validate_squashfs_at(bytes: &[u8], offset: usize) -> bool {
++    const SUPERBLOCK_SIZE: usize = 96;
++    const METADATA_LIMIT: u64 = 8192;
++    let Some(filesystem) = bytes.get(offset..) else {
++        return false;
++    };
++    if filesystem.len() < SUPERBLOCK_SIZE || filesystem.get(0..4) != Some(b"hsqs") {
++        return false;
++    }
++    let Some(inodes) = read_u32(filesystem, 4) else {
++        return false;
++    };
++    let Some(block_size) = read_u32(filesystem, 12) else {
++        return false;
++    };
++    let Some(fragments) = read_u32(filesystem, 16) else {
++        return false;
++    };
++    let Some(compression) = read_u16(filesystem, 20) else {
++        return false;
++    };
++    let Some(block_log) = read_u16(filesystem, 22) else {
++        return false;
++    };
++    let Some(id_count) = read_u16(filesystem, 26) else {
++        return false;
++    };
++    let Some(major) = read_u16(filesystem, 28) else {
++        return false;
++    };
++    let Some(minor) = read_u16(filesystem, 30) else {
++        return false;
++    };
++    let Some(root_inode) = read_u64(filesystem, 32) else {
++        return false;
++    };
++    let Some(bytes_used) = read_u64(filesystem, 40) else {
++        return false;
++    };
++    let Some(id_table_start) = read_u64(filesystem, 48) else {
++        return false;
++    };
++    let Some(xattr_table_start) = read_u64(filesystem, 56) else {
++        return false;
++    };
++    let Some(inode_table_start) = read_u64(filesystem, 64) else {
++        return false;
++    };
++    let Some(directory_table_start) = read_u64(filesystem, 72) else {
++        return false;
++    };
++    let Some(fragment_table_start) = read_u64(filesystem, 80) else {
++        return false;
++    };
++    let Some(lookup_table_start) = read_u64(filesystem, 88) else {
++        return false;
++    };
++
++    if inodes == 0
++        || id_count == 0
++        || !(1..=6).contains(&compression)
++        || major != 4
++        || minor != 0
++        || block_size < 4096
++        || block_size > 1_048_576
++        || !block_size.is_power_of_two()
++        || block_log > 20
++        || block_size != (1_u32 << block_log)
++        || (root_inode & 0xffff) > METADATA_LIMIT
++        || bytes_used < (SUPERBLOCK_SIZE + 32) as u64
++        || bytes_used > filesystem.len() as u64
++        || inode_table_start < SUPERBLOCK_SIZE as u64
++        || inode_table_start >= directory_table_start
++        || directory_table_start >= id_table_start
++        || id_table_start
++            .checked_add(8)
++            .map_or(true, |end| end > bytes_used)
++    {
++        return false;
++    }
++
++    for optional_table in [xattr_table_start, fragment_table_start, lookup_table_start] {
++        if optional_table != u64::MAX && optional_table >= bytes_used {
++            return false;
++        }
++    }
++    if fragments > 0 && fragment_table_start == u64::MAX {
++        return false;
++    }
++
++    let root_block = root_inode >> 16;
++    let root_metadata_start = match inode_table_start.checked_add(root_block) {
++        Some(start) if start < directory_table_start => start,
++        _ => return false,
++    };
++    if !valid_squashfs_metadata_block(filesystem, root_metadata_start, bytes_used)
++        || !valid_squashfs_metadata_block(filesystem, directory_table_start, bytes_used)
++    {
++        return false;
++    }
++    let root_offset = (root_inode & 0xffff) as usize;
++    let root_metadata_offset = match usize::try_from(root_metadata_start) {
++        Ok(offset) => offset,
++        Err(_) => return false,
++    };
++    let metadata_header = match read_u16(filesystem, root_metadata_offset) {
++        Some(header) => header,
++        None => return false,
++    };
++    if metadata_header & 0x8000 != 0 {
++        let raw_size = u64::from(metadata_header & 0x7fff);
++        let Some(inode_type_offset) = root_metadata_offset
++            .checked_add(2)
++            .and_then(|offset| offset.checked_add(root_offset))
++        else {
++            return false;
++        };
++        let Some(inode_type) = read_u16(filesystem, inode_type_offset) else {
++            return false;
++        };
++        let inode_size = match inode_type {
++            1 => 32_u64, // SQUASHFS_DIR_TYPE / squashfs_dir_inode
++            8 => 40_u64, // SQUASHFS_LDIR_TYPE / squashfs_ldir_inode
++            _ => return false,
++        };
++        if raw_size < root_offset as u64 + inode_size {
++            return false;
++        }
++    }
++    true
++}
++
++fn valid_squashfs_metadata_block(bytes: &[u8], offset: u64, bytes_used: u64) -> bool {
++    let Ok(offset) = usize::try_from(offset) else {
++        return false;
++    };
++    let Some(header) = read_u16(bytes, offset) else {
++        return false;
++    };
++    let size = u64::from(header & 0x7fff);
++    let block_end = (offset as u64)
++        .checked_add(2)
++        .and_then(|start| start.checked_add(size));
++    size > 0 && size <= 8192 && block_end.map_or(false, |end| end <= bytes_used)
++}
++
++fn validate_type2_filesystem(bytes: &[u8], runtime_end: u64) -> io::Result<()> {
++    let start = usize::try_from(runtime_end)
++        .map_err(|_| invalid_appimage("AppImage ELF runtime size overflows"))?;
++    if start >= bytes.len() {
++        return Err(invalid_appimage(
++            "Type 2 AppImage has no appended SquashFS filesystem",
++        ));
++    }
++    for offset in start..bytes.len().saturating_sub(3) {
++        if bytes.get(offset..offset + 4) == Some(b"hsqs") && validate_squashfs_at(bytes, offset) {
++            return Ok(());
++        }
++    }
++    Err(invalid_appimage(
++        "Type 2 AppImage has no complete, bounded SquashFS filesystem",
++    ))
++}
++
++fn validate_iso9660(bytes: &[u8]) -> io::Result<()> {
++    const BLOCK: usize = 2048;
++    const FIRST_DESCRIPTOR: usize = 16;
++    const MAX_DESCRIPTORS: usize = 256;
++    if bytes.len() < (FIRST_DESCRIPTOR + 2) * BLOCK {
++        return Err(invalid_appimage(
++            "Type 1 AppImage ISO 9660 volume is truncated",
++        ));
++    }
++    let mut primary_volume = None;
++    let mut terminator = None;
++    let last_descriptor = bytes.len() / BLOCK;
++    for block in FIRST_DESCRIPTOR..last_descriptor.min(FIRST_DESCRIPTOR + MAX_DESCRIPTORS) {
++        let start = block * BLOCK;
++        let descriptor = &bytes[start..start + BLOCK];
++        if descriptor.get(1..6) != Some(b"CD001") || descriptor[6] != 1 {
++            return Err(invalid_appimage(
++                "Type 1 AppImage ISO volume descriptor is invalid",
++            ));
++        }
++        match descriptor[0] {
++            1 => primary_volume = Some((start, descriptor)),
++            255 => {
++                terminator = Some(block);
++                break;
++            }
++            _ => {}
++        }
++    }
++    let terminator = terminator
++        .ok_or_else(|| invalid_appimage("Type 1 AppImage ISO descriptor set is unterminated"))?;
++    let (pvd_offset, pvd) = primary_volume
++        .ok_or_else(|| invalid_appimage("Type 1 AppImage has no ISO primary volume descriptor"))?;
++    let volume_blocks = both_endian_u32(pvd, 80)
++        .ok_or_else(|| invalid_appimage("Type 1 AppImage ISO volume size is invalid"))?;
++    let logical_block = both_endian_u16(pvd, 128)
++        .ok_or_else(|| invalid_appimage("Type 1 AppImage ISO block size is invalid"))?;
++    let volume_bytes = u64::from(volume_blocks)
++        .checked_mul(BLOCK as u64)
++        .ok_or_else(|| invalid_appimage("Type 1 AppImage ISO volume size overflows"))?;
++    if logical_block != BLOCK as u16
++        || volume_blocks <= terminator as u32 + 1
++        || volume_bytes > bytes.len() as u64
++    {
++        return Err(invalid_appimage(
++            "Type 1 AppImage ISO volume is truncated or inconsistent",
++        ));
++    }
++
++    let root = pvd
++        .get(156..190)
++        .ok_or_else(|| invalid_appimage("Type 1 AppImage ISO root record is truncated"))?;
++    if root[0] < 34 || root[32] != 1 || root[33] != 0 || root[25] & 2 == 0 {
++        return Err(invalid_appimage(
++            "Type 1 AppImage ISO root directory record is invalid",
++        ));
++    }
++    let root_extent = both_endian_u32(root, 2)
++        .ok_or_else(|| invalid_appimage("Type 1 AppImage ISO root extent is invalid"))?;
++    let root_length = both_endian_u32(root, 10)
++        .ok_or_else(|| invalid_appimage("Type 1 AppImage ISO root length is invalid"))?;
++    let root_blocks = (u64::from(root_length) + BLOCK as u64 - 1) / BLOCK as u64;
++    let root_end = u64::from(root_extent)
++        .checked_add(root_blocks)
++        .ok_or_else(|| invalid_appimage("Type 1 AppImage ISO root extent overflows"))?;
++    if root_extent <= terminator as u32 || root_length == 0 || root_end > u64::from(volume_blocks) {
++        return Err(invalid_appimage(
++            "Type 1 AppImage ISO root directory is outside the volume",
++        ));
++    }
++
++    let root_data_start = usize::try_from(u64::from(root_extent) * BLOCK as u64)
++        .map_err(|_| invalid_appimage("Type 1 AppImage ISO root offset overflows"))?;
++    let root_data_end = root_data_start
++        .checked_add(root_length as usize)
++        .ok_or_else(|| invalid_appimage("Type 1 AppImage ISO root length overflows"))?;
++    let root_data = bytes
++        .get(root_data_start..root_data_end)
++        .ok_or_else(|| invalid_appimage("Type 1 AppImage ISO root directory is truncated"))?;
++    if !valid_iso_directory_record(root_data, 0, 0)
++        || !valid_iso_directory_record(
++            root_data,
++            root_data.first().copied().unwrap_or(0) as usize,
++            1,
++        )
++    {
++        return Err(invalid_appimage(
++            "Type 1 AppImage ISO root directory entries are invalid",
++        ));
++    }
++    let _ = pvd_offset;
++    Ok(())
++}
++
++fn valid_iso_directory_record(directory: &[u8], offset: usize, identifier: u8) -> bool {
++    let Some(length) = directory.get(offset).copied().map(usize::from) else {
++        return false;
++    };
++    if length < 34 || offset % 2048 + length > 2048 {
++        return false;
++    }
++    let Some(record) = directory.get(offset..offset + length) else {
++        return false;
++    };
++    record[32] == 1 && record[33] == identifier && record[25] & 2 != 0
++}
++
++/// Reject updater data that cannot be an executable AppImage for this build.
++/// Type 1 and Type 2 markers are accepted so existing supported AppImages can
++/// still move between releases; both formats require an ELF executable.
++pub(crate) fn validate_appimage_bytes(bytes: &[u8]) -> io::Result<()> {
++    let Some((expected_class, expected_machine)) = expected_elf_target() else {
++        return Err(invalid_appimage(
++            "AppImage architecture is not supported by this updater build",
++        ));
++    };
++    if bytes.len() < 20 || bytes.get(0..4) != Some(&b"\x7fELF"[..]) {
++        return Err(invalid_appimage("update is not a complete ELF AppImage"));
++    }
++    if bytes.get(8..11) != Some(&b"AI\x01"[..]) && bytes.get(8..11) != Some(&b"AI\x02"[..]) {
++        return Err(invalid_appimage(
++            "update has no recognized Type 1 or Type 2 AppImage marker",
++        ));
++    }
++    if bytes[4] != expected_class || bytes[5] != 1 || bytes[6] != 1 {
++        return Err(invalid_appimage(
++            "AppImage ELF class, byte order, or version does not match this updater",
++        ));
++    }
++    let runtime_end = validate_elf_executable(bytes, expected_class, expected_machine)?;
++    match bytes[10] {
++        1 => validate_iso9660(bytes),
++        2 => validate_type2_filesystem(bytes, runtime_end),
++        _ => Err(invalid_appimage("AppImage type marker is invalid")),
++    }
++}
++
++fn validate_appimage_file(path: &Path) -> io::Result<Metadata> {
++    let metadata = fs::symlink_metadata(path)?;
++    if !metadata.file_type().is_file() || metadata.len() == 0 {
++        return Err(invalid_appimage(
++            "live or staged AppImage must be a nonempty regular file",
++        ));
++    }
++    if metadata.permissions().mode() & 0o111 == 0 {
++        return Err(invalid_appimage("AppImage file is not executable"));
++    }
++    validate_appimage_bytes(&fs::read(path)?)?;
++    Ok(metadata)
++}
++
++fn create_private_work_directory(root: &Path) -> io::Result<PathBuf> {
++    for _ in 0..128 {
++        let sequence = WORK_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
++        let path = root.join(format!(
++            ".tauri-appimage-update-{}-{sequence}",
++            std::process::id()
++        ));
++        match fs::create_dir(&path) {
++            Ok(()) => {
++                if let Err(error) = fs::set_permissions(&path, fs::Permissions::from_mode(0o700)) {
++                    let _ = fs::remove_dir(&path);
++                    return Err(error);
++                }
++                return Ok(path);
++            }
++            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
++            Err(error) => return Err(error),
++        }
++    }
++    Err(io::Error::new(
++        io::ErrorKind::AlreadyExists,
++        "could not allocate a private AppImage update directory",
++    ))
++}
++
++/// Stage and validate the payload before moving the current executable. The
++/// returned path names the retained previous AppImage on successful replacement.
++pub(crate) fn install_appimage_at(
++    extract_path: &Path,
++    bytes: &[u8],
++    temporary_roots: &[PathBuf],
++) -> io::Result<PathBuf> {
++    validate_appimage_bytes(bytes)?;
++    let live_metadata = validate_appimage_file(extract_path)?;
++    let live_mode = live_metadata.permissions().mode() & 0o777;
++    if live_mode & 0o111 == 0 {
++        return Err(invalid_appimage("current AppImage is not executable"));
++    }
++
++    let mut last_error = None;
++    for root in temporary_roots {
++        let work_directory = match create_private_work_directory(root) {
++            Ok(path) => path,
++            Err(error) => {
++                last_error = Some(error);
++                continue;
++            }
++        };
++        let work_metadata = match fs::metadata(&work_directory) {
++            Ok(metadata) => metadata,
++            Err(error) => {
++                let _ = fs::remove_dir_all(&work_directory);
++                last_error = Some(error);
++                continue;
++            }
++        };
++        if work_metadata.dev() != live_metadata.dev() {
++            let _ = fs::remove_dir_all(&work_directory);
++            last_error = Some(io::Error::new(
++                io::ErrorKind::InvalidInput,
++                "temporary AppImage directory is not on the install filesystem",
++            ));
++            continue;
++        }
++
++        let staged_path = work_directory.join("next_app.AppImage");
++        let staged_result = (|| -> io::Result<()> {
++            let mut staged = OpenOptions::new()
++                .write(true)
++                .create_new(true)
++                .open(&staged_path)?;
++            staged.write_all(bytes)?;
++            staged.sync_all()?;
++            fs::set_permissions(&staged_path, fs::Permissions::from_mode(live_mode))?;
++            validate_appimage_file(&staged_path)?;
++            Ok(())
++        })();
++        if let Err(error) = staged_result {
++            let _ = fs::remove_dir_all(&work_directory);
++            last_error = Some(error);
++            continue;
++        }
++
++        match replace_appimage_with_backup(
++            extract_path,
++            &staged_path,
++            &work_directory,
++            |from, to| fs::rename(from, to),
++        ) {
++            Ok(backup_path) => return Ok(backup_path),
++            Err(error) => {
++                let retained_backup = work_directory.join("current_app.AppImage");
++                if !retained_backup.exists() {
++                    let _ = fs::remove_dir_all(&work_directory);
++                }
++                return Err(error);
++            }
++        }
++    }
++
++    Err(last_error.unwrap_or_else(|| {
++        io::Error::new(
++            io::ErrorKind::InvalidInput,
++            "no temporary AppImage directory is on the install filesystem",
++        )
++    }))
++}
++
++/// Move the already-validated old image to a recoverable path, then atomically
++/// rename the already-validated stage into place. `rename` is injectable for
++/// deterministic rollback-failure verification.
++pub(crate) fn replace_appimage_with_backup(
++    extract_path: &Path,
++    staged_path: &Path,
++    work_directory: &Path,
++    mut rename: impl FnMut(&Path, &Path) -> io::Result<()>,
++) -> io::Result<PathBuf> {
++    let live_metadata = validate_appimage_file(extract_path)?;
++    let staged_metadata = validate_appimage_file(staged_path)?;
++    let work_metadata = fs::metadata(work_directory)?;
++    if live_metadata.dev() != staged_metadata.dev() || live_metadata.dev() != work_metadata.dev() {
++        return Err(io::Error::new(
++            io::ErrorKind::InvalidInput,
++            "AppImage stage and recovery copy must share the install filesystem",
++        ));
++    }
++
++    let backup_path = work_directory.join("current_app.AppImage");
++    if backup_path.exists() {
++        return Err(io::Error::new(
++            io::ErrorKind::AlreadyExists,
++            "private AppImage recovery path already exists",
++        ));
++    }
++    rename(extract_path, &backup_path)?;
++
++    if let Err(swap_error) = rename(staged_path, extract_path) {
++        if fs::symlink_metadata(extract_path).is_ok() {
++            return Err(io::Error::other(format!(
++                "AppImage replacement failed ({swap_error}); live path is occupied and the previous image backup is retained at {}",
++                backup_path.display()
++            )));
++        }
++        return match rename(&backup_path, extract_path) {
++            Ok(()) => Err(swap_error),
++            Err(restore_error) => Err(io::Error::other(format!(
++                "AppImage replacement failed ({swap_error}); restoring the previous image failed ({restore_error}); backup retained at {}",
++                backup_path.display()
++            ))),
++        };
++    }
++
++    match validate_appimage_file(extract_path) {
++        Ok(installed_metadata)
++            if installed_metadata.dev() == staged_metadata.dev()
++                && installed_metadata.ino() == staged_metadata.ino() =>
++        {
++            Ok(backup_path)
++        }
++        validation => {
++            let primary_error = match validation {
++                Ok(_) => invalid_appimage("installed AppImage changed during replacement"),
++                Err(error) => error,
++            };
++            let live_after = fs::symlink_metadata(extract_path).ok();
++            if live_after.as_ref().is_some_and(|metadata| {
++                metadata.dev() == staged_metadata.dev() && metadata.ino() == staged_metadata.ino()
++            }) {
++                if let Err(remove_error) = fs::remove_file(extract_path) {
++                    return Err(io::Error::other(format!(
++                        "installed AppImage validation failed ({primary_error}); removing it failed ({remove_error}); backup retained at {}",
++                        backup_path.display()
++                    )));
++                }
++            } else if live_after.is_some() {
++                return Err(io::Error::other(format!(
++                    "installed AppImage validation failed ({primary_error}); live path changed and backup retained at {}",
++                    backup_path.display()
++                )));
++            }
++            match rename(&backup_path, extract_path) {
++                Ok(()) => Err(primary_error),
++                Err(restore_error) => Err(io::Error::other(format!(
++                    "installed AppImage validation failed ({primary_error}); restoring the previous image failed ({restore_error}); backup retained at {}",
++                    backup_path.display()
++                ))),
++            }
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use std::{
++        fs,
++        os::unix::fs::{MetadataExt, PermissionsExt},
++        path::{Path, PathBuf},
++    };
++
++    const RUNTIME_SIZE: usize = 4096;
++    const SQUASHFS_SIZE: usize = 256;
++    const ISO_BLOCK_SIZE: usize = 2048;
++    const ISO_BLOCK_COUNT: usize = 19;
++
++    fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
++        bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
++    }
++
++    fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
++        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
++    }
++
++    fn write_u64(bytes: &mut [u8], offset: usize, value: u64) {
++        bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
++    }
++
++    fn write_both_endian_u16(bytes: &mut [u8], offset: usize, value: u16) {
++        bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
++        bytes[offset + 2..offset + 4].copy_from_slice(&value.to_be_bytes());
++    }
++
++    fn write_both_endian_u32(bytes: &mut [u8], offset: usize, value: u32) {
++        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
++        bytes[offset + 4..offset + 8].copy_from_slice(&value.to_be_bytes());
++    }
++
++    fn write_iso_directory_record(bytes: &mut [u8], offset: usize, extent: u32, id: u8) {
++        bytes[offset] = 34;
++        write_both_endian_u32(bytes, offset + 2, extent);
++        write_both_endian_u32(bytes, offset + 10, ISO_BLOCK_SIZE as u32);
++        bytes[offset + 25] = 2;
++        write_both_endian_u16(bytes, offset + 28, 1);
++        bytes[offset + 32] = 1;
++        bytes[offset + 33] = id;
++    }
++
++    pub(super) fn appimage(marker: u8, machine: u16, suffix: u8) -> Vec<u8> {
++        let total_size = if marker == 1 {
++            ISO_BLOCK_SIZE * ISO_BLOCK_COUNT
++        } else {
++            RUNTIME_SIZE + SQUASHFS_SIZE
++        };
++        let mut bytes = vec![0_u8; total_size];
++        bytes[0..4].copy_from_slice(b"\x7fELF");
++        bytes[4] = 2; // ELFCLASS64 for ROSI's released Linux targets.
++        bytes[5] = 1; // little-endian
++        bytes[6] = 1; // current ELF identification version
++        bytes[8..11].copy_from_slice(&[b'A', b'I', marker]);
++        write_u16(&mut bytes, 16, 3); // ET_DYN
++        write_u16(&mut bytes, 18, machine);
++        write_u32(&mut bytes, 20, 1);
++        write_u64(&mut bytes, 24, 0x400100); // entry point
++        write_u64(&mut bytes, 32, 64); // program-header offset
++        write_u16(&mut bytes, 52, 64);
++        write_u16(&mut bytes, 54, 56);
++        write_u16(&mut bytes, 56, 1);
++
++        // A real executable PT_LOAD segment covering the ELF header and entry.
++        write_u32(&mut bytes, 64, 1); // PT_LOAD
++        write_u32(&mut bytes, 68, 5); // PF_R | PF_X
++        write_u64(&mut bytes, 72, 0); // p_offset
++        write_u64(&mut bytes, 80, 0x400000); // p_vaddr
++        write_u64(&mut bytes, 96, RUNTIME_SIZE as u64); // p_filesz
++        write_u64(&mut bytes, 104, RUNTIME_SIZE as u64); // p_memsz
++        write_u64(&mut bytes, 112, 4096); // p_align
++        bytes[1000] = suffix;
++
++        if marker == 1 {
++            // ISO 9660 volume descriptor sequence: primary descriptor, then
++            // terminator, with a bounded root-directory extent.
++            let pvd = ISO_BLOCK_SIZE * 16;
++            bytes[pvd] = 1;
++            bytes[pvd + 1..pvd + 6].copy_from_slice(b"CD001");
++            bytes[pvd + 6] = 1;
++            write_both_endian_u32(&mut bytes, pvd + 80, ISO_BLOCK_COUNT as u32);
++            write_both_endian_u16(&mut bytes, pvd + 128, ISO_BLOCK_SIZE as u16);
++            write_iso_directory_record(&mut bytes, pvd + 156, 18, 0);
++
++            let terminator = pvd + ISO_BLOCK_SIZE;
++            bytes[terminator] = 255;
++            bytes[terminator + 1..terminator + 6].copy_from_slice(b"CD001");
++            bytes[terminator + 6] = 1;
++            write_iso_directory_record(&mut bytes, ISO_BLOCK_SIZE * 18, 18, 0);
++            write_iso_directory_record(&mut bytes, ISO_BLOCK_SIZE * 18 + 34, 18, 1);
++        } else {
++            // SquashFS 4.0 superblock and bounded metadata-table extents.
++            let fs = RUNTIME_SIZE;
++            write_u32(&mut bytes, fs, 0x7371_7368); // "hsqs"
++            write_u32(&mut bytes, fs + 4, 1); // inode count
++            write_u32(&mut bytes, fs + 12, 4096); // block size
++            write_u16(&mut bytes, fs + 20, 1); // zlib compression
++            write_u16(&mut bytes, fs + 22, 12); // log2(block size)
++            write_u16(&mut bytes, fs + 26, 1); // one uid/gid
++            write_u16(&mut bytes, fs + 28, 4); // major version
++            write_u16(&mut bytes, fs + 30, 0); // minor version
++            write_u64(&mut bytes, fs + 32, 0); // root inode in first block
++            write_u64(&mut bytes, fs + 40, SQUASHFS_SIZE as u64);
++            write_u64(&mut bytes, fs + 48, 224); // id table
++            write_u64(&mut bytes, fs + 56, u64::MAX); // no xattrs
++            write_u64(&mut bytes, fs + 64, 96); // inode table
++            write_u64(&mut bytes, fs + 72, 160); // directory table
++            write_u64(&mut bytes, fs + 80, u64::MAX); // no fragments
++            write_u64(&mut bytes, fs + 88, u64::MAX); // no export lookup table
++            write_u16(&mut bytes, fs + 96, 0x8020); // raw 32-byte inode block
++            write_u16(&mut bytes, fs + 98, 1); // root is a directory inode
++            write_u16(&mut bytes, fs + 100, 0x41ed); // directory permissions
++            write_u32(&mut bytes, fs + 110, 1); // root inode number
++            write_u32(&mut bytes, fs + 118, 2); // root link count
++            write_u16(&mut bytes, fs + 122, 34); // header + dot entries + 3
++            write_u32(&mut bytes, fs + 126, 1); // parent is root
++            write_u16(&mut bytes, fs + 160, 0x801f); // raw 31-byte directory block
++                                                     // SquashFS directory header followed by "." and ".." entries.
++            write_u32(&mut bytes, fs + 162, 1); // entry count minus one
++            write_u32(&mut bytes, fs + 170, 1); // directory inode number
++            write_u16(&mut bytes, fs + 174, 0); // "." inode offset
++            write_u16(&mut bytes, fs + 178, 1); // directory inode type
++            bytes[fs + 182] = b'.';
++            write_u16(&mut bytes, fs + 183, 0); // ".." inode offset
++            write_u16(&mut bytes, fs + 187, 1); // directory inode type
++            write_u16(&mut bytes, fs + 189, 1); // name length minus one
++            bytes[fs + 191..fs + 193].copy_from_slice(b"..");
++            write_u64(&mut bytes, fs + 224, 240); // bounded id index
++            write_u16(&mut bytes, fs + 240, 0x8008); // raw uid/gid id block
++        }
++        bytes
++    }
++
++    fn host_machine() -> u16 {
++        #[cfg(target_arch = "x86_64")]
++        {
++            return 62;
++        }
++        #[cfg(target_arch = "aarch64")]
++        {
++            return 183;
++        }
++        #[cfg(target_arch = "x86")]
++        {
++            return 3;
++        }
++        #[cfg(target_arch = "arm")]
++        {
++            return 40;
++        }
++        #[allow(unreachable_code)]
++        panic!("add an AppImage fixture for this target architecture");
++    }
++
++    fn temporary_directory(label: &str) -> PathBuf {
++        for attempt in 0..100 {
++            let path = std::env::temp_dir().join(format!(
++                "rosi-appimage-audit3-{}-{label}-{attempt}",
++                std::process::id()
++            ));
++            match fs::create_dir(&path) {
++                Ok(()) => {
++                    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
++                    return path;
++                }
++                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
++                Err(error) => panic!("could not create test directory: {error}"),
++            }
++        }
++        panic!("could not allocate unique test directory");
++    }
++
++    #[test]
++    fn rejects_empty_invalid_marker_truncated_and_wrong_architecture_payloads() {
++        let machine = host_machine();
++        let valid = appimage(2, machine, b'n');
++        assert!(super::validate_appimage_bytes(&valid).is_ok());
++        assert!(super::validate_appimage_bytes(&appimage(1, machine, b'1')).is_ok());
++
++        for invalid in [
++            Vec::new(),
++            b"ordinary data".to_vec(),
++            appimage(0, machine, b'0'),
++            appimage(2, u16::MAX, b'w'),
++            appimage(2, machine, b't')[..63].to_vec(),
++        ] {
++            assert!(super::validate_appimage_bytes(&invalid).is_err());
++        }
++    }
++
++    #[test]
++    fn rejects_nonloadable_or_unmapped_elf_entrypoints_and_segments() {
++        let machine = host_machine();
++        let mut invalid_entry = appimage(2, machine, b'e');
++        invalid_entry[24..32].fill(0);
++        assert!(super::validate_appimage_bytes(&invalid_entry).is_err());
++
++        let mut non_executable_segment = appimage(2, machine, b'x');
++        write_u32(&mut non_executable_segment, 68, 4); // PF_R only
++        assert!(super::validate_appimage_bytes(&non_executable_segment).is_err());
++
++        let mut out_of_bounds_segment = appimage(2, machine, b'o');
++        write_u64(&mut out_of_bounds_segment, 96, u64::MAX);
++        write_u64(&mut out_of_bounds_segment, 104, u64::MAX);
++        assert!(super::validate_appimage_bytes(&out_of_bounds_segment).is_err());
++
++        let mut no_load_segments = appimage(2, machine, b'p');
++        write_u32(&mut no_load_segments, 64, 0); // PT_NULL, not PT_LOAD
++        assert!(super::validate_appimage_bytes(&no_load_segments).is_err());
++
++        let mut filesz_exceeds_memsz = appimage(2, machine, b'f');
++        write_u64(&mut filesz_exceeds_memsz, 96, 2048);
++        write_u64(&mut filesz_exceeds_memsz, 104, 1024);
++        assert!(super::validate_appimage_bytes(&filesz_exceeds_memsz).is_err());
++
++        let mut unmapped_entry = appimage(2, machine, b'u');
++        write_u64(&mut unmapped_entry, 24, 0x500100);
++        assert!(super::validate_appimage_bytes(&unmapped_entry).is_err());
++    }
++
++    #[test]
++    fn rejects_missing_or_truncated_appimage_filesystems_but_keeps_type_one_and_two() {
++        let machine = host_machine();
++        assert!(super::validate_appimage_bytes(&appimage(2, machine, b'2')).is_ok());
++        assert!(super::validate_appimage_bytes(&appimage(1, machine, b'1')).is_ok());
++
++        let mut no_squashfs = appimage(2, machine, b'n');
++        no_squashfs.truncate(RUNTIME_SIZE);
++        assert!(super::validate_appimage_bytes(&no_squashfs).is_err());
++
++        let mut truncated_squashfs = appimage(2, machine, b't');
++        truncated_squashfs.truncate(RUNTIME_SIZE + 96);
++        assert!(super::validate_appimage_bytes(&truncated_squashfs).is_err());
++
++        let mut invalid_squashfs = appimage(2, machine, b'i');
++        write_u32(&mut invalid_squashfs, RUNTIME_SIZE + 40, 1024);
++        assert!(super::validate_appimage_bytes(&invalid_squashfs).is_err());
++
++        let mut invalid_compression = appimage(2, machine, b'c');
++        write_u16(&mut invalid_compression, RUNTIME_SIZE + 20, 0);
++        assert!(super::validate_appimage_bytes(&invalid_compression).is_err());
++
++        let mut invalid_tables = appimage(2, machine, b't');
++        write_u64(&mut invalid_tables, RUNTIME_SIZE + 64, u64::MAX);
++        assert!(super::validate_appimage_bytes(&invalid_tables).is_err());
++
++        let mut missing_iso = appimage(1, machine, b'm');
++        missing_iso[ISO_BLOCK_SIZE * 16 + 1..ISO_BLOCK_SIZE * 16 + 6].fill(0);
++        assert!(super::validate_appimage_bytes(&missing_iso).is_err());
++
++        let mut truncated_iso = appimage(1, machine, b't');
++        truncated_iso.truncate(ISO_BLOCK_SIZE * 18);
++        assert!(super::validate_appimage_bytes(&truncated_iso).is_err());
++
++        let mut oversized_iso_volume = appimage(1, machine, b'v');
++        write_both_endian_u32(
++            &mut oversized_iso_volume,
++            ISO_BLOCK_SIZE * 16 + 80,
++            u32::MAX,
++        );
++        assert!(super::validate_appimage_bytes(&oversized_iso_volume).is_err());
++    }
++
++    #[test]
++    fn validates_replacement_before_moving_live_image_and_keeps_old_image_after_success() {
++        let directory = temporary_directory("success");
++        let live = directory.join("ROSI.AppImage");
++        let old = appimage(2, host_machine(), b'o');
++        let new = appimage(2, host_machine(), b'n');
++        fs::write(&live, &old).unwrap();
++        fs::set_permissions(&live, fs::Permissions::from_mode(0o751)).unwrap();
++
++        assert!(super::install_appimage_at(&live, b"", &[directory.clone()]).is_err());
++        assert_eq!(fs::read(&live).unwrap(), old);
++
++        let backup = super::install_appimage_at(&live, &new, &[directory.clone()]).unwrap();
++        assert_eq!(fs::read(&live).unwrap(), new);
++        assert_eq!(fs::read(&backup).unwrap(), old);
++        assert_eq!(
++            fs::symlink_metadata(&live).unwrap().permissions().mode() & 0o777,
++            0o751
++        );
++        assert!(
++            backup.exists(),
++            "successful replacement must retain recovery copy"
++        );
++        assert!(
++            fs::symlink_metadata(&live).unwrap().file_type().is_file(),
++            "the live path must remain a regular file"
++        );
++        let live_metadata = fs::symlink_metadata(&live).unwrap();
++        assert!(live_metadata.ino() > 0);
++        fs::remove_dir_all(directory).unwrap();
++    }
++
++    #[test]
++    fn swap_failure_restores_live_image_and_failed_restore_keeps_reported_backup() {
++        let directory = temporary_directory("rollback");
++        let live = directory.join("ROSI.AppImage");
++        let stage = directory.join("next.AppImage");
++        let old = appimage(2, host_machine(), b'o');
++        let new = appimage(2, host_machine(), b'n');
++        fs::write(&live, &old).unwrap();
++        fs::set_permissions(&live, fs::Permissions::from_mode(0o755)).unwrap();
++        fs::write(&stage, &new).unwrap();
++        fs::set_permissions(&stage, fs::Permissions::from_mode(0o755)).unwrap();
++
++        let backup_directory = directory.join("work-restore");
++        fs::create_dir(&backup_directory).unwrap();
++        let mut renames = 0;
++        let error = super::replace_appimage_with_backup(
++            &live,
++            &stage,
++            &backup_directory,
++            |from: &Path, to: &Path| {
++                renames += 1;
++                if renames == 2 {
++                    return Err(std::io::Error::other("forced staged rename failure"));
++                }
++                fs::rename(from, to)
++            },
++        )
++        .unwrap_err();
++        assert!(error.to_string().contains("forced staged rename failure"));
++        assert_eq!(fs::read(&live).unwrap(), old);
++
++        let backup_directory = directory.join("work-retain");
++        fs::create_dir(&backup_directory).unwrap();
++        let mut renames = 0;
++        let error = super::replace_appimage_with_backup(
++            &live,
++            &stage,
++            &backup_directory,
++            |from: &Path, to: &Path| {
++                renames += 1;
++                if renames == 2 || renames == 3 {
++                    return Err(std::io::Error::other("forced swap and restore failure"));
++                }
++                fs::rename(from, to)
++            },
++        )
++        .unwrap_err();
++        assert!(error.to_string().contains("backup retained at "));
++        let backup = error
++            .to_string()
++            .split("backup retained at ")
++            .nth(1)
++            .expect("retained backup path is part of the failure")
++            .to_owned();
++        assert_eq!(fs::read(backup).unwrap(), old);
++        fs::remove_dir_all(directory).unwrap();
++    }
++}
++
++#[cfg(test)]
++pub(crate) mod test_fixtures {
++    pub(crate) fn valid_appimage(marker: u8, machine: u16, suffix: u8) -> Vec<u8> {
++        super::tests::appimage(marker, machine, suffix)
++    }
++}
+--- a/src/commands.rs
++++ b/src/commands.rs
+@@ -64,9 +64,7 @@
+     if let Some(target) = target {
+         builder = builder.target(target);
+     }
+-    if allow_downgrades.unwrap_or(false) {
+-        builder = builder.version_comparator(|current, update| update.version != current);
+-    }
++    let _ = allow_downgrades;
+ 
+     let updater = builder.build()?;
+     let update = updater.check().await?;
+--- a/src/error.rs
++++ b/src/error.rs
+@@ -76,6 +76,9 @@
+     DebInstallFailed,
+     #[error("Failed to install package")]
+     PackageInstallFailed,
++    /// Application state could not be flushed before beginning installation.
++    #[error("Could not prepare the application for update installation: {0}")]
++    BeforeExit(String),
+     #[error("invalid updater binary format")]
+     InvalidUpdaterFormat,
+     #[error(transparent)]
+--- a/src/install_safety.rs
++++ b/src/install_safety.rs
+@@ -0,0 +1,936 @@
++// Copyright 2019-2023 Tauri Programme within The Commons Conservancy
++// SPDX-License-Identifier: Apache-2.0
++// SPDX-License-Identifier: MIT
++
++//! Shared install-path and helper-binary checks used by the platform updaters.
++//! Keep this module free of extra crate dependencies so unit tests can run
++//! without elevation.
++
++#![allow(dead_code)]
++
++use std::path::{Component, Path, PathBuf};
++
++/// AppleScript used for privileged macOS bundle replacement.
++///
++/// Paths and identity are handler arguments, quoted before reaching the
++/// shell. Every candidate must have the expected bundle identifier,
++/// executable, and Resources directory. A backup is removed only after its
++/// identity has been verified and a complete replacement is live.
++pub const MACOS_PRIVILEGED_INSTALL_SCRIPT: &str = r#"
++on installUpdate(srcPath, newPath, backupPath, bundleIdentifier, executableName)
++  do shell script "NEW=" & quoted form of newPath & "; SRC=" & quoted form of srcPath & "; BAK=" & quoted form of backupPath & "; BID=" & quoted form of bundleIdentifier & "; EXE=" & quoted form of executableName & "; set -e; valid_bundle() { B=\"$1\"; /bin/test ! -L \"$B\" && /bin/test -d \"$B\" && /bin/test ! -L \"$B/Contents\" && /bin/test -d \"$B/Contents\" && /bin/test ! -L \"$B/Contents/Info.plist\" && /bin/test -f \"$B/Contents/Info.plist\" && /bin/test ! -L \"$B/Contents/Resources\" && /bin/test -d \"$B/Contents/Resources\" && /bin/test ! -L \"$B/Contents/MacOS\" && /bin/test -d \"$B/Contents/MacOS\" && /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \"$B/Contents/Info.plist\" 2>/dev/null | /usr/bin/grep -Fqx -- \"$BID\" && /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \"$B/Contents/Info.plist\" 2>/dev/null | /usr/bin/grep -Fqx -- \"$EXE\" && /bin/test ! -L \"$B/Contents/MacOS/$EXE\" && /bin/test -f \"$B/Contents/MacOS/$EXE\" && /bin/test -s \"$B/Contents/MacOS/$EXE\" && /bin/test -x \"$B/Contents/MacOS/$EXE\" && /bin/test ! -L \"$B/Contents/MacOS/rosi-yt-dlp\" && /bin/test -f \"$B/Contents/MacOS/rosi-yt-dlp\" && /bin/test -s \"$B/Contents/MacOS/rosi-yt-dlp\" && /bin/test -x \"$B/Contents/MacOS/rosi-yt-dlp\" && /bin/test ! -L \"$B/Contents/MacOS/rosi-ffmpeg\" && /bin/test -f \"$B/Contents/MacOS/rosi-ffmpeg\" && /bin/test -s \"$B/Contents/MacOS/rosi-ffmpeg\" && /bin/test -x \"$B/Contents/MacOS/rosi-ffmpeg\" && /bin/test ! -L \"$B/Contents/MacOS/rosi-ffprobe\" && /bin/test -f \"$B/Contents/MacOS/rosi-ffprobe\" && /bin/test -s \"$B/Contents/MacOS/rosi-ffprobe\" && /bin/test -x \"$B/Contents/MacOS/rosi-ffprobe\"; }; /bin/test -d \"$NEW/Contents\" || exit 1; valid_bundle \"$NEW\" || exit 1; if ! valid_bundle \"$SRC\"; then if valid_bundle \"$BAK\"; then if /bin/test -e \"$SRC\"; then /bin/rm -rf \"$SRC\"; fi; /bin/mv -f \"$BAK\" \"$SRC\" || exit 1; /bin/test -d \"$SRC/Contents\" || exit 1; else exit 1; fi; fi; if /bin/test -e \"$BAK\" && ! valid_bundle \"$BAK\"; then exit 1; fi; if /bin/test -e \"$BAK\"; then /bin/rm -rf \"$BAK\"; fi; /bin/mv -f \"$SRC\" \"$BAK\" || exit 1; valid_bundle \"$BAK\" || { /bin/mv -f \"$BAK\" \"$SRC\"; exit 1; }; if /bin/mv -f \"$NEW\" \"$SRC\" && valid_bundle \"$SRC\"; then if ! /bin/rm -rf \"$BAK\"; then :; fi; exit 0; fi; if /bin/test -e \"$SRC\"; then /bin/rm -rf \"$SRC\"; fi; /bin/mv -f \"$BAK\" \"$SRC\"; exit 1" with administrator privileges
++end installUpdate
++"#;
++
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct MacosBundleIdentity {
++    pub bundle_identifier: String,
++    pub executable: String,
++}
++
++/// Read the identity required to compare live, staged, and recovery bundles.
++pub fn macos_app_bundle_identity(path: &Path) -> Option<MacosBundleIdentity> {
++    let info = path.join("Contents/Info.plist");
++    let metadata = std::fs::symlink_metadata(&info).ok()?;
++    if !metadata.is_file() || metadata.file_type().is_symlink() {
++        return None;
++    }
++    let bundle_identifier = read_plist_string(&info, "CFBundleIdentifier")?;
++    let executable = read_plist_string(&info, "CFBundleExecutable")?;
++    if !safe_bundle_identifier(&bundle_identifier) || !safe_executable_name(&executable) {
++        return None;
++    }
++    Some(MacosBundleIdentity {
++        bundle_identifier,
++        executable,
++    })
++}
++
++fn safe_bundle_identifier(value: &str) -> bool {
++    !value.is_empty()
++        && value
++            .bytes()
++            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
++}
++
++fn safe_executable_name(value: &str) -> bool {
++    !value.is_empty()
++        && value != "."
++        && value != ".."
++        && !value.contains('/')
++        && !value.contains('\\')
++        && !value.chars().any(char::is_control)
++}
++
++fn xml_plist_string(contents: &str, key: &str) -> Option<String> {
++    let key = format!("<key>{key}</key>");
++    let after_key = contents.split_once(&key)?.1;
++    let start = after_key.find("<string>")? + "<string>".len();
++    let value = &after_key[start..];
++    let end = value.find("</string>")?;
++    Some(
++        value[..end]
++            .replace("&amp;", "&")
++            .replace("&lt;", "<")
++            .replace("&gt;", ">")
++            .replace("&quot;", "\"")
++            .replace("&apos;", "'"),
++    )
++}
++
++fn read_plist_string(path: &Path, key: &str) -> Option<String> {
++    if let Ok(contents) = std::fs::read_to_string(path) {
++        if let Some(value) = xml_plist_string(&contents, key) {
++            return Some(value);
++        }
++    }
++    #[cfg(target_os = "macos")]
++    {
++        let output = std::process::Command::new("/usr/libexec/PlistBuddy")
++            .arg("-c")
++            .arg(format!("Print :{key}"))
++            .arg(path)
++            .output()
++            .ok()?;
++        if !output.status.success() {
++            return None;
++        }
++        let value = String::from_utf8(output.stdout).ok()?.trim().to_string();
++        if value.is_empty() {
++            None
++        } else {
++            Some(value)
++        }
++    }
++    #[cfg(not(target_os = "macos"))]
++    {
++        None
++    }
++}
++
++/// Require a readable identity, an executable file, and the required
++/// resources tree. Symlinked top-level bundle components are not complete.
++pub fn macos_app_bundle_complete(path: &Path) -> bool {
++    let Some(identity) = macos_app_bundle_identity(path) else {
++        return false;
++    };
++    let Ok(bundle_metadata) = std::fs::symlink_metadata(path) else {
++        return false;
++    };
++    let Ok(contents_metadata) = std::fs::symlink_metadata(path.join("Contents")) else {
++        return false;
++    };
++    let Ok(resources_metadata) = std::fs::symlink_metadata(path.join("Contents/Resources")) else {
++        return false;
++    };
++    let macos_path = path.join("Contents/MacOS");
++    let Ok(macos_metadata) = std::fs::symlink_metadata(&macos_path) else {
++        return false;
++    };
++    let executable = macos_path.join(identity.executable);
++    if bundle_metadata.file_type().is_symlink()
++        || !bundle_metadata.is_dir()
++        || contents_metadata.file_type().is_symlink()
++        || !contents_metadata.is_dir()
++        || resources_metadata.file_type().is_symlink()
++        || !resources_metadata.is_dir()
++        || macos_metadata.file_type().is_symlink()
++        || !macos_metadata.is_dir()
++        || !macos_bundle_executable_complete(&executable)
++    {
++        return false;
++    }
++    ["rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"]
++        .iter()
++        .all(|name| macos_bundle_executable_complete(&macos_path.join(name)))
++}
++
++fn macos_bundle_executable_complete(path: &Path) -> bool {
++    let Ok(metadata) = std::fs::symlink_metadata(path) else {
++        return false;
++    };
++    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() == 0 {
++        return false;
++    }
++    #[cfg(unix)]
++    {
++        use std::os::unix::fs::PermissionsExt;
++        metadata.permissions().mode() & 0o111 != 0
++    }
++    #[cfg(not(unix))]
++    {
++        true
++    }
++}
++
++/// Session variables pkexec, zenity, and polkit agents need after `env_clear`.
++/// Never includes `PATH`.
++pub const LINUX_PRIVILEGED_ENV_ALLOWLIST: &[&str] = &[
++    "HOME",
++    "DISPLAY",
++    "WAYLAND_DISPLAY",
++    "XAUTHORITY",
++    "DBUS_SESSION_BUS_ADDRESS",
++    "XDG_RUNTIME_DIR",
++    "XDG_SESSION_TYPE",
++    "XDG_CURRENT_DESKTOP",
++];
++
++/// App- and install-scoped sibling backup, on the same volume as the live `.app`.
++pub fn macos_update_backup_path(extract_path: &Path) -> Option<PathBuf> {
++    let parent = extract_path.parent()?;
++    let app_name = extract_path
++        .file_name()
++        .and_then(|name| name.to_str())
++        .unwrap_or("app")
++        .chars()
++        .map(|character| {
++            if character.is_ascii_alphanumeric() || character == '-' {
++                character
++            } else {
++                '-'
++            }
++        })
++        .collect::<String>();
++    let hash = extract_path
++        .as_os_str()
++        .to_string_lossy()
++        .bytes()
++        .fold(0xcbf29ce484222325_u64, |hash, byte| {
++            (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
++        });
++    Some(parent.join(format!(".{app_name}.rosi-update-backup-{hash:016x}")))
++}
++
++/// Serialize all in-process macOS bundle swaps and their recovery steps.
++pub fn with_macos_update_install_lock<T>(operation: impl FnOnce() -> T) -> T {
++    static INSTALL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
++    let _guard = INSTALL_LOCK
++        .lock()
++        .unwrap_or_else(|poisoned| poisoned.into_inner());
++    operation()
++}
++
++/// ShellExecuteW returns a value `<= 32` on failure (Win32).
++pub fn shell_execute_launch_ok(result: isize) -> bool {
++    result > 32
++}
++
++/// True when `rename` failed because source and destination are on different devices.
++pub fn is_cross_device(err: &std::io::Error) -> bool {
++    match err.raw_os_error() {
++        // Unix EXDEV
++        Some(18) => true,
++        // Windows ERROR_NOT_SAME_DEVICE
++        Some(17) if cfg!(windows) => true,
++        _ => false,
++    }
++}
++
++/// Skip the archive's first path component (Tauri `.app.tar.gz` wrapper), then
++/// reject `Prefix` / `RootDir` / `ParentDir`. Remaining components must be
++/// relative and contained.
++pub fn confined_tar_member_relative(entry_path: &Path) -> Result<PathBuf, ConfinedPathError> {
++    let mut components = entry_path.components();
++    match components.next() {
++        Some(Component::Normal(_)) | Some(Component::CurDir) => {}
++        Some(Component::Prefix(_))
++        | Some(Component::RootDir)
++        | Some(Component::ParentDir)
++        | None => {
++            return Err(ConfinedPathError::Unconfined);
++        }
++    }
++
++    let mut relative = PathBuf::new();
++    for component in components {
++        match component {
++            Component::Normal(part) => relative.push(part),
++            Component::CurDir => {}
++            Component::Prefix(_) | Component::RootDir | Component::ParentDir => {
++                return Err(ConfinedPathError::Unconfined);
++            }
++        }
++    }
++    Ok(relative)
++}
++
++/// Create `dest`'s parent directories under `root` without following symlinks.
++pub fn create_confined_parent_dirs(root: &Path, dest: &Path) -> std::io::Result<()> {
++    let Some(parent) = dest.parent() else {
++        return Ok(());
++    };
++    if !path_is_inside(root, parent) {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::InvalidInput,
++            "parent path is not confined",
++        ));
++    }
++    if parent == root {
++        return Ok(());
++    }
++    let relative = parent.strip_prefix(root).map_err(|_| {
++        std::io::Error::new(
++            std::io::ErrorKind::InvalidInput,
++            "parent path is not confined",
++        )
++    })?;
++    let mut current = root.to_path_buf();
++    for component in relative.components() {
++        let std::path::Component::Normal(part) = component else {
++            return Err(std::io::Error::new(
++                std::io::ErrorKind::InvalidInput,
++                "parent path is not confined",
++            ));
++        };
++        current.push(part);
++        match std::fs::symlink_metadata(&current) {
++            Ok(meta) if meta.file_type().is_symlink() => {
++                return Err(std::io::Error::new(
++                    std::io::ErrorKind::InvalidInput,
++                    "refusing to create updater files through a symlink parent",
++                ));
++            }
++            Ok(meta) if meta.is_dir() => {}
++            Ok(_) => {
++                return Err(std::io::Error::new(
++                    std::io::ErrorKind::InvalidInput,
++                    "updater extract parent is not a directory",
++                ));
++            }
++            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
++                std::fs::create_dir(&current)?;
++            }
++            Err(err) => return Err(err),
++        }
++    }
++    Ok(())
++}
++
++/// Lexical containment: `candidate` must be `root` or a descendant without `..`.
++pub fn path_is_inside(root: &Path, candidate: &Path) -> bool {
++    if candidate == root {
++        return true;
++    }
++    let Ok(rest) = candidate.strip_prefix(root) else {
++        return false;
++    };
++    rest.components()
++        .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
++}
++
++/// Symlink targets must be relative and stay inside `root` when resolved from
++/// the symlink's parent directory.
++pub fn confined_symlink_target(root: &Path, link_parent: &Path, target: &Path) -> bool {
++    if target.as_os_str().is_empty() {
++        return false;
++    }
++    if !path_is_inside(root, link_parent) {
++        return false;
++    }
++
++    let mut resolved = link_parent.to_path_buf();
++    for component in target.components() {
++        match component {
++            Component::Normal(part) => resolved.push(part),
++            Component::CurDir => {}
++            Component::ParentDir => {
++                if resolved == root || !resolved.pop() {
++                    return false;
++                }
++            }
++            Component::Prefix(_) | Component::RootDir => return false,
++        }
++        if !path_is_inside(root, &resolved) {
++            return false;
++        }
++    }
++    path_is_inside(root, &resolved)
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum ConfinedPathError {
++    Unconfined,
++}
++
++impl std::fmt::Display for ConfinedPathError {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        match self {
++            ConfinedPathError::Unconfined => {
++                write!(f, "updater archive member path is not confined")
++            }
++        }
++    }
++}
++
++impl std::error::Error for ConfinedPathError {}
++
++/// Candidate absolute paths for a Linux helper. Never search `PATH`.
++pub fn trusted_system_helper_candidates(name: &str) -> [PathBuf; 2] {
++    [
++        PathBuf::from("/usr/bin").join(name),
++        PathBuf::from("/bin").join(name),
++    ]
++}
++
++pub fn helper_name_is_safe(name: &str) -> bool {
++    !name.is_empty()
++        && name != "."
++        && name != ".."
++        && !name.contains('/')
++        && !name.contains('\\')
++        && !name.contains('\0')
++}
++
++/// Root-owned regular file, not group/world-writable.
++pub fn unix_metadata_is_trusted_helper(uid: u32, mode: u32, is_regular_file: bool) -> bool {
++    is_regular_file && uid == 0 && (mode & 0o022) == 0
++}
++
++/// Trust check for the directory entry at a helper path before following it.
++///
++/// Regular files must be root-owned and not group/world-writable. Symlink
++/// inodes must be root-owned; their mode is ignored because Linux always
++/// reports 0777 on symlinks and never uses those bits (`man 7 symlink`).
++/// Rejecting 0777 would refuse `/usr/bin/sh` -> `dash` and any distro helper
++/// that is an alias.
++pub fn unix_directory_entry_is_trusted_helper(uid: u32, mode: u32, is_symlink: bool) -> bool {
++    if uid != 0 {
++        return false;
++    }
++    if is_symlink {
++        return true;
++    }
++    (mode & 0o022) == 0
++}
++
++#[cfg(unix)]
++pub fn unix_helper_is_trusted(path: &Path) -> bool {
++    use std::os::unix::fs::MetadataExt;
++
++    let Ok(link_meta) = std::fs::symlink_metadata(path) else {
++        return false;
++    };
++    // The directory entry must be root-owned. A user-owned /usr/bin symlink
++    // cannot be swapped in. Writable-bit checks apply to regular files only.
++    if !unix_directory_entry_is_trusted_helper(
++        link_meta.uid(),
++        link_meta.mode(),
++        link_meta.file_type().is_symlink(),
++    ) {
++        return false;
++    }
++    let Ok(meta) = std::fs::metadata(path) else {
++        return false;
++    };
++    unix_metadata_is_trusted_helper(meta.uid(), meta.mode(), meta.is_file())
++}
++
++#[cfg(unix)]
++pub fn resolve_trusted_system_helper(name: &str) -> std::io::Result<PathBuf> {
++    if !helper_name_is_safe(name) {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::InvalidInput,
++            "invalid helper name",
++        ));
++    }
++    for candidate in trusted_system_helper_candidates(name) {
++        if unix_helper_is_trusted(&candidate) {
++            return Ok(candidate);
++        }
++    }
++    Err(std::io::Error::new(
++        std::io::ErrorKind::NotFound,
++        format!("trusted helper {name} not found"),
++    ))
++}
++
++/// Recursively copy a directory tree onto `dst` (for EXDEV fallback).
++pub fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
++    std::fs::create_dir_all(dst)?;
++    for entry in std::fs::read_dir(src)? {
++        let entry = entry?;
++        let from = entry.path();
++        let to = dst.join(entry.file_name());
++        let file_type = entry.file_type()?;
++        if file_type.is_dir() {
++            copy_dir_all(&from, &to)?;
++        } else if file_type.is_symlink() {
++            let target = std::fs::read_link(&from)?;
++            #[cfg(unix)]
++            std::os::unix::fs::symlink(target, &to)?;
++            #[cfg(not(unix))]
++            {
++                let _ = target;
++                return Err(std::io::Error::new(
++                    std::io::ErrorKind::Unsupported,
++                    "symlink copy is not supported on this platform",
++                ));
++            }
++        } else {
++            std::fs::copy(&from, &to)?;
++        }
++    }
++    Ok(())
++}
++
++/// Move a directory onto an absent `dst`. On EXDEV, copy into a unique sibling
++/// staging directory, then rename. Existing staging data is never removed.
++pub fn move_dir_replacing(src: &Path, dst: &Path) -> std::io::Result<()> {
++    if dst.exists() {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::AlreadyExists,
++            "updater destination must be absent before replacement",
++        ));
++    }
++    match std::fs::rename(src, dst) {
++        Ok(()) => Ok(()),
++        Err(err) if is_cross_device(&err) => {
++            if let Some(parent) = dst.parent() {
++                let staging = tempfile::Builder::new()
++                    .prefix(".rosi-update-staging-")
++                    .tempdir_in(parent)?;
++                copy_dir_all(src, staging.path())?;
++                std::fs::rename(staging.path(), dst)?;
++                let _ = std::fs::remove_dir_all(src);
++                Ok(())
++            } else {
++                Err(err)
++            }
++        }
++        Err(err) => Err(err),
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::path::Path;
++
++    #[cfg(unix)]
++    fn write_round2_complete_app_bundle(path: &Path) {
++        use std::os::unix::fs::PermissionsExt;
++
++        let macos = path.join("Contents/MacOS");
++        std::fs::create_dir_all(path.join("Contents/Resources")).unwrap();
++        std::fs::create_dir_all(&macos).unwrap();
++        std::fs::write(
++            path.join("Contents/Info.plist"),
++            "<plist><dict><key>CFBundleIdentifier</key><string>run.rosie.rosi</string><key>CFBundleExecutable</key><string>rosi</string></dict></plist>",
++        )
++        .unwrap();
++        for name in ["rosi", "rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"] {
++            let binary = macos.join(name);
++            std::fs::write(&binary, b"round2 sidecar fixture").unwrap();
++            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
++        }
++    }
++
++    #[cfg(unix)]
++    #[test]
++    fn round2_macos_bundle_requires_all_three_executable_sidecars() {
++        use std::os::unix::fs::PermissionsExt;
++
++        let temp = tempfile::tempdir().unwrap();
++        let bundle = temp.path().join("ROSI.app");
++        write_round2_complete_app_bundle(&bundle);
++        assert!(macos_app_bundle_complete(&bundle));
++
++        for name in ["rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"] {
++            let sidecar = bundle.join("Contents/MacOS").join(name);
++            std::fs::remove_file(&sidecar).unwrap();
++            assert!(
++                !macos_app_bundle_complete(&bundle),
++                "bundle missing {name} must be incomplete"
++            );
++            std::fs::write(&sidecar, b"round2 sidecar fixture").unwrap();
++            std::fs::set_permissions(&sidecar, std::fs::Permissions::from_mode(0o755)).unwrap();
++        }
++
++        let ffprobe = bundle.join("Contents/MacOS/rosi-ffprobe");
++        std::fs::set_permissions(&ffprobe, std::fs::Permissions::from_mode(0o644)).unwrap();
++        assert!(
++            !macos_app_bundle_complete(&bundle),
++            "non-executable sidecar must be incomplete"
++        );
++    }
++
++    #[test]
++    fn round2_privileged_validator_checks_all_critical_sidecars() {
++        for name in ["rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"] {
++            for condition in ["! -L", "-f", "-s", "-x"] {
++                assert!(
++                    MACOS_PRIVILEGED_INSTALL_SCRIPT.contains(&format!(
++                        "/bin/test {condition} \\\"$B/Contents/MacOS/{name}\\\""
++                    )),
++                    "privileged validator must require {condition} for {name}"
++                );
++            }
++        }
++    }
++
++    #[test]
++    fn macos_script_quotes_handler_args_and_restores_backup() {
++        assert!(MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("quoted form of"));
++        assert!(MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("backupPath"));
++        assert!(MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/bin/test -d \\\"$NEW/Contents\\\""));
++        assert!(MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/bin/test -d \\\"$SRC/Contents\\\""));
++        for component in [
++            "$B",
++            "$B/Contents",
++            "$B/Contents/Info.plist",
++            "$B/Contents/Resources",
++            "$B/Contents/MacOS",
++            "$B/Contents/MacOS/$EXE",
++        ] {
++            assert!(
++                MACOS_PRIVILEGED_INSTALL_SCRIPT
++                    .contains(&format!("/bin/test ! -L \\\"{component}\\\"")),
++                "privileged validation must reject symlinked bundle component {component}"
++            );
++        }
++        assert!(
++            MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/bin/test -s \\\"$B/Contents/MacOS/$EXE\\\"")
++        );
++        assert!(MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/bin/mv -f \\\"$BAK\\\" \\\"$SRC\\\""));
++        assert!(
++            MACOS_PRIVILEGED_INSTALL_SCRIPT
++                .contains("/bin/rm -rf \\\"$SRC\\\"; fi; /bin/mv -f \\\"$BAK\\\" \\\"$SRC\\\""),
++            "failed swap must remove the incomplete new tree before restoring the backup"
++        );
++        let swap_at = MACOS_PRIVILEGED_INSTALL_SCRIPT
++            .find("/bin/mv -f \\\"$SRC\\\" \\\"$BAK\\\"")
++            .expect("live bundle must be renamed to the sibling backup first");
++        let stale_backup_rm = MACOS_PRIVILEGED_INSTALL_SCRIPT
++            .find(concat!(
++                "if /bin/test -e \\\"$BAK\\\"; then /bin/rm -rf \\\"$BAK\\\"; fi; ",
++                "/bin/mv -f \\\"$SRC\\\" \\\"$BAK\\\""
++            ))
++            .expect(
++                "stale backup may be removed only after live Contents exists and immediately before the swap",
++            );
++        assert!(
++            stale_backup_rm < swap_at,
++            "must not delete the sibling backup before the live bundle is moved"
++        );
++        assert!(
++            !MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("rm -rf \" & quoted form of srcPath"),
++            "must never rm -rf the live bundle path via AppleScript concatenation"
++        );
++        assert!(
++            !MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("Zinnia.app")
++                && !MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/Applications"),
++            "script template must not embed filesystem paths"
++        );
++        let malicious = "/Applications/Don't '; touch /tmp/pwned; '.app";
++        assert!(!MACOS_PRIVILEGED_INSTALL_SCRIPT.contains(malicious));
++    }
++
++    #[test]
++    fn backup_path_is_scoped_to_the_app_and_installation() {
++        let first_app = Path::new("/Applications/ROSI.app");
++        let other_app = Path::new("/Applications/Helper.app");
++        let second_install = Path::new("/Volumes/Applications/ROSI.app");
++        let first_backup = macos_update_backup_path(first_app).unwrap();
++
++        assert_eq!(first_backup.parent(), first_app.parent());
++        assert_ne!(first_backup, macos_update_backup_path(other_app).unwrap());
++        assert_ne!(
++            first_backup,
++            macos_update_backup_path(second_install).unwrap()
++        );
++        assert!(first_backup
++            .file_name()
++            .unwrap()
++            .to_string_lossy()
++            .contains("ROSI"));
++    }
++
++    struct TestDirectory(PathBuf);
++
++    fn super_test_id() -> String {
++        let nanos = std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .unwrap_or_default()
++            .as_nanos();
++        format!("{}-{nanos}", std::process::id())
++    }
++
++    impl TestDirectory {
++        fn new() -> Self {
++            let path = std::env::temp_dir()
++                .join(format!("tauri-updater-install-safety-{}", super_test_id()));
++            std::fs::create_dir(&path).expect("create isolated updater directory");
++            Self(path)
++        }
++    }
++
++    impl Drop for TestDirectory {
++        fn drop(&mut self) {
++            let _ = std::fs::remove_dir_all(&self.0);
++        }
++    }
++
++    fn write_test_bundle(path: &Path, bundle_id: &str, executable: &str) {
++        let contents = path.join("Contents");
++        let macos = contents.join("MacOS");
++        std::fs::create_dir_all(&macos).expect("create bundle executable directory");
++        std::fs::create_dir_all(contents.join("Resources")).expect("create bundle resources");
++        std::fs::write(
++            contents.join("Info.plist"),
++            format!(
++                "<plist><dict><key>CFBundleIdentifier</key><string>{bundle_id}</string><key>CFBundleExecutable</key><string>{executable}</string></dict></plist>"
++            ),
++        )
++        .expect("write bundle identity");
++        let executable_path = macos.join(executable);
++        std::fs::write(&executable_path, b"test executable").expect("write bundle executable");
++        #[cfg(unix)]
++        {
++            use std::os::unix::fs::PermissionsExt;
++            std::fs::set_permissions(&executable_path, std::fs::Permissions::from_mode(0o755))
++                .expect("mark bundle executable");
++        }
++        for name in ["rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"] {
++            let sidecar = macos.join(name);
++            std::fs::write(&sidecar, b"test sidecar").expect("write required bundle sidecar");
++            #[cfg(unix)]
++            {
++                use std::os::unix::fs::PermissionsExt;
++                std::fs::set_permissions(&sidecar, std::fs::Permissions::from_mode(0o755))
++                    .expect("mark required bundle sidecar executable");
++            }
++        }
++    }
++
++    #[test]
++    fn complete_bundle_requires_identity_executable_and_resources() {
++        let directory = TestDirectory::new();
++        let complete = directory.0.join("ROSI.app");
++        write_test_bundle(&complete, "run.rosie.rosi", "ROSI");
++        assert!(macos_app_bundle_complete(&complete));
++        assert_eq!(
++            macos_app_bundle_identity(&complete),
++            Some(MacosBundleIdentity {
++                bundle_identifier: "run.rosie.rosi".into(),
++                executable: "ROSI".into(),
++            })
++        );
++
++        let partial = directory.0.join("Partial.app");
++        std::fs::create_dir_all(partial.join("Contents")).expect("create partial Contents");
++        assert!(!macos_app_bundle_complete(&partial));
++
++        let missing_executable = directory.0.join("MissingExecutable.app");
++        write_test_bundle(&missing_executable, "run.rosie.rosi", "ROSI");
++        std::fs::remove_file(missing_executable.join("Contents/MacOS/ROSI"))
++            .expect("remove expected executable");
++        assert!(!macos_app_bundle_complete(&missing_executable));
++
++        let empty_executable = directory.0.join("EmptyExecutable.app");
++        write_test_bundle(&empty_executable, "run.rosie.rosi", "ROSI");
++        std::fs::write(empty_executable.join("Contents/MacOS/ROSI"), b"")
++            .expect("truncate expected executable");
++        assert!(!macos_app_bundle_complete(&empty_executable));
++
++        #[cfg(unix)]
++        {
++            let symlinked_macos = directory.0.join("SymlinkedMacos.app");
++            write_test_bundle(&symlinked_macos, "run.rosie.rosi", "ROSI");
++            let external_macos = directory.0.join("external-macos");
++            std::fs::create_dir(&external_macos).expect("create external MacOS directory");
++            std::fs::copy(
++                symlinked_macos.join("Contents/MacOS/ROSI"),
++                external_macos.join("ROSI"),
++            )
++            .expect("copy external executable");
++            std::fs::remove_dir_all(symlinked_macos.join("Contents/MacOS"))
++                .expect("remove original MacOS directory");
++            std::os::unix::fs::symlink(&external_macos, symlinked_macos.join("Contents/MacOS"))
++                .expect("replace MacOS directory with symlink");
++            assert!(!macos_app_bundle_complete(&symlinked_macos));
++        }
++
++        let different_identity = directory.0.join("Other.app");
++        write_test_bundle(&different_identity, "run.example.other", "Other");
++        assert_ne!(
++            macos_app_bundle_identity(&complete),
++            macos_app_bundle_identity(&different_identity)
++        );
++    }
++
++    #[test]
++    fn install_lock_serializes_bundle_replacement_work() {
++        let active = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
++        let maximum = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
++        let first_active = std::sync::Arc::clone(&active);
++        let first_maximum = std::sync::Arc::clone(&maximum);
++        let first = std::thread::spawn(move || {
++            with_macos_update_install_lock(|| {
++                let now = first_active.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
++                first_maximum.fetch_max(now, std::sync::atomic::Ordering::SeqCst);
++                std::thread::sleep(std::time::Duration::from_millis(30));
++                first_active.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
++            });
++        });
++        let second_active = std::sync::Arc::clone(&active);
++        let second_maximum = std::sync::Arc::clone(&maximum);
++        let second = std::thread::spawn(move || {
++            with_macos_update_install_lock(|| {
++                let now = second_active.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
++                second_maximum.fetch_max(now, std::sync::atomic::Ordering::SeqCst);
++                std::thread::sleep(std::time::Duration::from_millis(30));
++                second_active.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
++            });
++        });
++        first.join().expect("first install operation completes");
++        second.join().expect("second install operation completes");
++        assert_eq!(maximum.load(std::sync::atomic::Ordering::SeqCst), 1);
++    }
++
++    #[test]
++    fn shell_execute_rejects_win32_error_codes() {
++        assert!(!shell_execute_launch_ok(0));
++        assert!(!shell_execute_launch_ok(2));
++        assert!(!shell_execute_launch_ok(32));
++        assert!(shell_execute_launch_ok(33));
++        assert!(shell_execute_launch_ok(42));
++    }
++
++    #[test]
++    fn tar_paths_reject_parent_root_and_prefix() {
++        assert_eq!(
++            confined_tar_member_relative(Path::new("Zinnia.app/Contents/MacOS/zinnia")).unwrap(),
++            PathBuf::from("Contents/MacOS/zinnia")
++        );
++        assert!(confined_tar_member_relative(Path::new("Zinnia.app"))
++            .unwrap()
++            .as_os_str()
++            .is_empty());
++        assert!(confined_tar_member_relative(Path::new("Zinnia.app/../etc/passwd")).is_err());
++        assert!(confined_tar_member_relative(Path::new("/etc/passwd")).is_err());
++        assert!(confined_tar_member_relative(Path::new("Zinnia.app/Contents/../../etc")).is_err());
++        assert!(confined_tar_member_relative(Path::new("..")).is_err());
++    }
++
++    #[test]
++    fn symlink_targets_must_stay_inside_extract_root() {
++        let root = Path::new("/tmp/extract");
++        let parent = Path::new("/tmp/extract/Contents/MacOS");
++        assert!(confined_symlink_target(
++            root,
++            parent,
++            Path::new("../Resources/icon.icns")
++        ));
++        assert!(!confined_symlink_target(
++            root,
++            parent,
++            Path::new("/etc/passwd")
++        ));
++        assert!(!confined_symlink_target(
++            root,
++            parent,
++            Path::new("../../../../etc/passwd")
++        ));
++        assert!(!confined_symlink_target(root, parent, Path::new("")));
++    }
++
++    #[test]
++    fn trusted_helpers_never_search_path() {
++        let old = std::env::var("PATH").ok();
++        std::env::set_var("PATH", "/tmp/hostile-updater-path:/opt/evil/bin");
++        let candidates = trusted_system_helper_candidates("pkexec");
++        assert_eq!(candidates[0], PathBuf::from("/usr/bin/pkexec"));
++        assert_eq!(candidates[1], PathBuf::from("/bin/pkexec"));
++        assert!(helper_name_is_safe("dpkg"));
++        assert!(helper_name_is_safe("rpm"));
++        assert!(helper_name_is_safe("sudo"));
++        assert!(!helper_name_is_safe("../usr/bin/pkexec"));
++        assert!(!helper_name_is_safe("/usr/bin/pkexec"));
++        assert!(!helper_name_is_safe("pkexec/../../bin/sh"));
++        #[cfg(unix)]
++        {
++            let resolved = resolve_trusted_system_helper("sh").expect("sh should exist");
++            assert!(
++                resolved == PathBuf::from("/bin/sh") || resolved == PathBuf::from("/usr/bin/sh"),
++                "hostile PATH must not change trusted helper resolution, got {resolved:?}"
++            );
++        }
++        match old {
++            Some(value) => std::env::set_var("PATH", value),
++            None => std::env::remove_var("PATH"),
++        }
++    }
++
++    #[test]
++    fn linux_privileged_env_keep_session_display_and_dbus() {
++        assert!(LINUX_PRIVILEGED_ENV_ALLOWLIST.contains(&"DISPLAY"));
++        assert!(LINUX_PRIVILEGED_ENV_ALLOWLIST.contains(&"WAYLAND_DISPLAY"));
++        assert!(LINUX_PRIVILEGED_ENV_ALLOWLIST.contains(&"DBUS_SESSION_BUS_ADDRESS"));
++        assert!(LINUX_PRIVILEGED_ENV_ALLOWLIST.contains(&"XDG_RUNTIME_DIR"));
++        assert!(!LINUX_PRIVILEGED_ENV_ALLOWLIST
++            .iter()
++            .any(|key| *key == "PATH"));
++    }
++
++    #[cfg(unix)]
++    #[test]
++    fn confined_parent_dirs_refuse_symlink_parents() {
++        let root =
++            std::env::temp_dir().join(format!("zinnia-updater-confine-{}", std::process::id()));
++        let _ = std::fs::remove_dir_all(&root);
++        std::fs::create_dir_all(&root).unwrap();
++        let outside =
++            std::env::temp_dir().join(format!("zinnia-updater-outside-{}", std::process::id()));
++        std::fs::create_dir_all(&outside).unwrap();
++        let link = root.join("link");
++        std::os::unix::fs::symlink(&outside, &link).unwrap();
++        let dest = link.join("evil");
++        let err = create_confined_parent_dirs(&root, &dest).unwrap_err();
++        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
++        let _ = std::fs::remove_dir_all(&root);
++        let _ = std::fs::remove_dir_all(&outside);
++    }
++
++    #[test]
++    fn helper_mode_rejects_group_or_world_writable_and_non_root() {
++        assert!(unix_metadata_is_trusted_helper(0, 0o755, true));
++        assert!(unix_metadata_is_trusted_helper(0, 0o750, true));
++        assert!(!unix_metadata_is_trusted_helper(0, 0o775, true));
++        assert!(!unix_metadata_is_trusted_helper(0, 0o757, true));
++        assert!(!unix_metadata_is_trusted_helper(501, 0o755, true));
++        assert!(!unix_metadata_is_trusted_helper(0, 0o755, false));
++        // Linux symlink inodes are always 0777; a root-owned link must still
++        // be a valid helper directory entry.
++        assert!(unix_directory_entry_is_trusted_helper(0, 0o777, true));
++        assert!(unix_directory_entry_is_trusted_helper(0, 0o755, true));
++        assert!(!unix_directory_entry_is_trusted_helper(501, 0o777, true));
++        assert!(!unix_directory_entry_is_trusted_helper(0, 0o777, false));
++        assert!(!unix_directory_entry_is_trusted_helper(0, 0o775, false));
++    }
++
++    #[cfg(unix)]
++    #[test]
++    fn resolve_sh_from_system_roots_without_elevation() {
++        let resolved =
++            resolve_trusted_system_helper("sh").expect("sh should exist as a root helper");
++        assert!(
++            resolved == PathBuf::from("/bin/sh") || resolved == PathBuf::from("/usr/bin/sh"),
++            "unexpected sh path {resolved:?}"
++        );
++        assert!(unix_helper_is_trusted(&resolved));
++        let hostile = std::env::temp_dir().join("zinnia-hostile-pkexec");
++        let _ = std::fs::write(&hostile, b"#!/bin/sh\n");
++        assert!(!unix_helper_is_trusted(&hostile));
++        let _ = std::fs::remove_file(&hostile);
++        let hostile_link = std::env::temp_dir().join("zinnia-hostile-sh-link");
++        let _ = std::fs::remove_file(&hostile_link);
++        std::os::unix::fs::symlink(&resolved, &hostile_link).unwrap();
++        assert!(
++            !unix_helper_is_trusted(&hostile_link),
++            "a user-owned symlink to a trusted helper must not be trusted"
++        );
++        let _ = std::fs::remove_file(&hostile_link);
++        assert!(resolve_trusted_system_helper("definitely-not-a-zinnia-helper").is_err());
++    }
++}
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -23,6 +23,7 @@
+ mod commands;
+ mod config;
+ mod error;
++mod install_safety;
+ mod updater;
+ 
+ pub use config::Config;
+@@ -75,6 +76,7 @@
+             target,
+             version_comparator,
+             headers,
++            before_exit,
+         } = self.state::<UpdaterState>().inner();
+ 
+         let mut builder = UpdaterBuilder::new(app, config.clone()).headers(headers.clone());
+@@ -105,7 +107,16 @@
+         }
+ 
+         let app_handle = app.app_handle().clone();
++        let before_exit = before_exit.clone();
+         builder = builder.on_before_exit(move || {
++            if let Some(before_exit) = before_exit.as_ref() {
++                before_exit()?;
++            }
++            Ok(())
++        });
++        builder = builder.on_windows_installer_launched(move || {
++            // Windows exits directly after ShellExecuteW starts the installer.
++            // The normal restart path owns Tauri cleanup on other platforms.
+             app_handle.cleanup_before_exit();
+         });
+ 
+@@ -117,11 +128,14 @@
+     }
+ }
+ 
++type AppBeforeExit = Arc<dyn Fn() -> std::result::Result<(), String> + Send + Sync + 'static>;
++
+ struct UpdaterState {
+     target: Option<String>,
+     config: Config,
+     version_comparator: Option<VersionComparator>,
+     headers: HeaderMap,
++    before_exit: Option<AppBeforeExit>,
+ }
+ 
+ #[derive(Default)]
+@@ -131,6 +145,7 @@
+     installer_args: Vec<OsString>,
+     headers: HeaderMap,
+     default_version_comparator: Option<VersionComparator>,
++    before_exit: Option<AppBeforeExit>,
+ }
+ 
+ impl Builder {
+@@ -206,7 +221,18 @@
+         self
+     }
+ 
++    /// Fallible app preparation to run before an update is installed.
++    /// Returning an error aborts installation and leaves the update resource available.
++    pub fn on_before_exit<F: Fn() -> std::result::Result<(), String> + Send + Sync + 'static>(
++        mut self,
++        f: F,
++    ) -> Self {
++        self.before_exit.replace(Arc::new(f));
++        self
++    }
++
+     pub fn build<R: Runtime>(self) -> TauriPlugin<R, Config> {
++        let before_exit = self.before_exit;
+         let pubkey = self.pubkey;
+         let target = self.target;
+         let version_comparator = self.default_version_comparator;
+@@ -226,6 +252,7 @@
+                     config,
+                     version_comparator,
+                     headers,
++                    before_exit,
+                 });
+                 Ok(())
+             })
+--- a/src/updater.rs
++++ b/src/updater.rs
+@@ -41,6 +41,31 @@
+     Config,
+ };
+ 
++#[cfg(any(
++    target_os = "linux",
++    target_os = "dragonfly",
++    target_os = "freebsd",
++    target_os = "netbsd",
++    target_os = "openbsd",
++    target_os = "macos"
++))]
++#[path = "appimage_install.rs"]
++mod appimage_install;
++
++#[cfg(all(
++    feature = "zip",
++    any(
++        target_os = "linux",
++        target_os = "dragonfly",
++        target_os = "freebsd",
++        target_os = "netbsd",
++        target_os = "openbsd",
++        target_os = "macos"
++    )
++))]
++#[path = "appimage_archive.rs"]
++mod appimage_archive;
++
+ const UPDATER_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
+ 
+ #[derive(Copy, Clone)]
+@@ -126,9 +151,79 @@
+     }
+ }
+ 
+-pub type OnBeforeExit = Arc<dyn Fn() + Send + Sync + 'static>;
++pub type OnBeforeExit = Arc<dyn Fn() -> std::result::Result<(), String> + Send + Sync + 'static>;
++type OnWindowsInstallerLaunched = Arc<dyn Fn() + Send + Sync + 'static>;
+ pub type OnBeforeRequest = Arc<dyn Fn(ClientBuilder) -> ClientBuilder + Send + Sync + 'static>;
+ pub type VersionComparator = Arc<dyn Fn(Version, RemoteRelease) -> bool + Send + Sync>;
++fn run_preinstall_flush(
++    hook: Option<&OnBeforeExit>,
++    install: impl FnOnce() -> Result<()>,
++) -> Result<()> {
++    if let Some(hook) = hook {
++        hook().map_err(Error::BeforeExit)?;
++    }
++    install()
++}
++
++#[cfg(any(windows, test))]
++fn finish_windows_installer_launch(
++    shell_result: isize,
++    cleanup: impl FnOnce(),
++    exit: impl FnOnce(),
++) -> Result<()> {
++    if !crate::install_safety::shell_execute_launch_ok(shell_result) {
++        return Err(Error::Io(std::io::Error::other(format!(
++            "failed to launch updater installer (ShellExecuteW={shell_result})"
++        ))));
++    }
++    cleanup();
++    exit();
++    Ok(())
++}
++
++const MAX_UPDATE_PACKAGE_BYTES: u64 = 512 * 1024 * 1024;
++
++fn validate_download_content_length(content_length: Option<u64>, limit: u64) -> Result<()> {
++    if content_length.is_some_and(|length| length > limit) {
++        return Err(Error::Network(format!(
++            "update package exceeds the {} byte download limit",
++            limit
++        )));
++    }
++    Ok(())
++}
++
++fn append_download_chunk(
++    buffer: &mut Vec<u8>,
++    chunk: &[u8],
++    content_length: Option<u64>,
++    limit: u64,
++) -> Result<()> {
++    validate_download_content_length(content_length, limit)?;
++    let current = u64::try_from(buffer.len()).map_err(|_| {
++        Error::Network("update package size exceeds the supported limit".to_string())
++    })?;
++    let chunk_size = u64::try_from(chunk.len()).map_err(|_| {
++        Error::Network("update package size exceeds the supported limit".to_string())
++    })?;
++    let next = current.checked_add(chunk_size).ok_or_else(|| {
++        Error::Network("update package size exceeds the supported limit".to_string())
++    })?;
++    if next > limit {
++        return Err(Error::Network(format!(
++            "update package exceeds the {} byte download limit",
++            limit
++        )));
++    }
++    if content_length.is_some_and(|length| next > length) {
++        return Err(Error::Network(
++            "update response exceeded its Content-Length".to_string(),
++        ));
++    }
++    buffer.extend_from_slice(chunk);
++    Ok(())
++}
++
+ type MainThreadClosure = Box<dyn FnOnce() + Send + Sync + 'static>;
+ type RunOnMainThread =
+     Box<dyn Fn(MainThreadClosure) -> std::result::Result<(), tauri::Error> + Send + Sync + 'static>;
+@@ -137,6 +232,7 @@
+     #[allow(dead_code)]
+     run_on_main_thread: RunOnMainThread,
+     app_name: String,
++    bundle_identifier: String,
+     current_version: Version,
+     config: Config,
+     pub(crate) version_comparator: Option<VersionComparator>,
+@@ -150,6 +246,7 @@
+     installer_args: Vec<OsString>,
+     current_exe_args: Vec<OsString>,
+     on_before_exit: Option<OnBeforeExit>,
++    on_windows_installer_launched: Option<OnWindowsInstallerLaunched>,
+     configure_client: Option<OnBeforeRequest>,
+ }
+ 
+@@ -166,6 +263,7 @@
+                 .unwrap_or_default(),
+             current_exe_args: Vec::new(),
+             app_name: app.package_info().name.clone(),
++            bundle_identifier: app.config().identifier.clone(),
+             current_version: app.package_info().version.clone(),
+             config,
+             version_comparator: None,
+@@ -177,6 +275,7 @@
+             proxy: None,
+             no_proxy: false,
+             on_before_exit: None,
++            on_windows_installer_launched: None,
+             configure_client: None,
+         }
+     }
+@@ -285,12 +384,24 @@
+         self
+     }
+ 
+-    /// Function to run before we run the installer and exit the app through `std::process::exit(0)` on Windows
+-    pub fn on_before_exit<F: Fn() + Send + Sync + 'static>(mut self, f: F) -> Self {
++    /// Fallible preparation to run before installing an update. Returning an
++    /// error aborts installation and keeps the downloaded update retryable.
++    pub fn on_before_exit<F: Fn() -> std::result::Result<(), String> + Send + Sync + 'static>(
++        mut self,
++        f: F,
++    ) -> Self {
+         self.on_before_exit.replace(Arc::new(f));
+         self
+     }
+ 
++    pub(crate) fn on_windows_installer_launched<F: Fn() + Send + Sync + 'static>(
++        mut self,
++        f: F,
++    ) -> Self {
++        self.on_windows_installer_launched = Some(Arc::new(f));
++        self
++    }
++
+     /// Allows you to modify the `reqwest` client builder before the HTTP request is sent.
+     ///
+     /// Note that `reqwest` crate may be updated in minor releases of tauri-plugin-updater.
+@@ -315,6 +426,10 @@
+         let arch = updater_arch().ok_or(Error::UnsupportedArch)?;
+ 
+         let executable_path = self.executable_path.clone().unwrap_or(current_exe()?);
++        let executable_name = executable_path
++            .file_name()
++            .and_then(|name| name.to_str())
++            .map(str::to_owned);
+ 
+         // Get the extract_path from the provided executable_path
+         let extract_path = if cfg!(target_os = "linux") {
+@@ -327,6 +442,8 @@
+             run_on_main_thread: Arc::new(self.run_on_main_thread),
+             config: self.config,
+             app_name: self.app_name,
++            bundle_identifier: self.bundle_identifier,
++            executable_name,
+             current_version: self.current_version,
+             version_comparator: self.version_comparator,
+             timeout: self.timeout,
+@@ -340,6 +457,7 @@
+             headers: self.headers,
+             extract_path,
+             on_before_exit: self.on_before_exit,
++            on_windows_installer_launched: self.on_windows_installer_launched,
+             configure_client: self.configure_client,
+         })
+     }
+@@ -362,6 +480,8 @@
+     run_on_main_thread: Arc<RunOnMainThread>,
+     config: Config,
+     app_name: String,
++    bundle_identifier: String,
++    executable_name: Option<String>,
+     current_version: Version,
+     version_comparator: Option<VersionComparator>,
+     timeout: Option<Duration>,
+@@ -375,6 +495,7 @@
+     headers: HeaderMap,
+     extract_path: PathBuf,
+     on_before_exit: Option<OnBeforeExit>,
++    on_windows_installer_launched: Option<OnWindowsInstallerLaunched>,
+     configure_client: Option<OnBeforeRequest>,
+     #[allow(unused)]
+     installer_args: Vec<OsString>,
+@@ -394,7 +515,15 @@
+         #[cfg(target_os = "linux")]
+         {
+             if std::env::var_os("SSL_CERT_FILE").is_none() {
+-                std::env::set_var("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt");
++                for candidate in [
++                    "/etc/ssl/certs/ca-certificates.crt",
++                    "/etc/pki/tls/certs/ca-bundle.crt",
++                ] {
++                    if std::path::Path::new(candidate).is_file() {
++                        std::env::set_var("SSL_CERT_FILE", candidate);
++                        break;
++                    }
++                }
+             }
+             if std::env::var_os("SSL_CERT_DIR").is_none() {
+                 std::env::set_var("SSL_CERT_DIR", "/etc/ssl/certs");
+@@ -540,7 +669,10 @@
+                 run_on_main_thread: self.run_on_main_thread.clone(),
+                 config: self.config.clone(),
+                 on_before_exit: self.on_before_exit.clone(),
++                on_windows_installer_launched: self.on_windows_installer_launched.clone(),
+                 app_name: self.app_name.clone(),
++                bundle_identifier: self.bundle_identifier.clone(),
++                executable_name: self.executable_name.clone(),
+                 current_version: self.current_version.to_string(),
+                 target: target.to_owned(),
+                 extract_path: self.extract_path.clone(),
+@@ -605,6 +737,8 @@
+     config: Config,
+     #[allow(unused)]
+     on_before_exit: Option<OnBeforeExit>,
++    #[allow(unused)]
++    on_windows_installer_launched: Option<OnWindowsInstallerLaunched>,
+     /// Update description
+     pub body: Option<String>,
+     /// Version used to check for update
+@@ -637,6 +771,10 @@
+     #[allow(unused)]
+     app_name: String,
+     #[allow(unused)]
++    bundle_identifier: String,
++    #[allow(unused)]
++    executable_name: Option<String>,
++    #[allow(unused)]
+     installer_args: Vec<OsString>,
+     #[allow(unused)]
+     current_exe_args: Vec<OsString>,
+@@ -698,14 +836,20 @@
+             .get("Content-Length")
+             .and_then(|value| value.to_str().ok())
+             .and_then(|value| value.parse().ok());
++        validate_download_content_length(content_length, MAX_UPDATE_PACKAGE_BYTES)?;
+ 
+         let mut buffer = Vec::new();
+ 
+         let mut stream = response.bytes_stream();
+         while let Some(chunk) = stream.next().await {
+             let chunk = chunk?;
++            append_download_chunk(
++                &mut buffer,
++                chunk.as_ref(),
++                content_length,
++                MAX_UPDATE_PACKAGE_BYTES,
++            )?;
+             on_chunk(chunk.len(), content_length);
+-            buffer.extend(chunk);
+         }
+         on_download_finish();
+ 
+@@ -716,7 +860,9 @@
+ 
+     /// Installs the updater package downloaded by [`Update::download`]
+     pub fn install(&self, bytes: impl AsRef<[u8]>) -> Result<()> {
+-        self.install_inner(bytes.as_ref())
++        run_preinstall_flush(self.on_before_exit.as_ref(), || {
++            self.install_inner(bytes.as_ref())
++        })
+     }
+ 
+     /// Downloads and installs the updater package
+@@ -834,11 +980,6 @@
+             }
+         };
+ 
+-        if let Some(on_before_exit) = self.on_before_exit.as_ref() {
+-            log::debug!("running on_before_exit hook");
+-            on_before_exit();
+-        }
+-
+         let file = match &updater_type {
+             WindowsUpdaterType::Nsis { path, .. } => path.as_os_str().to_os_string(),
+             WindowsUpdaterType::Msi { .. } => std::env::var("SYSTEMROOT").as_ref().map_or_else(
+@@ -851,7 +992,7 @@
+         let parameters = installer_args.join(OsStr::new(" "));
+         let parameters = encode_wide(parameters);
+ 
+-        unsafe {
++        let launched = unsafe {
+             ShellExecuteW(
+                 std::ptr::null_mut(),
+                 w!("open"),
+@@ -860,9 +1001,16 @@
+                 std::ptr::null(),
+                 SW_SHOW,
+             )
+-        };
+-
+-        std::process::exit(0);
++        } as isize;
++        finish_windows_installer_launch(
++            launched,
++            || {
++                if let Some(cleanup) = &self.on_windows_installer_launched {
++                    cleanup();
++                }
++            },
++            || std::process::exit(0),
++        )
+     }
+ 
+     fn installer_args(&self) -> Vec<&OsStr> {
+@@ -974,76 +1122,34 @@
+     }
+ 
+     fn install_appimage(&self, bytes: &[u8]) -> Result<()> {
+-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+-        let extract_path_metadata = self.extract_path.metadata()?;
++        #[cfg(feature = "zip")]
++        let payload = if infer::archive::is_gz(bytes) {
++            log::debug!("extracting AppImage update archive");
++            appimage_archive::extract_appimage_from_archive(bytes, MAX_UPDATE_PACKAGE_BYTES)?
++        } else {
++            bytes.to_vec()
++        };
++        #[cfg(not(feature = "zip"))]
++        let payload = bytes.to_vec();
+ 
+-        let tmp_dir_locations = vec![
+-            Box::new(|| Some(std::env::temp_dir())) as Box<dyn FnOnce() -> Option<PathBuf>>,
+-            Box::new(dirs::cache_dir),
+-            Box::new(|| Some(self.extract_path.parent().unwrap().to_path_buf())),
+-        ];
+-
+-        for tmp_dir_location in tmp_dir_locations {
+-            if let Some(tmp_dir_location) = tmp_dir_location() {
+-                let tmp_dir = tempfile::Builder::new()
+-                    .prefix("tauri_current_app")
+-                    .tempdir_in(tmp_dir_location)?;
+-                let tmp_dir_metadata = tmp_dir.path().metadata()?;
+-
+-                if extract_path_metadata.dev() == tmp_dir_metadata.dev() {
+-                    let mut perms = tmp_dir_metadata.permissions();
+-                    perms.set_mode(0o700);
+-                    std::fs::set_permissions(tmp_dir.path(), perms)?;
+-
+-                    let tmp_app_image = &tmp_dir.path().join("current_app.AppImage");
+-
+-                    let permissions = std::fs::metadata(&self.extract_path)?.permissions();
+-
+-                    // create a backup of our current app image
+-                    std::fs::rename(&self.extract_path, tmp_app_image)?;
+-
+-                    #[cfg(feature = "zip")]
+-                    if infer::archive::is_gz(bytes) {
+-                        log::debug!("extracting AppImage");
+-                        // extract the buffer to the tmp_dir
+-                        // we extract our signed archive into our final directory without any temp file
+-                        let archive = Cursor::new(bytes);
+-                        let decoder = flate2::read::GzDecoder::new(archive);
+-                        let mut archive = tar::Archive::new(decoder);
+-                        for mut entry in archive.entries()?.flatten() {
+-                            if let Ok(path) = entry.path() {
+-                                if path.extension() == Some(OsStr::new("AppImage")) {
+-                                    // if something went wrong during the extraction, we should restore previous app
+-                                    if let Err(err) = entry.unpack(&self.extract_path) {
+-                                        std::fs::rename(tmp_app_image, &self.extract_path)?;
+-                                        return Err(err.into());
+-                                    }
+-                                    // early finish we have everything we need here
+-                                    return Ok(());
+-                                }
+-                            }
+-                        }
+-                        // if we have not returned early we should restore the backup
+-                        std::fs::rename(tmp_app_image, &self.extract_path)?;
+-                        return Err(Error::BinaryNotFoundInArchive);
+-                    }
+-
+-                    log::debug!("rewriting AppImage");
+-                    return match std::fs::write(&self.extract_path, bytes)
+-                        .and_then(|_| std::fs::set_permissions(&self.extract_path, permissions))
+-                    {
+-                        Err(err) => {
+-                            // if something went wrong during the extraction, we should restore previous app
+-                            std::fs::rename(tmp_app_image, &self.extract_path)?;
+-                            Err(err.into())
+-                        }
+-                        Ok(_) => Ok(()),
+-                    };
+-                }
+-            }
++        // Keep the recovery copy beside the installed image when possible so
++        // it survives ordinary `/tmp` cleanup and remains on the install
++        // filesystem for an atomic replacement.
++        let mut temporary_roots = Vec::new();
++        if let Some(parent) = self.extract_path.parent() {
++            temporary_roots.push(parent.to_path_buf());
+         }
+-
+-        Err(Error::TempDirNotOnSameMountPoint)
++        if let Some(cache_directory) = dirs::cache_dir() {
++            temporary_roots.push(cache_directory);
++        }
++        temporary_roots.push(std::env::temp_dir());
++        let backup =
++            appimage_install::install_appimage_at(&self.extract_path, &payload, &temporary_roots)?;
++        log::info!(
++            "installed validated AppImage; previous image is recoverable at {}",
++            backup.display()
++        );
++        Ok(())
+     }
+ 
+     fn install_deb(&self, bytes: &[u8]) -> Result<()> {
+@@ -1053,7 +1159,7 @@
+             return Err(Error::InvalidUpdaterFormat);
+         }
+ 
+-        self.try_tmp_locations(bytes, "dpkg", "-i", "deb")
++        self.try_tmp_locations(bytes, "dpkg", &["-i"], "deb")
+     }
+ 
+     fn install_rpm(&self, bytes: &[u8]) -> Result<()> {
+@@ -1061,14 +1167,17 @@
+         if !infer::archive::is_rpm(bytes) {
+             return Err(Error::InvalidUpdaterFormat);
+         }
+-        self.try_tmp_locations(bytes, "rpm", "-U", "rpm")
++        // semver already decided this is newer, but RPM orders prereleases
++        // after their release (5.0.0-beta.1 > 5.0.0), so beta -> stable would
++        // be refused as a downgrade without --oldpackage.
++        self.try_tmp_locations(bytes, "rpm", &["-U", "--oldpackage"], "rpm")
+     }
+ 
+     fn try_tmp_locations(
+         &self,
+         bytes: &[u8],
+         install_cmd: &str,
+-        install_arg: &str,
++        install_args: &[&str],
+         package_extension: &str,
+     ) -> Result<()> {
+         // Try different temp directories
+@@ -1091,7 +1200,7 @@
+                         return self.try_install_with_privileges(
+                             &pkg_path,
+                             install_cmd,
+-                            install_arg,
++                            install_args,
+                         );
+                     }
+                     // If write fails, continue to next temp location
+@@ -1107,68 +1216,77 @@
+         &self,
+         pkg_path: &Path,
+         install_cmd: &str,
+-        install_arg: &str,
++        install_args: &[&str],
+     ) -> Result<()> {
++        let installer = crate::install_safety::resolve_trusted_system_helper(install_cmd)
++            .map_err(|_| Error::PackageInstallFailed)?;
++        let pkexec = crate::install_safety::resolve_trusted_system_helper("pkexec").ok();
++        let sudo = crate::install_safety::resolve_trusted_system_helper("sudo").ok();
++
+         // 1. First try using pkexec (graphical sudo prompt)
+-        if let Ok(status) = std::process::Command::new("pkexec")
+-            .arg(install_cmd)
+-            .arg(install_arg)
+-            .arg(pkg_path)
+-            .status()
+-        {
+-            if status.success() {
+-                log::debug!("installed {pkg_path:?} with pkexec");
+-                return Ok(());
++        if let Some(pkexec) = pkexec.as_ref() {
++            let mut command = linux_privileged_command(pkexec);
++            command.arg(&installer).args(install_args).arg(pkg_path);
++            if let Ok(status) =
++                linux_privileged_wait_status(command, std::time::Duration::from_secs(600))
++            {
++                if status.success() {
++                    log::debug!("installed {pkg_path:?} with pkexec");
++                    return Ok(());
++                }
+             }
+         }
+ 
+         // 2. Try zenity or kdialog for a graphical sudo experience
+-        if let Ok(password) = self.get_password_graphically() {
+-            if self.install_with_sudo(pkg_path, &password, install_cmd, install_arg)? {
+-                log::debug!("installed {pkg_path:?} with GUI sudo");
+-                return Ok(());
++        if let Some(sudo) = sudo.as_ref() {
++            if let Ok(password) = self.get_password_graphically() {
++                if self.install_with_sudo(sudo, &installer, pkg_path, &password, install_args)? {
++                    log::debug!("installed {pkg_path:?} with GUI sudo");
++                    return Ok(());
++                }
+             }
+-        }
+ 
+-        // 3. Final fallback: terminal sudo
+-        let status = std::process::Command::new("sudo")
+-            .arg(install_cmd)
+-            .arg(install_arg)
+-            .arg(pkg_path)
+-            .status()?;
++            // 3. Final fallback: terminal sudo
++            let mut command = linux_privileged_command(sudo);
++            command.arg(&installer).args(install_args).arg(pkg_path);
++            let status =
++                linux_privileged_wait_status(command, std::time::Duration::from_secs(600))?;
+ 
+-        if status.success() {
+-            log::debug!("installed {pkg_path:?} with sudo");
+-            Ok(())
+-        } else {
+-            Err(Error::PackageInstallFailed)
++            if status.success() {
++                log::debug!("installed {pkg_path:?} with sudo");
++                return Ok(());
++            }
+         }
++
++        Err(Error::PackageInstallFailed)
+     }
+ 
+     fn get_password_graphically(&self) -> Result<String> {
+-        // Try zenity first
+-        let zenity_result = std::process::Command::new("zenity")
+-            .args([
+-                "--password",
+-                "--title=Authentication Required",
+-                "--text=Enter your password to install the update:",
+-            ])
+-            .output();
++        if let Ok(zenity) = crate::install_safety::resolve_trusted_system_helper("zenity") {
++            let zenity_result = linux_privileged_command(&zenity)
++                .args([
++                    "--password",
++                    "--title=Authentication Required",
++                    "--text=Enter your password to install the update:",
++                ])
++                .output();
+ 
+-        if let Ok(output) = zenity_result {
+-            if output.status.success() {
+-                return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
++            if let Ok(output) = zenity_result {
++                if output.status.success() {
++                    return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
++                }
+             }
+         }
+ 
+-        // Fall back to kdialog if zenity fails or isn't available
+-        let kdialog_result = std::process::Command::new("kdialog")
+-            .args(["--password", "Enter your password to install the update:"])
+-            .output();
++        if let Ok(kdialog) = crate::install_safety::resolve_trusted_system_helper("kdialog") {
++            let kdialog_result = linux_privileged_command(&kdialog)
++                .args(["--password", "Enter your password to install the update:"])
++                .output();
+ 
+-        if let Ok(output) = kdialog_result {
+-            if output.status.success() {
+-                return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
++            if let Ok(output) = kdialog_result {
++                if output.status.success() {
++                    return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
++                }
+             }
+         }
+ 
+@@ -1177,34 +1295,105 @@
+ 
+     fn install_with_sudo(
+         &self,
++        sudo: &Path,
++        installer: &Path,
+         pkg_path: &Path,
+         password: &str,
+-        install_cmd: &str,
+-        install_arg: &str,
++        install_args: &[&str],
+     ) -> Result<bool> {
+         use std::io::Write;
+-        use std::process::{Command, Stdio};
++        use std::os::unix::process::CommandExt;
++        use std::process::Stdio;
++        use std::time::Duration;
+ 
+-        let mut child = Command::new("sudo")
++        let mut command = linux_privileged_command(sudo);
++        command
+             .arg("-S") // read password from stdin
+-            .arg(install_cmd)
+-            .arg(install_arg)
++            .arg(installer)
++            .args(install_args)
+             .arg(pkg_path)
+             .stdin(Stdio::piped())
+             .stdout(Stdio::piped())
+-            .stderr(Stdio::piped())
+-            .spawn()?;
++            .stderr(Stdio::piped());
++        // Isolate the sudo/dpkg group so a timeout can kill the whole tree.
++        command.process_group(0);
+ 
++        let mut child = command.spawn()?;
++        let pid = child.id();
++
+         if let Some(mut stdin) = child.stdin.take() {
+-            // Write password to stdin
+             writeln!(stdin, "{password}")?;
+         }
+ 
+-        let status = child.wait()?;
+-        Ok(status.success())
++        let output = wait_child_output_timeout(child, pid, Duration::from_secs(600))?;
++        Ok(output.status.success())
+     }
+ }
+ 
++#[cfg(target_os = "linux")]
++fn linux_privileged_wait_status(
++    mut command: std::process::Command,
++    timeout: std::time::Duration,
++) -> std::io::Result<std::process::ExitStatus> {
++    use std::os::unix::process::CommandExt;
++    command.stdout(std::process::Stdio::piped());
++    command.stderr(std::process::Stdio::piped());
++    command.process_group(0);
++    let child = command.spawn()?;
++    let pid = child.id();
++    let output = wait_child_output_timeout(child, pid, timeout)?;
++    Ok(output.status)
++}
++
++#[cfg(target_os = "linux")]
++fn linux_privileged_command(program: &Path) -> std::process::Command {
++    let mut command = std::process::Command::new(program);
++    command.env_clear();
++    command.env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
++    command.env("LC_ALL", "C");
++    command.env("LANG", "C");
++    for key in crate::install_safety::LINUX_PRIVILEGED_ENV_ALLOWLIST {
++        if let Some(value) = std::env::var_os(key) {
++            command.env(key, value);
++        }
++    }
++    command
++}
++
++#[cfg(target_os = "linux")]
++fn wait_child_output_timeout(
++    child: std::process::Child,
++    pid: u32,
++    timeout: std::time::Duration,
++) -> std::io::Result<std::process::Output> {
++    use std::sync::atomic::{AtomicBool, Ordering};
++    use std::sync::Arc;
++
++    let finished = Arc::new(AtomicBool::new(false));
++    let finished_for_killer = finished.clone();
++    std::thread::spawn(move || {
++        std::thread::sleep(timeout);
++        if finished_for_killer.load(Ordering::SeqCst) {
++            return;
++        }
++        let pgid = format!("-{pid}");
++        let _ = std::process::Command::new("/bin/kill")
++            .args(["-TERM", "--", &pgid])
++            .status();
++        std::thread::sleep(std::time::Duration::from_secs(2));
++        if finished_for_killer.load(Ordering::SeqCst) {
++            return;
++        }
++        let _ = std::process::Command::new("/bin/kill")
++            .args(["-KILL", "--", &pgid])
++            .status();
++    });
++
++    let output = child.wait_with_output();
++    finished.store(true, Ordering::SeqCst);
++    output
++}
++
+ /// MacOS
+ #[cfg(target_os = "macos")]
+ impl Update {
+@@ -1215,99 +1404,458 @@
+     /// │          └── ...
+     /// └── ...
+     fn install_inner(&self, bytes: &[u8]) -> Result<()> {
+-        use flate2::read::GzDecoder;
++        crate::install_safety::with_macos_update_install_lock(|| self.install_inner_locked(bytes))
++    }
+ 
+-        let cursor = Cursor::new(bytes);
+-        let mut extracted_files: Vec<PathBuf> = Vec::new();
++    fn install_inner_locked(&self, bytes: &[u8]) -> Result<()> {
++        use crate::install_safety::{
++            is_cross_device, macos_app_bundle_complete, macos_app_bundle_identity,
++            macos_update_backup_path, move_dir_replacing, MacosBundleIdentity,
++            MACOS_PRIVILEGED_INSTALL_SCRIPT,
++        };
+ 
+-        // Create temp directories for backup and extraction
+-        let tmp_backup_dir = tempfile::Builder::new()
+-            .prefix("tauri_current_app")
+-            .tempdir()?;
++        let app_parent = self
++            .extract_path
++            .parent()
++            .ok_or(Error::FailedToDetermineExtractPath)?;
++        let backup_path = macos_update_backup_path(&self.extract_path)
++            .ok_or(Error::FailedToDetermineExtractPath)?;
+ 
+-        let tmp_extract_dir = tempfile::Builder::new()
+-            .prefix("tauri_updated_app")
+-            .tempdir()?;
++        let expected_identity = MacosBundleIdentity {
++            bundle_identifier: self.bundle_identifier.clone(),
++            executable: self.executable_name.clone().ok_or_else(|| {
++                Error::Io(std::io::Error::new(
++                    std::io::ErrorKind::InvalidData,
++                    "could not determine the installed app executable name",
++                ))
++            })?,
++        };
++        if !macos_bundle_matches(&self.extract_path, &expected_identity)
++            && !macos_bundle_matches(&backup_path, &expected_identity)
++        {
++            return Err(Error::Io(std::io::Error::new(
++                std::io::ErrorKind::InvalidData,
++                "neither the installed app nor its recovery backup matches the configured app identity",
++            )));
++        }
+ 
+-        let decoder = GzDecoder::new(cursor);
+-        let mut archive = tar::Archive::new(decoder);
++        let tmp_extract_dir = match tempfile::Builder::new()
++            .prefix(".rosi-updated-app-")
++            .tempdir_in(app_parent)
++        {
++            Ok(dir) => dir,
++            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
++                // `/Applications` is not user-writable. Extract in a user temp
++                // dir; the privileged swap copies onto the app volume. Restore
++                // must never nest `mv` into a partial `$SRC`.
++                tempfile::Builder::new()
++                    .prefix("tauri_updated_app")
++                    .tempdir()?
++            }
++            Err(err) => return Err(err.into()),
++        };
+ 
+-        // Extract files to temporary directory
+-        for entry in archive.entries()? {
+-            let mut entry = entry?;
+-            let collected_path: PathBuf = entry.path()?.iter().skip(1).collect();
+-            let extraction_path = tmp_extract_dir.path().join(&collected_path);
++        extract_macos_app_archive(bytes, tmp_extract_dir.path())?;
++        let staged_identity = macos_app_bundle_identity(tmp_extract_dir.path());
++        if !macos_app_bundle_complete(tmp_extract_dir.path())
++            || staged_identity.as_ref() != Some(&expected_identity)
++        {
++            return Err(Error::Io(std::io::Error::new(
++                std::io::ErrorKind::InvalidData,
++                "staged updater bundle is incomplete or has a different app identity",
++            )));
++        }
+ 
+-            // Ensure parent directories exist
+-            if let Some(parent) = extraction_path.parent() {
+-                std::fs::create_dir_all(parent)?;
++        // Recovery can mutate a protected install tree. Delay it until the
++        // downloaded bundle has passed identity and completeness validation,
++        // then route only permission failures through the existing admin path.
++        let recovery =
++            recover_macos_live_bundle(&self.extract_path, &backup_path, &expected_identity)?;
++
++        let unprivileged = if matches!(recovery, MacosRecoveryDisposition::RequiresPrivilegedSwap) {
++            // A validated recovery entry can live in a protected install
++            // directory. Keep it untouched until the staged bundle is fully
++            // validated above, then let the privileged script perform the
++            // recovery and replacement as one checked transition.
++            Err(std::io::Error::new(
++                std::io::ErrorKind::PermissionDenied,
++                "validated app recovery requires a privileged bundle transition",
++            ))
++        } else {
++            (|| -> std::io::Result<()> {
++                std::fs::rename(&self.extract_path, &backup_path)?;
++                match move_dir_replacing(tmp_extract_dir.path(), &self.extract_path) {
++                    Ok(()) => {
++                        if !macos_bundle_matches(&self.extract_path, &expected_identity) {
++                            restore_macos_live_bundle(
++                                &self.extract_path,
++                                &backup_path,
++                                &expected_identity,
++                            )?;
++                            return Err(std::io::Error::new(
++                                std::io::ErrorKind::InvalidData,
++                                "installed app bundle failed identity validation",
++                            ));
++                        }
++                        // The backup was validated before the swap and remains a
++                        // complete recovery point until the new live bundle passes
++                        // the same identity check.
++                        if let Err(error) =
++                            remove_validated_macos_backup(&backup_path, &expected_identity)
++                        {
++                            // The new live bundle is already complete. Keep
++                            // installation successful and leave the validated
++                            // rollback entry for the next recovery pass.
++                            log::warn!("could not remove validated updater backup: {error}");
++                        }
++                        Ok(())
++                    }
++                    Err(err) => {
++                        restore_macos_live_bundle(
++                            &self.extract_path,
++                            &backup_path,
++                            &expected_identity,
++                        )?;
++                        Err(err)
++                    }
++                }
++            })()
++        };
++
++        match unprivileged {
++            Ok(()) => {
++                let _ = tmp_extract_dir.keep();
+             }
++            Err(err)
++                if err.kind() == std::io::ErrorKind::PermissionDenied || is_cross_device(&err) =>
++            {
++                log::debug!("app installation needs admin privileges");
++                let src = self.extract_path.to_string_lossy().into_owned();
++                let new = tmp_extract_dir.path().to_string_lossy().into_owned();
++                let backup = backup_path.to_string_lossy().into_owned();
++                let bundle_identifier = expected_identity.bundle_identifier.clone();
++                let executable = expected_identity.executable.clone();
++                let (tx, rx) = std::sync::mpsc::channel();
++                let res = (self.run_on_main_thread)(Box::new(move || {
++                    let mut script = osakit::Script::new_from_source(
++                        osakit::Language::AppleScript,
++                        MACOS_PRIVILEGED_INSTALL_SCRIPT,
++                    );
++                    // compile() and execute_function() use different error
++                    // types. Stringify both so a compile failure cannot panic
++                    // or fail to type-check against the execute Result.
++                    let r = script
++                        .compile()
++                        .map_err(|error| error.to_string())
++                        .and_then(|()| {
++                            script
++                                .execute_function(
++                                    "installUpdate",
++                                    [
++                                        osakit::Value::String(src),
++                                        osakit::Value::String(new),
++                                        osakit::Value::String(backup),
++                                        osakit::Value::String(bundle_identifier),
++                                        osakit::Value::String(executable),
++                                    ],
++                                )
++                                .map_err(|error| error.to_string())
++                        });
++                    // The main-thread callback can be torn down during app
++                    // shutdown. Sending best-effort keeps that teardown from
++                    // turning an update failure into a process panic.
++                    let _ = tx.send(r);
++                }));
++                if let Err(error) = res {
++                    return Err(Error::Io(std::io::Error::other(format!(
++                        "Failed to schedule the privileged macOS update: {error}"
++                    ))));
++                }
++                let result = rx.recv().map_err(|_| {
++                    Error::Io(std::io::Error::other(
++                        "Privileged macOS update callback did not complete",
++                    ))
++                })?;
+ 
+-            if let Err(err) = entry.unpack(&extraction_path) {
+-                // Cleanup on error
+-                std::fs::remove_dir_all(tmp_extract_dir.path()).ok();
+-                return Err(err.into());
++                if result.is_err() || !macos_bundle_matches(&self.extract_path, &expected_identity)
++                {
++                    return Err(Error::Io(std::io::Error::new(
++                        std::io::ErrorKind::PermissionDenied,
++                        "Failed to install a complete app bundle with the expected identity",
++                    )));
++                }
++                if let Err(error) = remove_macos_bundle_entry(&backup_path) {
++                    log::warn!("could not remove validated updater backup: {error}");
++                }
++                let _ = tmp_extract_dir.keep();
+             }
+-            extracted_files.push(extraction_path);
++            Err(err) => return Err(err.into()),
+         }
+ 
+-        // Try to move the current app to backup
+-        let move_result = std::fs::rename(
+-            &self.extract_path,
+-            tmp_backup_dir.path().join("current_app"),
+-        );
+-        let need_authorization = if let Err(err) = move_result {
+-            if err.kind() == std::io::ErrorKind::PermissionDenied {
+-                true
+-            } else {
+-                std::fs::remove_dir_all(tmp_extract_dir.path()).ok();
+-                return Err(err.into());
+-            }
+-        } else {
+-            false
+-        };
++        let _ = std::process::Command::new("touch")
++            .arg(&self.extract_path)
++            .status();
+ 
+-        if need_authorization {
+-            log::debug!("app installation needs admin privileges");
+-            // Use AppleScript to perform moves with admin privileges
+-            let apple_script = format!(
+-                "do shell script \"rm -rf '{src}' && mv -f '{new}' '{src}'\" with administrator privileges",
+-                src = self.extract_path.display(),
+-                new = tmp_extract_dir.path().display()
++        Ok(())
++    }
++}
++
++#[cfg(target_os = "macos")]
++fn macos_bundle_matches(
++    path: &Path,
++    expected: &crate::install_safety::MacosBundleIdentity,
++) -> bool {
++    crate::install_safety::macos_app_bundle_complete(path)
++        && crate::install_safety::macos_app_bundle_identity(path).as_ref() == Some(expected)
++}
++
++#[cfg(target_os = "macos")]
++fn remove_macos_bundle_entry(path: &Path) -> std::io::Result<()> {
++    let metadata = match std::fs::symlink_metadata(path) {
++        Ok(metadata) => metadata,
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
++        Err(error) => return Err(error),
++    };
++    if metadata.file_type().is_symlink() || !metadata.is_dir() {
++        std::fs::remove_file(path)
++    } else {
++        std::fs::remove_dir_all(path)
++    }
++}
++
++#[cfg(target_os = "macos")]
++fn remove_validated_macos_backup(
++    backup: &Path,
++    expected: &crate::install_safety::MacosBundleIdentity,
++) -> std::io::Result<()> {
++    if !macos_bundle_matches(backup, expected) {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::InvalidData,
++            "refusing to retire an incomplete or identity-mismatched updater backup",
++        ));
++    }
++    let parent = backup.parent().ok_or_else(|| {
++        std::io::Error::new(
++            std::io::ErrorKind::InvalidInput,
++            "updater backup has no parent directory",
++        )
++    })?;
++    let retired_dir = tempfile::Builder::new()
++        .prefix(".rosi-update-retired-backup-")
++        .tempdir_in(parent)?;
++    let retired_path = retired_dir.path().join("backup");
++
++    // Move the complete backup atomically before recursive cleanup. A denied
++    // rename leaves the recovery entry at its canonical path; a partial
++    // recursive deletion cannot damage the live bundle or future recovery.
++    std::fs::rename(backup, &retired_path)?;
++    if !macos_bundle_matches(&retired_path, expected) {
++        let restore = std::fs::rename(&retired_path, backup);
++        if let Err(error) = restore {
++            let retired_dir_path = retired_dir.keep();
++            log::warn!(
++                "could not restore updater backup from {}: {error}",
++                retired_dir_path.display()
+             );
++            return Err(error);
++        }
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::InvalidData,
++            "updater backup identity changed during retirement",
++        ));
++    }
+ 
+-            let (tx, rx) = std::sync::mpsc::channel();
+-            let res = (self.run_on_main_thread)(Box::new(move || {
+-                let mut script =
+-                    osakit::Script::new_from_source(osakit::Language::AppleScript, &apple_script);
+-                script.compile().expect("invalid AppleScript");
+-                let r = script.execute();
+-                tx.send(r).unwrap();
+-            }));
+-            let result = rx.recv().unwrap();
++    if let Err(error) = remove_macos_bundle_entry(&retired_path) {
++        if macos_bundle_matches(&retired_path, expected) {
++            // No partial deletion occurred. Put the validated recovery entry
++            // back so PermissionDenied can be handled by the admin installer.
++            if let Err(restore_error) = std::fs::rename(&retired_path, backup) {
++                let retired_dir_path = retired_dir.keep();
++                log::warn!(
++                    "could not restore updater backup from {}: {restore_error}",
++                    retired_dir_path.display()
++                );
++                return Err(restore_error);
++            }
++            return Err(error);
++        }
+ 
+-            if res.is_err() || result.is_err() {
+-                std::fs::remove_dir_all(tmp_extract_dir.path()).ok();
++        // The live bundle is still complete and will become the canonical
++        // backup before it is replaced. Preserve any partly retired data for
++        // diagnosis instead of letting TempDir drop retry recursive deletion.
++        let retired_dir_path = retired_dir.keep();
++        log::warn!(
++            "updater backup cleanup was incomplete at {}: {error}",
++            retired_dir_path.display()
++        );
++        if error.kind() == std::io::ErrorKind::PermissionDenied {
++            return Ok(());
++        }
++        return Err(error);
++    }
++
++    Ok(())
++}
++
++#[cfg(target_os = "macos")]
++fn restore_macos_live_bundle(
++    live: &Path,
++    backup: &Path,
++    expected: &crate::install_safety::MacosBundleIdentity,
++) -> std::io::Result<()> {
++    if !macos_bundle_matches(backup, expected) {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::InvalidData,
++            "refusing to restore an incomplete or identity-mismatched updater backup",
++        ));
++    }
++    remove_macos_bundle_entry(live)?;
++    std::fs::rename(backup, live)?;
++    if !macos_bundle_matches(live, expected) {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::InvalidData,
++            "restored updater backup failed identity validation",
++        ));
++    }
++    Ok(())
++}
++
++#[cfg(target_os = "macos")]
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum MacosRecoveryDisposition {
++    ReadyForUnprivilegedSwap,
++    RequiresPrivilegedSwap,
++}
++
++#[cfg(target_os = "macos")]
++fn recover_macos_live_bundle(
++    live: &Path,
++    backup: &Path,
++    expected: &crate::install_safety::MacosBundleIdentity,
++) -> Result<MacosRecoveryDisposition> {
++    let live_complete = macos_bundle_matches(live, expected);
++    let backup_complete = macos_bundle_matches(backup, expected);
++    let backup_exists = match std::fs::symlink_metadata(backup) {
++        Ok(_) => true,
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
++        Err(error) => return Err(error.into()),
++    };
++    if live_complete {
++        if backup_exists {
++            if !backup_complete {
+                 return Err(Error::Io(std::io::Error::new(
+-                    std::io::ErrorKind::PermissionDenied,
+-                    "Failed to move the new app into place",
++                    std::io::ErrorKind::InvalidData,
++                    "refusing to remove an incomplete or identity-mismatched updater backup",
+                 )));
+             }
+-        } else {
+-            // Remove existing directory if it exists
+-            if self.extract_path.exists() {
+-                std::fs::remove_dir_all(&self.extract_path)?;
+-            }
+-            // Move the new app to the target path
+-            std::fs::rename(tmp_extract_dir.path(), &self.extract_path)?;
++            return match remove_validated_macos_backup(backup, expected) {
++                Ok(()) => Ok(MacosRecoveryDisposition::ReadyForUnprivilegedSwap),
++                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
++                    Ok(MacosRecoveryDisposition::RequiresPrivilegedSwap)
++                }
++                Err(error) => Err(error.into()),
++            };
+         }
++        return Ok(MacosRecoveryDisposition::ReadyForUnprivilegedSwap);
++    }
++    if backup_complete {
++        return match restore_macos_live_bundle(live, backup, expected) {
++            Ok(()) => Ok(MacosRecoveryDisposition::ReadyForUnprivilegedSwap),
++            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
++                Ok(MacosRecoveryDisposition::RequiresPrivilegedSwap)
++            }
++            Err(error) => Err(error.into()),
++        };
++    }
++    Err(Error::Io(std::io::Error::new(
++        std::io::ErrorKind::InvalidData,
++        "installed app is incomplete and no complete matching recovery backup exists",
++    )))
++}
+ 
+-        let _ = std::process::Command::new("touch")
+-            .arg(&self.extract_path)
+-            .status();
++#[cfg(target_os = "macos")]
++fn extract_macos_app_archive(bytes: &[u8], dest_root: &Path) -> Result<()> {
++    use crate::install_safety::{
++        confined_symlink_target, confined_tar_member_relative, create_confined_parent_dirs,
++        path_is_inside,
++    };
++    use flate2::read::GzDecoder;
++    use tar::EntryType;
+ 
+-        Ok(())
++    let decoder = GzDecoder::new(Cursor::new(bytes));
++    let mut archive = tar::Archive::new(decoder);
++    for entry in archive.entries()? {
++        let mut entry = entry?;
++        let entry_path = entry.path()?.into_owned();
++        let relative = confined_tar_member_relative(&entry_path).map_err(|_| {
++            Error::Io(std::io::Error::new(
++                std::io::ErrorKind::InvalidData,
++                "updater archive member path is not confined",
++            ))
++        })?;
++        if relative.as_os_str().is_empty() {
++            continue;
++        }
++        let dest = dest_root.join(&relative);
++        if !path_is_inside(dest_root, &dest) {
++            return Err(Error::Io(std::io::Error::new(
++                std::io::ErrorKind::InvalidData,
++                "updater archive member path is not confined",
++            )));
++        }
++        let kind = entry.header().entry_type();
++        if kind == EntryType::Link {
++            return Err(Error::Io(std::io::Error::new(
++                std::io::ErrorKind::InvalidData,
++                "hard links are not allowed in updater archives",
++            )));
++        }
++        if kind.is_symlink() {
++            let target = entry.link_name()?.ok_or_else(|| {
++                Error::Io(std::io::Error::new(
++                    std::io::ErrorKind::InvalidData,
++                    "symlink is missing a target",
++                ))
++            })?;
++            let parent = dest.parent().unwrap_or(dest_root);
++            if !confined_symlink_target(dest_root, parent, target.as_ref()) {
++                return Err(Error::Io(std::io::Error::new(
++                    std::io::ErrorKind::InvalidData,
++                    "symlink target escapes updater extract root",
++                )));
++            }
++            create_confined_parent_dirs(dest_root, &dest)?;
++            std::os::unix::fs::symlink(target.as_ref(), &dest)?;
++            continue;
++        }
++        if kind.is_dir() {
++            create_confined_parent_dirs(dest_root, &dest)?;
++            match std::fs::symlink_metadata(&dest) {
++                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
++                    std::fs::create_dir(&dest)?;
++                }
++                Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {}
++                Ok(_) => {
++                    return Err(Error::Io(std::io::Error::new(
++                        std::io::ErrorKind::InvalidData,
++                        "updater archive directory collides with a non-directory",
++                    )));
++                }
++                Err(err) => return Err(err.into()),
++            }
++            continue;
++        }
++        if kind.is_file() || matches!(kind, EntryType::GNUSparse) {
++            create_confined_parent_dirs(dest_root, &dest)?;
++            entry.unpack(&dest)?;
++            continue;
++        }
++        return Err(Error::Io(std::io::Error::new(
++            std::io::ErrorKind::InvalidData,
++            format!("unsupported updater archive member type {kind:?}"),
++        )));
+     }
++    Ok(())
+ }
+ 
+ /// Gets the base target string used by the updater. If bundle type is available it
+@@ -1560,7 +2108,110 @@
+ #[cfg(test)]
+ mod tests {
+ 
++    use super::{finish_windows_installer_launch, OnBeforeExit, Update};
++    use crate::{Config, Error};
++    use std::sync::{
++        atomic::{AtomicUsize, Ordering},
++        Arc,
++    };
++
++    fn round2_update_with_hook(before_exit: OnBeforeExit, cleanup: Arc<AtomicUsize>) -> Update {
++        Update {
++            run_on_main_thread: Arc::new(Box::new(|_| Ok(()))),
++            config: Config::default(),
++            on_before_exit: Some(before_exit),
++            on_windows_installer_launched: Some(Arc::new(move || {
++                cleanup.fetch_add(1, Ordering::SeqCst);
++            })),
++            body: None,
++            current_version: "1.0.0".to_string(),
++            version: "1.0.1".to_string(),
++            date: None,
++            target: "test".to_string(),
++            download_url: url::Url::parse("https://example.invalid/update").unwrap(),
++            signature: String::new(),
++            raw_json: serde_json::Value::Null,
++            timeout: None,
++            proxy: None,
++            no_proxy: false,
++            headers: Default::default(),
++            extract_path: std::path::PathBuf::from("/unused/round2-app"),
++            app_name: "ROSI".to_string(),
++            bundle_identifier: "run.rosie.rosi".to_string(),
++            executable_name: Some("rosi".to_string()),
++            installer_args: Vec::new(),
++            current_exe_args: Vec::new(),
++            configure_client: None,
++        }
++    }
++
+     #[test]
++    fn round2_actual_update_install_hook_failure_keeps_update_and_skips_cleanup() {
++        let hook_calls = Arc::new(AtomicUsize::new(0));
++        let hook_calls_in = Arc::clone(&hook_calls);
++        let cleanup_calls = Arc::new(AtomicUsize::new(0));
++        let update = round2_update_with_hook(
++            Arc::new(move || {
++                hook_calls_in.fetch_add(1, Ordering::SeqCst);
++                Err("round2 forced durable-state flush failure".to_string())
++            }),
++            Arc::clone(&cleanup_calls),
++        );
++
++        let error = update
++            .install(b"invalid installer bytes")
++            .expect_err("a failed pre-install hook must reject the actual install call");
++        assert!(matches!(
++            error,
++            Error::BeforeExit(message) if message == "round2 forced durable-state flush failure"
++        ));
++        assert_eq!(hook_calls.load(Ordering::SeqCst), 1);
++        assert_eq!(cleanup_calls.load(Ordering::SeqCst), 0);
++    }
++
++    #[test]
++    fn round2_windows_cleanup_runs_only_after_a_successful_installer_launch() {
++        let events = std::cell::RefCell::new(Vec::new());
++        let failure = finish_windows_installer_launch(
++            32,
++            || events.borrow_mut().push("cleanup"),
++            || events.borrow_mut().push("exit"),
++        );
++        assert!(failure.is_err());
++        assert!(
++            events.borrow().is_empty(),
++            "failed launch must preserve Tauri resources"
++        );
++
++        finish_windows_installer_launch(
++            33,
++            || events.borrow_mut().push("cleanup"),
++            || events.borrow_mut().push("exit"),
++        )
++        .expect("successful launch must finish cleanup and exit sequence");
++        assert_eq!(&*events.borrow(), &["cleanup", "exit"]);
++    }
++
++    #[test]
++    fn round2_download_cap_rejects_oversize_chunks_without_content_length() {
++        let mut received = Vec::new();
++        super::append_download_chunk(&mut received, b"123", None, 4)
++            .expect("under-limit chunk should be accepted without a length header");
++        let error = super::append_download_chunk(&mut received, b"45", None, 4)
++            .expect_err("actual streamed size must be capped without Content-Length");
++        assert!(error.to_string().contains("package exceeds"));
++        assert_eq!(received, b"123", "over-limit bytes must not be buffered");
++    }
++
++    #[test]
++    fn round2_download_cap_rejects_declared_oversize_and_actual_oversize() {
++        let mut received = Vec::new();
++        assert!(super::validate_download_content_length(Some(5), 4).is_err());
++        assert!(super::append_download_chunk(&mut received, b"12345", Some(1), 4).is_err());
++        assert!(received.is_empty(), "rejected bytes must not be buffered");
++    }
++
++    #[test]
+     #[cfg(windows)]
+     fn it_wraps_correctly() {
+         use super::PathExt;
+@@ -1661,5 +2312,46 @@
+         for (orig, escaped) in cases.iter().zip(cases_escaped) {
+             assert_eq!(escape_nsis_current_exe_arg(&OsStr::new(orig)), escaped);
+         }
++    }
++
++    #[test]
++    fn macos_admin_install_script_quotes_paths_via_handler_args() {
++        use crate::install_safety::MACOS_PRIVILEGED_INSTALL_SCRIPT;
++        assert!(
++            MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("quoted form of"),
++            "privileged install must quote paths with AppleScript quoted form of"
++        );
++        assert!(
++            MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("backupPath"),
++            "privileged install must restore from a sibling backup"
++        );
++        assert!(
++            MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("CFBundleIdentifier")
++                && MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("CFBundleExecutable"),
++            "privileged install must validate bundle identity and executable"
++        );
++        assert!(
++            MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("Contents/Resources")
++                && MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("Contents/MacOS"),
++            "privileged install must validate required bundle resources"
++        );
++        assert!(
++            MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/bin/test -d \\\"$SRC/Contents\\\""),
++            "privileged install must verify Contents before deleting the backup"
++        );
++        assert!(
++            !MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("rm -rf \" & quoted form of srcPath"),
++            "privileged install must never rm -rf the live bundle via AppleScript concatenation"
++        );
++        assert!(
++            !MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("Zinnia.app")
++                && !MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/Applications"),
++            "script template must not embed filesystem paths"
++        );
++        let malicious = "/Applications/Don't '; touch /tmp/pwned; '.app";
++        assert!(
++            !MACOS_PRIVILEGED_INSTALL_SCRIPT.contains(malicious),
++            "malicious path must stay outside the constant script body"
++        );
+     }
+ }

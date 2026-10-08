@@ -14,10 +14,25 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const defaultRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const YT_DLP_VERSION = "2026.08.19";
+
+// The pinned yt-dlp version and license file come from the checksums manifest
+// that fetch-ytdlp.cjs verifies, so bumping yt-dlp touches one file.
+function readYtDlpPin(root) {
+  const manifest = JSON.parse(
+    readFileSync(join(root, "assets", "ytdlp-checksums.json"), "utf8"),
+  );
+  if (typeof manifest.version !== "string" || !manifest.version) {
+    throw new Error("assets/ytdlp-checksums.json has no version");
+  }
+  const licenseFile =
+    manifest.license?.file ??
+    `yt-dlp-${manifest.version}-THIRD_PARTY_LICENSES.txt`;
+  return { version: manifest.version, licenseFile };
+}
 
 export function copyBundledNotices(root = defaultRoot) {
   const publicDir = join(root, "public");
+  const { version, licenseFile } = readYtDlpPin(root);
   const notices = [
     {
       label: "yt-dlp",
@@ -25,12 +40,8 @@ export function copyBundledNotices(root = defaultRoot) {
       destination: join(publicDir, "yt-dlp-notices.txt"),
     },
     {
-      label: `yt-dlp bundled component licenses (${YT_DLP_VERSION})`,
-      source: join(
-        root,
-        "assets",
-        `yt-dlp-${YT_DLP_VERSION}-THIRD_PARTY_LICENSES.txt`,
-      ),
+      label: `yt-dlp bundled component licenses (${version})`,
+      source: join(root, "assets", licenseFile),
       destination: join(publicDir, "yt-dlp-third-party-licenses.txt"),
     },
     {

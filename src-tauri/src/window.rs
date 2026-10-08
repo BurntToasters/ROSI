@@ -30,9 +30,6 @@ pub fn create_splash(app: &AppHandle) {
             .inner_size(360.0, 360.0)
             .resizable(false)
             .decorations(false)
-            // WebKitGTK transparency depends on the compositor; Linux gets an
-            // opaque splash rather than a black box.
-            .transparent(!cfg!(target_os = "linux"))
             .shadow(false)
             .always_on_top(true)
             .skip_taskbar(true)

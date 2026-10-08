@@ -3,12 +3,23 @@ name: CI
 # Pull requests prove candidate changes. Pushes prove the exact post-merge tips
 # of the protected release branches without duplicating every PR branch update.
 # Jobs run tests and smoke builds, not signed release artifacts.
+#
+# The weekly schedule runs only the security and live-feed jobs. Heavy jobs are
+# skipped on schedule, and ci-gate expects exactly that.
+#
+# yt-dlp binaries are fetched by `npm run ytdlp:fetch:all`, which uses gpg to
+# verify signatures. The ubuntu, macos and windows hosted images ship gpg. A
+# runner image without gpg fails that step loudly instead of skipping it.
 
 on:
   push:
     branches: [main, beta]
   pull_request:
     branches: [main, beta]
+  schedule:
+    # Mondays 07:23 UTC.
+    - cron: "23 7 * * 1"
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -51,6 +62,7 @@ jobs:
           ${{ github.event.pull_request.head.sha }}
 
   quality-gate:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -79,6 +91,8 @@ jobs:
             patchelf \
             xvfb
       - run: npm ci --ignore-scripts
+      - name: Fetch yt-dlp binaries
+        run: npm run ytdlp:fetch:all
       - name: Strict Cargo license notices
         run: npm run licenses:cargo:strict
       - name: Quality gate
@@ -97,6 +111,7 @@ jobs:
 
   rust-check:
     needs: quality-gate
+    if: ${{ success() && github.event_name != 'schedule' }}
     strategy:
       matrix:
         os: [windows-latest, macos-26]
@@ -116,6 +131,10 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
           components: clippy
       - run: npm ci --ignore-scripts
+      # On windows-latest gpg ships only in Git for Windows (usr\bin), which is
+      # often not on PATH for PowerShell. fetch-ytdlp.cjs looks there itself.
+      - name: Fetch yt-dlp binaries
+        run: npm run ytdlp:fetch:all
       - run: node scripts/npm-audit-signatures.cjs
       - run: npm run test:cov
       - run: npm run ytdlp:check
@@ -163,6 +182,7 @@ jobs:
   # build VMs. FFmpeg is not public, so CI compiles against development stubs.
   smoke-build:
     needs: quality-gate
+    if: ${{ success() && github.event_name != 'schedule' }}
     strategy:
       matrix:
         include:
@@ -209,6 +229,8 @@ jobs:
             librsvg2-dev \
             patchelf
       - run: npm ci --ignore-scripts
+      - name: Fetch yt-dlp binaries
+        run: npm run ytdlp:fetch:all
       - run: node scripts/npm-audit-signatures.cjs
       - run: npm run sync-version
       - name: Verify synchronized version files are committed
@@ -259,6 +281,8 @@ jobs:
       - name: cargo audit
         working-directory: src-tauri
         run: cargo audit
+      - name: Vendored tauri-plugin-updater version and advisory check
+        run: node scripts/check-vendored-updater.mjs
 
   ci-gate:
     if: ${{ always() }}
@@ -285,11 +309,19 @@ jobs:
           STABLE_METADATA_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && startsWith(github.head_ref, 'release/') }}
         run: |
           set -euo pipefail
+          test "$UPDATER_MANIFEST" = success
+          test "$SECURITY_AUDIT" = success
+          if [ "$EVENT_NAME" = schedule ]; then
+            # Scheduled runs cover security and the live feed only.
+            test "$QUALITY_GATE" = skipped
+            test "$RUST_CHECK" = skipped
+            test "$SMOKE_BUILD" = skipped
+            test "$COMMIT_MESSAGE_POLICY" = skipped
+            exit 0
+          fi
           test "$QUALITY_GATE" = success
           test "$RUST_CHECK" = success
-          test "$UPDATER_MANIFEST" = success
           test "$SMOKE_BUILD" = success
-          test "$SECURITY_AUDIT" = success
           # Main accepts next-* promotion or tightly scoped stable metadata.
           test "$PR_BASE_REF" != "main" || test "$RELEASE_PROMOTION_PR" = "true" || test "$STABLE_METADATA_PR" = "true"
           if [ "$EVENT_NAME" = pull_request ]; then

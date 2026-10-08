@@ -191,9 +191,31 @@ interface RosiParsedProgress {
   eta: string | null;
 }
 
+interface RosiActivityPanelDeps {
+  showToast: (
+    message: unknown,
+    options?: { type?: 'warning' | 'error' | 'success' | 'info' }
+  ) => void;
+  renderStatusText: (target: HTMLElement, text: string) => void;
+  formatRelativeTime: (timestamp: number) => string;
+  revealFileLocation: (filePath: string) => Promise<void>;
+  icon: (name: string, size: number) => SVGSVGElement | null;
+  markUnseen: (tab: string) => void;
+  onReplay: (entry: RosiDownloadActivity) => void;
+}
+
+interface RosiActivityPanel {
+  setEntries: (entries: RosiDownloadActivity[]) => void;
+  clear: () => Promise<boolean>;
+}
+
 interface RosiDownloadsModule {
   formatBytes: (bytes: number) => string;
   parseYtdlpProgress: (message: string) => RosiParsedProgress | null;
+}
+
+interface RosiActivityModule {
+  initActivityPanel: (deps: RosiActivityPanelDeps) => RosiActivityPanel;
 }
 
 interface RosiQueueItem {
@@ -286,6 +308,7 @@ interface RosiModules {
   ui?: RosiUiModule;
   dock?: RosiDockModule;
   downloads?: RosiDownloadsModule;
+  activity?: RosiActivityModule;
   queue?: RosiQueueModule;
   settings?: RosiSettingsModule;
   updates?: RosiUpdatesModule;
