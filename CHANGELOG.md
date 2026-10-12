@@ -19,6 +19,10 @@
 
 ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 
+## Unreleased
+
+- **Licensing:** Added `COPYRIGHT.md` covering copyright, MPL-2.0 terms, and name and logo policy.
+
 ## Changes in `v5.0.0-beta.2:`
 
 - **UI:** Added docked Downloads and Queue controls, expanded the first-run setup flow, refreshed status icons, and improved keyboard focus and small-window layouts.
