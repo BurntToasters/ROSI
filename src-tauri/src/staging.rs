@@ -569,13 +569,7 @@ pub(crate) fn stage_entries_match(root: &Path, expected: &HashMap<PathBuf, FileI
 pub(crate) fn reserve_download_stage(download_dir: &Path) -> Result<DownloadStage, String> {
     for _ in 0..32 {
         let directory = download_dir.join(format!(".rosi-download-{}", crate::fs_util::uuid_v4()));
-        let mut builder = std::fs::DirBuilder::new();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
-        }
-        match builder.create(&directory) {
+        match crate::fs_util::private_dir_builder().create(&directory) {
             Ok(()) => {
                 crate::staging::hide_on_windows(&directory);
                 let Some(root_identity) = file_identity(&directory) else {
@@ -685,10 +679,17 @@ fn flagged_rename(from: &Path, to: &Path) -> std::io::Result<()> {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn flag_unsupported(error: &std::io::Error, destination: &Path) -> bool {
     match error.raw_os_error() {
-        Some(libc::ENOTSUP) | Some(libc::EOPNOTSUPP) | Some(libc::ENOSYS) => true,
+        Some(code) if is_unsupported_errno(code) => true,
         Some(libc::EINVAL) => destination.parent().is_some_and(flag_rejected_by_probe),
         _ => false,
     }
+}
+
+/// ENOTSUP and EOPNOTSUPP share a value on Linux but differ on macOS, so they
+/// are compared rather than matched as patterns.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn is_unsupported_errno(code: i32) -> bool {
+    code == libc::ENOTSUP || code == libc::EOPNOTSUPP || code == libc::ENOSYS
 }
 
 /// Renames an empty probe file within the destination folder using the same
@@ -720,10 +721,9 @@ fn flag_rejected_by_probe(folder: &Path) -> bool {
             }
             false
         }
-        Err(error) => matches!(
-            error.raw_os_error(),
-            Some(libc::EINVAL) | Some(libc::ENOTSUP) | Some(libc::EOPNOTSUPP) | Some(libc::ENOSYS)
-        ),
+        Err(error) => error
+            .raw_os_error()
+            .is_some_and(|code| code == libc::EINVAL || is_unsupported_errno(code)),
     }
 }
 

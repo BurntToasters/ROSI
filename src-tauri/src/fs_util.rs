@@ -21,6 +21,18 @@ pub fn random_hex(bytes: usize) -> String {
     buffer.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// Directory builder that creates owner-only (0700) directories on Unix.
+pub fn private_dir_builder() -> std::fs::DirBuilder {
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder
+}
+
 /// RFC 4122 version 4 UUID string.
 pub fn uuid_v4() -> String {
     let hex = random_hex(16);
