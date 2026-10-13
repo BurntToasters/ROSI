@@ -24,10 +24,21 @@ use std::time::{Duration, Instant};
 const MAX_PROXY_HEADER_BYTES: usize = 64 * 1024;
 const MAX_HTTP_REQUEST_BODY_BYTES: u64 = 64 * 1024 * 1024;
 const THUMBNAIL_MAX_BYTES: usize = 2 * 1024 * 1024;
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Per-address connect attempt.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(4);
+/// Budget for all addresses of one destination.
+const CONNECT_TOTAL_TIMEOUT: Duration = Duration::from_secs(12);
 const IO_TIMEOUT: Duration = Duration::from_secs(20);
-const PROXY_WORKERS: usize = 8;
-const MAX_PENDING_PROXY_CLIENTS: usize = 32;
+/// yt-dlp keeps finished HTTPS connections open in its pool, and each open
+/// tunnel holds a worker. Size the pool above yt-dlp's per-process pool count
+/// and close idle tunnels, so pooled connections cannot starve new ones.
+const PROXY_WORKERS: usize = 32;
+const MAX_PENDING_PROXY_CLIENTS: usize = 64;
+/// A tunnel with no traffic in either direction for this long is closed.
+/// yt-dlp reopens a dropped pooled connection on its next request. This stays
+/// below yt-dlp's 20 s socket timeout so a queued connection is served first.
+const TUNNEL_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+const RELAY_MAX_IDLE_SLEEP: Duration = Duration::from_millis(25);
 const RELAY_BUFFER_BYTES: usize = 16 * 1024;
 const DNS_RESOLVER_WORKERS: usize = 4;
 const MAX_PENDING_DNS_QUERIES: usize = 16;
@@ -1108,13 +1119,19 @@ fn connect_vetted_destination(
         return None;
     }
 
-    let deadline = Instant::now() + CONNECT_TIMEOUT;
-    for address in addresses {
+    // Each address gets its own attempt budget, with address families
+    // interleaved, so an unreachable IPv6 route cannot consume the time an
+    // IPv4 fallback needs (a simplified Happy Eyeballs, RFC 8305).
+    let deadline = Instant::now() + CONNECT_TOTAL_TIMEOUT;
+    for address in interleave_address_families(addresses) {
+        if active.shared.stopped.load(Ordering::Acquire) {
+            return None;
+        }
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             break;
         }
-        if let Ok(stream) = TcpStream::connect_timeout(&address, remaining) {
+        if let Ok(stream) = TcpStream::connect_timeout(&address, remaining.min(CONNECT_TIMEOUT)) {
             let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
             let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
             if active.register(&stream).is_err() {
@@ -1125,6 +1142,22 @@ fn connect_vetted_destination(
         }
     }
     None
+}
+
+/// Alternate address families, keeping the resolver's order within each.
+fn interleave_address_families(addresses: Vec<SocketAddr>) -> Vec<SocketAddr> {
+    let first_is_v6 = addresses.first().is_some_and(SocketAddr::is_ipv6);
+    let (mut preferred, mut other): (VecDeque<_>, VecDeque<_>) = addresses
+        .into_iter()
+        .partition(|address| address.is_ipv6() == first_is_v6);
+    let mut ordered = Vec::with_capacity(preferred.len() + other.len());
+    loop {
+        match (preferred.pop_front(), other.pop_front()) {
+            (None, None) => break,
+            (first, second) => ordered.extend(first.into_iter().chain(second)),
+        }
+    }
+    ordered
 }
 
 fn parse_ip_host(host: &str) -> Option<IpAddr> {
@@ -1447,6 +1480,8 @@ fn relay_bidirectional(
     let mut upstream_to_client_offset = 0usize;
     let mut client_read_open = true;
     let mut upstream_read_open = true;
+    let mut last_activity = Instant::now();
+    let mut idle_sleep = Duration::from_millis(1);
 
     loop {
         if shared.stopped.load(Ordering::Acquire) {
@@ -1532,8 +1567,18 @@ fn relay_bidirectional(
         {
             return Ok(());
         }
-        if !progressed {
-            thread::sleep(Duration::from_millis(2));
+        if progressed {
+            last_activity = Instant::now();
+            idle_sleep = Duration::from_millis(1);
+        } else {
+            if last_activity.elapsed() >= TUNNEL_IDLE_TIMEOUT {
+                let _ = client.shutdown(Shutdown::Both);
+                let _ = upstream.shutdown(Shutdown::Both);
+                return Ok(());
+            }
+            // Back off while idle so open pooled tunnels do not spin.
+            thread::sleep(idle_sleep);
+            idle_sleep = (idle_sleep * 2).min(RELAY_MAX_IDLE_SLEEP);
         }
     }
 }

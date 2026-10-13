@@ -238,11 +238,7 @@ pub fn guard_before_replace(
 /// Refuse to touch a file that declares a `schemaVersion` this build does not
 /// know. Such a file is read best-effort but never rewritten.
 pub fn ensure_schema_not_newer(value: &Value, what: &str) -> Result<(), String> {
-    let newer = value
-        .get("schemaVersion")
-        .and_then(Value::as_f64)
-        .is_some_and(|version| version > f64::from(CURRENT_PERSISTED_SCHEMA_VERSION));
-    if newer {
+    if ensure_schema_version_is_newer(value) {
         notify_newer_once(what);
         return Err(format!(
             "{what} was written by a newer ROSI version. This version will not overwrite it."
@@ -251,9 +247,27 @@ pub fn ensure_schema_not_newer(value: &Value, what: &str) -> Result<(), String> 
     Ok(())
 }
 
+/// True when `path` holds a JSON object whose `schemaVersion` is newer than
+/// this build. Such a file is preserved on purpose, so a refused write to it is
+/// not a durability failure.
+pub fn is_newer_schema_file(path: &Path, max_bytes: u64) -> bool {
+    read_bounded(path, max_bytes)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .is_some_and(|value| ensure_schema_version_is_newer(&value))
+}
+
+fn ensure_schema_version_is_newer(value: &Value) -> bool {
+    value
+        .get("schemaVersion")
+        .and_then(Value::as_f64)
+        .is_some_and(|version| version > f64::from(CURRENT_PERSISTED_SCHEMA_VERSION))
+}
+
 /// One non-blocking warning per file kind per launch, so changes this version
 /// cannot save are never lost silently.
-fn notify_newer_once(what: &str) {
+pub fn notify_newer_once(what: &str) {
     static NOTIFIED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
     {
         let mut notified = NOTIFIED.lock().unwrap_or_else(|p| p.into_inner());

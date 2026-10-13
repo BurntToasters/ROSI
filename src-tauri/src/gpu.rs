@@ -39,7 +39,8 @@ fn probe_encoder(ffmpeg: &std::path::Path, encoder: &str) -> bool {
         "-f",
         "lavfi",
         "-i",
-        "nullsrc=s=64x64:d=0.1",
+        // NVENC and AMF reject very small frames; probe a common size.
+        "nullsrc=s=256x256:d=0.1",
         "-c:v",
         encoder,
         "-f",

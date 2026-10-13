@@ -6,9 +6,11 @@ pub const SPLASH_FADE_DELAY: Duration = Duration::from_millis(800);
 pub const SETTINGS_FLUSH_TIMEOUT: Duration = Duration::from_millis(1500);
 pub const FORMAT_FETCH_TIMEOUT: Duration = Duration::from_secs(60);
 pub const DENO_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
-pub const DENO_INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
+pub const DENO_INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
 pub const GPU_DETECT_TIMEOUT: Duration = Duration::from_secs(10);
-pub const FFMPEG_CONVERT_TIMEOUT: Duration = Duration::from_secs(600);
+/// A conversion fails only when FFmpeg reports no progress for this long.
+/// Long re-encodes may take far longer in total.
+pub const FFMPEG_STALL_TIMEOUT: Duration = Duration::from_secs(600);
 pub const CODEC_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 pub const MAX_OUTPUT_BUFFER: usize = 500_000;
 pub const MAX_ERROR_BUFFER: usize = 100_000;

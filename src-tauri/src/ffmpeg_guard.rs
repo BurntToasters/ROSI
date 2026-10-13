@@ -21,6 +21,20 @@ struct LauncherConfig {
     ffprobe: Option<PathBuf>,
 }
 
+/// Where per-operation launchers live. Windows uses the app data folder: it
+/// is on the same volume as a per-user install, so the launcher is a hard link
+/// rather than a full copy of ROSI in %TEMP% for every operation.
+fn launcher_root() -> Result<PathBuf, String> {
+    #[cfg(windows)]
+    {
+        let root = crate::app_state::data_dir().join("media-tools");
+        if fs::create_dir_all(&root).is_ok() {
+            return Ok(root);
+        }
+    }
+    crate::process_util::executable_temp_dir()
+}
+
 /// Unique local launcher paths that remain present until the owning yt-dlp
 /// process and its descendants have finished.
 pub struct FfmpegToolGuard {
@@ -57,7 +71,7 @@ impl FfmpegToolGuard {
         };
         let has_tools = ffmpeg.is_some() || ffprobe.is_some();
         let root = if has_tools {
-            crate::process_util::executable_temp_dir()?
+            launcher_root()?
         } else {
             std::env::temp_dir()
         };

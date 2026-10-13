@@ -223,6 +223,15 @@ fn sweep_staging_dir(folder: &Path, directory: &Path) {
             retained = true;
             continue;
         };
+        let name = child.file_name().to_string_lossy().into_owned();
+        if metadata.is_dir() && is_staging_dir_name(&name) {
+            // Nested scratch from an interrupted conversion, source retirement
+            // or caption publication. One level only; links are never followed.
+            if !sweep_nested_scratch_dir(folder, &path, &name) {
+                retained = true;
+            }
+            continue;
+        }
         if !metadata.is_file() {
             crate::logging::warn(&format!(
                 "Retaining nested entry in staging leftover: {}",
@@ -231,9 +240,12 @@ fn sweep_staging_dir(folder: &Path, directory: &Path) {
             retained = true;
             continue;
         }
-        let name = child.file_name().to_string_lossy().into_owned();
         let redundant_stream = format_stream_stem(&name).is_some_and(|stem| merged.contains(stem));
-        if is_ytdlp_intermediate(&name) || redundant_stream || metadata.len() == 0 {
+        if is_bookkeeping_name(&name)
+            || is_ytdlp_intermediate(&name)
+            || redundant_stream
+            || metadata.len() == 0
+        {
             if let Err(error) = std::fs::remove_file(&path) {
                 crate::logging::warn(&format!(
                     "Could not remove staging leftover {}: {error}",
@@ -270,6 +282,48 @@ fn sweep_staging_dir(folder: &Path, directory: &Path) {
             directory.display()
         )),
     }
+}
+
+/// Clears one nested ROSI scratch directory. A partial conversion output is
+/// incomplete by definition (its source is recovered separately), so it is
+/// removed. Any other regular file is recovered. Returns true when the
+/// directory was removed.
+fn sweep_nested_scratch_dir(folder: &Path, directory: &Path, name: &str) -> bool {
+    let partial_conversion = name.starts_with(".rosi-convert-");
+    let Ok(children) = std::fs::read_dir(directory) else {
+        return false;
+    };
+    let mut retained = false;
+    for child in children.flatten() {
+        let path = child.path();
+        let is_file = std::fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_file());
+        if !is_file {
+            crate::logging::warn(&format!(
+                "Retaining nested entry in staging leftover: {}",
+                path.display()
+            ));
+            retained = true;
+            continue;
+        }
+        let outcome = if partial_conversion {
+            std::fs::remove_file(&path).map_err(|error| error.to_string())
+        } else {
+            recover_file(folder, &path).map(|destination| {
+                crate::logging::info(&format!(
+                    "Recovered staged file from an interrupted session to {}",
+                    destination.display()
+                ));
+            })
+        };
+        if let Err(error) = outcome {
+            crate::logging::warn(&format!(
+                "Retaining staged file {}: {error}",
+                path.display()
+            ));
+            retained = true;
+        }
+    }
+    !retained && std::fs::remove_dir(directory).is_ok()
 }
 
 /// Moves a recovered file beside the download folder's other files. The
@@ -694,8 +748,11 @@ fn create_probe_file(folder: &Path) -> Option<PathBuf> {
 
 /// Flag-free no-replace install. The destination name is reserved exclusively
 /// first (`create_dir` for directories, `create_new` for files), then the
-/// source renames over that empty placeholder. Any user content that appears
-/// at the destination makes the rename fail instead of being replaced.
+/// source renames over that placeholder. An existing user file is never
+/// replaced because the reservation fails first. Only a process that writes
+/// into ROSI's own fresh placeholder in the instant before the rename could
+/// lose that write (a file rename replaces it; a non-empty directory makes the
+/// rename fail). A crash in that instant leaves an empty file at the final name.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn install_without_flags(temp: &Path, destination: &Path) -> std::io::Result<()> {
     let is_dir = std::fs::symlink_metadata(temp)?.is_dir();

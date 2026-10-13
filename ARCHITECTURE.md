@@ -139,6 +139,17 @@ Ordered plan (confirm each Tauri step with a dry run before changing the pipelin
 Until steps 1 to 7 land together, keep `entitlements.plist` unchanged so the
 release gate stays consistent.
 
+## Deno end of life (planned risk)
+
+yt-dlp uses Deno as its default JavaScript runtime for YouTube. Deno is
+expected to shut down around October 2027 after its acquisition, and yt-dlp
+has not chosen a replacement yet; follow
+[yt-dlp#17799](https://github.com/yt-dlp/yt-dlp/issues/17799). ROSI's Deno
+code is `src-tauri/src/deno.rs` (detection and winget/Homebrew install), the
+Deno entries in `process_util::enhanced_path`, the startup reminder and the
+setup wizard step in `rosiEngine.ts`. Keep new runtime work generic until
+yt-dlp decides, and replace these pieces when it does.
+
 ## Testing
 
 - E2E (`npm run test:e2e`): WebdriverIO drives an unpackaged `--features e2e`

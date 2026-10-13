@@ -93,6 +93,12 @@ Ways the probe can mislead:
 Expected: a queue item never fails because of a session-owner conflict; the
 runner waits for the slot or refuses to start.
 
+Re-audit after the fix (written before changing the probe): once manual
+downloads are refused while the queue runs, sending the queue request first
+always wins, so the runner's wait path is never reached. The probe therefore
+alternates the order (queue first in odd rounds, manual first in even rounds)
+and records which side each round accepted.
+
 ## D5. The startup sweep leaks bookkeeping files and keeps partial conversions (`staging-sweep-leak`)
 
 Hypothesis: a crash leaves `.rosi-download-<uuid>/` with media, the

@@ -26,6 +26,9 @@ struct QueueState {
     cancelled: bool,
     active_item_id: Option<String>,
     runner_alive: bool,
+    /// When the current run started. Progress weighting counts only items
+    /// finished during this run, not results kept from earlier runs.
+    run_started_at: u64,
 }
 
 static QUEUE: OnceLock<Mutex<QueueState>> = OnceLock::new();
@@ -336,9 +339,22 @@ fn schedule_persist() {
     signal.notify_one();
 }
 
+/// Durably write the latest queue. A queue file owned by a newer ROSI version
+/// is never rewritten; it is already the preserved state, so its refusal does
+/// not block closing, restarting, or installing an update.
 pub fn flush() -> Result<(), String> {
     let (revision, snapshot) = revisioned_snapshot(true);
-    persistence().flush(revision, snapshot)
+    match persistence().flush(revision, snapshot) {
+        Err(_)
+            if crate::fs_util::is_newer_schema_file(&queue_path(), MAX_QUEUE_FILE_BYTES as u64) =>
+        {
+            crate::logging::warn(
+                "Kept the download queue written by a newer ROSI version; this session's queue changes were not saved.",
+            );
+            Ok(())
+        }
+        result => result,
+    }
 }
 
 /// Folders queued requests target, for the startup staging sweep.
@@ -595,15 +611,22 @@ fn run_queue() {
             if let Some(current) = queue.items.iter_mut().find(|entry| entry.id == item.id) {
                 current.request = Some(request.clone());
             }
+            let run_started_at = queue.run_started_at;
+            let finished_this_run = |entry: &&QueueItem| {
+                matches!(entry.status.as_str(), "completed" | "failed" | "cancelled")
+                    && entry
+                        .completed_at
+                        .is_some_and(|completed| completed >= run_started_at)
+            };
+            let completed_items = queue.items.iter().filter(finished_this_run).count();
+            let remaining = queue
+                .items
+                .iter()
+                .filter(|entry| matches!(entry.status.as_str(), "pending" | "downloading"))
+                .count();
             QueueProgress {
-                completed_items: queue
-                    .items
-                    .iter()
-                    .filter(|entry| {
-                        matches!(entry.status.as_str(), "completed" | "failed" | "cancelled")
-                    })
-                    .count(),
-                queue_total: queue.items.len(),
+                completed_items,
+                queue_total: completed_items + remaining,
                 queue_item_id: Some(item.id.clone()),
             }
         };
@@ -616,42 +639,57 @@ fn run_queue() {
         }
         let (sender, receiver) = std::sync::mpsc::channel::<()>();
         let item_id = item.id.clone();
-        let on_complete: CompletionCallback = Box::new(move |completion| {
+        let completion_sender = sender.clone();
+        let mut on_complete: Option<CompletionCallback> = Some(Box::new(move |completion| {
             finish_item(&item_id, completion);
-            let _ = sender.send(());
-        });
-        let started = {
-            let _guard = START_GUARD.lock().unwrap_or_else(|p| p.into_inner());
-            let still_wanted = {
-                let queue = state();
-                queue.running
-                    && !queue.cancelled
-                    && queue
-                        .items
-                        .iter()
-                        .any(|entry| entry.id == item.id && entry.status == "downloading")
+            let _ = completion_sender.send(());
+        }));
+        drop(sender);
+        let started = loop {
+            let attempt = {
+                let _guard = START_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+                let still_wanted = {
+                    let queue = state();
+                    queue.running
+                        && !queue.cancelled
+                        && queue
+                            .items
+                            .iter()
+                            .any(|entry| entry.id == item.id && entry.status == "downloading")
+                };
+                if !still_wanted {
+                    None
+                } else if !downloader::can_start(Owner::Queue) {
+                    // A manual download that was accepted just before the queue
+                    // started still holds the slot. Wait for it instead of
+                    // failing this and every later item.
+                    Some(None)
+                } else {
+                    let callback = on_complete.take().expect("queue callback is used once");
+                    Some(Some(downloader::start_download(
+                        request.clone(),
+                        Owner::Queue,
+                        Some(progress.clone()),
+                        callback,
+                    )))
+                }
             };
-            if still_wanted {
-                Some(downloader::start_download(
-                    request.clone(),
-                    Owner::Queue,
-                    Some(progress),
-                    on_complete,
-                ))
-            } else {
-                None
+            match attempt {
+                Some(None) => std::thread::sleep(Duration::from_millis(250)),
+                Some(Some(Err(conflict))) => {
+                    on_complete = Some(conflict.on_complete);
+                    std::thread::sleep(Duration::from_millis(250));
+                }
+                Some(Some(Ok(session_id))) => break Some(session_id),
+                None => break None,
             }
         };
         match started {
             // Cancelled or cleared before the download started: the runner
             // owns this item, so it records exactly one outcome for it.
             None => finish_unstarted_item(&item, &request),
-            Some(Err(error)) => finish_item(
-                &item.id,
-                synthetic_completion(&item, &request, Outcome::Failed, &error),
-            ),
             // The callback always runs exactly once per started session.
-            Some(Ok(_session_id)) => {
+            Some(_session_id) => {
                 let _ = receiver.recv();
             }
         }
@@ -793,15 +831,17 @@ pub fn is_running() -> bool {
     state().running
 }
 
-/// Stop the runner and any active download (window close / quit).
+/// Stop the runner and any active download (window close / quit / restart).
+/// The interrupted item goes back to pending, so it runs again on the next
+/// start instead of looking like the user cancelled it.
 pub fn stop() {
     let _guard = START_GUARD.lock().unwrap_or_else(|p| p.into_inner());
-    {
+    let interrupted = {
         let mut queue = state();
         queue.cancelled = true;
         queue.running = false;
-        queue.active_item_id = None;
-    }
+        queue.active_item_id.take()
+    };
     downloader::cancel_active_session(false);
     downloader::kill_all_processes();
     // The claimed-but-unstarted item must acquire START_GUARD to finish.
@@ -811,6 +851,21 @@ pub fn stop() {
         queue = RUNNER_CHANGED
             .wait(queue)
             .unwrap_or_else(|p| p.into_inner());
+    }
+    let requeued = interrupted.is_some_and(|id| {
+        queue
+            .items
+            .iter_mut()
+            .find(|item| item.id == id && item.status == "cancelled")
+            .map(|item| {
+                clear_attempt(item);
+                item.status = "pending".into();
+            })
+            .is_some()
+    });
+    drop(queue);
+    if requeued {
+        broadcast();
     }
 }
 
@@ -1002,8 +1057,14 @@ pub fn reorder_queue_item(request: Value) -> IpcResult<()> {
     ipc::ok(())
 }
 
-#[tauri::command(async)]
-pub fn clear_queue() -> IpcResult<()> {
+#[tauri::command]
+pub async fn clear_queue() -> IpcResult<()> {
+    tauri::async_runtime::spawn_blocking(clear_queue_blocking)
+        .await
+        .unwrap_or_else(|error| ipc::err(crate::ipc::INTERNAL_ERROR, error.to_string()))
+}
+
+fn clear_queue_blocking() -> IpcResult<()> {
     let _guard = START_GUARD.lock().unwrap_or_else(|p| p.into_inner());
     let was_running = {
         let mut queue = state();
@@ -1026,6 +1087,29 @@ pub fn clear_queue() -> IpcResult<()> {
     ipc::ok(())
 }
 
+/// Remove every completed, failed or cancelled item. Pending and active items
+/// stay, so this never interrupts a run.
+#[tauri::command(async)]
+pub fn clear_finished_queue() -> IpcResult<RemovedCount> {
+    let removed = {
+        let mut queue = state();
+        let before = queue.items.len();
+        queue
+            .items
+            .retain(|item| matches!(item.status.as_str(), "pending" | "downloading"));
+        before - queue.items.len()
+    };
+    if removed > 0 {
+        broadcast();
+    }
+    ipc::ok(RemovedCount { removed })
+}
+
+#[derive(serde::Serialize)]
+pub struct RemovedCount {
+    removed: usize,
+}
+
 #[tauri::command(async)]
 pub fn get_queue() -> Vec<QueueItem> {
     state().items.clone()
@@ -1046,6 +1130,7 @@ pub fn start_queue() -> IpcResult<Started> {
     queue.running = true;
     queue.cancelled = false;
     queue.runner_alive = true;
+    queue.run_started_at = crate::app_state::now_ms();
     drop(queue);
     std::thread::spawn(run_queue);
     ipc::ok(Started { started: true })
@@ -1056,8 +1141,14 @@ pub struct Started {
     started: bool,
 }
 
-#[tauri::command(async)]
-pub fn cancel_queue() -> IpcResult<()> {
+#[tauri::command]
+pub async fn cancel_queue() -> IpcResult<()> {
+    tauri::async_runtime::spawn_blocking(cancel_queue_blocking)
+        .await
+        .unwrap_or_else(|error| ipc::err(crate::ipc::INTERNAL_ERROR, error.to_string()))
+}
+
+fn cancel_queue_blocking() -> IpcResult<()> {
     let _guard = START_GUARD.lock().unwrap_or_else(|p| p.into_inner());
     let active = {
         let mut queue = state();

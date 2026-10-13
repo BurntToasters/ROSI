@@ -70,16 +70,21 @@ pub fn is_app_url(url: &tauri::Url) -> bool {
 }
 
 /// Hand a blocked navigation to the system browser when it is a safe
-/// external URL; everything else is dropped.
+/// external URL; everything else is dropped. Validation resolves DNS, so it
+/// runs off the UI thread that delivers navigation callbacks.
 fn open_blocked_url(app: &AppHandle, url: &tauri::Url) {
     use tauri_plugin_opener::OpenerExt;
-    if crate::validation::is_safe_external_url(url.as_str()) {
-        if let Err(error) = app.opener().open_url(url.as_str(), None::<&str>) {
-            crate::logging::warn(&format!("Could not open external URL: {error}"));
+    let app = app.clone();
+    let url = url.clone();
+    std::thread::spawn(move || {
+        if crate::validation::is_safe_external_url(url.as_str()) {
+            if let Err(error) = app.opener().open_url(url.as_str(), None::<&str>) {
+                crate::logging::warn(&format!("Could not open external URL: {error}"));
+            }
+        } else {
+            crate::logging::warn(&format!("Blocked navigation to {}", url.scheme()));
         }
-    } else {
-        crate::logging::warn(&format!("Blocked navigation to {}", url.scheme()));
-    }
+    });
 }
 
 /// Injected into every frame of the main window before page scripts run.
@@ -383,13 +388,12 @@ fn begin_flush_and_close(app: AppHandle) {
                 .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
             {
-                app.dialog()
-                    .message("ROSI could not confirm that settings and the download queue were saved. The app will stay open. Try closing it again after the save finishes.")
-                    .title("Save Still Pending")
-                    .kind(MessageDialogKind::Warning)
-                    .show(|_| {
-                        CLOSE_TIMEOUT_DIALOG_VISIBLE.store(false, Ordering::SeqCst);
-                    });
+                offer_forced_close(
+                    &app,
+                    "Save Still Pending",
+                    "ROSI could not confirm that settings and the download queue were saved.\n\nKeep ROSI open and try closing again after the save finishes, or close without saving the latest changes.",
+                    || CLOSE_TIMEOUT_DIALOG_VISIBLE.store(false, Ordering::SeqCst),
+                );
             }
         }
     });
@@ -462,6 +466,12 @@ pub async fn notify_settings_flushed(
     };
     if let Err(error) = shutdown {
         cancel_close_generation(generation);
+        offer_forced_close(
+            &app,
+            "Could Not Save Before Closing",
+            &format!("ROSI could not durably save its state before closing.\n\n{error}\n\nKeep ROSI open to retry, or close without saving the latest changes."),
+            || {},
+        );
         return Err(format!(
             "Could not durably save application state before closing: {error}"
         ));
@@ -526,6 +536,64 @@ pub fn request_quit(app: &AppHandle) {
     }
 }
 
+/// Last resort when durable state cannot be confirmed (for example a stuck
+/// renderer or an unwritable profile): the user may close anyway. Active work
+/// still stops and the queue gets one best-effort write first.
+fn offer_forced_close(
+    app: &AppHandle,
+    title: &str,
+    message: &str,
+    on_dismiss: impl FnOnce() + Send + 'static,
+) {
+    let handle = app.clone();
+    let mut dialog = app
+        .dialog()
+        .message(message)
+        .title(title)
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Close Without Saving".to_string(),
+            "Keep ROSI Open".to_string(),
+        ));
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+        dialog = dialog.parent(&window);
+    }
+    dialog.show(move |close| {
+        on_dismiss();
+        if !close {
+            APP_QUITTING.store(false, Ordering::SeqCst);
+            return;
+        }
+        std::thread::spawn(move || force_close(handle));
+    });
+}
+
+fn force_close(app: AppHandle) {
+    crate::logging::warn("Closing without confirmed durable state at the user's request.");
+    stop_active_work();
+    if let Err(error) = crate::queue::flush() {
+        crate::logging::error(&format!(
+            "Best-effort queue save before forced close failed: {error}"
+        ));
+    }
+    {
+        let _state = CLOSE_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        CLOSE_IN_PROGRESS.store(true, Ordering::SeqCst);
+        CLOSE_GENERATION.fetch_add(1, Ordering::SeqCst);
+    }
+    let main_thread = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(window) = main_thread.get_webview_window(MAIN_WINDOW) {
+            if let Err(error) = window.destroy() {
+                crate::logging::error(&format!("Could not close the main window: {error}"));
+                cancel_close();
+            }
+        }
+    });
+}
+
 pub fn stop_active_work() {
     crate::queue::stop();
     crate::media_info::cancel_all();
@@ -576,7 +644,9 @@ pub fn restart(app: &AppHandle) -> Result<(), String> {
     restart_with(app, || Ok(()))
 }
 
-#[tauri::command(async)]
-pub fn restart_app(app: AppHandle) -> Result<(), String> {
-    restart(&app)
+#[tauri::command]
+pub async fn restart_app(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || restart(&app))
+        .await
+        .map_err(|error| error.to_string())?
 }

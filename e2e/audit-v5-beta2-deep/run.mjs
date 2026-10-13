@@ -42,26 +42,42 @@ if (
   fs.readFileSync(stamp, "utf8") !== "e2e-feature-1\n" ||
   fs.statSync(stamp).mtimeMs < fs.statSync(binary).mtimeMs
 ) {
-  throw new Error("Build a fresh E2E binary (npm run test:e2e) before running these probes.");
+  throw new Error(
+    "Build a fresh E2E binary (npm run test:e2e) before running these probes.",
+  );
 }
 
-const ownedRoot = path.join(REPO_ROOT, "e2e", "artifacts", "audit-v5-beta2-deep");
+const ownedRoot = path.join(
+  REPO_ROOT,
+  "e2e",
+  "artifacts",
+  "audit-v5-beta2-deep",
+);
 const artifactRoot = path.join(
   ownedRoot,
   `${new Date().toISOString().replaceAll(":", "-")}-${process.pid}`,
 );
 fs.mkdirSync(artifactRoot, { recursive: true });
 
-const sha256 = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
+const sha256 = (bytes) =>
+  crypto.createHash("sha256").update(bytes).digest("hex");
 const fileHash = (file) =>
-  fs.existsSync(file) && fs.statSync(file).isFile() ? sha256(fs.readFileSync(file)) : null;
-const ffmpeg = spawnSync("which", ["ffmpeg"], { encoding: "utf8" }).stdout.trim();
+  fs.existsSync(file) && fs.statSync(file).isFile()
+    ? sha256(fs.readFileSync(file))
+    : null;
+const ffmpeg = spawnSync("which", ["ffmpeg"], {
+  encoding: "utf8",
+}).stdout.trim();
 if (!ffmpeg || path.basename(ffmpeg) !== "ffmpeg") {
   throw new Error("A real FFmpeg named `ffmpeg` must be on PATH.");
 }
 const caPath = path.join(REPO_ROOT, "e2e", "fixtures", "security-test-ca.pem");
-const tlsKey = fs.readFileSync(path.join(REPO_ROOT, "e2e", "fixtures", "security-test-server-key.pem"));
-const tlsCert = fs.readFileSync(path.join(REPO_ROOT, "e2e", "fixtures", "security-test-server.pem"));
+const tlsKey = fs.readFileSync(
+  path.join(REPO_ROOT, "e2e", "fixtures", "security-test-server-key.pem"),
+);
+const tlsCert = fs.readFileSync(
+  path.join(REPO_ROOT, "e2e", "fixtures", "security-test-server.pem"),
+);
 
 function runWdio(env, timeoutMs) {
   return new Promise((resolve) => {
@@ -134,7 +150,10 @@ async function seed(mode, profile) {
     const media = path.join(stageDir, "interrupted [abc123].mp4");
     fs.writeFileSync(media, crypto.randomBytes(4096));
     fs.writeFileSync(path.join(stageDir, bookkeeping), `${media}\n`);
-    fs.writeFileSync(path.join(stageDir, nested, "output.mp4"), crypto.randomBytes(2048));
+    fs.writeFileSync(
+      path.join(stageDir, nested, "output.mp4"),
+      crypto.randomBytes(2048),
+    );
     for (const target of [
       media,
       path.join(stageDir, bookkeeping),
@@ -165,43 +184,74 @@ async function seedHls(profile) {
   const encode = spawnSync(
     ffmpeg,
     [
-      "-hide_banner", "-loglevel", "error",
-      "-f", "lavfi", "-i", "testsrc=size=160x90:rate=10:duration=12",
-      "-f", "lavfi", "-i", "sine=frequency=440:duration=12",
-      "-c:v", "libx264", "-g", "10", "-keyint_min", "10", "-sc_threshold", "0",
-      "-c:a", "aac", "-shortest",
-      "-f", "hls", "-hls_time", "1", "-hls_list_size", "0",
-      "-hls_segment_filename", path.join(hlsDir, "seg%02d.ts"),
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc=size=160x90:rate=10:duration=12",
+      "-f",
+      "lavfi",
+      "-i",
+      "sine=frequency=440:duration=12",
+      "-c:v",
+      "libx264",
+      "-g",
+      "10",
+      "-keyint_min",
+      "10",
+      "-sc_threshold",
+      "0",
+      "-c:a",
+      "aac",
+      "-shortest",
+      "-f",
+      "hls",
+      "-hls_time",
+      "1",
+      "-hls_list_size",
+      "0",
+      "-hls_segment_filename",
+      path.join(hlsDir, "seg%02d.ts"),
       path.join(hlsDir, "index.m3u8"),
     ],
     { encoding: "utf8" },
   );
-  if (encode.status !== 0) throw new Error(`HLS fixture failed: ${encode.stderr}`);
-  const segments = fs.readdirSync(hlsDir).filter((name) => name.endsWith(".ts")).sort();
+  if (encode.status !== 0)
+    throw new Error(`HLS fixture failed: ${encode.stderr}`);
+  const segments = fs
+    .readdirSync(hlsDir)
+    .filter((name) => name.endsWith(".ts"))
+    .sort();
   const events = [];
   const servers = [];
   const startOrigin = async (label, routes) => {
-    const server = https.createServer({ key: tlsKey, cert: tlsCert }, (request, response) => {
-      const route = routes[new URL(request.url, "https://127.0.0.1").pathname];
-      events.push({
-        at: Date.now(),
-        label,
-        method: request.method,
-        path: request.url,
-        socket: request.socket.remotePort,
-      });
-      if (!route) {
-        response.writeHead(404);
-        response.end();
-        return;
-      }
-      response.writeHead(200, {
-        "Content-Type": route.type,
-        "Content-Length": String(route.body.length),
-        Connection: "keep-alive",
-      });
-      response.end(route.body);
-    });
+    const server = https.createServer(
+      { key: tlsKey, cert: tlsCert },
+      (request, response) => {
+        const route =
+          routes[new URL(request.url, "https://127.0.0.1").pathname];
+        events.push({
+          at: Date.now(),
+          label,
+          method: request.method,
+          path: request.url,
+          socket: request.socket.remotePort,
+        });
+        if (!route) {
+          response.writeHead(404);
+          response.end();
+          return;
+        }
+        response.writeHead(200, {
+          "Content-Type": route.type,
+          "Content-Length": String(route.body.length),
+          Connection: "keep-alive",
+        });
+        response.end(route.body);
+      },
+    );
     // CDN-like idle keep-alive, far longer than Node's 5 s default.
     server.keepAliveTimeout = 10 * 60 * 1000;
     server.headersTimeout = 10 * 60 * 1000 + 1000;
@@ -217,7 +267,10 @@ async function seedHls(profile) {
   for (const segment of segments) {
     segmentPorts.push(
       await startOrigin(segment, {
-        [`/${segment}`]: { type: "video/mp2t", body: fs.readFileSync(path.join(hlsDir, segment)) },
+        [`/${segment}`]: {
+          type: "video/mp2t",
+          body: fs.readFileSync(path.join(hlsDir, segment)),
+        },
       }),
     );
   }
@@ -226,11 +279,16 @@ async function seedHls(profile) {
     .split("\n")
     .map((line) => {
       const index = segments.indexOf(line.trim());
-      return index >= 0 ? `https://127.0.0.1:${segmentPorts[index]}/${segments[index]}` : line;
+      return index >= 0
+        ? `https://127.0.0.1:${segmentPorts[index]}/${segments[index]}`
+        : line;
     })
     .join("\n");
   const manifestPort = await startOrigin("manifest", {
-    "/index.m3u8": { type: "application/vnd.apple.mpegurl", body: Buffer.from(playlist) },
+    "/index.m3u8": {
+      type: "application/vnd.apple.mpegurl",
+      body: Buffer.from(playlist),
+    },
   });
   return {
     env: {
@@ -238,19 +296,30 @@ async function seedHls(profile) {
       ROSI_DEEP_HLS_URL: `https://127.0.0.1:${manifestPort}/index.m3u8`,
       ROSI_DEEP_WINDOW_MS: "120000",
     },
-    context: { segments, segmentPorts, manifestPort, events, servers, playlist },
+    context: {
+      segments,
+      segmentPorts,
+      manifestPort,
+      events,
+      servers,
+      playlist,
+    },
   };
 }
 
 function judgeHls(observation, context) {
   const firstRequest = context.segments.map((segment) => {
-    const hit = context.events.find((event) => event.label === segment && event.method === "GET");
+    const hit = context.events.find(
+      (event) => event.label === segment && event.method === "GET",
+    );
     return hit ? hit.at : null;
   });
   const tlsConnections = Object.fromEntries(
     ["manifest", ...context.segments].map((label) => [
       label,
-      context.events.filter((event) => event.label === label && event.tlsConnection).length,
+      context.events.filter(
+        (event) => event.label === label && event.tlsConnection,
+      ).length,
     ]),
   );
   const requested = firstRequest.filter((at) => at !== null).length;
@@ -287,7 +356,9 @@ for (const mode of modes) {
   });
   const seeded = await seed(mode, profile);
   const dataBefore = Object.fromEntries(
-    fs.readdirSync(profile.dataDir).map((name) => [name, fileHash(path.join(profile.dataDir, name))]),
+    fs
+      .readdirSync(profile.dataDir)
+      .map((name) => [name, fileHash(path.join(profile.dataDir, name))]),
   );
   const result = await runWdio(
     {
@@ -300,11 +371,14 @@ for (const mode of modes) {
       ROSI_DEEP_ARTIFACTS: directory,
       ROSI_DEEP_DOWNLOADS: profile.downloads,
     },
-    mode === "proxy-pool-exhaustion" || mode === "queue-owner-race" ? 600_000 : 240_000,
+    mode === "proxy-pool-exhaustion" || mode === "queue-owner-race"
+      ? 600_000
+      : 240_000,
   );
   fs.writeFileSync(path.join(directory, "wdio.log"), result.output);
   const logFile = path.join(profile.dataDir, "logs", "rosi.log");
-  if (fs.existsSync(logFile)) fs.copyFileSync(logFile, path.join(directory, "rosi.log"));
+  if (fs.existsSync(logFile))
+    fs.copyFileSync(logFile, path.join(directory, "rosi.log"));
   const observationPath = path.join(directory, "observation.json");
   const observation = fs.existsSync(observationPath)
     ? JSON.parse(fs.readFileSync(observationPath, "utf8"))
@@ -324,7 +398,10 @@ for (const mode of modes) {
   observation.runnerExitCode = result.code;
   observation.dataBefore = dataBefore;
   observations.push(observation);
-  fs.writeFileSync(observationPath, `${JSON.stringify(observation, null, 2)}\n`);
+  fs.writeFileSync(
+    observationPath,
+    `${JSON.stringify(observation, null, 2)}\n`,
+  );
   fs.rmSync(profile.profileDir, { recursive: true, force: true });
   console.log(
     JSON.stringify({
@@ -336,8 +413,10 @@ for (const mode of modes) {
   );
 }
 
-const commit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: REPO_ROOT, encoding: "utf8" })
-  .stdout.trim();
+const commit = spawnSync("git", ["rev-parse", "HEAD"], {
+  cwd: REPO_ROOT,
+  encoding: "utf8",
+}).stdout.trim();
 const report = {
   suite: "audit-v5-beta2-deep",
   commit,
@@ -349,9 +428,15 @@ const report = {
   binarySha256: sha256(fs.readFileSync(binary)),
   ffmpeg,
   probeSourceSha256: {
-    "deep-audit.spec.js": fileHash(path.join(REPO_ROOT, "e2e/audit-v5-beta2-deep/deep-audit.spec.js")),
-    "run.mjs": fileHash(path.join(REPO_ROOT, "e2e/audit-v5-beta2-deep/run.mjs")),
-    "failure-modes.md": fileHash(path.join(REPO_ROOT, "e2e/audit-v5-beta2-deep/failure-modes.md")),
+    "deep-audit.spec.js": fileHash(
+      path.join(REPO_ROOT, "e2e/audit-v5-beta2-deep/deep-audit.spec.js"),
+    ),
+    "run.mjs": fileHash(
+      path.join(REPO_ROOT, "e2e/audit-v5-beta2-deep/run.mjs"),
+    ),
+    "failure-modes.md": fileHash(
+      path.join(REPO_ROOT, "e2e/audit-v5-beta2-deep/failure-modes.md"),
+    ),
   },
   platform: `${process.platform}-${process.arch}`,
   finishedAt: new Date().toISOString(),
@@ -359,5 +444,10 @@ const report = {
 };
 const reportText = `${JSON.stringify(report, null, 2)}\n`;
 fs.writeFileSync(path.join(artifactRoot, "report.json"), reportText);
-fs.writeFileSync(path.join(artifactRoot, "report.sha256"), `${sha256(reportText)}  report.json\n`);
-console.log(`Report: ${path.relative(REPO_ROOT, path.join(artifactRoot, "report.json"))}`);
+fs.writeFileSync(
+  path.join(artifactRoot, "report.sha256"),
+  `${sha256(reportText)}  report.json\n`,
+);
+console.log(
+  `Report: ${path.relative(REPO_ROOT, path.join(artifactRoot, "report.json"))}`,
+);

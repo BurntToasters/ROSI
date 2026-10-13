@@ -144,6 +144,7 @@ macro_rules! generate_app_handler {
             queue::retry_queue_item,
             queue::reorder_queue_item,
             queue::clear_queue,
+            queue::clear_finished_queue,
             queue::get_queue,
             queue::start_queue,
             queue::cancel_queue,

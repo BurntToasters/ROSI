@@ -121,9 +121,16 @@ pub struct Shown {
     shown: bool,
 }
 
-#[tauri::command(async)]
-pub fn open_external(app: tauri::AppHandle, url: Value) -> IpcResult<Opened> {
-    let url = match crate::validation::validate_external_url(&url) {
+#[tauri::command]
+pub async fn open_external(app: tauri::AppHandle, url: Value) -> IpcResult<Opened> {
+    // URL validation resolves DNS, which can block for seconds.
+    tauri::async_runtime::spawn_blocking(move || open_external_blocking(&app, &url))
+        .await
+        .unwrap_or_else(|error| ipc::err(INTERNAL_ERROR, error.to_string()))
+}
+
+fn open_external_blocking(app: &tauri::AppHandle, url: &Value) -> IpcResult<Opened> {
+    let url = match crate::validation::validate_external_url(url) {
         Ok(url) => url,
         Err(error) => return ipc::from_error(error),
     };
@@ -213,10 +220,35 @@ pub async fn select_download_location(app: tauri::AppHandle) -> Option<String> {
         if let Some(window) = crate::app_state::main_window() {
             dialog = dialog.set_parent(&window);
         }
-        dialog
+        let picked = dialog
             .blocking_pick_folder()
             .and_then(|folder| folder.into_path().ok())
-            .map(|path| path.to_string_lossy().into_owned())
+            .map(|path| path.to_string_lossy().into_owned())?;
+        // Refuse a folder the download path rules reject here, so the renderer
+        // never stores a value that every later settings save would refuse.
+        match crate::validation::validate_download_path(&picked) {
+            Ok(valid) if !valid.is_empty() => Some(valid),
+            Ok(_) => None,
+            Err(error) => {
+                crate::logging::warn(&format!(
+                    "Refused download folder {picked}: {}",
+                    error.message
+                ));
+                let mut message = app
+                    .dialog()
+                    .message(format!(
+                        "ROSI cannot save downloads to this folder:\n{picked}\n\n{}",
+                        error.message
+                    ))
+                    .title("Folder Not Allowed")
+                    .kind(tauri_plugin_dialog::MessageDialogKind::Warning);
+                if let Some(window) = crate::app_state::main_window() {
+                    message = message.parent(&window);
+                }
+                message.blocking_show();
+                None
+            }
+        }
     })
     .await
     .unwrap_or(None)

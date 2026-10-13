@@ -276,6 +276,10 @@
                 >?</a
               >
               <p class="settings-hint">Lets yt-dlp reach videos that need you to be signed in.</p>
+              <p id="browserFlatpakHint" class="settings-hint hidden">
+                The Flatpak build cannot read browser profiles, so browser cookies are unavailable
+                here. Use the AppImage if you need signed-in downloads.
+              </p>
               <div id="browserChoiceContainer" class="sub-option setting-subgroup">
                 <label class="select-label">
                   <span>Browser</span>
@@ -651,7 +655,7 @@
                       id="profileCompatibleBtn"
                       class="download-profile-btn segmented__item"
                       aria-pressed="false"
-                      title="Prefer MP4 when available; otherwise use the best available format."
+                      title="Prefer MP4 when available; otherwise use the best available format. Compatible files are often low resolution (for example 360p on YouTube). Choose Best video for higher quality."
                     >
                       Compatible
                     </button>
@@ -709,7 +713,8 @@
                   </button>
                 </div>
                 <p id="downloadOutputSummary" class="download-output-summary">
-                  Prefer MP4 when available; otherwise use the best available format
+                  Prefer MP4 when available; otherwise use the best available format. Often low
+                  resolution
                 </p>
 
                 <div
@@ -1045,6 +1050,15 @@
                     </button>
                     <button
                       type="button"
+                      id="clearFinishedQueueBtn"
+                      class="queue-action-btn queue-clear-finished-btn btn btn--ghost btn--sm btn--icon btn--accent-hover"
+                      title="Remove finished items"
+                      aria-label="Remove completed, failed, and cancelled items"
+                    >
+                      <span data-icon="circle-check" data-size="14"></span>
+                    </button>
+                    <button
+                      type="button"
                       id="clearQueueBtn"
                       class="queue-action-btn queue-clear-btn btn btn--ghost btn--sm btn--icon btn--danger-hover"
                       title="Clear queue"
@@ -1371,6 +1385,7 @@
                 <label class="wizard-segment"
                   ><input type="radio" name="wizard-profile" value="compatible" checked /><span
                     class="segmented__item"
+                    title="Compatible files are often low resolution (for example 360p on YouTube). Choose Best video for higher quality."
                     >Compatible</span
                   ></label
                 >

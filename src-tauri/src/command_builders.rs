@@ -92,6 +92,11 @@ pub fn must_preserve_original(target: &str, source: &SourceCodecs, probe_complet
 }
 
 fn resolve_gpu_video_encoder(settings: &Settings) -> &'static str {
+    if cfg!(target_os = "macos") && settings.gpu_type == "auto" {
+        // Every supported Mac has a VideoToolbox H.264 encoder. A failed
+        // attempt still falls back to libx264.
+        return "h264_videotoolbox";
+    }
     match settings.gpu_type.as_str() {
         "nvidia" => return "h264_nvenc",
         "amd" => return "h264_amf",
@@ -124,7 +129,9 @@ pub fn resolve_video_encoder(settings: &Settings) -> String {
 /// discovery commands. Invalid persisted values fail closed to no cookies.
 pub fn build_browser_cookie_args(hook_browser: bool, browser: &str) -> Vec<String> {
     let browser = browser.trim().to_lowercase();
-    if hook_browser && allowed(ALLOWED_BROWSERS, &browser) {
+    // The Flatpak sandbox cannot read browser profiles; the option would only
+    // make every request fail.
+    if hook_browser && allowed(ALLOWED_BROWSERS, &browser) && !crate::platform::flatpak() {
         vec!["--cookies-from-browser".into(), browser]
     } else {
         Vec::new()
@@ -182,6 +189,8 @@ pub fn ytdlp_e2e_ca_path() -> Option<String> {
         None
     }
 }
+
+const OUTPUT_TEMPLATE: &str = "%(title).150B [%(id)s].%(ext)s";
 
 const SAFE_FORMAT_PROTOCOLS: &str = "^(https?|m3u8|m3u8_native|http_dash_segments)$";
 
@@ -272,6 +281,20 @@ pub fn build_ffmpeg_args(
     .into_iter()
     .map(str::to_string)
     .collect::<Vec<_>>();
+    let apple_container =
+        ["mp4", "m4v", "mov"].contains(&target_format.to_ascii_lowercase().as_str());
+    if video == "copy"
+        && apple_container
+        && matches!(source_video.as_deref(), Some("hevc" | "h265"))
+    {
+        // Apple players open HEVC in MP4/MOV only with the hvc1 tag.
+        args.extend(["-tag:v".to_string(), "hvc1".to_string()]);
+    }
+    if video == "libx264" {
+        // 10-bit or 4:4:4 sources would otherwise yield High 10/4:4:4 H.264,
+        // which most phones, TVs and QuickTime cannot play.
+        args.extend(["-pix_fmt".to_string(), "yuv420p".to_string()]);
+    }
     if let Some(codec) = source.and_then(|source| target_subtitle_codec(target_format, source)) {
         if let Some(source) = source {
             for index in 0..source.subtitles.len() {
@@ -370,6 +393,12 @@ pub fn build_ytdlp_args(input: YtdlpArgsInput<'_>) -> (Vec<String>, Vec<String>)
         "--no-overwrites".into(),
         "-P".into(),
         download_dir.to_string_lossy().into_owned(),
+        // yt-dlp's default template, with the title capped in bytes. Long
+        // (especially CJK) titles otherwise exceed the 255-byte name limit on
+        // Linux and macOS, and push paths past MAX_PATH on Windows once the
+        // private staging folder is added.
+        "-o".into(),
+        OUTPUT_TEMPLATE.into(),
     ]);
     args.extend(playlist_args(options));
     args.extend(

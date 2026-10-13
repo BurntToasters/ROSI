@@ -516,10 +516,15 @@ function showModal({
   key,
   buttons = [],
   priority = false,
+  busy = false,
   extra = null,
 }: ModalData) {
-  const modalData: ModalData = { title, message, key, buttons, priority, extra };
+  const modalData: ModalData = { title, message, key, buttons, priority, busy, extra };
+  // A keyed prompt (for example an available update) that a priority modal
+  // pushes aside is shown again afterwards instead of being lost.
+  let displaced: ModalData | null = null;
   if (priority && isModalActive) {
+    if (currentModalData?.key && !currentModalData.busy) displaced = currentModalData;
     cancelModalHide();
     const modal = document.getElementById('app-modal');
     if (modal) {
@@ -533,6 +538,7 @@ function showModal({
   }
   if (priority) {
     modalQueue.unshift(modalData);
+    if (displaced) modalQueue.splice(1, 0, displaced);
   } else {
     modalQueue.push(modalData);
   }
@@ -881,15 +887,13 @@ async function fetchFormats() {
         option.title = trimmed;
         const isVideoOnly = /video only/i.test(line);
         const isAudioOnly = /audio only/i.test(line);
-        const isVideo = /video/.test(line.toLowerCase()) && !isAudioOnly;
-        const isAudio = /audio/.test(line.toLowerCase()) && !isVideoOnly;
-        if (isVideoOnly || (isVideo && !isAudio)) {
-          if (videoSelect) videoSelect.appendChild(option);
-          videoFormatsFound++;
-        } else if (isAudioOnly || (isAudio && !isVideo)) {
+        if (isAudioOnly) {
           if (audioSelect) audioSelect.appendChild(option);
           audioFormatsFound++;
-        } else if (isVideo && isAudio) {
+        } else {
+          // Video-only streams and combined video+audio formats. Combined
+          // formats (common on sites with a single file) carry no marker.
+          if (!isVideoOnly) option.text += ' (video + audio)';
           if (videoSelect) videoSelect.appendChild(option);
           videoFormatsFound++;
         }
@@ -1248,7 +1252,7 @@ async function checkForUpdates() {
         {
           label: 'Open Store',
           primary: true,
-          action: () => window.api.openExternal('ms-windows-store://pdp/?ProductId=9N0BQSTFL4SV'),
+          action: () => window.api.openExternal('ms-windows-store://pdp/?ProductId=9P4Q134B2JW3'),
         },
         { label: 'OK' },
       ],
@@ -1649,9 +1653,12 @@ const DENO_INSTALL_DOCS = 'https://docs.deno.com/runtime/getting_started/install
 async function checkDenoInstallation(
   settings: RosiSettings,
   persist: () => Promise<boolean>,
-  flushBeforeRestart: () => Promise<boolean>
+  flushBeforeRestart: () => Promise<boolean>,
+  isFlatpak = false
 ) {
-  if (settings.denoReminderDismissed) {
+  // The Flatpak sandbox cannot run a Deno installed on the host, so the
+  // reminder would ask for something that cannot help.
+  if (settings.denoReminderDismissed || isFlatpak) {
     return;
   }
 
@@ -1809,7 +1816,8 @@ function launchSetupWizard(
   settings: RosiSettings,
   applyThemeFn: (preference: string) => void,
   persistSettingsFn: (silent?: boolean, immediate?: boolean) => Promise<boolean>,
-  onComplete: (outcome: WizardOutcome) => void
+  onComplete: (outcome: WizardOutcome) => void,
+  isFlatpak = false
 ) {
   let currentStep = 0;
 
@@ -2040,8 +2048,15 @@ function launchSetupWizard(
   async function checkDenoForWizard() {
     if (denoChecked) return;
     denoChecked = true;
-    setDenoStatus('checking', 'Checking for Deno…');
     setDenoAction(null, null);
+    if (isFlatpak) {
+      setDenoStatus(
+        'missing',
+        'The Flatpak build cannot use Deno from your system, so some YouTube videos may not download. The AppImage does not have this limit.'
+      );
+      return;
+    }
+    setDenoStatus('checking', 'Checking for Deno…');
     try {
       if (await window.api.checkDenoInstalled()) {
         setDenoStatus('installed', 'Deno is installed. YouTube downloads are fully supported.');
@@ -2502,13 +2517,35 @@ async function initializeRenderer() {
       taskbarSetting?.setAttribute('hidden', '');
       taskbarLinuxNote?.classList.remove('hidden');
     }
+    if (platform === 'darwin') {
+      // macOS always uses VideoToolbox; the vendor choice does not apply.
+      document.getElementById('gpuTypeContainer')?.classList.add('hidden');
+    }
   } catch (e) {
     logError('Could not resolve app platform for settings UI', e);
   }
 
+  let isFlatpakBuild = false;
+  try {
+    isFlatpakBuild = (await window.api.isFlatpak?.()) === true;
+  } catch (e) {
+    logError('Could not detect the Flatpak build', e);
+  }
+  if (isFlatpakBuild) {
+    // The sandbox cannot read browser profiles, so cookies cannot work here.
+    const cookieToggle = document.getElementById('hookBrowserToggle') as HTMLInputElement | null;
+    if (cookieToggle) {
+      cookieToggle.checked = false;
+      cookieToggle.disabled = true;
+      cookieToggle.closest('.toggle-switch')?.classList.add('disabled');
+    }
+    document.getElementById('browserChoiceContainer')?.classList.add('hidden');
+    document.getElementById('browserFlatpakHint')?.classList.remove('hidden');
+  }
+
   if (window.api.getChannel() !== 'msstore') {
     try {
-      setupAutoUpdater(() => persistSettings(false, true));
+      setupAutoUpdater(() => flushBeforeRestart('Installing the update'));
     } catch (e) {
       logError('Failed to setup auto-updater', e);
     }
@@ -2531,6 +2568,11 @@ async function initializeRenderer() {
 
   let persistDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   let settingsSaveInFlight = false;
+  // Error code of the most recent failed save. NEWER_VERSION means the file
+  // belongs to a newer ROSI and is intentionally preserved.
+  let lastSettingsSaveErrorCode: string | null = null;
+  // Set once the controls exist; refreshes them after the backend refuses a field.
+  let refreshSettingsControls: (() => void) | null = null;
   let settingsSaveWaiters: Array<{
     revision: number;
     immediate: boolean;
@@ -2566,18 +2608,39 @@ async function initializeRenderer() {
     let saved = false;
     let errorMessage = 'Could not save settings due to an unexpected error.';
 
+    let rejectedMessage: string | null = null;
     try {
       const result = await window.api.saveSettings(
         snapshot as unknown as Parameters<typeof window.api.saveSettings>[0]
       );
       if (result?.ok === true) {
         saved = true;
+        lastSettingsSaveErrorCode = null;
         // The backend may normalize values. Reconcile only if this immutable
         // snapshot is still the newest renderer revision.
         if (snapshotRevision === settingsRevision) {
           reconcileSettingsInPlace(result.data as RosiSettings);
         }
+      } else if (result?.error?.code === 'VALIDATION_ERROR' && result.error.details) {
+        // The other fields were saved; only the listed ones were refused.
+        // Restore those from disk so they are not sent again on every save.
+        const refused = JSON.parse(result.error.details) as string[];
+        const stored = (await window.api.getSettings()) as unknown as Record<string, unknown>;
+        const current = settings as unknown as Record<string, unknown>;
+        reconcilingSettings = true;
+        try {
+          refused.forEach((key) => {
+            if (key in stored) current[key] = stored[key];
+          });
+        } finally {
+          reconcilingSettings = false;
+        }
+        refreshSettingsControls?.();
+        saved = true;
+        lastSettingsSaveErrorCode = null;
+        rejectedMessage = result.error.message;
       } else {
+        lastSettingsSaveErrorCode = result?.error?.code ?? null;
         errorMessage = result?.error?.message || 'Could not save settings.';
       }
     } catch {
@@ -2585,8 +2648,21 @@ async function initializeRenderer() {
     }
 
     const latestRevision = settingsRevision;
-    const settled = settleSettingsSaveWaiters(snapshotRevision, saved, latestRevision);
-    if (!saved && snapshotRevision === latestRevision && settled.some((waiter) => !waiter.silent)) {
+    // A newer ROSI owns settings.json: the file is preserved and the user was
+    // told once. Callers proceed with the in-memory values.
+    const preserved = !saved && lastSettingsSaveErrorCode === 'NEWER_VERSION';
+    const settled = settleSettingsSaveWaiters(snapshotRevision, saved || preserved, latestRevision);
+    if (rejectedMessage) {
+      showSettingsSaveError(
+        `This setting was not changed:\n${rejectedMessage}\nYour other settings were saved.`
+      );
+    } else if (
+      !saved &&
+      lastSettingsSaveErrorCode !== 'NEWER_VERSION' &&
+      snapshotRevision === latestRevision &&
+      settled.some((waiter) => !waiter.silent)
+    ) {
+      // A newer-version settings file is reported once by the backend.
       showSettingsSaveError(`${errorMessage}\nChanges may not persist after restart.`);
     }
     settingsSaveInFlight = false;
@@ -2627,7 +2703,9 @@ async function initializeRenderer() {
   setPrepareForCloseHandler(async (generation) => {
     try {
       const saved = await persistSettings(false, true);
-      if (!saved) return;
+      // A settings file from a newer ROSI is preserved on purpose; it must not
+      // keep the app from closing.
+      if (!saved && lastSettingsSaveErrorCode !== 'NEWER_VERSION') return;
       await window.api.notifySettingsFlushed(generation);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -2640,8 +2718,35 @@ async function initializeRenderer() {
     }
   });
 
+  /**
+   * Restarts and update installs stop any active download. Ask first; an
+   * interrupted queue item returns to the queue and runs again later.
+   */
+  function confirmInterruptActiveWork(action: string): Promise<boolean> {
+    const queueActive = currentQueue.some((item) => item.status === 'downloading');
+    if (!isDownloading && !queueActive) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      showModal({
+        title: 'Download in Progress',
+        message: `${action} stops the active download.${
+          queueActive ? ' The interrupted queue item goes back to the queue.' : ''
+        }`,
+        priority: true,
+        buttons: [
+          { label: 'Keep Downloading', primary: true, action: () => resolve(false) },
+          { label: 'Stop and Continue', danger: true, action: () => resolve(true) },
+        ],
+      });
+    });
+  }
+
+  async function flushBeforeRestart(action: string) {
+    if (!(await confirmInterruptActiveWork(action))) return false;
+    return persistSettings(false, true);
+  }
+
   async function restartAfterSettingsFlush() {
-    if (!(await persistSettings(false, true))) return;
+    if (!(await flushBeforeRestart('Restarting ROSI'))) return;
     try {
       await window.api.restartApp();
     } catch (error) {
@@ -2727,6 +2832,7 @@ async function initializeRenderer() {
   const addToQueueBtn = byId<HTMLButtonElement>('addToQueueBtn');
   const startQueueBtn = byId<HTMLButtonElement>('startQueueBtn');
   const clearQueueBtn = byId<HTMLButtonElement>('clearQueueBtn');
+  const clearFinishedQueueBtn = byId<HTMLButtonElement>('clearFinishedQueueBtn');
   const cancelQueueBtn = byId<HTMLButtonElement>('cancelQueueBtn');
   const queueStatusMessage = byId('queueStatusMessage');
   const queueList = byId('queueList');
@@ -2889,7 +2995,7 @@ async function initializeRenderer() {
         downloadOutputSummary.textContent = 'Pick exact video and audio formats below';
       } else {
         downloadOutputSummary.textContent =
-          'Prefer MP4 when available; otherwise use the best available format';
+          'Prefer MP4 when available; otherwise use the best available format. Often low resolution';
       }
     }
     // disable convert when audio-only is enabled
@@ -2959,6 +3065,13 @@ async function initializeRenderer() {
   } catch (e) {
     logError('Failed to update UI from settings', e);
   }
+  refreshSettingsControls = () => {
+    try {
+      updateUIFromSettings();
+    } catch (e) {
+      logError('Failed to refresh settings controls', e);
+    }
+  };
 
   // Runs after a settings pass, so the Console tab is already offered or not.
   function syncDockFromSettings() {
@@ -4590,7 +4703,7 @@ async function initializeRenderer() {
             label: '⟳ Reset & Restart',
             danger: true,
             action: async () => {
-              if (!(await persistSettings(false, true))) return;
+              if (!(await flushBeforeRestart('Resetting settings'))) return;
               localStorage.removeItem('rosi-flat-ui');
               localStorage.removeItem('rosi-theme');
               try {
@@ -4719,6 +4832,11 @@ async function initializeRenderer() {
     }
     if (cancelQueueBtn) {
       cancelQueueBtn.disabled = queueActionLocks > 0 || !isRunning;
+    }
+    if (clearFinishedQueueBtn) {
+      clearFinishedQueueBtn.disabled =
+        queueActionLocks > 0 ||
+        !queue.some((item) => ['completed', 'failed', 'cancelled'].includes(item.status));
     }
   }
 
@@ -4891,9 +5009,13 @@ async function initializeRenderer() {
     }
   }
 
-  const queueActionButtons = [addToQueueBtn, startQueueBtn, clearQueueBtn, cancelQueueBtn].filter(
-    (button) => button instanceof HTMLButtonElement
-  );
+  const queueActionButtons = [
+    addToQueueBtn,
+    startQueueBtn,
+    clearQueueBtn,
+    clearFinishedQueueBtn,
+    cancelQueueBtn,
+  ].filter((button) => button instanceof HTMLButtonElement);
   let queueActionLocks = 0;
   function syncQueueActionBusyState() {
     const isBusy = queueActionLocks > 0;
@@ -5038,6 +5160,35 @@ async function initializeRenderer() {
     });
   }
 
+  if (clearFinishedQueueBtn) {
+    clearFinishedQueueBtn.addEventListener('click', async () => {
+      if (queueActionLocks > 0) return;
+      const endQueueAction = beginQueueAction();
+      try {
+        const result = await window.api.clearFinishedQueue();
+        if (result && result.ok) {
+          announceQueueAction(
+            queueMessageForCount(
+              result.data.removed,
+              'Removed 1 finished item.',
+              'Removed {count} finished items.'
+            )
+          );
+        } else {
+          const message = result?.error?.message || 'Could not remove finished items.';
+          setQueueStatusMessage(message);
+          showToast(message, { type: 'error' });
+        }
+      } catch {
+        const message = 'Could not remove finished items.';
+        setQueueStatusMessage(message);
+        showToast(message, { type: 'error' });
+      } finally {
+        endQueueAction();
+      }
+    });
+  }
+
   if (cancelQueueBtn) {
     cancelQueueBtn.addEventListener('click', () => {
       if (queueActionLocks > 0) return;
@@ -5129,12 +5280,13 @@ async function initializeRenderer() {
         const formatSelections = readAdvancedFormatSelections(url.trim());
         if (
           settings.advancedOptions &&
-          (!formatSelections.videoFormat || !formatSelections.audioFormat)
+          !formatSelections.videoFormat &&
+          !formatSelections.audioFormat
         ) {
           failManualDownloadStart(operation);
           isDownloading = false;
           syncPrimaryActionState();
-          showToast('Please check resolutions and select video/audio formats first.', {
+          showToast('Check resolutions and select a video or audio format first.', {
             type: 'warning',
           });
           return;
@@ -5603,22 +5755,30 @@ async function initializeRenderer() {
   }
 
   if (settings.firstLaunch) {
-    launchSetupWizard(settings, applyTheme, persistSettings, (outcome) => {
-      updateUIFromSettings();
-      if (!outcome.denoReviewed) {
-        void checkDenoInstallation(
-          settings,
-          () => persistSettings(),
-          () => persistSettings(false, true)
-        );
-      }
-      void checkUpdatesOnStartup();
-    });
+    launchSetupWizard(
+      settings,
+      applyTheme,
+      persistSettings,
+      (outcome) => {
+        updateUIFromSettings();
+        if (!outcome.denoReviewed) {
+          void checkDenoInstallation(
+            settings,
+            () => persistSettings(),
+            () => flushBeforeRestart('Restarting ROSI'),
+            isFlatpakBuild
+          );
+        }
+        void checkUpdatesOnStartup();
+      },
+      isFlatpakBuild
+    );
   } else {
     void checkDenoInstallation(
       settings,
       () => persistSettings(),
-      () => persistSettings(false, true)
+      () => flushBeforeRestart('Restarting ROSI'),
+      isFlatpakBuild
     );
     void checkUpdatesOnStartup();
     setTimeout(maybeShowSupportModal, 1500);

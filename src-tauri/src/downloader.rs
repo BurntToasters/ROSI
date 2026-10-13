@@ -11,7 +11,7 @@ use crate::command_builders::{
     build_ffmpeg_args, build_ytdlp_args, resolve_video_encoder, YtdlpArgsInput,
 };
 use crate::constants::*;
-use crate::ipc::{self, IpcResult, INTERNAL_ERROR, NOT_AVAILABLE};
+use crate::ipc::{self, IpcResult, NOT_AVAILABLE};
 use crate::progress::{self, Metrics, Reporter};
 use crate::staging::{
     file_identity, install_no_replace, reserve_download_stage, reserve_path_output_file,
@@ -55,10 +55,15 @@ struct Session {
     completed_paths: Vec<PathBuf>,
     failed_paths: Vec<PathBuf>,
     conversion_failures: Vec<String>,
+    /// Set when a playlist run lost some entries but produced others.
+    partial_error: Option<String>,
     reporter: Reporter,
 }
 
 static ACTIVE: Mutex<Option<Session>> = Mutex::new(None);
+/// Mirrors whether ACTIVE holds a session, so the main thread can ask without
+/// waiting on the session lock.
+static ACTIVE_PRESENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static SESSION_CHANGED: Condvar = Condvar::new();
 static FINALIZING: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 static FINALIZATION_CHANGED: Condvar = Condvar::new();
@@ -138,7 +143,7 @@ fn is_active(id: u64) -> bool {
 }
 
 pub fn is_busy() -> bool {
-    lock().is_some()
+    ACTIVE_PRESENT.load(Ordering::SeqCst)
 }
 
 pub fn can_start(owner: Owner) -> bool {
@@ -428,7 +433,9 @@ fn complete_session(id: u64, status_message: &str, outcome: Outcome, meta: Compl
         match guard.as_ref() {
             Some(session) if session.id == id => {
                 let finalizer = CompletionFinalizer::begin(id);
-                guard.take().map(|session| (session, finalizer))
+                let taken = guard.take().map(|session| (session, finalizer));
+                ACTIVE_PRESENT.store(false, Ordering::SeqCst);
+                taken
             }
             _ => None,
         }
@@ -436,6 +443,21 @@ fn complete_session(id: u64, status_message: &str, outcome: Outcome, meta: Compl
     let Some((mut session, _finalizer)) = session else {
         return;
     };
+    let mut outcome = outcome;
+    let mut meta = meta;
+    let partial_status;
+    let mut status_message = status_message;
+    if let Some(partial) = session.partial_error.take() {
+        if outcome == Outcome::Success || outcome == Outcome::Failed {
+            outcome = Outcome::Failed;
+            partial_status = format!("⚠️ Playlist partially downloaded. {partial}");
+            status_message = &partial_status;
+            meta.error = Some(match meta.error.take() {
+                Some(existing) => format!("{partial}; {existing}"),
+                None => partial,
+            });
+        }
+    }
     let final_path = meta.file_path.map(resolve_path);
     let size_bytes = meta
         .bytes
@@ -887,6 +909,13 @@ fn append_bounded(buffer: &Mutex<String>, line: &str, limit: usize, keep_tail: b
     text.push('\n');
 }
 
+/// Returned when another owner holds the session slot. The unused completion
+/// callback is handed back so the caller can retry later.
+pub struct OwnerConflict {
+    pub message: String,
+    pub on_complete: CompletionCallback,
+}
+
 /// Start a download. Validation failures are reported through the normal
 /// completion path; `Err` only means another owner holds the session slot.
 pub fn start_download(
@@ -894,7 +923,7 @@ pub fn start_download(
     owner: Owner,
     queue_progress: Option<QueueProgress>,
     on_complete: CompletionCallback,
-) -> Result<u64, String> {
+) -> Result<u64, OwnerConflict> {
     let settings = crate::settings::load();
     let request = resolve_preset_options(&settings, options);
     let effective = apply_request_to_settings(&settings, &request);
@@ -906,7 +935,10 @@ pub fn start_download(
     let existing_owner = lock().as_ref().map(|session| session.owner);
     match existing_owner {
         Some(current) if current != owner => {
-            return Err("Download session already active with a different owner.".to_string())
+            return Err(OwnerConflict {
+                message: "Download session already active with a different owner.".to_string(),
+                on_complete,
+            })
         }
         Some(_) => cancel_active_session(false),
         None => {}
@@ -931,6 +963,7 @@ pub fn start_download(
         completed_paths: Vec::new(),
         failed_paths: Vec::new(),
         conversion_failures: Vec::new(),
+        partial_error: None,
         reporter: Reporter::new(plan, queue_progress, effective.show_taskbar_progress),
     };
     {
@@ -938,6 +971,7 @@ pub fn start_download(
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         *lock() = Some(session);
+        ACTIVE_PRESENT.store(true, Ordering::SeqCst);
     }
     let mut startup = Some(startup);
 
@@ -1740,6 +1774,38 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
         );
         return;
     }
+    // A playlist run exits non-zero when any entry fails, even after the other
+    // entries downloaded. Keep going for the files it produced (including
+    // conversion) and report the run as partially failed at the end.
+    if exit.code != Some(0) && exit.code.is_some() && !cancelled {
+        let playlist_run = with_session(id, |session| {
+            session
+                .request
+                .playlist
+                .as_ref()
+                .is_some_and(|playlist| playlist.mode != "current")
+        })
+        .unwrap_or(false);
+        if playlist_run && downloaded_file_paths(&exit).is_ok() {
+            let code = exit.code.unwrap_or_default();
+            let failed_entries = exit
+                .stderr
+                .lines()
+                .filter(|line| line.trim_start().starts_with("ERROR:"))
+                .count()
+                .max(1);
+            let message = format!(
+                "{failed_entries} playlist entr{} failed (yt-dlp exited with code {code}).",
+                if failed_entries == 1 { "y" } else { "ies" }
+            );
+            send_progress(
+                id,
+                format!("⚠️ {message} Continuing with the downloaded entries."),
+            );
+            with_session(id, |session| session.partial_error = Some(message));
+            exit.code = Some(0);
+        }
+    }
     if exit.code != Some(0) {
         let code = exit
             .code
@@ -2008,17 +2074,19 @@ fn install_conversion_output_for_session(
     target: &str,
     download_dir: &Path,
 ) -> Result<PathBuf, ConversionFailure> {
+    if !active_not_cancelled(id) {
+        return Err(ConversionFailure::Cancelled);
+    }
+    // File installation and fsync run without the session lock, so close
+    // requests, cancellation and progress never wait on disk flushes. A cancel
+    // that lands meanwhile still sees this output in the batch result.
+    let output = install_conversion_output(temp, input, target, download_dir)
+        .map_err(ConversionFailure::Setup)?;
     with_session(id, |session| {
-        if session.cancelled {
-            return Err(ConversionFailure::Cancelled);
-        }
-        let output = install_conversion_output(temp, input, target, download_dir)
-            .map_err(ConversionFailure::Setup)?;
         session.conversion_format = Some(target.to_string());
         session.completed_paths.push(output.clone());
-        Ok(output)
-    })
-    .unwrap_or(Err(ConversionFailure::Cancelled))
+    });
+    Ok(output)
 }
 
 fn record_conversion_failure(id: u64, path: &Path, detail: &str) {
@@ -2158,9 +2226,14 @@ fn execute_ffmpeg(
     let progress_state = Arc::new(Mutex::new(progress::FfmpegProgressState::new(
         duration_seconds,
     )));
+    let last_output = Arc::new(Mutex::new(std::time::Instant::now()));
     let stdout_reader = {
         let state = Arc::clone(&progress_state);
+        let last_output = Arc::clone(&last_output);
         read_lines(child.take_stdout(), move |line| {
+            if let Ok(mut at) = last_output.lock() {
+                *at = std::time::Instant::now();
+            }
             if !active_not_cancelled(id) {
                 return;
             }
@@ -2178,7 +2251,11 @@ fn execute_ffmpeg(
     let stderr = Arc::new(Mutex::new(String::new()));
     let stderr_reader = {
         let stderr = Arc::clone(&stderr);
+        let last_output = Arc::clone(&last_output);
         read_lines(child.take_stderr(), move |line| {
+            if let Ok(mut at) = last_output.lock() {
+                *at = std::time::Instant::now();
+            }
             let text = line.trim();
             if !text.is_empty() {
                 append_bounded(&stderr, text, MAX_ERROR_BUFFER, true);
@@ -2188,7 +2265,22 @@ fn execute_ffmpeg(
     };
 
     let mut timed_out = false;
-    let status = match child.wait_timeout(FFMPEG_CONVERT_TIMEOUT) {
+    // `-progress` reports about twice a second, so silence means a stall.
+    let waited = loop {
+        match child.wait_timeout(std::time::Duration::from_secs(1)) {
+            Ok(None) => {
+                let silent_for = last_output
+                    .lock()
+                    .map(|at| at.elapsed())
+                    .unwrap_or_default();
+                if silent_for >= FFMPEG_STALL_TIMEOUT {
+                    break Ok(None);
+                }
+            }
+            other => break other,
+        }
+    };
+    let status = match waited {
         Ok(Some(status)) => Some(status),
         Ok(None) => {
             timed_out = true;
@@ -2200,7 +2292,10 @@ fn execute_ffmpeg(
             })
             .unwrap_or(false)
             {
-                send_progress(id, "❌ Conversion timed out after 10 minutes.");
+                send_progress(
+                    id,
+                    "❌ Conversion stopped: FFmpeg made no progress for 10 minutes.",
+                );
             }
             crate::process_util::terminate_tree(&child);
             child.wait().ok()
@@ -2472,7 +2567,7 @@ fn convert_one(
 fn failure_message(failure: &ConversionFailure) -> String {
     match failure {
         ConversionFailure::Cancelled => "Conversion cancelled.".into(),
-        ConversionFailure::TimedOut => "FFmpeg conversion timed out after 10 minutes.".into(),
+        ConversionFailure::TimedOut => "FFmpeg made no progress for 10 minutes.".into(),
         ConversionFailure::Spawn(error) if error.kind() == std::io::ErrorKind::NotFound => {
             "FFmpeg was not found at the configured path.".into()
         }
@@ -2513,6 +2608,9 @@ fn complete_conversion_batch(
         .iter()
         .filter_map(|path| crate::fs_util::file_size(path))
         .fold(0u64, u64::saturating_add);
+    // Silent cancellations (queue shutdown, replaced sessions) stay silent,
+    // matching the download-phase cancellation path.
+    let notify = cancelled && with_session(id, |session| session.cancel_notify).unwrap_or(false);
     let meta = CompletionMeta {
         format,
         bytes: (!completed.is_empty()).then_some(bytes),
@@ -2520,8 +2618,8 @@ fn complete_conversion_batch(
         output_paths: (!completed.is_empty()).then_some(completed),
         failed_paths: (!failed.is_empty()).then_some(failed.clone()),
         error: (!failures.is_empty()).then(|| failures.join("; ")),
-        progress_message: cancelled.then(|| CANCELLED_PROGRESS.into()),
-        ..CompletionMeta::default()
+        progress_message: notify.then(|| CANCELLED_PROGRESS.into()),
+        suppress_legacy_complete: cancelled && !notify,
     };
     if cancelled {
         complete_session(id, CANCELLED_STATUS, Outcome::Cancelled, meta);
@@ -2621,33 +2719,30 @@ fn publish_same_extension_for_session(
     stage: &mut DownloadStage,
     write_subtitles: bool,
 ) -> Result<PathBuf, ConversionFailure> {
-    with_session(id, |session| {
-        if session.cancelled {
-            return Err(ConversionFailure::Cancelled);
+    if !active_not_cancelled(id) {
+        return Err(ConversionFailure::Cancelled);
+    }
+    // Publication runs without the session lock; see
+    // install_conversion_output_for_session.
+    match publish_staged_source_with_captions(input, download_dir, stage, write_subtitles) {
+        Ok(published) => {
+            with_session(id, |session| {
+                session.conversion_format = Some(target.to_string());
+                session.completed_paths.push(published.clone());
+            });
+            Ok(published)
         }
-        let published = match publish_staged_source_with_captions(
-            input,
-            download_dir,
-            stage,
-            write_subtitles,
-        ) {
-            Ok(published) => published,
-            Err(failure) => {
-                if let Some(path) = failure.media_path {
-                    session.completed_paths.push(path.clone());
-                    return Err(ConversionFailure::SetupPublished {
-                        message: failure.detail,
-                        path,
-                    });
-                }
-                return Err(ConversionFailure::Setup(failure.detail));
+        Err(failure) => {
+            if let Some(path) = failure.media_path {
+                with_session(id, |session| session.completed_paths.push(path.clone()));
+                return Err(ConversionFailure::SetupPublished {
+                    message: failure.detail,
+                    path,
+                });
             }
-        };
-        session.conversion_format = Some(target.to_string());
-        session.completed_paths.push(published.clone());
-        Ok(published)
-    })
-    .unwrap_or(Err(ConversionFailure::Cancelled))
+            Err(ConversionFailure::Setup(failure.detail))
+        }
+    }
 }
 
 /// Remove only the source that was present in this session's ownership
@@ -3227,7 +3322,9 @@ pub fn download_video(options: Value) -> IpcResult<Started> {
         Ok(request) => request,
         Err(error) => return ipc::from_error(error),
     };
-    if !can_start(Owner::Manual) {
+    // The runner briefly holds no session between items, so the session slot
+    // alone cannot tell that a queue run owns the downloader.
+    if !can_start(Owner::Manual) || crate::queue::is_running() {
         return ipc::err(NOT_AVAILABLE, "A queue download is already in progress.");
     }
     let on_complete: CompletionCallback =
@@ -3237,16 +3334,18 @@ pub fn download_video(options: Value) -> IpcResult<Started> {
             started: true,
             session_id,
         }),
-        Err(error) => {
-            crate::logging::error(&format!("Error in download-video handler: {error}"));
-            ipc::err(INTERNAL_ERROR, "Failed to start download.")
+        Err(conflict) => {
+            crate::logging::warn(&format!("Refused a manual download: {}", conflict.message));
+            ipc::err(NOT_AVAILABLE, "A queue download is already in progress.")
         }
     }
 }
 
-#[tauri::command(async)]
-pub fn cancel_download() {
-    cancel_active_session(true);
+#[tauri::command]
+pub async fn cancel_download() {
+    // Cancellation waits for helper exit and file publication; keep that off
+    // the async runtime's worker threads.
+    let _ = tauri::async_runtime::spawn_blocking(|| cancel_active_session(true)).await;
 }
 
 #[cfg(test)]
@@ -3276,6 +3375,7 @@ mod audit4_tests {
             completed_paths: vec![],
             failed_paths: vec![],
             conversion_failures: vec![],
+            partial_error: None,
             reporter: Reporter::new(progress::Plan::default(), None, false),
         }
     }

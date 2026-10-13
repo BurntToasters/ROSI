@@ -133,9 +133,16 @@ describe("v5 persistence acceptance (findings 2, 3, 15, 16)", () => {
       const firstGeneration = readBytes(queuePath);
       observation.secondAdd = await attempt("addToQueue", [itemC]);
       await waitForPersistedUrl(itemC);
-      observation.backupUrls = JSON.parse(readBytes(backupPath)).items.map(
-        (item) => item.url,
-      );
+      // The backup is written just after the primary; wait for that write
+      // instead of racing it.
+      for (let index = 0; index < 50; index += 1) {
+        if (readBytes(backupPath).includes(itemB)) break;
+        await sleep(100);
+      }
+      const backup = JSON.parse(readBytes(backupPath));
+      observation.backupUrls = (
+        Array.isArray(backup) ? backup : backup.items
+      ).map((item) => item.url);
       observation.primaryUrls = JSON.parse(readBytes(queuePath)).items.map(
         (item) => item.url,
       );

@@ -96,6 +96,7 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
         .build()
         .map_err(|error| error.to_string())?;
     let window = SubmenuBuilder::new(app, "Window")
+        .close_window()
         .minimize()
         .maximize()
         .separator()

@@ -22,6 +22,20 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 ## Unreleased
 
 - **Licensing:** Added `COPYRIGHT.md` covering copyright, MPL-2.0 terms, and name and logo policy.
+- **Downloads:** Downloads that reach many servers (such as playlists and multi-CDN streams) no longer stall after a few connections. ROSI also falls back to IPv4 when an IPv6 route does not answer.
+- **Downloads:** Long conversions no longer fail after 10 minutes. A conversion now stops only if FFmpeg makes no progress for 10 minutes.
+- **Downloads:** A playlist where some entries fail still converts and keeps the entries that downloaded, and reports the run as partially failed.
+- **Downloads:** Very long titles are shortened in file names, so they no longer fail on Linux, macOS or long Windows paths.
+- **Conversion:** MP4 and MOV output plays on Apple devices more often: HEVC copies are tagged for QuickTime and re-encoded H.264 uses 8-bit 4:2:0. GPU acceleration on macOS now uses VideoToolbox.
+- **Queue:** Starting a download while the queue starts no longer fails every queued item. Finished items can be removed one at a time or all at once, and an item interrupted by closing or restarting ROSI goes back to the queue.
+- **Settings:** A folder ROSI cannot download to is refused when you pick it. One invalid setting no longer stops your other settings from saving.
+- **Closing:** ROSI closes normally when its queue or settings were saved by a newer version, and offers Close Without Saving when it cannot confirm a save.
+- **Restarts:** Restarting, resetting settings or installing an update now asks first when a download is running.
+- **Custom profile:** Sites that offer only combined video and audio formats now list them, and a single selected format is enough to download.
+- **Recovery:** The startup cleanup no longer leaves internal bookkeeping files or partial conversions in your download folder.
+- **Flatpak:** Browser cookies and the Deno reminder are hidden in the Flatpak build, which cannot use either.
+- **Microsoft Store:** Open Store now opens the ROSI listing.
+- **Profiles:** The Compatible profile now warns that its files are often low resolution (for example 360p on YouTube).
 
 ## Changes in `v5.0.0-beta.2:`
 

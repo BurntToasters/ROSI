@@ -178,7 +178,10 @@ fn install(app: tauri::AppHandle) -> InstallResult {
             ..InstallResult::default()
         };
     };
-    let mut command = crate::process_util::command(program, &args, &[], true);
+    // Homebrew's automatic `brew update` can take minutes on its own; skip it
+    // so the install is not killed part way through.
+    let mut command =
+        crate::process_util::command(program, &args, &[("HOMEBREW_NO_AUTO_UPDATE", "1")], true);
     match crate::process_util::run_with_timeout(
         &mut command,
         DENO_INSTALL_TIMEOUT,
@@ -187,7 +190,7 @@ fn install(app: tauri::AppHandle) -> InstallResult {
     ) {
         Ok(output) if output.timed_out => InstallResult {
             success: Some(false),
-            error: Some("Installation timed out after 2 minutes".to_string()),
+            error: Some("Installation timed out after 10 minutes".to_string()),
             ..InstallResult::default()
         },
         Ok(output) if output.code == Some(0) => InstallResult {

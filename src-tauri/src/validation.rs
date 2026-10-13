@@ -222,7 +222,64 @@ pub fn is_path_within(candidate: &Path, base: &Path) -> bool {
     comparable(&resolve_path(candidate)).starts_with(comparable(&resolve_path(base)))
 }
 
+/// Lexical rules plus, on Unix, the same rules for the real (symlink-resolved)
+/// location of the deepest existing ancestor. This stops aliases such as
+/// `/Volumes/Macintosh HD/...` or a link in the home folder from reaching
+/// system folders.
 fn is_allowed_download_base(resolved: &Path) -> bool {
+    if !is_allowed_download_base_lexical(resolved) {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        let mut existing = resolved;
+        while !existing.exists() {
+            match existing.parent() {
+                Some(parent) => existing = parent,
+                None => return true,
+            }
+        }
+        if let Ok(real) = existing.canonicalize() {
+            return is_allowed_download_base_lexical(&real)
+                || canonical_bases()
+                    .iter()
+                    .any(|base| is_path_within(&real, base));
+        }
+    }
+    true
+}
+
+/// Allowed roots with their own symlinks resolved, for comparing against a
+/// resolved candidate (for example a home folder that is itself a link).
+#[cfg(unix)]
+fn canonical_bases() -> Vec<PathBuf> {
+    let mut bases: Vec<PathBuf> = crate::app_state::home_dir().into_iter().collect();
+    if cfg!(target_os = "macos") {
+        bases.push(PathBuf::from("/Volumes"));
+    }
+    if cfg!(target_os = "linux") {
+        bases.extend(["/mnt", "/media", "/run/media"].map(PathBuf::from));
+        bases.extend(
+            crate::app_state::media_dirs()
+                .iter()
+                .filter(|dir| resolve_path(dir).parent().is_some())
+                .cloned(),
+        );
+        if crate::platform::flatpak() {
+            if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
+                bases.push(Path::new(&runtime).join("doc"));
+            }
+        }
+    }
+    bases
+        .into_iter()
+        .filter_map(|base| base.canonicalize().ok())
+        // A base that resolves to the filesystem root would allow everything.
+        .filter(|base| base.parent().is_some())
+        .collect()
+}
+
+fn is_allowed_download_base_lexical(resolved: &Path) -> bool {
     if let Some(home) = crate::app_state::home_dir() {
         if is_path_within(resolved, &home) {
             return true;
@@ -337,6 +394,24 @@ pub fn validate_ffmpeg_path_value(value: Option<&str>) -> Result<Option<String>,
         return Err(validation_error("ffmpegPath does not exist."));
     }
     Ok(Some(resolved.to_string_lossy().into_owned()))
+}
+
+/// The checks of `validate_ffmpeg_path_value` except existence, for values
+/// loaded from disk.
+pub fn validate_ffmpeg_path_shape(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed == "ffmpeg" {
+        return Some(trimmed.to_string());
+    }
+    if !is_absolute_path(trimmed) {
+        return None;
+    }
+    let resolved = resolve_path(trimmed);
+    let base = resolved
+        .file_name()
+        .map(|name| name.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    (base == "ffmpeg" || base == "ffmpeg.exe").then(|| resolved.to_string_lossy().into_owned())
 }
 
 pub fn validate_file_location(value: &Value) -> Result<String, IpcError> {
@@ -806,13 +881,45 @@ fn enum_patch(value: &Value, list: &[&str], message: &str) -> Result<Value, IpcE
     }
 }
 
-/// Validate a partial settings update. Unknown keys are ignored; known keys
-/// with invalid values reject the whole patch.
-pub fn validate_settings_patch(value: &Value) -> Result<Map<String, Value>, IpcError> {
+/// A validated settings patch plus the fields that were refused.
+pub struct SettingsPatch {
+    pub values: Map<String, Value>,
+    pub rejected: Vec<RejectedSetting>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RejectedSetting {
+    pub key: String,
+    pub message: String,
+}
+
+/// Validate a partial settings update. Unknown keys are ignored. A known key
+/// with an invalid value is refused on its own, so one bad field never blocks
+/// saving the others (or the close flush).
+pub fn validate_settings_patch(value: &Value) -> Result<SettingsPatch, IpcError> {
     let object = as_object(value, "Settings payload must be an object.")?;
-    let mut patch = Map::new();
+    let mut patch = SettingsPatch {
+        values: Map::new(),
+        rejected: Vec::new(),
+    };
     for (key, raw) in object {
-        let validated = match key.as_str() {
+        match validate_setting_value(key, raw) {
+            Ok(Some(validated)) => {
+                patch.values.insert(key.clone(), validated);
+            }
+            Ok(None) => {}
+            Err(error) => patch.rejected.push(RejectedSetting {
+                key: key.clone(),
+                message: error.message,
+            }),
+        }
+    }
+    Ok(patch)
+}
+
+fn validate_setting_value(key: &str, raw: &Value) -> Result<Option<Value>, IpcError> {
+    {
+        let validated = match key {
             "settingsVersion" => match raw.as_f64() {
                 Some(version)
                     if version.fract() == 0.0
@@ -915,11 +1022,10 @@ pub fn validate_settings_patch(value: &Value) -> Result<Map<String, Value>, IpcE
                 }
                 Value::String(validate_download_path(folder)?)
             }
-            _ => continue,
+            _ => return Ok(None),
         };
-        patch.insert(key.clone(), validated);
+        Ok(Some(validated))
     }
-    Ok(patch)
 }
 
 pub fn validate_notification(value: &Value) -> Result<NotificationRequest, IpcError> {

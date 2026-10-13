@@ -67,7 +67,9 @@ async function closeNewerQueue(observation) {
   const before = readBytes(queuePath);
   observation.close = await requestCloseAndObserve();
   const after = readBytes(queuePath);
-  observation.queueBytesUnchanged = Boolean(before && after && before.equals(after));
+  observation.queueBytesUnchanged = Boolean(
+    before && after && before.equals(after),
+  );
   observation.invariantPassed =
     observation.close.closed === true && observation.queueBytesUnchanged;
 }
@@ -76,7 +78,9 @@ async function closeNewerSettings(observation) {
   const before = readBytes(settingsPath);
   observation.close = await requestCloseAndObserve();
   const after = readBytes(settingsPath);
-  observation.settingsBytesUnchanged = Boolean(before && after && before.equals(after));
+  observation.settingsBytesUnchanged = Boolean(
+    before && after && before.equals(after),
+  );
   observation.invariantPassed =
     observation.close.closed === true && observation.settingsBytesUnchanged;
 }
@@ -89,7 +93,9 @@ async function closeInvalidFolder(observation) {
     .resolve(outside)
     .startsWith(`${path.resolve(home)}${path.sep}`);
   if (!observation.outsideIsOutsideHome) {
-    throw new Error("Probe setup error: the replacement folder is inside HOME.");
+    throw new Error(
+      "Probe setup error: the replacement folder is inside HOME.",
+    );
   }
   const settingsBefore = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
   observation.folderBefore = settingsBefore.downloadFolder;
@@ -120,7 +126,7 @@ async function closeInvalidFolder(observation) {
   observation.visibleModal = await browser.execute(() => {
     const modal = document.getElementById("app-modal");
     return modal?.classList.contains("active")
-      ? document.getElementById("modal-message")?.textContent ?? ""
+      ? (document.getElementById("modal-message")?.textContent ?? "")
       : null;
   });
 
@@ -135,7 +141,9 @@ async function waitForQueueIdle(timeoutMs) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     const queue = await api("getQueue");
-    if (!queue.some((item) => ["pending", "downloading"].includes(item.status))) {
+    if (
+      !queue.some((item) => ["pending", "downloading"].includes(item.status))
+    ) {
       return queue;
     }
     await sleep(250);
@@ -148,7 +156,10 @@ async function waitForManualDone(url, sinceMs, timeoutMs) {
   while (Date.now() - started < timeoutMs) {
     const activity = await api("getDownloadActivity");
     const entry = activity?.data?.find(
-      (item) => item.owner === "manual" && item.url === url && item.completedAt >= sinceMs,
+      (item) =>
+        item.owner === "manual" &&
+        item.url === url &&
+        item.completedAt >= sinceMs,
     );
     if (entry) return entry;
     await sleep(250);
@@ -166,22 +177,37 @@ async function queueOwnerRace(observation) {
     const manualUrl = `https://127.0.0.1:9/rosi-race-manual.mp4?round=${round}`;
     const added = await api("addToQueue", urls);
     const startedAt = Date.now();
-    const results = await browser.executeAsync((manual, outputPath, done) => {
-      Promise.allSettled([
-        window.api.startQueue(),
-        window.api.downloadVideo({ url: manual, outputPath }),
-      ]).then((settled) =>
-        done(
-          JSON.stringify(
-            settled.map((entry) =>
-              entry.status === "fulfilled"
-                ? { ok: entry.value?.ok === true, error: entry.value?.error?.message ?? null }
-                : { ok: false, error: String(entry.reason) },
+    // Alternate which request is sent first so both race orders are covered.
+    const manualFirst = round % 2 === 0;
+    const results = await browser.executeAsync(
+      (manual, outputPath, manualFirstOrder, done) => {
+        const queue = () => window.api.startQueue();
+        const download = () =>
+          window.api.downloadVideo({ url: manual, outputPath });
+        const started = manualFirstOrder
+          ? [download(), queue()]
+          : [queue(), download()];
+        Promise.allSettled(
+          manualFirstOrder ? [started[1], started[0]] : started,
+        ).then((settled) =>
+          done(
+            JSON.stringify(
+              settled.map((entry) =>
+                entry.status === "fulfilled"
+                  ? {
+                      ok: entry.value?.ok === true,
+                      error: entry.value?.error?.message ?? null,
+                    }
+                  : { ok: false, error: String(entry.reason) },
+              ),
             ),
           ),
-        ),
-      );
-    }, manualUrl, downloads);
+        );
+      },
+      manualUrl,
+      downloads,
+      manualFirst,
+    );
     const [queueStart, manualStart] = JSON.parse(results);
     const queue = await waitForQueueIdle(60_000);
     const manual = manualStart.ok
@@ -191,18 +217,24 @@ async function queueOwnerRace(observation) {
     const conflicts = roundItems.filter((item) => item.error === conflict);
     observation.rounds.push({
       round,
+      manualFirst,
       added,
       queueStart,
       manualStart,
       bothAccepted: queueStart.ok && manualStart.ok,
-      itemErrors: roundItems.map((item) => ({ status: item.status, error: item.error ?? null })),
+      itemErrors: roundItems.map((item) => ({
+        status: item.status,
+        error: item.error ?? null,
+      })),
       ownerConflicts: conflicts.length,
       manualOutcome: manual?.outcome ?? null,
     });
     await api("clearQueue");
     await sleep(500);
   }
-  observation.roundsJudged = observation.rounds.filter((round) => round.bothAccepted).length;
+  observation.roundsJudged = observation.rounds.filter(
+    (round) => round.bothAccepted,
+  ).length;
   observation.totalOwnerConflicts = observation.rounds.reduce(
     (sum, round) => sum + round.ownerConflicts,
     0,
@@ -214,7 +246,10 @@ async function queueOwnerRace(observation) {
 async function stagingSweepLeak(observation) {
   const seeded = JSON.parse(process.env.ROSI_DEEP_SEEDED);
   observation.seeded = seeded;
-  observation.sweepLog = await waitForLog([/Recovered staged file from an interrupted session/], 30_000);
+  observation.sweepLog = await waitForLog(
+    [/Recovered staged file from an interrupted session/],
+    30_000,
+  );
   await sleep(3000);
   const entries = fs.readdirSync(downloads).sort();
   observation.downloadFolderEntries = entries;
@@ -226,7 +261,9 @@ async function stagingSweepLeak(observation) {
   );
   const stage = path.join(downloads, seeded.stage);
   observation.stageRemains = fs.existsSync(stage);
-  observation.nestedConvertRemains = fs.existsSync(path.join(stage, seeded.nested));
+  observation.nestedConvertRemains = fs.existsSync(
+    path.join(stage, seeded.nested),
+  );
   observation.sweepLogLines = readLog()
     .split("\n")
     .filter((line) => /staging|staged|Recovered/i.test(line))
@@ -244,7 +281,10 @@ async function proxyPoolExhaustion(observation) {
   observation.manifest = manifest;
   observation.windowMs = windowMs;
   const startedAt = Date.now();
-  observation.start = await api("downloadVideo", { url: manifest, outputPath: downloads });
+  observation.start = await api("downloadVideo", {
+    url: manifest,
+    outputPath: downloads,
+  });
   let entry = null;
   while (Date.now() - startedAt < windowMs) {
     const activity = await api("getDownloadActivity");
@@ -263,7 +303,9 @@ async function proxyPoolExhaustion(observation) {
   observation.outcome = entry?.outcome ?? null;
   observation.outputPath = entry?.outputPath ?? null;
   observation.consoleTail = await browser.execute(() =>
-    (document.getElementById("output")?.textContent ?? "").split("\n").slice(-40),
+    (document.getElementById("output")?.textContent ?? "")
+      .split("\n")
+      .slice(-40),
   );
   // The runner adds the origin request log and judges the timing invariant.
   observation.invariantPassed = null;
@@ -287,7 +329,8 @@ describe("V5 beta 2 deep audit probes", () => {
     try {
       await probe(observation);
     } catch (error) {
-      observation.probeError = error instanceof Error ? error.message : String(error);
+      observation.probeError =
+        error instanceof Error ? error.message : String(error);
       observation.invariantPassed = observation.invariantPassed ?? false;
     }
     observation.finishedAt = new Date().toISOString();

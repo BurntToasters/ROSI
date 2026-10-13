@@ -154,6 +154,8 @@ interface RosiRendererApi {
     direction: 'up' | 'down';
   }) => Promise<RosiIpcResult<void>>;
   clearQueue: () => Promise<RosiIpcResult<void>>;
+  clearFinishedQueue: () => Promise<RosiIpcResult<{ removed: number }>>;
+  isFlatpak: () => Promise<boolean>;
   getQueue: () => Promise<RosiQueueItem[]>;
   startQueue: () => Promise<RosiIpcResult<{ started: boolean }>>;
   cancelQueue: () => Promise<RosiIpcResult<void>>;

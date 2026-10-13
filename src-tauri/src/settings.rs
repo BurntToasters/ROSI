@@ -2,7 +2,7 @@
 //! settings commands (load, save, reset, import, export).
 
 use crate::constants::*;
-use crate::ipc::{self, IpcResult, INTERNAL_ERROR};
+use crate::ipc::{self, IpcResult, INTERNAL_ERROR, NEWER_VERSION};
 use crate::types::{DownloadPreset, DownloadRequestOptions, PlaylistSelection, Settings};
 use crate::validation::{set_preset_bool, validate_download_path, validate_ffmpeg_path_value};
 use serde_json::{Map, Value};
@@ -99,12 +99,19 @@ fn read_browser_choice(raw: &Map<String, Value>, fallback: &str) -> String {
     }
 }
 
-fn read_ffmpeg_path(raw: &Map<String, Value>) -> String {
+fn read_ffmpeg_path(raw: &Map<String, Value>, own_profile: bool) -> String {
     let value = raw.get("ffmpegPath").and_then(Value::as_str).unwrap_or("");
     let capped = truncate_chars(value, 1024).trim();
     if capped.is_empty() {
         return String::new();
     }
+    if own_profile {
+        // ROSI 5's own setting survives an FFmpeg that is missing right now
+        // (an unmounted volume or a package upgrade in progress); downloads
+        // fall back to the bundled FFmpeg until it returns.
+        return crate::validation::validate_ffmpeg_path_shape(capped).unwrap_or_default();
+    }
+    // Imported values (ROSI 4 or a settings file) must point at a real binary.
     validate_ffmpeg_path_value(Some(capped))
         .ok()
         .flatten()
@@ -352,8 +359,18 @@ pub fn preset_to_request_options(preset: &DownloadPreset) -> Map<String, Value> 
     map
 }
 
-/// Coerce any JSON value into a valid, current-schema settings object.
+/// Coerce imported JSON (ROSI 4 or a settings export) into valid,
+/// current-schema settings.
 pub fn migrate_settings(raw: &Value) -> Settings {
+    migrate_settings_from(raw, false)
+}
+
+/// Like `migrate_settings`, for ROSI 5's own settings file.
+fn migrate_profile_settings(raw: &Value) -> Settings {
+    migrate_settings_from(raw, true)
+}
+
+fn migrate_settings_from(raw: &Value, own_profile: bool) -> Settings {
     let defaults = default_settings();
     let Some(raw) = raw.as_object() else {
         return defaults;
@@ -411,7 +428,7 @@ pub fn migrate_settings(raw: &Value) -> Settings {
         gpu_acceleration: read_bool(raw, "gpuAcceleration", defaults.gpu_acceleration),
         gpu_type: read_choice(raw, "gpuType", ALLOWED_GPU_TYPES, &defaults.gpu_type),
         best_quality,
-        ffmpeg_path: read_ffmpeg_path(raw),
+        ffmpeg_path: read_ffmpeg_path(raw, own_profile),
         download_folder: read_download_folder(raw),
         hide_support_modal: read_bool(raw, "hideSupportModal", defaults.hide_support_modal),
         check_updates_on_startup: read_bool(
@@ -445,7 +462,7 @@ fn normalized(mut settings: Settings) -> Settings {
 
 fn load_unlocked() -> Settings {
     match crate::fs_util::read_json(&settings_path(), MAX_SETTINGS_FILE_BYTES) {
-        Some(value) => normalized(migrate_settings(&value)),
+        Some(value) => normalized(migrate_profile_settings(&value)),
         None => default_settings(),
     }
 }
@@ -493,7 +510,7 @@ pub fn save_patch(patch: &Map<String, Value>) -> Result<Settings, String> {
     for (key, value) in patch {
         merged.insert(key.clone(), value.clone());
     }
-    let complete = normalized(migrate_settings(&Value::Object(merged)));
+    let complete = normalized(migrate_profile_settings(&Value::Object(merged)));
     if complete.ffmpeg_path != existing.ffmpeg_path
         || complete.gpu_acceleration != existing.gpu_acceleration
     {
@@ -560,14 +577,67 @@ pub fn get_default_settings() -> IpcResult<Settings> {
     ipc::ok(default_settings())
 }
 
+fn settings_file_is_newer() -> bool {
+    crate::fs_util::read_bounded(&settings_path(), MAX_SETTINGS_FILE_BYTES)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .is_some_and(|value| check_schema(&value).is_err())
+}
+
 #[tauri::command(async)]
 pub fn save_settings(settings: Value) -> IpcResult<Settings> {
+    // The renderer sends its whole snapshot. Values equal to the stored ones
+    // are not changes, so they are not validated again; a stored FFmpeg path
+    // that is missing right now must not be reported on every save.
+    let settings = match (settings, serde_json::to_value(load())) {
+        (Value::Object(mut incoming), Ok(Value::Object(stored))) => {
+            incoming.retain(|key, value| stored.get(key) != Some(value));
+            Value::Object(incoming)
+        }
+        (settings, _) => settings,
+    };
     let patch = match crate::validation::validate_settings_patch(&settings) {
         Ok(patch) => patch,
         Err(error) => return ipc::from_error(error),
     };
-    match save_patch(&patch) {
-        Ok(saved) => ipc::ok(saved),
+    for rejected in &patch.rejected {
+        crate::logging::warn(&format!(
+            "Refused setting {}: {}",
+            rejected.key, rejected.message
+        ));
+    }
+    match save_patch(&patch.values) {
+        Ok(saved) if patch.rejected.is_empty() => ipc::ok(saved),
+        Ok(_) => {
+            // The valid fields were saved. Report the refused ones as a
+            // validation error; `details` lists their keys (JSON array) so the
+            // renderer can restore just those controls.
+            let message = patch
+                .rejected
+                .iter()
+                .map(|rejected| rejected.message.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let keys: Vec<&str> = patch
+                .rejected
+                .iter()
+                .map(|rejected| rejected.key.as_str())
+                .collect();
+            ipc::from_error(crate::ipc::IpcError {
+                code: crate::ipc::VALIDATION_ERROR,
+                message,
+                details: serde_json::to_string(&keys).ok(),
+            })
+        }
+        Err(error) if settings_file_is_newer() => {
+            // The newer file is kept as-is. Tell the user once per launch
+            // instead of on every change, and report a distinct code so the
+            // close flow can treat the preserved file as durable.
+            crate::logging::warn(&format!("Settings were not saved: {error}"));
+            crate::fs_util::notify_newer_once("Settings");
+            ipc::err(NEWER_VERSION, error)
+        }
         Err(error) => {
             crate::logging::error(&format!("Failed to save settings: {error}"));
             show_save_error(&error);
