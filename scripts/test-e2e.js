@@ -793,7 +793,10 @@ function runLongTermPersistenceRepairs() {
       cwd: REPO_ROOT,
       env: { ...process.env, ROSI_LONG_TERM_ARTIFACT_ROOT: relative },
       encoding: "utf8",
-      timeout: 240_000,
+      // This runner performs 15 isolated app launches. WebKitGTK startup on
+      // hosted Linux takes roughly 30 seconds per launch, so four minutes
+      // kills the runner mid-suite and leaves its WebDriver child behind.
+      timeout: 900_000,
       maxBuffer: 8 * 1024 * 1024,
     },
   );
