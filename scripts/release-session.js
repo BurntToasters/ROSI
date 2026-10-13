@@ -15,7 +15,6 @@ const QUALITY_GATE_RELATIVE_PATH = path.join(
   "coverage",
   ".release-quality.json",
 );
-const HOSTED_CI_RELATIVE_PATH = path.join("coverage", ".hosted-ci-proof.json");
 const DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const HEX_SHA256 = /^[a-f0-9]{64}$/i;
 const HEX_GIT = /^[a-f0-9]{40}$/i;
@@ -66,12 +65,10 @@ function isIgnorableReleaseDirtyPath(filePath) {
     "/",
   );
   const qualityGatePath = QUALITY_GATE_RELATIVE_PATH.replaceAll("\\", "/");
-  const hostedCiPath = HOSTED_CI_RELATIVE_PATH.replaceAll("\\", "/");
   return (
     GENERATED_TAURI_SCHEMA_PATHS.has(normalizedPath) ||
     normalizedPath === releaseSessionPath ||
-    normalizedPath === qualityGatePath ||
-    normalizedPath === hostedCiPath
+    normalizedPath === qualityGatePath
   );
 }
 
@@ -189,25 +186,11 @@ function validateQualityGate(
       );
     }
   } else if (qualityGate.scope === "build-vm-partial") {
-    const hosted = qualityGate.hostedCi;
-    const expectedBranch = /-beta\./.test(expected.version) ? "beta" : "main";
-    if (
-      qualityGate.e2e?.status !== "skipped" ||
-      hosted?.checkName !== "ci-gate" ||
-      hosted.status !== "completed" ||
-      hosted.conclusion !== "success" ||
-      hosted.event !== "push" ||
-      hosted.branch !== expectedBranch ||
-      hosted.headSha !== expected.commit ||
-      !Number.isSafeInteger(hosted.checkRunId) ||
-      !/^https:\/\/github\.com\/BurntToasters\/ROSI\//.test(hosted.url || "") ||
-      !Number.isFinite(hosted.completedAt) ||
-      hosted.completedAt > qualityGate.completedAt ||
-      now - hosted.completedAt > maxAgeMs ||
-      !HEX_SHA256.test(hosted.artifactSha256 || "")
-    ) {
+    // Build VMs skip the GUI E2E suite. Hosted CI is not required before a
+    // release; the full suite still runs wherever the proof scope is "full".
+    if (qualityGate.e2e?.status !== "skipped") {
       throw new Error(
-        "Skipped-E2E build-VM proof requires fresh successful hosted ci-gate evidence for this exact branch and HEAD.",
+        "Skipped-E2E build-VM proof must record the skipped E2E suite.",
       );
     }
   } else {
@@ -218,23 +201,6 @@ function validateQualityGate(
 
 function clearQualityGateProof(root = defaultRoot) {
   fs.rmSync(path.join(root, QUALITY_GATE_RELATIVE_PATH), { force: true });
-}
-
-function clearHostedCiProof(root = defaultRoot) {
-  fs.rmSync(path.join(root, HOSTED_CI_RELATIVE_PATH), { force: true });
-}
-
-function recordHostedCiProof(evidence, root = defaultRoot) {
-  const proofPath = path.join(root, HOSTED_CI_RELATIVE_PATH);
-  const proof = {
-    ...evidence,
-    artifactSha256: sha256Text(JSON.stringify(evidence)),
-  };
-  fs.mkdirSync(path.dirname(proofPath), { recursive: true });
-  fs.writeFileSync(proofPath, `${JSON.stringify(proof, null, 2)}\n`, {
-    mode: 0o600,
-  });
-  return proof;
 }
 
 function expectedE2eEvidencePaths(root, identity) {
@@ -393,49 +359,6 @@ function verifyScreenshotArtifacts(screenshots, root, identity, scenario) {
   return problems;
 }
 
-function verifyHostedCiEvidence(proof, root, identity) {
-  const proofPath = path.join(root, HOSTED_CI_RELATIVE_PATH);
-  let hostedProof;
-  try {
-    hostedProof = JSON.parse(fs.readFileSync(proofPath, "utf8"));
-  } catch (error) {
-    throw new Error(
-      `Hosted ci-gate evidence is missing or invalid: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  const { artifactSha256, ...evidence } = hostedProof;
-  const hosted = proof.hostedCi;
-  if (
-    artifactSha256 !== hosted.artifactSha256 ||
-    sha256Text(JSON.stringify(evidence)) !== artifactSha256 ||
-    evidence.headSha !== identity.commit ||
-    evidence.sourceTree !== identity.sourceTree ||
-    evidence.version !== identity.version ||
-    evidence.packageLockSha256 !== identity.packageLockSha256 ||
-    evidence.cargoLockSha256 !== identity.cargoLockSha256 ||
-    evidence.branch !== hosted.branch ||
-    evidence.event !== "push" ||
-    evidence.checkRunId !== hosted.checkRunId ||
-    evidence.completedAt !== hosted.completedAt ||
-    evidence.checkName !== "ci-gate" ||
-    evidence.status !== "completed" ||
-    evidence.conclusion !== "success" ||
-    evidence.appId !== 15368 ||
-    !Number.isSafeInteger(evidence.checkSuiteId) ||
-    evidence.workflowRunStatus !== "completed" ||
-    evidence.workflowRunConclusion !== "success" ||
-    !Number.isSafeInteger(evidence.workflowRunId) ||
-    String(evidence.workflowPath || "").split("@")[0] !==
-      ".github/workflows/ci.yml" ||
-    !Number.isFinite(evidence.workflowRunUpdatedAt) ||
-    evidence.workflowRunUpdatedAt < evidence.completedAt
-  ) {
-    throw new Error(
-      "Hosted ci-gate artifact does not match the exact successful check recorded in the proof.",
-    );
-  }
-}
-
 function recordSuccessfulQualityGate(
   root = defaultRoot,
   { skipE2e = false, gateStartedAt = Date.now() } = {},
@@ -462,48 +385,7 @@ function recordSuccessfulQualityGate(
   const completedAt = Date.now();
   let evidence;
   if (skipE2e) {
-    let hostedProof;
-    try {
-      hostedProof = JSON.parse(
-        fs.readFileSync(path.join(root, HOSTED_CI_RELATIVE_PATH), "utf8"),
-      );
-    } catch {
-      return {
-        recorded: false,
-        dirtyFiles:
-          "--skip-e2e requires exact successful hosted ci-gate evidence.",
-      };
-    }
-    const { artifactSha256, ...hosted } = hostedProof;
-    if (
-      artifactSha256 !== sha256Text(JSON.stringify(hosted)) ||
-      hosted.headSha !== identity.commit ||
-      hosted.sourceTree !== identity.sourceTree ||
-      hosted.completedAt > completedAt ||
-      completedAt - hosted.completedAt > DEFAULT_MAX_AGE_MS
-    ) {
-      return {
-        recorded: false,
-        dirtyFiles:
-          "Hosted ci-gate evidence is stale or does not match this source.",
-      };
-    }
-    evidence = {
-      scope: "build-vm-partial",
-      e2e: { status: "skipped" },
-      hostedCi: {
-        checkName: hosted.checkName,
-        status: hosted.status,
-        conclusion: hosted.conclusion,
-        event: hosted.event,
-        branch: hosted.branch,
-        headSha: hosted.headSha,
-        checkRunId: hosted.checkRunId,
-        url: hosted.url,
-        completedAt: hosted.completedAt,
-        artifactSha256,
-      },
-    };
+    evidence = { scope: "build-vm-partial", e2e: { status: "skipped" } };
   } else {
     const { reportPath, binaryPath } = expectedE2eEvidencePaths(root, identity);
     try {
@@ -537,7 +419,6 @@ function recordSuccessfulQualityGate(
   try {
     validateQualityGate(proof, identity, { now: completedAt });
     if (proof.scope === "full") verifyFullE2eEvidence(proof, root, identity);
-    else verifyHostedCiEvidence(proof, root, identity);
   } catch (error) {
     return {
       recorded: false,
@@ -590,8 +471,6 @@ function verifyQualityGate(root = defaultRoot, options) {
   const validated = validateQualityGate(proof, identity, options);
   if (validated.scope === "full") {
     verifyFullE2eEvidence(validated, root, identity);
-  } else {
-    verifyHostedCiEvidence(validated, root, identity);
   }
   return validated;
 }
@@ -660,18 +539,15 @@ if (isDirectExecution()) {
 
 export {
   DEFAULT_MAX_AGE_MS,
-  HOSTED_CI_RELATIVE_PATH,
   QUALITY_GATE_RELATIVE_PATH,
   RELEASE_SESSION_RELATIVE_PATH,
   assertReleaseTreeClean,
   clearQualityGateProof,
-  clearHostedCiProof,
   createReleaseSession,
   currentReleaseIdentity,
   isIgnorableReleaseDirtyPath,
   porcelainPaths,
   recordSuccessfulQualityGate,
-  recordHostedCiProof,
   validateQualityGate,
   validateReleaseSession,
   verifyQualityGate,

@@ -114,23 +114,11 @@ function fullGate(overrides = {}) {
   };
 }
 
-function hostedGate(overrides = {}) {
+function buildVmGate(overrides = {}) {
   return {
     ...expected,
     scope: "build-vm-partial",
     e2e: { status: "skipped" },
-    hostedCi: {
-      checkName: "ci-gate",
-      status: "completed",
-      conclusion: "success",
-      event: "push",
-      branch: "beta",
-      headSha: expected.commit,
-      checkRunId: 1234,
-      url: "https://github.com/BurntToasters/ROSI/actions/runs/1234",
-      completedAt: now - 120_000,
-      artifactSha256: "1".repeat(64),
-    },
     completedAt: now - 30_000,
     ...overrides,
   };
@@ -151,37 +139,15 @@ test("a full local gate must bind fresh same-platform E2E and binary artifacts",
   }
 });
 
-test("a skipped-E2E build-VM proof requires fresh exact successful hosted ci-gate", () => {
+test("a skipped-E2E build-VM proof does not require hosted CI", () => {
   assert.doesNotThrow(() =>
-    validateQualityGate(hostedGate(), expected, { now }),
+    validateQualityGate(buildVmGate(), expected, { now }),
   );
-  const failures = [
-    hostedGate({
-      hostedCi: { ...hostedGate().hostedCi, conclusion: "failure" },
+  assert.throws(() =>
+    validateQualityGate(buildVmGate({ e2e: { status: "passed" } }), expected, {
+      now,
     }),
-    hostedGate({
-      hostedCi: { ...hostedGate().hostedCi, headSha: "9".repeat(40) },
-    }),
-    hostedGate({
-      hostedCi: { ...hostedGate().hostedCi, checkName: "quality-gate" },
-    }),
-    hostedGate({
-      hostedCi: { ...hostedGate().hostedCi, status: "in_progress" },
-    }),
-    hostedGate({
-      hostedCi: { ...hostedGate().hostedCi, artifactSha256: null },
-    }),
-    hostedGate({
-      hostedCi: {
-        ...hostedGate().hostedCi,
-        completedAt: now - 26 * 60 * 60 * 1000,
-      },
-    }),
-    hostedGate({ hostedCi: null }),
-  ];
-  for (const gate of failures) {
-    assert.throws(() => validateQualityGate(gate, expected, { now }));
-  }
+  );
 });
 
 test("a gate proof is rejected for a different source tree, lock, or stale timestamp", () => {

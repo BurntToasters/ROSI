@@ -22,9 +22,10 @@ aggregates every CI proof job, requires the branch to be up to date, allows the
 intentional administrator bypass, and disables force pushes and branch
 deletion. CI remains limited to tests, audits, validation, and unsigned compile
 smoke; all release building, signing, and publishing stays on the manually
-operated release VMs. `release:preflight` requires that protection for stable
-releases. Beta preflight instead requires a clean local `beta` checkout exactly
-matching `origin/beta` and does not require branch protection.
+operated release VMs. Branch protection is optional: `release:preflight` does
+not check it and does not wait for hosted CI. For both stable and beta it
+requires a clean local checkout of the release branch that exactly matches its
+`origin` branch.
 
 Confirm the repository Settings page shows the rule before continuing.
 

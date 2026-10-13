@@ -546,7 +546,7 @@ function main({
     const qualityGate = recordProof(root, { skipE2e, gateStartedAt });
     if (qualityGate.recorded) {
       console.log(
-        `Release quality-gate proof recorded (scope: ${skipE2e ? "build-vm-partial with hosted ci-gate" : "full local E2E"}).`,
+        `Release quality-gate proof recorded (scope: ${skipE2e ? "build-vm-partial, E2E skipped" : "full local E2E"}).`,
       );
     } else {
       console.error(
