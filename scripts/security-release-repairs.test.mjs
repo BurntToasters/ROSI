@@ -249,13 +249,16 @@ function hash(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
+// The verifier resolves the debug binary by the host OS, not the report's platform.
+const hostBinaryName = process.platform === "win32" ? "rosi.exe" : "rosi";
+
 function writeFullE2eFixture(directory, mutate = () => {}) {
   const binaryPath = path.join(
     directory,
     "src-tauri",
     "target",
     "debug",
-    "rosi",
+    hostBinaryName,
   );
   const reportPath = path.join(
     directory,
@@ -345,7 +348,7 @@ function writeFullE2eFixture(directory, mutate = () => {}) {
         platform: expected.platform,
         arch: expected.arch,
         reportPath: "e2e/artifacts/e2e-report-darwin-arm64.json",
-        binaryPath: "src-tauri/target/debug/rosi",
+        binaryPath: `src-tauri/target/debug/${hostBinaryName}`,
         reportSha256: hash(fs.readFileSync(reportPath)),
         binarySha256: hash(fs.readFileSync(binaryPath)),
         finishedAt: Date.parse(finishedAt),
