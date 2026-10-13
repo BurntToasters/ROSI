@@ -13,6 +13,8 @@ type RosiIpcResult<T = void> = { ok: true; data: T } | { ok: false; error: RosiI
 
 interface RosiUpdaterStatusEvent {
   status: 'checking' | 'available' | 'not-available' | 'error' | 'cancelled' | 'downloaded';
+  kind?: 'feed' | 'download' | 'install';
+  candidateId?: number;
   version?: string;
   releaseNotes?: unknown;
   isBeta?: boolean;
@@ -25,6 +27,7 @@ interface RosiUpdaterProgressEvent {
   total: number;
 }
 interface RosiJobProgressEvent {
+  sessionId?: number;
   phase: 'download' | 'merge' | 'convert' | 'idle';
   phasePercent: number | null;
   itemOverallPercent: number;
@@ -56,12 +59,14 @@ interface RosiDownloadCompletion {
   outcome: 'success' | 'failed' | 'cancelled';
   statusMessage: string;
   url: string;
-  profile?: 'best-video' | 'audio' | 'custom';
+  profile?: 'compatible' | 'best-video' | 'audio' | 'custom';
   presetId?: string;
   presetName?: string;
   request: Record<string, unknown>;
   filename?: string;
   outputPath?: string;
+  outputPaths?: string[];
+  failedPaths?: string[];
   sizeBytes?: number;
   format?: string;
   error?: string;
@@ -80,9 +85,11 @@ interface RosiRendererApi {
   getSettings: () => Promise<unknown>;
   getDefaultSettings: () => Promise<RosiIpcResult<unknown>>;
   saveSettings: (settings: Record<string, unknown>) => Promise<RosiIpcResult<unknown>>;
-  resetSettings: () => void;
+  resetSettings: () => Promise<void>;
   openExternal: (url: string) => Promise<RosiIpcResult<{ opened: boolean }>>;
-  downloadVideo: (options: Record<string, unknown>) => Promise<RosiIpcResult<{ started: boolean }>>;
+  downloadVideo: (
+    options: Record<string, unknown>
+  ) => Promise<RosiIpcResult<{ started: boolean; sessionId?: number }>>;
   cancelDownload: () => void;
   cancelFormats: () => void;
   getAppVersion: () => Promise<string>;
@@ -97,9 +104,18 @@ interface RosiRendererApi {
   detectGpu: () => Promise<{ nvidia: boolean; amd: boolean; intel: boolean }>;
   isPackaged: () => Promise<boolean>;
   checkForUpdates: () => Promise<{ error: string; message?: string } | null>;
-  downloadUpdate: () => Promise<{ success?: boolean; cancelled?: boolean; error?: string }>;
+  notifyUpdaterChannelChanged?: (
+    channel: 'auto' | 'stable' | 'beta',
+    save?: Promise<boolean>,
+    previousChannel?: 'auto' | 'stable' | 'beta'
+  ) => void;
+  downloadUpdate: (candidateId?: number) => Promise<{
+    success?: boolean;
+    cancelled?: boolean;
+    error?: string;
+  }>;
   cancelUpdateDownload: () => void;
-  installUpdate: () => void;
+  installUpdate: (candidateId?: number) => Promise<void>;
   onUpdaterStatus: (callback: (data: RosiUpdaterStatusEvent) => void) => () => void;
   onUpdaterProgress: (callback: (data: RosiUpdaterProgressEvent) => void) => () => void;
   onProgress: (callback: (message: string) => void) => () => void;
@@ -125,7 +141,8 @@ interface RosiRendererApi {
   clearDownloadActivity: () => Promise<RosiIpcResult<void>>;
   onDownloadActivityUpdate: (callback: (activity: RosiDownloadActivity[]) => void) => () => void;
   logError: (message: string) => void;
-  notifySettingsFlushed: () => void;
+  setWindowTheme: (theme: 'light' | 'dark') => void;
+  notifySettingsFlushed: (generation: number) => Promise<void>;
   addToQueue: (
     urls: string[],
     options?: Record<string, unknown>
@@ -137,10 +154,12 @@ interface RosiRendererApi {
     direction: 'up' | 'down';
   }) => Promise<RosiIpcResult<void>>;
   clearQueue: () => Promise<RosiIpcResult<void>>;
+  clearFinishedQueue: () => Promise<RosiIpcResult<{ removed: number }>>;
+  isFlatpak: () => Promise<boolean>;
   getQueue: () => Promise<RosiQueueItem[]>;
   startQueue: () => Promise<RosiIpcResult<{ started: boolean }>>;
   cancelQueue: () => Promise<RosiIpcResult<void>>;
-  onPrepareForClose: (callback: () => void | Promise<void>) => () => void;
+  onPrepareForClose: (callback: (generation: number) => void | Promise<void>) => () => void;
   onQueueUpdate: (callback: (queue: RosiQueueItem[]) => void) => () => void;
   onSettingsImported: (callback: (settings: RosiSettings) => void) => () => void;
 }
@@ -174,9 +193,31 @@ interface RosiParsedProgress {
   eta: string | null;
 }
 
+interface RosiActivityPanelDeps {
+  showToast: (
+    message: unknown,
+    options?: { type?: 'warning' | 'error' | 'success' | 'info' }
+  ) => void;
+  renderStatusText: (target: HTMLElement, text: string) => void;
+  formatRelativeTime: (timestamp: number) => string;
+  revealFileLocation: (filePath: string) => Promise<void>;
+  icon: (name: string, size: number) => SVGSVGElement | null;
+  markUnseen: (tab: string) => void;
+  onReplay: (entry: RosiDownloadActivity) => void;
+}
+
+interface RosiActivityPanel {
+  setEntries: (entries: RosiDownloadActivity[]) => void;
+  clear: () => Promise<boolean>;
+}
+
 interface RosiDownloadsModule {
   formatBytes: (bytes: number) => string;
   parseYtdlpProgress: (message: string) => RosiParsedProgress | null;
+}
+
+interface RosiActivityModule {
+  initActivityPanel: (deps: RosiActivityPanelDeps) => RosiActivityPanel;
 }
 
 interface RosiQueueItem {
@@ -238,15 +279,45 @@ interface RosiUpdatesModule {
   isPrereleaseVersion: (version: string) => boolean;
 }
 
+type RosiDockTab = 'queue' | 'activity' | 'console';
+
+interface RosiDockModule {
+  initDock: (options?: {
+    initialTab?: string;
+    collapsed?: boolean;
+    onChange?: (state: { tab: RosiDockTab; collapsed: boolean }) => void;
+  }) => void;
+  selectTab: (tab: string, options?: { focus?: boolean }) => void;
+  markUnseen: (tab: string) => void;
+  setTabAvailable: (tab: string, available: boolean) => void;
+  setCollapsed: (collapsed: boolean) => void;
+  getState: () => { tab: RosiDockTab; collapsed: boolean };
+}
+
+interface RosiIconsModule {
+  icon: (name: string, size?: number, className?: string) => SVGSVGElement | null;
+  initializeIcons: (root?: ParentNode) => void;
+  parseStatus: (text: string) => {
+    icon: string | null;
+    tone: 'danger' | 'success' | 'warning' | null;
+    text: string;
+  };
+  renderStatus: (target: HTMLElement, text: string) => void;
+}
+
 interface RosiModules {
+  icons?: RosiIconsModule;
   ui?: RosiUiModule;
+  dock?: RosiDockModule;
   downloads?: RosiDownloadsModule;
+  activity?: RosiActivityModule;
   queue?: RosiQueueModule;
   settings?: RosiSettingsModule;
   updates?: RosiUpdatesModule;
 }
 
 interface Window {
+  __ROSI_RENDERER_STARTUP_READY__: Promise<void>;
   api: RosiRendererApi;
   rosiModules?: RosiModules;
 }

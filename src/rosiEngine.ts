@@ -15,7 +15,7 @@ interface RosiPlaylistSelection {
 interface RosiDownloadPreset {
   id: string;
   name: string;
-  profile: 'best-video' | 'audio' | 'custom';
+  profile: 'compatible' | 'best-video' | 'audio' | 'custom';
   bestQuality?: boolean;
   audioOnly?: boolean;
   audioFormat?: string;
@@ -38,10 +38,9 @@ interface RosiSettings {
   settingsVersion: number;
   theme: 'system' | 'light' | 'dark' | 'purple';
   showConsoleOutput: boolean;
-  consoleCollapsed: boolean;
-  queueCollapsed: boolean;
-  downloadProfilesEnabled: boolean;
-  downloadMode: 'best-video' | 'audio' | 'custom';
+  dockTab: 'queue' | 'activity' | 'console';
+  dockCollapsed: boolean;
+  downloadMode: 'compatible' | 'best-video' | 'audio' | 'custom';
   downloadPresets: RosiDownloadPreset[];
   askDownloadLocation: boolean;
   advancedOptions: boolean;
@@ -74,6 +73,7 @@ interface RosiSettings {
 }
 
 interface RosiJobProgressEvent {
+  sessionId?: number;
   phase: 'download' | 'merge' | 'convert' | 'idle';
   phasePercent: number | null;
   itemOverallPercent: number;
@@ -92,15 +92,10 @@ function resolveProgressPhaseFlags(
   activeSettings: RosiSettings,
   advancedFormats?: { videoFormat?: string; audioFormat?: string }
 ) {
-  if (
-    activeSettings.audioOnly ||
-    (activeSettings.downloadProfilesEnabled && activeSettings.downloadMode === 'audio')
-  ) {
+  if (activeSettings.audioOnly || activeSettings.downloadMode === 'audio') {
     return { needsMerge: false, needsConvert: activeSettings.convertEnabled };
   }
-  const baseMerge = activeSettings.downloadProfilesEnabled
-    ? activeSettings.downloadMode === 'best-video' || activeSettings.downloadMode === 'custom'
-    : activeSettings.bestQuality || activeSettings.advancedOptions;
+  const baseMerge = activeSettings.bestQuality || activeSettings.advancedOptions;
   const needsMerge =
     Boolean(advancedFormats?.videoFormat && advancedFormats?.audioFormat) || baseMerge;
   return {
@@ -122,9 +117,26 @@ function applyActiveDownloadProgressPhases(
 const rosiModules = window.rosiModules || {};
 const uiModule = rosiModules.ui || null;
 const downloadsModule = rosiModules.downloads || null;
+const activityModule = rosiModules.activity || null;
 const queueModule = rosiModules.queue || null;
 const settingsModule = rosiModules.settings || null;
 const updatesModule = rosiModules.updates || null;
+const dockModule = rosiModules.dock || null;
+const iconsModule = rosiModules.icons || null;
+
+/** Write a status line, showing a leading Rust status emoji as an icon. */
+function renderStatusText(target: HTMLElement, text: string) {
+  if (iconsModule) iconsModule.renderStatus(target, text);
+  else target.textContent = text;
+}
+
+/** Replace a button's content with a Lucide icon and a text label. */
+function setButtonIconLabel(button: HTMLElement, iconName: string, label: string, size = 18) {
+  const svg = iconsModule?.icon(iconName, size) ?? null;
+  const text = document.createElement('span');
+  text.textContent = label;
+  button.replaceChildren(...(svg ? [svg] : []), text);
+}
 
 function isMac() {
   if (uiModule && typeof uiModule.isMac === 'function') {
@@ -212,6 +224,31 @@ function resolveAppliedTheme(preference: ThemeName): ThemeName {
   return query && query.matches ? 'dark' : 'light';
 }
 
+/**
+ * Show the save folder with its last segment pinned, so a long path loses its
+ * middle to the ellipsis and the folder name stays readable.
+ */
+function renderFolderSummary(target: HTMLElement, folderSetting: string | undefined) {
+  const folder = folderSetting?.trim() ?? '';
+  target.title = folder || 'Choose a folder before downloading';
+  if (!folder) {
+    target.textContent = 'Choose a folder';
+    return;
+  }
+  const [, parents, name] = /^(.*[\\/])([^\\/]+)[\\/]?$/.exec(folder) ?? [];
+  const head = document.createElement('span');
+  head.className = 'download-destination-head';
+  head.textContent = parents ?? folder;
+  const parts: HTMLElement[] = [head];
+  if (name) {
+    const tail = document.createElement('span');
+    tail.className = 'download-destination-tail';
+    tail.textContent = name;
+    parts.push(tail);
+  }
+  target.replaceChildren(...parts);
+}
+
 function syncLicensesTheme(theme: ThemeName) {
   try {
     const frame = document.getElementById('licenses-frame') as HTMLIFrameElement | null;
@@ -222,6 +259,12 @@ function syncLicensesTheme(theme: ThemeName) {
   } catch {
     /* ignore */
   }
+}
+
+// Pin the native title bar to the rendered theme rather than the system
+// appearance, so a dark page never sits under a light bar.
+function syncWindowTheme(theme: ThemeName) {
+  window.api?.setWindowTheme?.(theme === 'light' ? 'light' : 'dark');
 }
 
 function teardownSystemThemeListener() {
@@ -254,6 +297,7 @@ function ensureSystemThemeListener() {
     appliedTheme = resolveAppliedTheme('system');
     document.documentElement.dataset.theme = appliedTheme;
     syncLicensesTheme(appliedTheme);
+    syncWindowTheme(appliedTheme);
   };
   if (typeof systemThemeMediaQuery.addEventListener === 'function') {
     systemThemeMediaQuery.addEventListener('change', systemThemeMediaQueryHandler);
@@ -266,14 +310,59 @@ function setMainContentInert(isInert: boolean) {
   const mainContent =
     document.getElementById('main-content') || document.querySelector('.main-content');
   if (!(mainContent instanceof HTMLElement)) return;
+  const shouldBeInert = isInert || getTopActiveOverlayId() !== null;
   if ('inert' in mainContent) {
-    (mainContent as HTMLElement & { inert: boolean }).inert = isInert;
+    (mainContent as HTMLElement & { inert: boolean }).inert = shouldBeInert;
   }
-  if (isInert) {
+  if (shouldBeInert) {
     mainContent.setAttribute('aria-hidden', 'true');
   } else {
     mainContent.removeAttribute('aria-hidden');
   }
+}
+
+function getTopActiveOverlayId(): string | null {
+  const overlayOrder = ['app-modal', 'licenses-overlay', 'setup-wizard', 'sidebar'];
+  for (const id of overlayOrder) {
+    const overlay = document.getElementById(id);
+    const active =
+      id === 'sidebar'
+        ? overlay?.classList.contains('open')
+        : overlay?.classList.contains('active');
+    if (active) return id;
+  }
+  return null;
+}
+
+function syncModalAccessibility() {
+  const topOverlayId = getTopActiveOverlayId();
+  for (const id of ['app-modal', 'licenses-overlay', 'setup-wizard']) {
+    const overlay = document.getElementById(id);
+    if (overlay) overlay.setAttribute('aria-modal', String(topOverlayId === id));
+  }
+}
+
+function focusTopOverlayOr(target: Element | null) {
+  const topOverlayId = getTopActiveOverlayId();
+  if (topOverlayId) {
+    const overlay = document.getElementById(topOverlayId);
+    if (focusFirstElement(overlay)) return;
+    if (overlay instanceof HTMLElement) overlay.focus();
+    return;
+  }
+
+  setMainContentInert(false);
+  if (!(target instanceof HTMLElement) || !target.isConnected || target.hasAttribute('disabled')) {
+    return;
+  }
+  if (target.closest('[aria-hidden="true"]')) {
+    const fallback = document.getElementById('url');
+    if (fallback instanceof HTMLElement && !fallback.closest('[aria-hidden="true"]')) {
+      fallback.focus();
+    }
+    return;
+  }
+  target.focus();
 }
 
 function applyTheme(preference: string) {
@@ -285,6 +374,7 @@ function applyTheme(preference: string) {
   appliedTheme = resolveAppliedTheme(themePreference);
   document.documentElement.dataset.theme = appliedTheme;
   syncLicensesTheme(appliedTheme);
+  syncWindowTheme(appliedTheme);
   try {
     localStorage.setItem('rosi-theme', themePreference);
   } catch {
@@ -320,28 +410,7 @@ function appendConsoleOutput(outputEl: HTMLElement | null, text: string) {
   if (uiModule && typeof uiModule.appendConsoleOutput === 'function') {
     uiModule.appendConsoleOutput(outputEl, text);
   }
-}
-
-function setConsoleCollapsed(collapsed: boolean) {
-  const consoleSection = document.getElementById('console-section');
-  const consoleToggleBtn = document.getElementById('consoleToggleBtn');
-  const output = document.getElementById('output');
-  if (!consoleSection) return false;
-  consoleSection.classList.toggle('collapsed', !!collapsed);
-  const isCollapsed = consoleSection.classList.contains('collapsed');
-  if (consoleToggleBtn) consoleToggleBtn.setAttribute('aria-expanded', String(!isCollapsed));
-  if (output) output.setAttribute('aria-hidden', String(isCollapsed));
-  return isCollapsed;
-}
-
-// Toggle console collapsed state
-function toggleConsoleCollapse(forceCollapsed?: boolean) {
-  const consoleSection = document.getElementById('console-section');
-  if (!consoleSection) return false;
-  if (typeof forceCollapsed === 'boolean') {
-    return setConsoleCollapsed(forceCollapsed);
-  }
-  return setConsoleCollapsed(!consoleSection.classList.contains('collapsed'));
+  dockModule?.markUnseen('console');
 }
 
 function setButtonLoading(
@@ -375,6 +444,7 @@ function toggleAdvancedUI(show: boolean) {
 // Modal queue system
 interface ModalButton {
   label: string;
+  icon?: string;
   action?: () => void;
   primary?: boolean;
   danger?: boolean;
@@ -383,6 +453,7 @@ interface ModalButton {
 interface ModalData {
   title: string;
   message: unknown;
+  key?: string;
   buttons?: ModalButton[];
   priority?: boolean;
   busy?: boolean;
@@ -396,6 +467,23 @@ let previousFocus: Element | null = null;
 let modalTrapHandler: ((e: KeyboardEvent) => void) | null = null;
 let modalFocusinHandler: ((e: FocusEvent) => void) | null = null;
 let licensesFocusinHandler: ((e: FocusEvent) => void) | null = null;
+let modalHideTimer: ReturnType<typeof setTimeout> | null = null;
+let modalHideGeneration = 0;
+let modalHidingData: ModalData | null = null;
+
+function detachModalFocusHandlers(modal: HTMLElement | null) {
+  if (modal && modalTrapHandler) modal.removeEventListener('keydown', modalTrapHandler);
+  if (modalFocusinHandler) document.removeEventListener('focusin', modalFocusinHandler, true);
+  modalTrapHandler = null;
+  modalFocusinHandler = null;
+}
+
+function cancelModalHide() {
+  modalHideGeneration += 1;
+  if (modalHideTimer !== null) clearTimeout(modalHideTimer);
+  modalHideTimer = null;
+  modalHidingData = null;
+}
 
 function getFocusableElements(container: unknown): HTMLElement[] {
   if (!(container instanceof HTMLElement)) return [];
@@ -422,18 +510,35 @@ function focusFirstElement(container: unknown) {
   return false;
 }
 
-function showModal({ title, message, buttons = [], priority = false, extra = null }: ModalData) {
-  const modalData: ModalData = { title, message, buttons, priority, extra };
+function showModal({
+  title,
+  message,
+  key,
+  buttons = [],
+  priority = false,
+  busy = false,
+  extra = null,
+}: ModalData) {
+  const modalData: ModalData = { title, message, key, buttons, priority, busy, extra };
+  // A keyed prompt (for example an available update) that a priority modal
+  // pushes aside is shown again afterwards instead of being lost.
+  let displaced: ModalData | null = null;
   if (priority && isModalActive) {
+    if (currentModalData?.key && !currentModalData.busy) displaced = currentModalData;
+    cancelModalHide();
     const modal = document.getElementById('app-modal');
     if (modal) {
       modal.classList.remove('active', 'showing', 'hiding');
+      modal.setAttribute('aria-hidden', 'true');
+      detachModalFocusHandlers(modal);
     }
     isModalActive = false;
     currentModalData = null;
+    syncModalAccessibility();
   }
   if (priority) {
     modalQueue.unshift(modalData);
+    if (displaced) modalQueue.splice(1, 0, displaced);
   } else {
     modalQueue.push(modalData);
   }
@@ -455,7 +560,8 @@ function displayNextModal() {
     isModalActive = false;
     return;
   }
-  const { title, message, buttons = [], extra } = currentModalData;
+  const displayedModalData = currentModalData;
+  const { title, message, buttons = [], extra } = displayedModalData;
 
   const modal = document.getElementById('app-modal');
   const titleEl = document.getElementById('modal-title');
@@ -491,40 +597,43 @@ function displayNextModal() {
   }
   modal.classList.add('showing');
   modal.classList.add('active');
+  syncModalAccessibility();
   setMainContentInert(true);
 
   void modal.offsetWidth;
   requestAnimationFrame(() => {
-    modal.classList.remove('showing');
+    if (currentModalData === displayedModalData) modal.classList.remove('showing');
   });
 
-  buttons.forEach(({ label, action, primary, danger, disabled }) => {
+  buttons.forEach(({ label, icon, action, primary, danger, disabled }) => {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.textContent = label;
-    if (primary) btn.classList.add('modal-btn-primary');
-    if (danger) btn.classList.add('modal-btn-danger');
+    if (icon) setButtonIconLabel(btn, icon, label, 16);
+    else btn.textContent = label;
+    btn.className = 'btn';
+    if (primary) btn.classList.add('modal-btn-primary', 'btn--primary');
+    else if (danger) btn.classList.add('modal-btn-danger', 'btn--danger');
+    else btn.classList.add('btn--neutral');
     if (disabled) {
       btn.disabled = true;
       btn.setAttribute('aria-disabled', 'true');
     }
     if (!disabled) {
       btn.onclick = () => {
+        if (currentModalData !== displayedModalData || !modal.classList.contains('active')) return;
         hideModal(modal, action);
       };
     }
     btnContainer.appendChild(btn);
   });
 
-  previousFocus = document.activeElement;
+  if (!previousFocus) previousFocus = document.activeElement;
 
-  if (modalTrapHandler) {
-    modal.removeEventListener('keydown', modalTrapHandler);
-  }
-  if (modalFocusinHandler) {
-    document.removeEventListener('focusin', modalFocusinHandler, true);
-  }
+  detachModalFocusHandlers(modal);
   modalTrapHandler = (e: KeyboardEvent) => {
+    if (currentModalData !== displayedModalData || getTopActiveOverlayId() !== 'app-modal') {
+      return;
+    }
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
@@ -551,7 +660,14 @@ function displayNextModal() {
   };
   modal.addEventListener('keydown', modalTrapHandler);
   modalFocusinHandler = (e: FocusEvent) => {
-    if (!isModalActive || !modal.classList.contains('active')) return;
+    if (
+      !isModalActive ||
+      currentModalData !== displayedModalData ||
+      !modal.classList.contains('active') ||
+      getTopActiveOverlayId() !== 'app-modal'
+    ) {
+      return;
+    }
     const target = e.target;
     if (target instanceof Node && modal.contains(target)) return;
     if (!focusFirstElement(modal) && typeof modal.focus === 'function') {
@@ -561,6 +677,9 @@ function displayNextModal() {
   document.addEventListener('focusin', modalFocusinHandler, true);
 
   requestAnimationFrame(() => {
+    if (currentModalData !== displayedModalData || getTopActiveOverlayId() !== 'app-modal') {
+      return;
+    }
     if (!focusFirstElement(modal) && typeof modal.focus === 'function') {
       modal.focus();
     }
@@ -568,65 +687,104 @@ function displayNextModal() {
 }
 
 function hideModal(modal: HTMLElement, action: (() => void) | null | undefined) {
+  if (!currentModalData || modalHideTimer !== null) return;
+  const closingModalData = currentModalData;
+  const hideGeneration = ++modalHideGeneration;
+  modalHidingData = closingModalData;
   modal.classList.add('hiding');
   currentModalData = null;
-  if (modalTrapHandler) {
-    modal.removeEventListener('keydown', modalTrapHandler);
-    modalTrapHandler = null;
-  }
-  if (modalFocusinHandler) {
-    document.removeEventListener('focusin', modalFocusinHandler, true);
-    modalFocusinHandler = null;
-  }
-  setTimeout(() => {
+  detachModalFocusHandlers(modal);
+  modalHideTimer = setTimeout(() => {
+    if (hideGeneration !== modalHideGeneration || modalHidingData !== closingModalData) return;
+    modalHideTimer = null;
+    modalHidingData = null;
     modal.classList.remove('active', 'hiding');
     modal.setAttribute('aria-hidden', 'true');
     modal.removeAttribute('aria-busy');
     isModalActive = false;
+    syncModalAccessibility();
     if (typeof action === 'function') action();
-    if (!isModalActive) {
-      displayNextModal();
-    }
-    const wizardActive = document.getElementById('setup-wizard')?.classList.contains('active');
-    const licensesActive = document
-      .getElementById('licenses-overlay')
-      ?.classList.contains('active');
-    if (!isModalActive && !wizardActive && !licensesActive) {
+    if (!isModalActive && modalQueue.length > 0) displayNextModal();
+    if (!isModalActive && modalQueue.length === 0) {
       setMainContentInert(false);
-    }
-    if (!isModalActive && previousFocus instanceof HTMLElement) {
-      // Prefer returning focus to the wizard when skip/confirm was opened from it.
-      if (wizardActive) {
-        const wizard = document.getElementById('setup-wizard');
-        if (wizard instanceof HTMLElement) {
-          focusFirstElement(wizard);
-        }
-      } else {
-        previousFocus.focus();
-      }
+      focusTopOverlayOr(previousFocus);
       previousFocus = null;
     }
   }, 200);
+}
+
+function retireModal(key: string) {
+  for (let index = modalQueue.length - 1; index >= 0; index -= 1) {
+    if (modalQueue[index]?.key === key) modalQueue.splice(index, 1);
+  }
+  const retiresVisibleModal = currentModalData?.key === key;
+  const retiresHidingModal = modalHidingData?.key === key && modalHideTimer !== null;
+  if (!retiresVisibleModal && !retiresHidingModal) return;
+
+  cancelModalHide();
+  const modal = document.getElementById('app-modal');
+  if (modal) {
+    modal.classList.remove('active', 'showing', 'hiding');
+    modal.setAttribute('aria-hidden', 'true');
+    modal.removeAttribute('aria-busy');
+  }
+  detachModalFocusHandlers(modal);
+  currentModalData = null;
+  isModalActive = false;
+  syncModalAccessibility();
+
+  if (modalQueue.length > 0) {
+    displayNextModal();
+    return;
+  }
+  setMainContentInert(false);
+  focusTopOverlayOr(previousFocus);
+  previousFocus = null;
 }
 
 function showKeyboardShortcuts() {
   const modKey = getModifierKeyName();
   showModal({
     title: 'Keyboard Shortcuts',
-    message: `${modKey}+D - Restart application\n${modKey}+F - Focus URL input field\n${modKey}+, - Open settings\n${modKey}+Shift+, - Toggle settings sidebar\n${modKey}+Enter - Submit queue URLs (when focused)\nAlt+↑ / Alt+↓ - Move a pending queue item (when focused)`,
+    message: `${modKey}+D - Restart application\n${modKey}+F - Focus URL input field\n${modKey}+, - Open settings\n${modKey}+Shift+, - Toggle settings sidebar\n${modKey}+Enter - Submit queue URLs (when focused)\nAlt+↑ / Alt+↓ - Move a pending queue item (when focused)
+Alt+1 / Alt+2 / Alt+3 - Show Queue, Activity, or Console`,
     buttons: [{ label: 'OK', primary: true }],
   });
 }
 
 let isFetchingFormats = false;
 let fetchFormatsAbort: (() => void) | null = null;
+
+let formatRequestGeneration = 0;
+let formatRequestUrl: string | null = null;
+let formatSelectionsUrl: string | null = null;
+
+function clearAdvancedFormatSelections() {
+  const videoSelect = document.getElementById('videoFormat') as HTMLSelectElement | null;
+  const audioSelect = document.getElementById('audioFormat') as HTMLSelectElement | null;
+  if (videoSelect) videoSelect.innerHTML = '<option value="">Select Video Format</option>';
+  if (audioSelect) audioSelect.innerHTML = '<option value="">Select Audio Format</option>';
+  formatSelectionsUrl = null;
+}
+
+function invalidateFormatRequest() {
+  if (formatRequestUrl === null) return;
+  formatRequestGeneration += 1;
+  formatRequestUrl = null;
+  isFetchingFormats = false;
+  fetchFormatsAbort = null;
+  window.api.cancelFormats?.();
+  const btn = document.getElementById('fetchFormatsBtn') as HTMLButtonElement | null;
+  if (btn) setButtonLoading(btn, false);
+}
+
 async function fetchFormats() {
   const btn = document.getElementById('fetchFormatsBtn') as HTMLButtonElement | null;
   const urlInput = document.getElementById('url') as HTMLInputElement | null;
-  const videoUrl = urlInput ? urlInput.value : null;
+  const videoUrl = urlInput?.value.trim() || null;
 
   try {
-    if (!btn || !videoUrl || videoUrl.trim() === '') {
+    if (!btn || !videoUrl) {
       showModal({
         title: 'Input Error',
         message: 'Please enter a video URL first.',
@@ -636,7 +794,7 @@ async function fetchFormats() {
     }
 
     // Validate URL format
-    if (!isValidUrl(videoUrl.trim())) {
+    if (!isValidUrl(videoUrl)) {
       showModal({
         title: 'Invalid URL',
         message: 'Please enter a valid URL starting with http:// or https://',
@@ -647,10 +805,21 @@ async function fetchFormats() {
 
     if (isFetchingFormats) return;
     isFetchingFormats = true;
+    const requestGeneration = ++formatRequestGeneration;
+    formatRequestUrl = videoUrl;
+    formatSelectionsUrl = null;
+    const isCurrentRequest = () =>
+      requestGeneration === formatRequestGeneration && formatRequestUrl === videoUrl;
     let wasCancelled = false;
     fetchFormatsAbort = () => {
+      if (!isCurrentRequest()) return;
       wasCancelled = true;
+      formatRequestGeneration += 1;
+      formatRequestUrl = null;
+      formatSelectionsUrl = null;
       isFetchingFormats = false;
+      fetchFormatsAbort = null;
+      clearAdvancedFormatSelections();
       setButtonLoading(btn, false);
     };
     setButtonLoading(
@@ -670,7 +839,7 @@ async function fetchFormats() {
     if (audioSelect) audioSelect.innerHTML = '<option value="">Loading...</option>';
     try {
       const formatResult = await window.api.getFormats(videoUrl);
-      if (wasCancelled) return;
+      if (wasCancelled || !isCurrentRequest()) return;
       if (!formatResult || formatResult.ok !== true) {
         const errorMessage = formatResult?.error?.message || 'Unknown error';
         const cancelled =
@@ -718,15 +887,13 @@ async function fetchFormats() {
         option.title = trimmed;
         const isVideoOnly = /video only/i.test(line);
         const isAudioOnly = /audio only/i.test(line);
-        const isVideo = /video/.test(line.toLowerCase()) && !isAudioOnly;
-        const isAudio = /audio/.test(line.toLowerCase()) && !isVideoOnly;
-        if (isVideoOnly || (isVideo && !isAudio)) {
-          if (videoSelect) videoSelect.appendChild(option);
-          videoFormatsFound++;
-        } else if (isAudioOnly || (isAudio && !isVideo)) {
+        if (isAudioOnly) {
           if (audioSelect) audioSelect.appendChild(option);
           audioFormatsFound++;
-        } else if (isVideo && isAudio) {
+        } else {
+          // Video-only streams and combined video+audio formats. Combined
+          // formats (common on sites with a single file) carry no marker.
+          if (!isVideoOnly) option.text += ' (video + audio)';
           if (videoSelect) videoSelect.appendChild(option);
           videoFormatsFound++;
         }
@@ -735,7 +902,9 @@ async function fetchFormats() {
         videoSelect.innerHTML = '<option value="">No video formats found</option>';
       if (audioFormatsFound === 0 && audioSelect)
         audioSelect.innerHTML = '<option value="">No audio formats found</option>';
+      formatSelectionsUrl = videoUrl;
     } catch (e) {
+      if (!isCurrentRequest()) return;
       const errorMessage = typeof e === 'string' ? e : (e as Error)?.message || 'Unknown error';
       if (videoSelect) videoSelect.innerHTML = '<option value="">Error loading formats</option>';
       if (audioSelect) audioSelect.innerHTML = '<option value="">Error loading formats</option>';
@@ -745,8 +914,10 @@ async function fetchFormats() {
         buttons: [{ label: 'OK', primary: true }],
       });
     } finally {
-      if (!wasCancelled) {
+      if (isCurrentRequest()) {
         isFetchingFormats = false;
+        formatRequestUrl = null;
+        fetchFormatsAbort = null;
         setButtonLoading(btn, false);
       }
     }
@@ -790,6 +961,19 @@ interface RosiVideoInfo {
   isPlaylist: boolean;
   playlistCount: number | null;
   webpageUrl: string | null;
+}
+
+const MAX_PREVIEW_THUMBNAIL_BYTES = 2 * 1024 * 1024;
+const PREVIEW_THUMBNAIL_DATA_URL_PATTERN =
+  /^data:image\/(?:jpeg|png|webp);base64,((?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)$/i;
+
+function isSafePreviewThumbnail(value: string | null): value is string {
+  if (!value) return false;
+  const encoded = PREVIEW_THUMBNAIL_DATA_URL_PATTERN.exec(value)?.[1];
+  if (!encoded) return false;
+  const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0;
+  const decodedBytes = (encoded.length / 4) * 3 - padding;
+  return decodedBytes <= MAX_PREVIEW_THUMBNAIL_BYTES;
 }
 
 let isFetchingPreview = false;
@@ -837,7 +1021,7 @@ function renderVideoPreview(info: RosiVideoInfo) {
 
   if (thumb) {
     const wrap = thumb.parentElement as HTMLElement | null;
-    if (info.thumbnail) {
+    if (isSafePreviewThumbnail(info.thumbnail)) {
       thumb.src = info.thumbnail;
       thumb.alt = info.title || 'Video thumbnail';
       if (wrap) wrap.style.display = '';
@@ -919,7 +1103,7 @@ function showProgressBar(status = 'Downloading...') {
   if (container) {
     container.classList.add('visible');
   }
-  if (statusEl) statusEl.textContent = status;
+  if (statusEl) renderStatusText(statusEl, status);
   if (percentEl) percentEl.textContent = '0%';
   if (bar) {
     bar.style.width = '0%';
@@ -957,7 +1141,7 @@ function updateProgressBar(
     barWrapper.setAttribute('aria-valuenow', String(rounded));
     barWrapper.removeAttribute('aria-valuetext');
   }
-  if (statusText && statusEl) statusEl.textContent = statusText;
+  if (statusText && statusEl) renderStatusText(statusEl, statusText);
   if (detailsText && details) details.textContent = detailsText;
 }
 
@@ -968,7 +1152,7 @@ function setProgressIndeterminate(status = 'Processing...') {
   const barWrapper = document.getElementById('progress-bar-wrapper');
   const details = document.getElementById('progress-details');
 
-  if (statusEl) statusEl.textContent = status;
+  if (statusEl) renderStatusText(statusEl, status);
   if (percentEl) percentEl.textContent = '';
   if (bar) bar.classList.add('indeterminate');
   if (barWrapper) {
@@ -1013,99 +1197,6 @@ function formatBytes(bytes: number) {
   return String(bytes);
 }
 
-const HISTORY_KEY = 'rosi-download-history';
-
-interface LegacyHistoryEntry {
-  filename: string;
-  path: string | null;
-  timestamp: number;
-  status: 'success' | 'failed' | 'cancelled';
-}
-
-/**
- * Pre-4.3 downloads were tracked in localStorage. The main process is now the
- * authoritative store, so these records are only read for display when the
- * durable activity log is still empty.
- */
-function loadLegacyHistory(): LegacyHistoryEntry[] {
-  try {
-    const data = localStorage.getItem(HISTORY_KEY);
-    const parsed: unknown = data ? JSON.parse(data) : [];
-    return Array.isArray(parsed) ? (parsed as LegacyHistoryEntry[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-type ActivityFilter = 'all' | 'success' | 'failed' | 'cancelled';
-
-interface ActivityRow {
-  id: string;
-  outcome: 'success' | 'failed' | 'cancelled';
-  title: string;
-  subtitle: string;
-  timestamp: number;
-  url: string | null;
-  outputPath?: string;
-  error?: string;
-  request?: Record<string, unknown>;
-}
-
-let activityEntries: RosiDownloadActivity[] = [];
-let activityFilter: ActivityFilter = 'all';
-let activityReplayHandler: ((entry: RosiDownloadActivity) => void) | null = null;
-
-function hostFromUrl(url: string | null | undefined) {
-  if (!url) return '';
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return '';
-  }
-}
-
-function describeActivityProfile(entry: RosiDownloadActivity) {
-  if (entry.presetName) return entry.presetName;
-  if (entry.profile === 'best-video') return 'Best video';
-  if (entry.profile === 'audio') return 'Audio';
-  if (entry.profile === 'custom') return 'Custom';
-  return '';
-}
-
-function toActivityRows(): ActivityRow[] {
-  if (activityEntries.length > 0) {
-    return activityEntries.map((entry) => {
-      const parts = [
-        hostFromUrl(entry.url),
-        describeActivityProfile(entry),
-        typeof entry.sizeBytes === 'number' ? formatBytes(entry.sizeBytes) : '',
-        formatRelativeTime(entry.completedAt),
-      ].filter(Boolean);
-      return {
-        id: entry.id,
-        outcome: entry.outcome,
-        title: entry.filename || hostFromUrl(entry.url) || entry.url,
-        subtitle: parts.join(' • '),
-        timestamp: entry.completedAt,
-        url: entry.url,
-        outputPath: entry.outputPath,
-        error: entry.error,
-        request: entry.request,
-      };
-    });
-  }
-
-  return loadLegacyHistory().map((entry, index) => ({
-    id: `legacy-${index}`,
-    outcome: entry.status,
-    title: entry.filename || 'Unknown file',
-    subtitle: formatRelativeTime(entry.timestamp),
-    timestamp: entry.timestamp,
-    url: null,
-    outputPath: entry.path ?? undefined,
-  }));
-}
-
 function formatRelativeTime(timestamp: number) {
   const diff = Date.now() - timestamp;
   const seconds = Math.floor(diff / 1000);
@@ -1131,156 +1222,6 @@ async function revealFileLocation(filePath: string) {
   } catch {
     showToast('Could not open that file location.', { type: 'warning' });
   }
-}
-
-function createActivityActionButton(label: string, ariaLabel: string, action: () => void) {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'history-open-btn';
-  button.setAttribute('aria-label', ariaLabel);
-  button.textContent = label;
-  button.addEventListener('click', (event) => {
-    event.stopPropagation();
-    action();
-  });
-  return button;
-}
-
-function renderActivity() {
-  const historySection = document.getElementById('download-history');
-  const listEl = document.getElementById('history-list');
-  const countEl = document.getElementById('history-count');
-  if (!listEl || !historySection) return;
-
-  const rows = toActivityRows();
-  const visibleRows =
-    activityFilter === 'all' ? rows : rows.filter((row) => row.outcome === activityFilter);
-  if (countEl) countEl.textContent = String(rows.length);
-
-  // The panel now stays mounted so the empty state remains discoverable.
-  historySection.classList.add('visible');
-  listEl.replaceChildren();
-
-  if (visibleRows.length === 0) {
-    const empty = document.createElement('p');
-    empty.className = 'history-empty';
-    empty.textContent =
-      rows.length === 0
-        ? 'No downloads yet. Finished, failed, and cancelled downloads will appear here.'
-        : 'No downloads match this filter.';
-    listEl.appendChild(empty);
-    return;
-  }
-
-  const fragment = document.createDocumentFragment();
-  visibleRows.forEach((row) => {
-    const item = document.createElement('div');
-    item.className = 'history-item';
-    item.setAttribute('role', 'listitem');
-
-    const statusLabel =
-      row.outcome === 'success'
-        ? 'Completed'
-        : row.outcome === 'cancelled'
-          ? 'Cancelled'
-          : 'Failed';
-
-    const info = document.createElement('div');
-    info.className = 'history-item-info';
-    const filenameEl = document.createElement('span');
-    filenameEl.className = 'history-filename';
-    filenameEl.title = row.url || row.title;
-    filenameEl.textContent = row.title;
-    const timeEl = document.createElement('span');
-    timeEl.className = 'history-time';
-    timeEl.textContent = row.subtitle || formatRelativeTime(row.timestamp);
-    info.append(filenameEl, timeEl);
-    if (row.outcome === 'failed' && row.error) {
-      const errorEl = document.createElement('span');
-      errorEl.className = 'history-error';
-      errorEl.textContent = row.error;
-      info.appendChild(errorEl);
-    }
-
-    const actions = document.createElement('div');
-    actions.className = 'history-item-actions';
-    const statusEl = document.createElement('span');
-    statusEl.className = `history-status ${row.outcome}`;
-    statusEl.textContent = statusLabel;
-    actions.appendChild(statusEl);
-
-    if (row.request && activityReplayHandler) {
-      const entry = activityEntries.find((candidate) => candidate.id === row.id);
-      if (entry) {
-        actions.appendChild(
-          createActivityActionButton('Download again', `Download ${row.title} again`, () => {
-            activityReplayHandler?.(entry);
-          })
-        );
-      }
-    }
-    if (row.url) {
-      const sourceUrl = row.url;
-      actions.appendChild(
-        createActivityActionButton('Copy source', `Copy source link for ${row.title}`, () => {
-          void navigator.clipboard.writeText(sourceUrl).then(
-            () => showToast('Source link copied.', { type: 'info' }),
-            () => showToast('Could not copy the source link.', { type: 'warning' })
-          );
-        })
-      );
-    }
-    if (row.outcome === 'success' && row.outputPath) {
-      const filePath = row.outputPath;
-      actions.appendChild(
-        createActivityActionButton('Open folder', `Open file location for ${row.title}`, () => {
-          void revealFileLocation(filePath);
-        })
-      );
-    }
-
-    item.append(info, actions);
-    fragment.appendChild(item);
-  });
-  listEl.appendChild(fragment);
-}
-
-function setActivityEntries(entries: RosiDownloadActivity[]) {
-  activityEntries = Array.isArray(entries) ? entries : [];
-  renderActivity();
-}
-
-function setActivityFilter(filter: ActivityFilter) {
-  activityFilter = filter;
-  document.querySelectorAll<HTMLButtonElement>('.activity-filter').forEach((button) => {
-    const isSelected = button.dataset.activityFilter === filter;
-    button.classList.toggle('selected', isSelected);
-    button.setAttribute('aria-pressed', String(isSelected));
-  });
-  renderActivity();
-}
-
-async function clearActivity() {
-  try {
-    localStorage.removeItem(HISTORY_KEY);
-  } catch {
-    /* ignore */
-  }
-  if (typeof window.api.clearDownloadActivity !== 'function') {
-    setActivityEntries([]);
-    return;
-  }
-  try {
-    const result = await window.api.clearDownloadActivity();
-    if (!result || !result.ok) {
-      showToast(result?.error?.message || 'Could not clear activity.', { type: 'error' });
-      return;
-    }
-  } catch {
-    showToast('Could not clear activity.', { type: 'error' });
-    return;
-  }
-  setActivityEntries([]);
 }
 
 let isManualUpdateCheck = false;
@@ -1311,7 +1252,7 @@ async function checkForUpdates() {
         {
           label: 'Open Store',
           primary: true,
-          action: () => window.api.openExternal('ms-windows-store://pdp/?ProductId=9N0BQSTFL4SV'),
+          action: () => window.api.openExternal('ms-windows-store://pdp/?ProductId=9P4Q134B2JW3'),
         },
         { label: 'OK' },
       ],
@@ -1375,6 +1316,7 @@ async function checkForUpdates() {
 }
 
 let updaterCleanupFunctions: Array<() => void> = [];
+let updaterCandidateId: number | null = null;
 
 function showUpdateBanner() {
   const banner = document.getElementById('update-banner');
@@ -1403,7 +1345,17 @@ function hideUpdateBanner() {
   }
 }
 
-function setupAutoUpdater() {
+function showRestartFailure(error: unknown) {
+  const detail = error instanceof Error ? error.message : String(error);
+  showModal({
+    title: 'Could Not Restart ROSI',
+    message: `ROSI could not complete the restart safely, so the app remains open.\n\n${detail}`,
+    buttons: [{ label: 'OK', primary: true }],
+    priority: true,
+  });
+}
+
+function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boolean>) {
   const cancelBtn = document.getElementById('update-banner-cancel');
   if (cancelBtn) {
     cancelBtn.addEventListener('click', () => {
@@ -1420,9 +1372,18 @@ function setupAutoUpdater() {
 
       switch (data.status) {
         case 'checking':
+          updaterCandidateId = null;
+          retireModal('updater-candidate');
+          retireModal('updater-downloaded');
           break;
 
         case 'available': {
+          const candidateId = data.candidateId;
+          if (typeof candidateId !== 'number') break;
+          updaterCandidateId = candidateId;
+          retireModal('updater-candidate');
+          retireModal('updater-downloaded');
+          hideUpdateBanner();
           const version = data.version ?? '';
           const isBetaUpdate =
             data.isBeta ||
@@ -1431,6 +1392,7 @@ function setupAutoUpdater() {
               : /-(beta|alpha|rc)/i.test(version));
           showModal({
             title: isBetaUpdate ? 'Beta Update Available!' : 'Update Available!',
+            key: 'updater-candidate',
             message: isBetaUpdate
               ? `A new beta version (v${data.version}) of ROSI is available!\n\nWould you like to download and install it?`
               : `A new version (v${data.version}) of ROSI is available!\n\nWould you like to download and install it?`,
@@ -1440,8 +1402,10 @@ function setupAutoUpdater() {
                 label: 'Download & Install',
                 primary: true,
                 action: async () => {
+                  if (updaterCandidateId !== candidateId) return;
                   showUpdateBanner();
-                  await window.api.downloadUpdate();
+                  const result = await window.api.downloadUpdate(candidateId);
+                  if (result?.cancelled || result?.error) hideUpdateBanner();
                 },
               },
               { label: 'Later' },
@@ -1451,6 +1415,10 @@ function setupAutoUpdater() {
         }
 
         case 'not-available':
+          updaterCandidateId = null;
+          retireModal('updater-candidate');
+          retireModal('updater-downloaded');
+          hideUpdateBanner();
           if (wasManualCheck) {
             showModal({
               title: 'ROSI is up to date!',
@@ -1462,18 +1430,23 @@ function setupAutoUpdater() {
           break;
 
         case 'error':
+          updaterCandidateId = null;
+          retireModal('updater-candidate');
+          retireModal('updater-downloaded');
           hideUpdateBanner();
-          if (wasManualCheck) {
-            showModal({
-              title: 'Update Error',
-              message: `An error occurred while checking for updates:\n${data.message}`,
-              buttons: [{ label: 'OK', primary: true }],
-              priority: true,
-            });
-          }
+          if (data.kind === 'feed' && !wasManualCheck) break;
+          showModal({
+            title: 'Update Error',
+            message: `An error occurred while checking or installing the update:\n${data.message}`,
+            buttons: [{ label: 'OK', primary: true }],
+            priority: true,
+          });
           break;
 
         case 'cancelled':
+          updaterCandidateId = null;
+          retireModal('updater-candidate');
+          retireModal('updater-downloaded');
           hideUpdateBanner();
           showModal({
             title: 'Download Cancelled',
@@ -1484,15 +1457,25 @@ function setupAutoUpdater() {
           break;
 
         case 'downloaded':
+          if (typeof data.candidateId !== 'number') break;
+          updaterCandidateId = data.candidateId;
+          retireModal('updater-candidate');
+          retireModal('updater-downloaded');
           hideUpdateBanner();
           showModal({
             title: 'Update Ready!',
+            key: 'updater-downloaded',
             message: `Version ${data.version} has been downloaded.\n\nThe update will be installed when you restart ROSI.`,
             buttons: [
               {
                 label: 'Restart Now',
                 primary: true,
-                action: () => window.api.installUpdate(),
+                action: async () => {
+                  if (updaterCandidateId !== data.candidateId) return;
+                  if (await flushSettingsBeforeRestart()) {
+                    await window.api.installUpdate(data.candidateId);
+                  }
+                },
               },
               { label: 'Later' },
             ],
@@ -1552,6 +1535,7 @@ function showLicenses() {
     licensesPreviousFocus = document.activeElement;
     licensesOverlay.classList.add('active');
     licensesOverlay.setAttribute('aria-hidden', 'false');
+    syncModalAccessibility();
     setMainContentInert(true);
     syncLicensesTheme(appliedTheme);
     document.body.classList.add('licenses-open');
@@ -1560,6 +1544,7 @@ function showLicenses() {
     const closeBtn = licensesOverlay.querySelector<HTMLElement>('#close-licenses');
     licensesOverlay.setAttribute('tabindex', '-1');
     requestAnimationFrame(() => {
+      if (getTopActiveOverlayId() !== 'licenses-overlay') return;
       if (closeBtn) {
         closeBtn.focus();
         return;
@@ -1570,6 +1555,7 @@ function showLicenses() {
     });
 
     licensesTrapHandler = (e: KeyboardEvent) => {
+      if (getTopActiveOverlayId() !== 'licenses-overlay') return;
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
@@ -1597,7 +1583,12 @@ function showLicenses() {
       document.removeEventListener('focusin', licensesFocusinHandler, true);
     }
     licensesFocusinHandler = (e: FocusEvent) => {
-      if (!licensesOverlay.classList.contains('active')) return;
+      if (
+        !licensesOverlay.classList.contains('active') ||
+        getTopActiveOverlayId() !== 'licenses-overlay'
+      ) {
+        return;
+      }
       const target = e.target;
       if (target instanceof Node && licensesOverlay.contains(target)) return;
       if (!focusFirstElement(licensesOverlay) && typeof licensesOverlay.focus === 'function') {
@@ -1621,19 +1612,18 @@ function hideLicenses() {
     }
     licensesOverlay.classList.remove('active');
     licensesOverlay.setAttribute('aria-hidden', 'true');
-    const wizardOverlay = document.getElementById('setup-wizard');
-    const wizardActive = wizardOverlay?.classList.contains('active');
-    if (!isModalActive && !wizardActive) {
-      setMainContentInert(false);
+    if (previousFocus instanceof Node && licensesOverlay.contains(previousFocus)) {
+      previousFocus = licensesPreviousFocus;
     }
+    const focusToRestore = licensesPreviousFocus;
+    licensesPreviousFocus = null;
+    syncModalAccessibility();
+    setMainContentInert(false);
     setTimeout(() => {
       document.body.style.overflow = '';
       document.body.classList.remove('licenses-open');
     }, 300);
-    if (licensesPreviousFocus instanceof HTMLElement) {
-      licensesPreviousFocus.focus();
-      licensesPreviousFocus = null;
-    }
+    focusTopOverlayOr(focusToRestore);
   }
 }
 
@@ -1646,18 +1636,36 @@ function updateBackgroundAnimation(animate: boolean) {
   }
 }
 
+const SUBTITLE_LANGS_RE = /^[A-Za-z0-9.*-]+(,[A-Za-z0-9.*-]+)*$/;
+
+function isValidSubtitleLangs(raw: string) {
+  return raw.length > 0 && raw.length <= 256 && SUBTITLE_LANGS_RE.test(raw);
+}
+
+// Automatic Deno install uses winget (Windows) or Homebrew (macOS) only.
+function isLinuxPlatform() {
+  return /linux/i.test(navigator.userAgent) && !/android/i.test(navigator.userAgent);
+}
+
+const DENO_INSTALL_DOCS = 'https://docs.deno.com/runtime/getting_started/installation/';
+
 // check for Deno
-async function checkDenoInstallation(settings: RosiSettings, persist: () => void) {
-  if (settings.denoReminderDismissed) {
+async function checkDenoInstallation(
+  settings: RosiSettings,
+  persist: () => Promise<boolean>,
+  flushBeforeRestart: () => Promise<boolean>,
+  isFlatpak = false
+) {
+  // The Flatpak sandbox cannot run a Deno installed on the host, so the
+  // reminder would ask for something that cannot help.
+  if (settings.denoReminderDismissed || isFlatpak) {
     return;
   }
 
   try {
     const isInstalled = await window.api.checkDenoInstalled();
 
-    // Automatic install uses winget (Windows) or Homebrew (macOS) only.
-    const isLinux = /linux/i.test(navigator.userAgent) && !/android/i.test(navigator.userAgent);
-    if (!isInstalled && isLinux) {
+    if (!isInstalled && isLinuxPlatform()) {
       showModal({
         title: 'Deno Required for Full YouTube Functionality',
         message:
@@ -1666,17 +1674,14 @@ async function checkDenoInstallation(settings: RosiSettings, persist: () => void
           {
             label: 'Open Deno Instructions',
             primary: true,
-            action: () =>
-              window.api.openExternal(
-                'https://docs.deno.com/runtime/getting_started/installation/'
-              ),
+            action: () => window.api.openExternal(DENO_INSTALL_DOCS),
           },
           { label: 'Later' },
           {
             label: "No, don't remind me",
             action: () => {
               settings.denoReminderDismissed = true;
-              persist();
+              void persist();
             },
           },
         ],
@@ -1710,12 +1715,28 @@ async function checkDenoInstallation(settings: RosiSettings, persist: () => void
                   });
                   return;
                 }
+                if (result?.success !== true) {
+                  throw new Error(
+                    result?.error || 'Deno installation did not complete successfully.'
+                  );
+                }
                 showModal({
                   title: 'Installation Complete',
                   message:
                     'Deno has been successfully installed!\nRestarting the app can help pick up the updated environment.',
                   buttons: [
-                    { label: 'Restart Now', primary: true, action: () => window.api.restartApp() },
+                    {
+                      label: 'Restart Now',
+                      primary: true,
+                      action: async () => {
+                        if (!(await flushBeforeRestart())) return;
+                        try {
+                          await window.api.restartApp();
+                        } catch (error) {
+                          showRestartFailure(error);
+                        }
+                      },
+                    },
                     { label: 'Later' },
                   ],
                   priority: true,
@@ -1745,7 +1766,7 @@ async function checkDenoInstallation(settings: RosiSettings, persist: () => void
             label: "No, don't remind me",
             action: () => {
               settings.denoReminderDismissed = true;
-              persist();
+              void persist();
             },
           },
         ],
@@ -1756,13 +1777,48 @@ async function checkDenoInstallation(settings: RosiSettings, persist: () => void
   }
 }
 
+/** Settings the setup wizard asks about; Skip resets exactly these. */
+const WIZARD_SETTING_KEYS = [
+  'theme',
+  'flatUi',
+  'animateBackground',
+  'askDownloadLocation',
+  'downloadMode',
+  'bestQuality',
+  'audioOnly',
+  'advancedOptions',
+  'embedMetadata',
+  'embedThumbnail',
+  'sponsorblockRemove',
+  'writeSubtitles',
+  'subtitleLangs',
+  'notifications',
+  'checkUpdatesOnStartup',
+] as const satisfies readonly (keyof RosiSettings)[];
+
+interface WizardOutcome {
+  skipped: boolean;
+  /** The user already saw the Deno step, so no follow-up prompt is needed. */
+  denoReviewed: boolean;
+}
+
+function applyFlatUi(isFlat: boolean) {
+  if (isFlat) document.documentElement.dataset.flatUi = 'true';
+  else delete document.documentElement.dataset.flatUi;
+  try {
+    localStorage.setItem('rosi-flat-ui', isFlat ? 'true' : 'false');
+  } catch {
+    /* ignore */
+  }
+}
+
 function launchSetupWizard(
   settings: RosiSettings,
   applyThemeFn: (preference: string) => void,
-  persistSettingsFn: (silent?: boolean, immediate?: boolean) => Promise<boolean> | void,
-  onComplete: () => void
+  persistSettingsFn: (silent?: boolean, immediate?: boolean) => Promise<boolean>,
+  onComplete: (outcome: WizardOutcome) => void,
+  isFlatpak = false
 ) {
-  const TOTAL_STEPS = 5;
   let currentStep = 0;
 
   const overlay = document.getElementById('setup-wizard');
@@ -1776,14 +1832,18 @@ function launchSetupWizard(
 
   if (!overlay || !progressBar || !backBtn || !nextBtn || !dotsContainer || steps.length === 0) {
     settings.firstLaunch = false;
-    void persistSettingsFn();
-    onComplete();
+    void persistSettingsFn(false, true).then((saved) => {
+      if (saved) onComplete({ skipped: true, denoReviewed: false });
+    });
     return;
   }
+  const TOTAL_STEPS = steps.length;
 
   const overlayEl = overlay;
   const progressBarEl = progressBar;
   const wizardProgress = overlayEl.querySelector<HTMLElement>('.wizard-progress');
+  wizardProgress?.setAttribute('aria-valuemax', String(TOTAL_STEPS));
+  const skipBtn = document.getElementById('wizard-skip') as HTMLButtonElement | null;
   const stepAnnounce = document.getElementById('wizard-step-announce');
   const backBtnEl = backBtn;
   const nextBtnEl = nextBtn;
@@ -1842,16 +1902,175 @@ function launchSetupWizard(
       }
     });
   }
-  const initialProfileValue = settings.downloadProfilesEnabled
-    ? settings.downloadMode === 'audio'
-      ? 'audio'
-      : 'best-video'
-    : 'standard';
+  const initialProfileValue =
+    settings.downloadMode === 'best-video' || settings.downloadMode === 'audio'
+      ? settings.downloadMode
+      : 'compatible';
   const initialProfileRadio = overlayEl.querySelector<HTMLInputElement>(
     `input[name="wizard-profile"][value="${initialProfileValue}"]`
   );
   if (initialProfileRadio) initialProfileRadio.checked = true;
   syncWizardFolderSummary();
+
+  const wizardCheckbox = (id: string) => document.getElementById(id) as HTMLInputElement | null;
+
+  // Look and feel: preview live, like the theme cards.
+  const flatUiInput = wizardCheckbox('wizard-flat-ui');
+  const animateBgInput = wizardCheckbox('wizard-animate-bg');
+  if (flatUiInput) {
+    flatUiInput.checked = !!settings.flatUi;
+    flatUiInput.addEventListener('change', () => applyFlatUi(flatUiInput.checked));
+  }
+  if (animateBgInput) {
+    animateBgInput.checked = settings.animateBackground ?? true;
+    animateBgInput.addEventListener('change', () =>
+      updateBackgroundAnimation(animateBgInput.checked)
+    );
+  }
+
+  // Download extras.
+  const extraInputs: [
+    HTMLInputElement | null,
+    'embedMetadata' | 'embedThumbnail' | 'sponsorblockRemove' | 'writeSubtitles',
+  ][] = [
+    [wizardCheckbox('wizard-embed-metadata'), 'embedMetadata'],
+    [wizardCheckbox('wizard-embed-thumbnail'), 'embedThumbnail'],
+    [wizardCheckbox('wizard-sponsorblock'), 'sponsorblockRemove'],
+    [wizardCheckbox('wizard-subtitles'), 'writeSubtitles'],
+  ];
+  extraInputs.forEach(([input, key]) => {
+    if (input) input.checked = !!settings[key];
+  });
+  const subtitlesInput = wizardCheckbox('wizard-subtitles');
+  const subtitleLangsRow = document.getElementById('wizard-subtitle-langs-row');
+  const subtitleLangsInput = wizardCheckbox('wizard-subtitle-langs');
+  const subtitleLangsError = document.getElementById('wizard-subtitle-langs-error');
+  if (subtitleLangsInput) subtitleLangsInput.value = settings.subtitleLangs || 'en';
+  const setSubtitleLangsError = (message: string) => {
+    if (subtitleLangsError) subtitleLangsError.textContent = message;
+    if (message) subtitleLangsInput?.setAttribute('aria-invalid', 'true');
+    else subtitleLangsInput?.removeAttribute('aria-invalid');
+  };
+  const syncSubtitleRow = () => {
+    if (subtitleLangsRow) subtitleLangsRow.hidden = !subtitlesInput?.checked;
+    if (!subtitlesInput?.checked) setSubtitleLangsError('');
+  };
+  subtitlesInput?.addEventListener('change', syncSubtitleRow);
+  subtitleLangsInput?.addEventListener('input', () => setSubtitleLangsError(''));
+  syncSubtitleRow();
+
+  /** Block leaving the extras step with languages the backend would reject. */
+  function subtitleLangsValid() {
+    if (!subtitlesInput?.checked || !subtitleLangsInput) return true;
+    if (isValidSubtitleLangs(subtitleLangsInput.value.trim())) return true;
+    setSubtitleLangsError('Enter language codes such as en,es, or use all.');
+    subtitleLangsInput.focus();
+    return false;
+  }
+
+  // YouTube helper: check for Deno the first time the step is shown.
+  const stepIndex = (name: string) =>
+    Array.from(steps).findIndex((step) => step.dataset.wizardStep === name);
+  const extrasStepIndex = stepIndex('extras');
+  const denoStepIndex = stepIndex('deno');
+  const denoStatus = document.getElementById('wizard-deno-status');
+  const denoAction = document.getElementById('wizard-deno-action') as HTMLButtonElement | null;
+  let denoChecked = false;
+  let denoReviewed = false;
+
+  function setDenoStatus(
+    state: 'checking' | 'installed' | 'missing' | 'installing' | 'error',
+    text: string
+  ) {
+    if (!denoStatus) return;
+    denoStatus.dataset.state = state;
+    const iconName = {
+      checking: 'hourglass',
+      installing: 'hourglass',
+      installed: 'circle-check',
+      missing: 'triangle-alert',
+      error: 'circle-x',
+    }[state];
+    const iconSlot = denoStatus.querySelector<HTMLElement>('.wizard-status-icon');
+    const textSlot = denoStatus.querySelector<HTMLElement>('.wizard-status-text');
+    const svg = iconsModule?.icon(iconName, 18) ?? null;
+    if (iconSlot) iconSlot.replaceChildren(...(svg ? [svg] : []));
+    if (textSlot) textSlot.textContent = text;
+  }
+
+  function setDenoAction(label: string | null, action: (() => void) | null) {
+    if (!denoAction) return;
+    denoAction.hidden = !label;
+    denoAction.disabled = false;
+    denoAction.textContent = label ?? '';
+    denoAction.onclick = action;
+  }
+
+  function showDenoMissing() {
+    setDenoStatus(
+      'missing',
+      "Deno isn't installed. Some YouTube videos may not download until it is."
+    );
+    if (isLinuxPlatform()) {
+      setDenoAction('Open install instructions', () => {
+        void window.api.openExternal(DENO_INSTALL_DOCS);
+      });
+    } else {
+      setDenoAction('Install Deno', () => void installDenoFromWizard());
+    }
+  }
+
+  async function installDenoFromWizard() {
+    setDenoStatus('installing', 'Installing Deno. This may take a moment…');
+    if (denoAction) denoAction.disabled = true;
+    try {
+      const result = await window.api.installDeno();
+      if (result && result.cancelled) {
+        showDenoMissing();
+        return;
+      }
+      if (result?.success !== true) {
+        throw new Error(result?.error || 'Deno installation did not complete successfully.');
+      }
+      setDenoStatus('installed', 'Deno is installed. Restart ROSI after setup to use it.');
+      setDenoAction(null, null);
+    } catch (error) {
+      const message =
+        (error as { error?: string })?.error ||
+        (error instanceof Error ? error.message : 'Unknown error');
+      setDenoStatus('error', `Automatic install failed: ${message}`);
+      setDenoAction('Open Deno website', () => {
+        void window.api.openExternal('https://deno.land');
+      });
+    }
+  }
+
+  async function checkDenoForWizard() {
+    if (denoChecked) return;
+    denoChecked = true;
+    setDenoAction(null, null);
+    if (isFlatpak) {
+      setDenoStatus(
+        'missing',
+        'The Flatpak build cannot use Deno from your system, so some YouTube videos may not download. The AppImage does not have this limit.'
+      );
+      return;
+    }
+    setDenoStatus('checking', 'Checking for Deno…');
+    try {
+      if (await window.api.checkDenoInstalled()) {
+        setDenoStatus('installed', 'Deno is installed. YouTube downloads are fully supported.');
+      } else {
+        showDenoMissing();
+      }
+    } catch (error) {
+      logError('Wizard Deno check failed', error);
+      setDenoStatus('error', "Couldn't check for Deno.");
+      setDenoAction('Open install instructions', () => {
+        void window.api.openExternal(DENO_INSTALL_DOCS);
+      });
+    }
+  }
 
   function updateUI() {
     // Steps
@@ -1880,6 +2099,12 @@ function launchSetupWizard(
       backBtnEl.removeAttribute('hidden');
       backBtnEl.disabled = false;
       backBtnEl.removeAttribute('tabindex');
+    }
+
+    if (skipBtn) skipBtn.hidden = currentStep === TOTAL_STEPS - 1;
+    if (currentStep === denoStepIndex) {
+      denoReviewed = true;
+      void checkDenoForWizard();
     }
 
     // Next button text
@@ -1912,19 +2137,12 @@ function launchSetupWizard(
       'input[name="wizard-profile"]:checked'
     );
     const profile = selectedProfile?.value;
-    if (profile === 'best-video' || profile === 'audio') {
-      settings.downloadProfilesEnabled = true;
-      settings.downloadMode = profile;
-      settings.bestQuality = profile === 'best-video';
-      settings.audioOnly = profile === 'audio';
-      settings.advancedOptions = false;
-      if (profile === 'audio') settings.convertEnabled = false;
-    } else {
-      settings.downloadProfilesEnabled = false;
-      settings.bestQuality = false;
-      settings.audioOnly = false;
-      settings.advancedOptions = false;
-    }
+    const mode = profile === 'best-video' || profile === 'audio' ? profile : 'compatible';
+    settings.downloadMode = mode;
+    settings.bestQuality = mode === 'best-video';
+    settings.audioOnly = mode === 'audio';
+    settings.advancedOptions = false;
+    if (mode === 'audio') settings.convertEnabled = false;
 
     // Download prefs
     const notifications = document.getElementById(
@@ -1934,12 +2152,45 @@ function launchSetupWizard(
 
     if (notifications) settings.notifications = notifications.checked;
     if (autoUpdates) settings.checkUpdatesOnStartup = autoUpdates.checked;
+
+    // Look and feel
+    if (flatUiInput) settings.flatUi = flatUiInput.checked;
+    if (animateBgInput) settings.animateBackground = animateBgInput.checked;
+
+    // Download extras
+    extraInputs.forEach(([input, key]) => {
+      if (input) settings[key] = input.checked;
+    });
+    const langs = subtitleLangsInput?.value.trim() ?? '';
+    if (settings.writeSubtitles && isValidSubtitleLangs(langs)) settings.subtitleLangs = langs;
   }
 
-  function finalizeWizard() {
-    gatherSettings();
+  /** Skip: put every wizard-managed setting back to its default. */
+  async function applyWizardDefaults() {
+    let defaults: Partial<RosiSettings> | null = null;
+    try {
+      const result = await window.api.getDefaultSettings();
+      if (result && result.ok) defaults = result.data as Partial<RosiSettings>;
+    } catch (error) {
+      logError('Could not load default settings for setup skip', error);
+    }
+    if (defaults) {
+      const target = settings as unknown as Record<string, unknown>;
+      const source = defaults as unknown as Record<string, unknown>;
+      WIZARD_SETTING_KEYS.forEach((key) => {
+        if (key in source) target[key] = source[key];
+      });
+    }
+    applyThemeFn(settings.theme || 'system');
+    applyFlatUi(!!settings.flatUi);
+    updateBackgroundAnimation(settings.animateBackground ?? true);
+  }
+
+  async function finalizeWizard(skipped: boolean): Promise<boolean> {
+    if (!skipped) gatherSettings();
     settings.firstLaunch = false;
-    void persistSettingsFn(false, true);
+    const saved = await persistSettingsFn(false, true);
+    if (!saved) return false;
 
     const themeSelect = document.getElementById('themeSelect') as HTMLSelectElement | null;
     if (themeSelect) themeSelect.value = settings.theme || 'system';
@@ -1955,26 +2206,19 @@ function launchSetupWizard(
       'askDownloadLocationToggle'
     ) as HTMLInputElement | null;
     if (askLocationToggle) askLocationToggle.checked = settings.askDownloadLocation;
-    const profilesToggle = document.getElementById(
-      'downloadProfilesToggle'
-    ) as HTMLInputElement | null;
-    if (profilesToggle) profilesToggle.checked = settings.downloadProfilesEnabled;
     const folderSummary = document.getElementById('downloadFolderSummary');
-    if (folderSummary) {
-      const folder = settings.downloadFolder?.trim();
-      folderSummary.textContent = folder || 'Choose a folder';
-      folderSummary.title = folder || 'Choose a folder before downloading';
-    }
+    if (folderSummary) renderFolderSummary(folderSummary, settings.downloadFolder);
 
-    onComplete();
+    return true;
   }
 
   nextBtn.addEventListener('click', () => {
+    if (currentStep === extrasStepIndex && !subtitleLangsValid()) return;
     if (currentStep < TOTAL_STEPS - 1) {
       currentStep++;
       updateUI();
     } else {
-      closeWizard();
+      void closeWizard(false);
     }
   });
 
@@ -1996,7 +2240,36 @@ function launchSetupWizard(
   let wizardTrapHandler: ((e: KeyboardEvent) => void) | null = null;
   let wizardFocusinHandler: ((e: FocusEvent) => void) | null = null;
 
-  function closeWizard() {
+  let wizardSkipping = false;
+  let wizardClosed = false;
+  let wizardSaving = false;
+
+  async function skipWizard() {
+    if (wizardSkipping || wizardClosed) return;
+    wizardSkipping = true;
+    if (skipBtn) skipBtn.disabled = true;
+    await applyWizardDefaults();
+    await closeWizard(true);
+  }
+  skipBtn?.addEventListener('click', () => void skipWizard());
+
+  async function closeWizard(skipped = false) {
+    if (wizardClosed || wizardSaving) return;
+    wizardSaving = true;
+    const nextButton = nextBtn as HTMLButtonElement;
+    nextButton.disabled = true;
+    backBtnEl.disabled = true;
+    if (skipBtn) skipBtn.disabled = true;
+    const saved = await finalizeWizard(skipped);
+    if (!saved) {
+      wizardSaving = false;
+      wizardSkipping = false;
+      nextButton.disabled = false;
+      backBtnEl.disabled = false;
+      if (skipBtn) skipBtn.disabled = false;
+      return;
+    }
+    wizardClosed = true;
     if (wizardTrapHandler) {
       overlayEl.removeEventListener('keydown', wizardTrapHandler);
       wizardTrapHandler = null;
@@ -2007,12 +2280,11 @@ function launchSetupWizard(
     }
     overlayEl.classList.remove('active');
     overlayEl.setAttribute('aria-hidden', 'true');
+    syncModalAccessibility();
     setMainContentInert(false);
-    if (wizardPreviousFocus instanceof HTMLElement) {
-      wizardPreviousFocus.focus();
-      wizardPreviousFocus = null;
-    }
-    finalizeWizard();
+    focusTopOverlayOr(wizardPreviousFocus);
+    wizardPreviousFocus = null;
+    onComplete({ skipped, denoReviewed: !skipped && denoReviewed });
   }
 
   wizardPreviousFocus = document.activeElement;
@@ -2020,15 +2292,16 @@ function launchSetupWizard(
   setMainContentInert(true);
 
   wizardTrapHandler = (e: KeyboardEvent) => {
+    if (getTopActiveOverlayId() !== 'setup-wizard') return;
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
       showModal({
         title: 'Skip setup?',
-        message: 'Skip setup and use the standard ROSI download settings?',
+        message: 'Skip setup and start with the default settings?',
         buttons: [
           { label: 'Keep setting up', primary: true },
-          { label: 'Skip setup', action: closeWizard },
+          { label: 'Skip setup', action: () => void skipWizard() },
         ],
       });
       return;
@@ -2052,9 +2325,9 @@ function launchSetupWizard(
   overlayEl.addEventListener('keydown', wizardTrapHandler);
 
   wizardFocusinHandler = (e: FocusEvent) => {
-    if (!overlayEl.classList.contains('active')) return;
-    // Skip/confirm modals sit above the wizard; do not steal focus back.
-    if (isModalActive) return;
+    if (!overlayEl.classList.contains('active') || getTopActiveOverlayId() !== 'setup-wizard') {
+      return;
+    }
     const target = e.target;
     if (target instanceof Node && overlayEl.contains(target)) return;
     if (!focusFirstElement(overlayEl) && typeof overlayEl.focus === 'function') {
@@ -2065,15 +2338,62 @@ function launchSetupWizard(
 
   updateUI();
   overlayEl.classList.add('active');
+  syncModalAccessibility();
   requestAnimationFrame(() => {
+    if (getTopActiveOverlayId() !== 'setup-wizard') return;
     if (!focusFirstElement(overlayEl)) {
       nextBtnEl.focus();
     }
   });
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
+type PrepareForCloseHandler = (generation: number) => Promise<void>;
+
+let resolveRendererStartupReady!: () => void;
+const rendererStartupReady = new Promise<void>((resolve) => {
+  resolveRendererStartupReady = resolve;
+});
+window.__ROSI_RENDERER_STARTUP_READY__ = rendererStartupReady;
+
+let resolvePrepareForCloseHandler!: (handler: PrepareForCloseHandler) => void;
+let prepareForCloseHandlerIsSet = false;
+const prepareForCloseHandlerReady = new Promise<PrepareForCloseHandler>((resolve) => {
+  resolvePrepareForCloseHandler = resolve;
+});
+
+function setPrepareForCloseHandler(handler: PrepareForCloseHandler) {
+  if (prepareForCloseHandlerIsSet) return;
+  prepareForCloseHandlerIsSet = true;
+  resolvePrepareForCloseHandler(handler);
+}
+
+async function initializeRenderer() {
+  const ipcCleanupFunctions: Array<() => void> = [];
+  ipcCleanupFunctions.push(
+    window.api.onPrepareForClose(async (generation) => {
+      try {
+        const handler = await prepareForCloseHandlerReady;
+        await handler(generation);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        showModal({
+          title: 'ROSI Could Not Close Safely',
+          message: `ROSI could not confirm that settings and the download queue were saved. The app will remain open so you can retry.\n\n${detail}`,
+          buttons: [{ label: 'OK', primary: true }],
+          priority: true,
+        });
+      }
+    })
+  );
+  let settingsRevision = 0;
   let settings: RosiSettings;
+  let manualDownloadOperation = 0;
+  let manualDownloadSessionId: number | null = null;
+  let manualSessionIdentityReceived = false;
+  let manualDownloadStartPending = false;
+  const pendingManualCompletions = new Map<number, RosiDownloadCompletion>();
+  let downloadResultTimer: ReturnType<typeof setTimeout> | null = null;
+  let progressHideTimer: ReturnType<typeof setTimeout> | null = null;
   try {
     settings = (await window.api.getSettings()) as RosiSettings;
   } catch (error) {
@@ -2082,10 +2402,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       settingsVersion: 7,
       theme: 'system',
       showConsoleOutput: false,
-      consoleCollapsed: false,
-      queueCollapsed: false,
-      downloadProfilesEnabled: false,
-      downloadMode: 'best-video',
+      dockTab: 'queue',
+      dockCollapsed: false,
+      downloadMode: 'compatible',
       downloadPresets: [],
       askDownloadLocation: false,
       advancedOptions: false,
@@ -2122,6 +2441,38 @@ document.addEventListener('DOMContentLoaded', async () => {
       buttons: [{ label: 'OK', primary: true }],
     });
   }
+  let reconcilingSettings = false;
+  const trackSettings = (value: RosiSettings): RosiSettings =>
+    new Proxy(value, {
+      set(target, property, next, receiver) {
+        const previous = Reflect.get(target, property, receiver);
+        const applied = Reflect.set(target, property, next, receiver);
+        if (applied && !reconcilingSettings && !Object.is(previous, next)) {
+          settingsRevision += 1;
+        }
+        return applied;
+      },
+      deleteProperty(target, property) {
+        const existed = Object.prototype.hasOwnProperty.call(target, property);
+        const applied = Reflect.deleteProperty(target, property);
+        if (applied && existed && !reconcilingSettings) settingsRevision += 1;
+        return applied;
+      },
+    });
+  const reconcileSettingsInPlace = (value: RosiSettings) => {
+    const current = settings as unknown as Record<string, unknown>;
+    const next = value as unknown as Record<string, unknown>;
+    reconcilingSettings = true;
+    try {
+      Object.keys(current).forEach((key) => {
+        if (!Object.prototype.hasOwnProperty.call(next, key)) delete current[key];
+      });
+      Object.assign(current, next);
+    } finally {
+      reconcilingSettings = false;
+    }
+  };
+  settings = trackSettings(settings);
   applyTheme(settings.theme ?? 'system');
 
   try {
@@ -2166,13 +2517,35 @@ document.addEventListener('DOMContentLoaded', async () => {
       taskbarSetting?.setAttribute('hidden', '');
       taskbarLinuxNote?.classList.remove('hidden');
     }
+    if (platform === 'darwin') {
+      // macOS always uses VideoToolbox; the vendor choice does not apply.
+      document.getElementById('gpuTypeContainer')?.classList.add('hidden');
+    }
   } catch (e) {
     logError('Could not resolve app platform for settings UI', e);
   }
 
+  let isFlatpakBuild = false;
+  try {
+    isFlatpakBuild = (await window.api.isFlatpak?.()) === true;
+  } catch (e) {
+    logError('Could not detect the Flatpak build', e);
+  }
+  if (isFlatpakBuild) {
+    // The sandbox cannot read browser profiles, so cookies cannot work here.
+    const cookieToggle = document.getElementById('hookBrowserToggle') as HTMLInputElement | null;
+    if (cookieToggle) {
+      cookieToggle.checked = false;
+      cookieToggle.disabled = true;
+      cookieToggle.closest('.toggle-switch')?.classList.add('disabled');
+    }
+    document.getElementById('browserChoiceContainer')?.classList.add('hidden');
+    document.getElementById('browserFlatpakHint')?.classList.remove('hidden');
+  }
+
   if (window.api.getChannel() !== 'msstore') {
     try {
-      setupAutoUpdater();
+      setupAutoUpdater(() => flushBeforeRestart('Installing the update'));
     } catch (e) {
       logError('Failed to setup auto-updater', e);
     }
@@ -2194,54 +2567,191 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   let persistDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-  let persistGeneration = 0;
+  let settingsSaveInFlight = false;
+  // Error code of the most recent failed save. NEWER_VERSION means the file
+  // belongs to a newer ROSI and is intentionally preserved.
+  let lastSettingsSaveErrorCode: string | null = null;
+  // Set once the controls exist; refreshes them after the backend refuses a field.
+  let refreshSettingsControls: (() => void) | null = null;
+  let settingsSaveWaiters: Array<{
+    revision: number;
+    immediate: boolean;
+    silent: boolean;
+    resolve: (saved: boolean) => void;
+  }> = [];
+
+  function settleSettingsSaveWaiters(revision: number, saved: boolean, latestRevision: number) {
+    const settled: typeof settingsSaveWaiters = [];
+    const remaining: typeof settingsSaveWaiters = [];
+    settingsSaveWaiters.forEach((waiter) => {
+      if (waiter.revision > revision) {
+        remaining.push(waiter);
+      } else if (waiter.immediate && latestRevision > revision) {
+        // Lifecycle callers need the latest revision, even if their original
+        // snapshot succeeded while a newer edit was waiting behind it.
+        waiter.revision = latestRevision;
+        remaining.push(waiter);
+      } else {
+        settled.push(waiter);
+      }
+    });
+    settingsSaveWaiters = remaining;
+    settled.forEach((waiter) => waiter.resolve(saved));
+    return settled;
+  }
+
+  async function drainSettingsSaves() {
+    if (settingsSaveInFlight || settingsSaveWaiters.length === 0) return;
+    settingsSaveInFlight = true;
+    const snapshotRevision = settingsRevision;
+    const snapshot = JSON.parse(JSON.stringify(settings)) as RosiSettings;
+    let saved = false;
+    let errorMessage = 'Could not save settings due to an unexpected error.';
+
+    let rejectedMessage: string | null = null;
+    try {
+      const result = await window.api.saveSettings(
+        snapshot as unknown as Parameters<typeof window.api.saveSettings>[0]
+      );
+      if (result?.ok === true) {
+        saved = true;
+        lastSettingsSaveErrorCode = null;
+        // The backend may normalize values. Reconcile only if this immutable
+        // snapshot is still the newest renderer revision.
+        if (snapshotRevision === settingsRevision) {
+          reconcileSettingsInPlace(result.data as RosiSettings);
+        }
+      } else if (result?.error?.code === 'VALIDATION_ERROR' && result.error.details) {
+        // The other fields were saved; only the listed ones were refused.
+        // Restore those from disk so they are not sent again on every save.
+        const refused = JSON.parse(result.error.details) as string[];
+        const stored = (await window.api.getSettings()) as unknown as Record<string, unknown>;
+        const current = settings as unknown as Record<string, unknown>;
+        reconcilingSettings = true;
+        try {
+          refused.forEach((key) => {
+            if (key in stored) current[key] = stored[key];
+          });
+        } finally {
+          reconcilingSettings = false;
+        }
+        refreshSettingsControls?.();
+        saved = true;
+        lastSettingsSaveErrorCode = null;
+        rejectedMessage = result.error.message;
+      } else {
+        lastSettingsSaveErrorCode = result?.error?.code ?? null;
+        errorMessage = result?.error?.message || 'Could not save settings.';
+      }
+    } catch {
+      // Keep the latest renderer state available for a later retry.
+    }
+
+    const latestRevision = settingsRevision;
+    // A newer ROSI owns settings.json: the file is preserved and the user was
+    // told once. Callers proceed with the in-memory values.
+    const preserved = !saved && lastSettingsSaveErrorCode === 'NEWER_VERSION';
+    const settled = settleSettingsSaveWaiters(snapshotRevision, saved || preserved, latestRevision);
+    if (rejectedMessage) {
+      showSettingsSaveError(
+        `This setting was not changed:\n${rejectedMessage}\nYour other settings were saved.`
+      );
+    } else if (
+      !saved &&
+      lastSettingsSaveErrorCode !== 'NEWER_VERSION' &&
+      snapshotRevision === latestRevision &&
+      settled.some((waiter) => !waiter.silent)
+    ) {
+      // A newer-version settings file is reported once by the backend.
+      showSettingsSaveError(`${errorMessage}\nChanges may not persist after restart.`);
+    }
+    settingsSaveInFlight = false;
+
+    // A save requested during this request either fired its debounce already,
+    // or explicitly asked for an immediate flush. Preserve debounce spacing
+    // for ordinary edits while draining immediate lifecycle callers now.
+    const mustContinue = settingsSaveWaiters.some((waiter) => waiter.immediate);
+    if (settingsSaveWaiters.length > 0 && (mustContinue || !persistDebounceTimer)) {
+      void drainSettingsSaves();
+    }
+  }
 
   async function persistSettings(silent = false, immediate = false): Promise<boolean> {
-    if (persistDebounceTimer) clearTimeout(persistDebounceTimer);
-    const executeSave = async (resolve: (value: boolean) => void) => {
-      const generation = ++persistGeneration;
-      try {
-        const result = await window.api.saveSettings(
-          settings as unknown as Parameters<typeof window.api.saveSettings>[0]
-        );
-        // A newer save started while this one was in flight; do not clobber
-        // live prefs (including presets) with the older snapshot.
-        if (generation !== persistGeneration) {
-          resolve(true);
-          return;
-        }
-        if (!result || result.ok !== true) {
-          if (!silent) {
-            const message = result?.error?.message || 'Could not save settings.';
-            showSettingsSaveError(`${message}\nChanges may not persist after restart.`);
-          }
-          resolve(false);
-          return;
-        }
-        settings = result.data as RosiSettings;
-        resolve(true);
-      } catch {
-        if (generation !== persistGeneration) {
-          resolve(true);
-          return;
-        }
-        if (!silent) {
-          showSettingsSaveError('Could not save settings due to an unexpected error.');
-        }
-        resolve(false);
-      }
-    };
-    return new Promise<boolean>((resolve) => {
-      if (immediate) {
-        persistDebounceTimer = null;
-        void executeSave(resolve);
-        return;
-      }
+    if (persistDebounceTimer) {
+      clearTimeout(persistDebounceTimer);
+      persistDebounceTimer = null;
+    }
+    const promise = new Promise<boolean>((resolve) => {
+      settingsSaveWaiters.push({
+        revision: settingsRevision,
+        immediate,
+        silent,
+        resolve,
+      });
+    });
+    if (immediate) {
+      void drainSettingsSaves();
+    } else {
       persistDebounceTimer = setTimeout(() => {
         persistDebounceTimer = null;
-        void executeSave(resolve);
+        void drainSettingsSaves();
       }, 300);
+    }
+    return promise;
+  }
+
+  setPrepareForCloseHandler(async (generation) => {
+    try {
+      const saved = await persistSettings(false, true);
+      // A settings file from a newer ROSI is preserved on purpose; it must not
+      // keep the app from closing.
+      if (!saved && lastSettingsSaveErrorCode !== 'NEWER_VERSION') return;
+      await window.api.notifySettingsFlushed(generation);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      showModal({
+        title: 'ROSI Could Not Close Safely',
+        message: `ROSI could not confirm that settings and the download queue were saved. The app will remain open so you can retry.\n\n${detail}`,
+        buttons: [{ label: 'OK', primary: true }],
+        priority: true,
+      });
+    }
+  });
+
+  /**
+   * Restarts and update installs stop any active download. Ask first; an
+   * interrupted queue item returns to the queue and runs again later.
+   */
+  function confirmInterruptActiveWork(action: string): Promise<boolean> {
+    const queueActive = currentQueue.some((item) => item.status === 'downloading');
+    if (!isDownloading && !queueActive) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      showModal({
+        title: 'Download in Progress',
+        message: `${action} stops the active download.${
+          queueActive ? ' The interrupted queue item goes back to the queue.' : ''
+        }`,
+        priority: true,
+        buttons: [
+          { label: 'Keep Downloading', primary: true, action: () => resolve(false) },
+          { label: 'Stop and Continue', danger: true, action: () => resolve(true) },
+        ],
+      });
     });
+  }
+
+  async function flushBeforeRestart(action: string) {
+    if (!(await confirmInterruptActiveWork(action))) return false;
+    return persistSettings(false, true);
+  }
+
+  async function restartAfterSettingsFlush() {
+    if (!(await flushBeforeRestart('Restarting ROSI'))) return;
+    try {
+      await window.api.restartApp();
+    } catch (error) {
+      showRestartFailure(error);
+    }
   }
 
   const byId = <T extends HTMLElement = HTMLElement>(id: string) =>
@@ -2269,8 +2779,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const animateBackgroundToggle = byId<HTMLInputElement>('animateBackgroundToggle');
   const themeSelect = byId<HTMLSelectElement>('themeSelect');
   const flatUiToggle = byId<HTMLInputElement>('flatUiToggle');
-  const downloadProfilesToggle = byId<HTMLInputElement>('downloadProfilesToggle');
-  const downloadProfilesComposer = byId('downloadProfilesComposer');
+  const profileCompatibleBtn = byId<HTMLButtonElement>('profileCompatibleBtn');
   const profileBestVideoBtn = byId<HTMLButtonElement>('profileBestVideoBtn');
   const profileAudioBtn = byId<HTMLButtonElement>('profileAudioBtn');
   const profileCustomBtn = byId<HTMLButtonElement>('profileCustomBtn');
@@ -2301,7 +2810,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const downloadCard = document.querySelector<HTMLElement>('.download-card');
   const previewBtn = byId<HTMLButtonElement>('previewBtn');
   const previewCloseBtn = byId<HTMLButtonElement>('previewClose');
-  const historyToggle = byId<HTMLButtonElement>('historyToggle');
   const clearHistoryBtn = byId<HTMLButtonElement>('clearHistory');
   const browserCookiesHelp = byId('browserCookiesHelp');
   const helpLink = byId('helpLink');
@@ -2320,12 +2828,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   const writeSubtitlesToggle = byId<HTMLInputElement>('writeSubtitlesToggle');
   const subtitleLangsContainer = byId('subtitleLangsContainer');
   const subtitleLangsInput = byId<HTMLInputElement>('subtitleLangsInput');
-  const queueToggleBtn = byId<HTMLButtonElement>('queueToggleBtn');
-  const queueBody = byId<HTMLElement>('queueBody');
   const queueUrlInput = byId<HTMLTextAreaElement>('queueUrlInput');
   const addToQueueBtn = byId<HTMLButtonElement>('addToQueueBtn');
   const startQueueBtn = byId<HTMLButtonElement>('startQueueBtn');
   const clearQueueBtn = byId<HTMLButtonElement>('clearQueueBtn');
+  const clearFinishedQueueBtn = byId<HTMLButtonElement>('clearFinishedQueueBtn');
   const cancelQueueBtn = byId<HTMLButtonElement>('cancelQueueBtn');
   const queueStatusMessage = byId('queueStatusMessage');
   const queueList = byId('queueList');
@@ -2360,27 +2867,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (browserWindowsHint) browserWindowsHint.classList.remove('hidden');
   }
 
-  function setQueueCollapsed(collapsed: boolean) {
-    if (!queueSection) return false;
-    queueSection.classList.toggle('collapsed', !!collapsed);
-    const isCollapsed = queueSection.classList.contains('collapsed');
-    if (queueToggleBtn) {
-      queueToggleBtn.setAttribute('aria-expanded', String(!isCollapsed));
-    }
-    if (queueBody instanceof HTMLElement) {
-      queueBody.setAttribute('aria-hidden', String(isCollapsed));
-      queueBody.inert = isCollapsed;
-    }
-    return isCollapsed;
-  }
-
-  function toggleQueueCollapsed(collapsed?: boolean) {
-    if (typeof collapsed === 'boolean') {
-      return setQueueCollapsed(collapsed);
-    }
-    if (!queueSection) return false;
-    return setQueueCollapsed(!queueSection.classList.contains('collapsed'));
-  }
+  const profileButtons = [
+    ['compatible', profileCompatibleBtn],
+    ['best-video', profileBestVideoBtn],
+    ['audio', profileAudioBtn],
+    ['custom', profileCustomBtn],
+  ] as const;
 
   // update UI from settings
   const updateUIFromSettings = () => {
@@ -2442,11 +2934,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     updateConsoleVisibility(settings.showConsoleOutput);
 
-    // Restore console collapsed state
-    setConsoleCollapsed(!!settings.consoleCollapsed);
-    setQueueCollapsed(!!settings.queueCollapsed);
-
-    toggleAdvancedUI(!!settings.downloadProfilesEnabled && settings.downloadMode === 'custom');
+    toggleAdvancedUI(settings.downloadMode === 'custom');
 
     // Update additional options
     if (animateBackgroundToggle) {
@@ -2479,20 +2967,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       themeSelect.value = nextTheme;
       applyTheme(nextTheme);
     }
-    if (downloadProfilesToggle) {
-      downloadProfilesToggle.checked = !!settings.downloadProfilesEnabled;
-    }
-    if (downloadProfilesComposer) {
-      downloadProfilesComposer.classList.toggle('hidden', !settings.downloadProfilesEnabled);
-    }
-    const profileButtons = [
-      ['best-video', profileBestVideoBtn],
-      ['audio', profileAudioBtn],
-      ['custom', profileCustomBtn],
-    ] as const;
     profileButtons.forEach(([mode, button]) => {
       if (!button) return;
-      const isSelected = settings.downloadProfilesEnabled && settings.downloadMode === mode;
+      const isSelected = settings.downloadMode === mode;
       button.classList.toggle('selected', isSelected);
       button.setAttribute('aria-pressed', String(isSelected));
     });
@@ -2500,28 +2977,25 @@ document.addEventListener('DOMContentLoaded', async () => {
       profileAudioFormatSelect.value = settings.audioFormat ?? 'mp3';
     }
     if (profileAudioFormatContainer) {
-      profileAudioFormatContainer.classList.toggle(
-        'hidden',
-        !settings.downloadProfilesEnabled || settings.downloadMode !== 'audio'
-      );
+      profileAudioFormatContainer.classList.toggle('hidden', settings.downloadMode !== 'audio');
     }
     if (askDownloadLocationToggle) {
       askDownloadLocationToggle.checked = !!settings.askDownloadLocation;
     }
     if (downloadFolderSummary) {
-      const folder = settings.downloadFolder?.trim();
-      downloadFolderSummary.textContent = folder || 'Choose a folder';
-      downloadFolderSummary.title = folder || 'Choose a folder before downloading';
+      renderFolderSummary(downloadFolderSummary, settings.downloadFolder);
     }
     if (downloadOutputSummary) {
-      if (!settings.downloadProfilesEnabled) {
-        downloadOutputSummary.textContent = 'Standard compatible video';
-      } else if (settings.downloadMode === 'best-video') {
-        downloadOutputSummary.textContent = 'Highest available video and audio quality';
+      if (settings.downloadMode === 'best-video') {
+        downloadOutputSummary.textContent =
+          'Highest available video and audio quality, merged into one file';
       } else if (settings.downloadMode === 'audio') {
-        downloadOutputSummary.textContent = `${(settings.audioFormat || 'mp3').toUpperCase()} audio`;
+        downloadOutputSummary.textContent = `Audio only, saved as ${(settings.audioFormat || 'mp3').toUpperCase()}`;
+      } else if (settings.downloadMode === 'custom') {
+        downloadOutputSummary.textContent = 'Pick exact video and audio formats below';
       } else {
-        downloadOutputSummary.textContent = 'Custom video and audio formats';
+        downloadOutputSummary.textContent =
+          'Prefer MP4 when available; otherwise use the best available format. Often low resolution';
       }
     }
     // disable convert when audio-only is enabled
@@ -2586,23 +3060,32 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (mode === 'audio') settings.convertEnabled = false;
   };
 
-  const setDownloadProfilesEnabled = (enabled: boolean) => {
-    settings.downloadProfilesEnabled = enabled;
-    if (enabled) {
-      applyDownloadProfile(settings.downloadMode || 'best-video');
-    } else {
-      settings.bestQuality = false;
-      settings.audioOnly = false;
-      settings.advancedOptions = false;
-    }
-    updateUIFromSettings();
-  };
-
   try {
     updateUIFromSettings();
   } catch (e) {
     logError('Failed to update UI from settings', e);
   }
+  refreshSettingsControls = () => {
+    try {
+      updateUIFromSettings();
+    } catch (e) {
+      logError('Failed to refresh settings controls', e);
+    }
+  };
+
+  // Runs after a settings pass, so the Console tab is already offered or not.
+  function syncDockFromSettings() {
+    dockModule?.initDock({
+      initialTab: settings.dockTab,
+      collapsed: settings.dockCollapsed,
+      onChange: ({ tab, collapsed }) => {
+        settings.dockTab = tab;
+        settings.dockCollapsed = collapsed;
+        void persistSettings();
+      },
+    });
+  }
+  syncDockFromSettings();
 
   function maybeShowSupportModal() {
     if (settings.hideSupportModal || settings.firstLaunch) return;
@@ -2616,7 +3099,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         'Would you like to support the development of ROSI?\nYour help keeps this project alive!',
       buttons: [
         {
-          label: '❤️ Yes Support!',
+          label: 'Yes Support!',
+          icon: 'heart',
           primary: true,
           action: () => {
             void window.api.openExternal('https://rosie.run/support');
@@ -2643,7 +3127,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const bindExternalLink = (element: HTMLElement | null, url: string) => {
     if (settingsModule && typeof settingsModule.bindExternalLink === 'function') {
-      settingsModule.bindExternalLink(element, url, window.api.openExternal);
+      // Look the bridge up per click so it is never a stale reference.
+      settingsModule.bindExternalLink(element, url, (target) => window.api.openExternal(target));
       return;
     }
     if (element) {
@@ -2767,6 +3252,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // for the same URL (blur, download completion, ...) must not invalidate it.
   let previewTargetUrl: string | null = null;
   let previewRequestToken = 0;
+  let activePreviewRequestToken: number | null = null;
+  let pendingPreviewUrl: string | null = null;
 
   function readPreviewCache(url: string): RosiVideoInfo | null {
     const cached = previewCache.get(url);
@@ -2803,11 +3290,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   function setPreviewButtonLabel(label: string) {
     previewButtonLabel = label;
     if (!previewBtn || previewBtn.classList.contains('loading')) return;
-    const textNodes = Array.from(previewBtn.childNodes).filter(
-      (node) => node.nodeType === Node.TEXT_NODE && (node.textContent || '').trim().length > 0
-    );
-    const target = textNodes[textNodes.length - 1];
-    if (target) target.textContent = ` ${label}`;
+    const target = previewBtn.querySelector('.btn-label');
+    if (target) target.textContent = label;
   }
 
   function restorePreviewButtonLabel() {
@@ -2820,6 +3304,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       previewDebounceTimer = null;
     }
     previewTargetUrl = null;
+    pendingPreviewUrl = null;
     previewRequestToken += 1;
     setPreviewButtonLabel('Preview');
   }
@@ -2914,8 +3399,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     return candidate;
   }
 
-  function readAdvancedFormatSelections(): { videoFormat?: string; audioFormat?: string } {
+  function readAdvancedFormatSelections(targetUrl?: string): {
+    videoFormat?: string;
+    audioFormat?: string;
+  } {
     if (!settings.advancedOptions) return {};
+    const url =
+      targetUrl ?? (document.getElementById('url') as HTMLInputElement | null)?.value.trim();
+    if (!url || formatSelectionsUrl !== url) return {};
     const videoSelect = document.getElementById('videoFormat') as HTMLSelectElement | null;
     const audioSelect = document.getElementById('audioFormat') as HTMLSelectElement | null;
     const videoFormat = videoSelect?.value.trim() || undefined;
@@ -2942,7 +3433,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const preset: RosiDownloadPreset = {
       id,
       name,
-      profile: settings.downloadProfilesEnabled ? settings.downloadMode : 'best-video',
+      profile: settings.downloadMode,
       bestQuality: settings.bestQuality,
       audioOnly: settings.audioOnly,
       audioFormat: settings.audioFormat,
@@ -2992,9 +3483,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   /** On-screen download options that must beat a selected preset's stored values. */
-  function buildOnScreenPresetOverrides(): Record<string, unknown> {
+  function buildOnScreenPresetOverrides(formatSelections?: {
+    videoFormat?: string;
+    audioFormat?: string;
+  }): Record<string, unknown> {
     const overrides: Record<string, unknown> = {
-      profileEnabled: settings.downloadProfilesEnabled,
       profile: settings.downloadMode,
       bestQuality: settings.bestQuality,
       audioOnly: settings.audioOnly,
@@ -3011,14 +3504,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       sponsorblockRemove: settings.sponsorblockRemove,
       audioOutputFormat: settings.audioFormat,
     };
-    const formats = readAdvancedFormatSelections();
+    const formats = formatSelections ?? readAdvancedFormatSelections();
     if (formats.videoFormat) overrides.videoFormat = formats.videoFormat;
     if (formats.audioFormat) overrides.audioFormat = formats.audioFormat;
     return overrides;
   }
 
   function applyPresetToSettings(preset: RosiDownloadPreset) {
-    settings.downloadProfilesEnabled = true;
+    invalidateFormatRequest();
+    clearAdvancedFormatSelections();
     applyDownloadProfile(preset.profile);
     if (typeof preset.bestQuality === 'boolean') settings.bestQuality = preset.bestQuality;
     if (typeof preset.audioOnly === 'boolean') settings.audioOnly = preset.audioOnly;
@@ -3042,6 +3536,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateUIFromSettings();
     applyFormatIdToSelect('videoFormat', preset.videoFormat);
     applyFormatIdToSelect('audioFormat', preset.audioFormatId);
+    if (preset.videoFormat || preset.audioFormatId) {
+      formatSelectionsUrl =
+        (document.getElementById('url') as HTMLInputElement | null)?.value.trim() || null;
+    }
     applyPlaylistSelectionToRadios(preset.playlist);
   }
 
@@ -3054,7 +3552,8 @@ document.addEventListener('DOMContentLoaded', async () => {
    * so convert/GPU/profile toggles cannot be silently overwritten.
    */
   function buildQueueRequestOverrides(
-    outputPath?: string
+    outputPath?: string,
+    formatSelections?: { videoFormat?: string; audioFormat?: string }
   ): { ok: false } | { ok: true; overrides?: Record<string, unknown> } {
     const scopeVisible = isPlaylistScopeVisible();
     const playlist = resolvePlaylistSelection();
@@ -3062,14 +3561,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const overrides: Record<string, unknown> = {};
     if (outputPath) overrides.outputPath = outputPath;
-    const formats = readAdvancedFormatSelections();
+    const formats = formatSelections ?? readAdvancedFormatSelections();
     if (formats.videoFormat) overrides.videoFormat = formats.videoFormat;
     if (formats.audioFormat) overrides.audioFormat = formats.audioFormat;
     const preset = getSelectedPreset();
     if (preset) {
       overrides.presetId = preset.id;
       overrides.presetName = preset.name;
-      Object.assign(overrides, buildOnScreenPresetOverrides());
+      Object.assign(overrides, buildOnScreenPresetOverrides(formats));
       if (scopeVisible && playlist) overrides.playlist = playlist;
     } else if (scopeVisible && playlist && playlist.mode !== 'current') {
       overrides.playlist = playlist;
@@ -3147,6 +3646,53 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   renderPresetOptions();
 
+  const presetMenuBtn = byId<HTMLButtonElement>('presetMenuBtn');
+  const presetPopover = byId<HTMLElement>('presetPopover');
+
+  function isPresetPopoverOpen() {
+    return !!presetPopover && !presetPopover.hidden;
+  }
+
+  function setPresetPopoverOpen(open: boolean, { restoreFocus = true } = {}) {
+    if (!presetPopover || !presetMenuBtn) return;
+    if (open === isPresetPopoverOpen()) return;
+    presetPopover.hidden = !open;
+    presetMenuBtn.setAttribute('aria-expanded', String(open));
+    if (open) {
+      const first = presetPopover.querySelector<HTMLElement>(
+        'select:not(:disabled), input, button:not(:disabled)'
+      );
+      first?.focus();
+    } else if (restoreFocus) {
+      presetMenuBtn.focus();
+    }
+  }
+
+  if (presetMenuBtn && presetPopover) {
+    presetMenuBtn.addEventListener('click', () => {
+      setPresetPopoverOpen(!isPresetPopoverOpen());
+    });
+    presetPopover.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      setPresetPopoverOpen(false);
+    });
+    // Close when focus or a click lands anywhere outside the trigger and popover.
+    document.addEventListener('pointerdown', (event) => {
+      const target = event.target;
+      if (!isPresetPopoverOpen() || !(target instanceof Node)) return;
+      if (presetPopover.contains(target) || presetMenuBtn.contains(target)) return;
+      setPresetPopoverOpen(false, { restoreFocus: false });
+    });
+    document.addEventListener('focusin', (event) => {
+      const target = event.target;
+      if (!isPresetPopoverOpen() || !(target instanceof Node)) return;
+      if (presetPopover.contains(target) || presetMenuBtn.contains(target)) return;
+      setPresetPopoverOpen(false, { restoreFocus: false });
+    });
+  }
+
   // ── Settings search and per-section reset ───────────────────────────────────
   const settingsSearchInput = byId<HTMLInputElement>('settingsSearch');
   const settingsSearchStatus = byId<HTMLElement>('settingsSearchStatus');
@@ -3185,13 +3731,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let matches = 0;
     settingsSections.forEach((section) => {
       const controls = Array.from(
-        section.querySelectorAll<HTMLElement>(
-          '.toggle-switch, .select-label, .settings-btn, .settings-link-btn, .sub-option, .preset-manager, .toggle-row'
-        )
-      ).filter(
-        (control) =>
-          !control.closest('.sub-option, .toggle-row') ||
-          control.matches('.sub-option, .toggle-row')
+        section.querySelectorAll<HTMLElement>('.setting-row, .settings-btn')
       );
       let sectionMatches = false;
       controls.forEach((control) => {
@@ -3222,7 +3762,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       settingsSearchStatus.textContent =
         matches === 0
           ? 'No settings match your search.'
-          : `${matches} section${matches === 1 ? '' : 's'} match your search.`;
+          : `${matches} ${matches === 1 ? 'section matches' : 'sections match'} your search.`;
     }
   }
 
@@ -3256,12 +3796,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const SECTION_RESET_KEYS: Record<string, Array<keyof RosiSettings>> = {
     download: [
-      'downloadProfilesEnabled',
-      'downloadMode',
-      'bestQuality',
-      'audioOnly',
-      'advancedOptions',
-      'audioFormat',
       'convertEnabled',
       'convertFormat',
       'keepOriginalAfterConvert',
@@ -3279,7 +3813,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     browser: ['hookBrowser', 'browserChoice'],
     interface: [
       'showConsoleOutput',
-      'consoleCollapsed',
       'animateBackground',
       'theme',
       'flatUi',
@@ -3346,9 +3879,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!outputPath) return;
     request.outputPath = outputPath;
 
+    const operation = beginManualDownloadOperation();
     isDownloading = true;
     if (outputEl) outputEl.textContent = '';
     downloadAbort = () => {
+      if (operation !== manualDownloadOperation) return;
       isDownloading = false;
       setButtonLoading(downloadBtn, false);
       syncPrimaryActionState();
@@ -3360,8 +3895,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
     applyActiveDownloadProgressPhases(settings, 'Starting download...');
     try {
+      prepareManualDownloadStart(operation);
       const result = await window.api.downloadVideo(request);
+      if (operation !== manualDownloadOperation) return;
       if (!result || result.ok !== true) {
+        failManualDownloadStart(operation);
         isDownloading = false;
         setButtonLoading(downloadBtn, false);
         syncPrimaryActionState();
@@ -3369,8 +3907,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         showToast(result?.error?.message || 'Could not start that download again.', {
           type: 'error',
         });
+      } else {
+        receiveManualDownloadStart(result.data, operation);
       }
     } catch (error) {
+      if (operation !== manualDownloadOperation) return;
+      failManualDownloadStart(operation);
       logError('Failed to replay download', error);
       isDownloading = false;
       setButtonLoading(downloadBtn, false);
@@ -3382,6 +3924,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   let hasUrlValidationIntent = false;
   let lastPreviewUrl: string | null = null;
+  let lastFormatUrl: string | null = null;
   let pendingBatchUrls: string[] = [];
 
   function setDownloadButtonLabel(label: string) {
@@ -3400,6 +3943,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!hasInput || !hasPrimaryButton || !urlInput || !downloadBtn) return;
     const raw = urlInput.value || '';
     const trimmed = raw.trim();
+    if (trimmed !== lastFormatUrl) {
+      lastFormatUrl = trimmed;
+      invalidateFormatRequest();
+      clearAdvancedFormatSelections();
+    }
     const hasValue = trimmed.length > 0;
     const extracted = extractHttpUrls(raw);
     pendingBatchUrls = extracted.urls.length > 1 ? extracted.urls : [];
@@ -3475,7 +4023,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     // awaited, and without the lock a second click could queue the batch twice.
     if (queueActionLocks > 0) return false;
     const endQueueAction = beginQueueAction();
+    const currentUrl =
+      (document.getElementById('url') as HTMLInputElement | null)?.value.trim() ?? '';
+    const formatSelections =
+      urls.length === 1 && urls[0]?.trim() === currentUrl
+        ? readAdvancedFormatSelections(currentUrl)
+        : {};
     try {
+      const built = buildQueueRequestOverrides(undefined, formatSelections);
+      if (!built.ok) {
+        setQueueStatusMessage('Fix the playlist range before adding to the queue.');
+        return false;
+      }
       const destination = await resolveQueueDestination();
       if (destination.cancelled) {
         setQueueStatusMessage('Nothing was queued because no folder was chosen.');
@@ -3490,10 +4049,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         showToast(message, { type: 'error' });
         return false;
       }
-      const built = buildQueueRequestOverrides(destination.outputPath);
-      if (!built.ok) {
-        setQueueStatusMessage('Fix the playlist range before adding to the queue.');
-        return false;
+      if (destination.outputPath) {
+        built.overrides = { ...built.overrides, outputPath: destination.outputPath };
       }
       // Omit the second argument entirely when there is nothing to override.
       const result = built.overrides
@@ -3510,6 +4067,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (result.data.skipped > 0) parts.push(`${result.data.skipped} already queued.`);
         if (rejected > 0) parts.push(`${rejected} ignored as invalid.`);
         announceQueueAction(parts.join(' '));
+        dockModule?.selectTab('queue');
         return true;
       }
       const message = result?.error?.message || 'Could not add links to the queue.';
@@ -3542,6 +4100,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
     urlInput.addEventListener('input', () => {
       hasUrlValidationIntent = true;
+      // A new link means a new download, not the last one's result.
+      clearDownloadResult();
       updateUrlButtons();
     });
     urlInput.addEventListener('blur', () => {
@@ -3623,15 +4183,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
     if (isFetchingPreview) {
-      if (auto) return;
+      if (auto) {
+        pendingPreviewUrl = url;
+        return;
+      }
       // Supersede the in-flight lookup so its cleanup cannot clear the loading
       // state we are about to set.
+      pendingPreviewUrl = null;
       window.api.cancelVideoInfo();
       previewAbort?.();
     }
     // Stale in-flight replies are ignored via this generation token.
     previewRequestToken += 1;
     const requestToken = previewRequestToken;
+    activePreviewRequestToken = requestToken;
     isFetchingPreview = true;
 
     const card = document.getElementById('preview-card');
@@ -3640,7 +4205,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     let wasCancelled = false;
     previewAbort = () => {
       wasCancelled = true;
+      if (activePreviewRequestToken !== requestToken) return;
+      activePreviewRequestToken = null;
       isFetchingPreview = false;
+      previewAbort = null;
       setButtonLoading(previewBtn, false);
     };
     setButtonLoading(
@@ -3648,6 +4216,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       true,
       () => {
         if (window.api.cancelVideoInfo) window.api.cancelVideoInfo();
+        pendingPreviewUrl = null;
         previewAbort?.();
         hideVideoPreview();
       },
@@ -3685,10 +4254,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         logError('Video preview failed', e);
       }
     } finally {
-      if (!wasCancelled) {
+      if (activePreviewRequestToken === requestToken) {
+        activePreviewRequestToken = null;
         isFetchingPreview = false;
+        previewAbort = null;
         setButtonLoading(previewBtn, false);
         restorePreviewButtonLabel();
+        const queuedUrl = pendingPreviewUrl;
+        pendingPreviewUrl = null;
+        if (queuedUrl && urlInput.value.trim() === queuedUrl) {
+          void runVideoPreview(true);
+        }
       }
     }
   }
@@ -3710,72 +4286,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  renderActivity();
-
-  document.querySelectorAll<HTMLButtonElement>('.activity-filter').forEach((button) => {
-    button.addEventListener('click', () => {
-      const filter = button.dataset.activityFilter;
-      if (
-        filter === 'all' ||
-        filter === 'success' ||
-        filter === 'failed' ||
-        filter === 'cancelled'
-      ) {
-        setActivityFilter(filter);
-      }
-    });
-  });
-
-  activityReplayHandler = (entry) => {
-    void replayActivityDownload(entry);
-  };
+  // Renders the empty or legacy state and binds the activity filter buttons.
+  const activityPanel =
+    activityModule?.initActivityPanel({
+      showToast,
+      renderStatusText,
+      formatRelativeTime,
+      revealFileLocation,
+      icon: (name, size) => iconsModule?.icon(name, size) ?? null,
+      markUnseen: (tab) => dockModule?.markUnseen(tab),
+      onReplay: (entry) => {
+        void replayActivityDownload(entry);
+      },
+    }) ?? null;
 
   if (typeof window.api.getDownloadActivity === 'function') {
     window.api
       .getDownloadActivity()
       .then((result) => {
-        if (result && result.ok) setActivityEntries(result.data);
+        if (result && result.ok) activityPanel?.setEntries(result.data);
       })
       .catch(() => {});
-  }
-
-  if (historyToggle) {
-    const historySection = document.getElementById('download-history');
-    const historyList = document.getElementById('history-list');
-    const setHistoryCollapsed = (collapsed: boolean) => {
-      if (!historySection) return false;
-      historySection.classList.toggle('collapsed', !!collapsed);
-      const isCollapsed = historySection.classList.contains('collapsed');
-      historyToggle.setAttribute('aria-expanded', String(!isCollapsed));
-      if (historyList instanceof HTMLElement) {
-        historyList.setAttribute('aria-hidden', String(isCollapsed));
-        historyList.inert = isCollapsed;
-      }
-      return isCollapsed;
-    };
-    const toggleHistoryCollapsed = () => {
-      if (!historySection) return false;
-      return setHistoryCollapsed(!historySection.classList.contains('collapsed'));
-    };
-    if (historySection) {
-      setHistoryCollapsed(historySection.classList.contains('collapsed'));
-    }
-
-    historyToggle.addEventListener('click', () => {
-      toggleHistoryCollapsed();
-    });
-    historyToggle.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        toggleHistoryCollapsed();
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        setHistoryCollapsed(true);
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        setHistoryCollapsed(false);
-      }
-    });
   }
 
   if (clearHistoryBtn) {
@@ -3790,8 +4321,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             label: 'Clear',
             danger: true,
             action: () => {
-              void clearActivity().then(() => {
-                showToast('Download activity cleared.', { type: 'info' });
+              void activityPanel?.clear().then((cleared) => {
+                if (cleared) showToast('Download activity cleared.', { type: 'info' });
               });
             },
           },
@@ -3901,45 +4432,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       updateConsoleVisibility(settings.showConsoleOutput);
     });
 
-  const consoleToggleBtn = document.getElementById('consoleToggleBtn');
-  if (consoleToggleBtn) {
-    consoleToggleBtn.addEventListener('click', () => {
-      const isCollapsed = toggleConsoleCollapse();
-      settings.consoleCollapsed = isCollapsed;
-      void persistSettings();
-    });
-    consoleToggleBtn.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        const isCollapsed = toggleConsoleCollapse();
-        settings.consoleCollapsed = isCollapsed;
-        void persistSettings();
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        settings.consoleCollapsed = toggleConsoleCollapse(true);
-        void persistSettings();
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        settings.consoleCollapsed = toggleConsoleCollapse(false);
-        void persistSettings();
-      }
-    });
-  }
-
-  if (downloadProfilesToggle) {
-    downloadProfilesToggle.addEventListener('change', (e) => {
-      setDownloadProfilesEnabled((e.target as HTMLInputElement).checked);
-      void persistSettings(true, true);
-    });
-  }
-  const profileButtons = [
-    ['best-video', profileBestVideoBtn],
-    ['audio', profileAudioBtn],
-    ['custom', profileCustomBtn],
-  ] as const;
   profileButtons.forEach(([mode, button]) => {
     button?.addEventListener('click', () => {
-      if (!settings.downloadProfilesEnabled) return;
       applyDownloadProfile(mode);
       updateUIFromSettings();
       void persistSettings(true, true);
@@ -4114,7 +4608,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   bindExternalLink(sponsorblockHelp, 'https://sponsor.ajay.app/');
 
-  const SUBTITLE_LANGS_RE = /^[A-Za-z0-9.*-]+(,[A-Za-z0-9.*-]+)*$/;
   if (writeSubtitlesToggle) {
     writeSubtitlesToggle.addEventListener('change', (e) => {
       settings.writeSubtitles = (e.target as HTMLInputElement).checked;
@@ -4141,7 +4634,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     const commitSubtitleLangs = () => {
       const raw = subtitleLangsInput.value.trim();
-      if (!raw || !SUBTITLE_LANGS_RE.test(raw) || raw.length > 256) {
+      if (!isValidSubtitleLangs(raw)) {
         showSubtitleLangsError(
           'Enter comma-separated language codes (for example en,es) or use all.'
         );
@@ -4187,9 +4680,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (updateChannelSelect) {
     updateChannelSelect.addEventListener('change', (e) => {
+      const previousChannel = settings.updateChannel ?? 'auto';
       settings.updateChannel = (e.target as HTMLSelectElement)
         .value as RosiSettings['updateChannel'];
-      void persistSettings();
+      // Retire the old update identity before the async settings write can
+      // complete; the updater holds that save before its target recheck.
+      const save = persistSettings(false, true);
+      if (window.api.getChannel() !== 'msstore') {
+        window.api.notifyUpdaterChannelChanged?.(settings.updateChannel, save, previousChannel);
+      }
     });
   }
 
@@ -4203,10 +4702,23 @@ document.addEventListener('DOMContentLoaded', async () => {
           {
             label: '⟳ Reset & Restart',
             danger: true,
-            action: () => {
+            action: async () => {
+              if (!(await flushBeforeRestart('Resetting settings'))) return;
               localStorage.removeItem('rosi-flat-ui');
               localStorage.removeItem('rosi-theme');
-              window.api.resetSettings();
+              try {
+                await window.api.resetSettings();
+              } catch (error) {
+                localStorage.setItem('rosi-flat-ui', settings.flatUi ? 'true' : 'false');
+                if (settings.theme) localStorage.setItem('rosi-theme', settings.theme);
+                const detail = error instanceof Error ? error.message : String(error);
+                showModal({
+                  title: 'Reset Did Not Complete',
+                  message: `ROSI could not confirm durable state and complete the reset. Your settings were not reset, and the app remains open.\n\n${detail}`,
+                  buttons: [{ label: 'OK', primary: true }],
+                  priority: true,
+                });
+              }
             },
           },
         ],
@@ -4216,6 +4728,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (exportSettingsBtn) {
     exportSettingsBtn.addEventListener('click', async () => {
       try {
+        if (!(await persistSettings(false, true))) return;
         const result = await window.api.exportSettings();
         if (result && result.ok) {
           showToast('Settings exported successfully.', { type: 'success' });
@@ -4240,6 +4753,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             primary: true,
             action: async () => {
               try {
+                if (!(await persistSettings(false, true))) return;
                 const result = await window.api.importSettings();
                 if (result && result.ok) {
                   showToast('Settings imported successfully.', { type: 'success' });
@@ -4286,8 +4800,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             {
               label: 'Reset Stats',
               action: async () => {
-                await window.api.resetStats();
-                showToast('Statistics reset.', { type: 'info' });
+                try {
+                  const result = await window.api.resetStats();
+                  if (!result.ok) {
+                    showToast('Could not reset statistics. Please try again.', { type: 'error' });
+                    return;
+                  }
+                  showToast('Statistics reset.', { type: 'info' });
+                } catch {
+                  showToast('Could not reset statistics. Please try again.', { type: 'error' });
+                }
               },
             },
             { label: 'Close', primary: true },
@@ -4310,6 +4832,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (cancelQueueBtn) {
       cancelQueueBtn.disabled = queueActionLocks > 0 || !isRunning;
+    }
+    if (clearFinishedQueueBtn) {
+      clearFinishedQueueBtn.disabled =
+        queueActionLocks > 0 ||
+        !queue.some((item) => ['completed', 'failed', 'cancelled'].includes(item.status));
     }
   }
 
@@ -4482,9 +5009,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  const queueActionButtons = [addToQueueBtn, startQueueBtn, clearQueueBtn, cancelQueueBtn].filter(
-    (button) => button instanceof HTMLButtonElement
-  );
+  const queueActionButtons = [
+    addToQueueBtn,
+    startQueueBtn,
+    clearQueueBtn,
+    clearFinishedQueueBtn,
+    cancelQueueBtn,
+  ].filter((button) => button instanceof HTMLButtonElement);
   let queueActionLocks = 0;
   function syncQueueActionBusyState() {
     const isBusy = queueActionLocks > 0;
@@ -4510,29 +5041,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
   }
   syncQueueActionBusyState();
-
-  if (queueToggleBtn) {
-    setQueueCollapsed(!!settings.queueCollapsed);
-    queueToggleBtn.addEventListener('click', () => {
-      settings.queueCollapsed = toggleQueueCollapsed();
-      void persistSettings();
-    });
-    queueToggleBtn.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        settings.queueCollapsed = toggleQueueCollapsed();
-        void persistSettings();
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        settings.queueCollapsed = setQueueCollapsed(true);
-        void persistSettings();
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        settings.queueCollapsed = setQueueCollapsed(false);
-        void persistSettings();
-      }
-    });
-  }
 
   if (addToQueueBtn && queueUrlInput) {
     // Allow Ctrl/Cmd+Enter to submit from the textarea (standard multi-line UX).
@@ -4652,6 +5160,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  if (clearFinishedQueueBtn) {
+    clearFinishedQueueBtn.addEventListener('click', async () => {
+      if (queueActionLocks > 0) return;
+      const endQueueAction = beginQueueAction();
+      try {
+        const result = await window.api.clearFinishedQueue();
+        if (result && result.ok) {
+          announceQueueAction(
+            queueMessageForCount(
+              result.data.removed,
+              'Removed 1 finished item.',
+              'Removed {count} finished items.'
+            )
+          );
+        } else {
+          const message = result?.error?.message || 'Could not remove finished items.';
+          setQueueStatusMessage(message);
+          showToast(message, { type: 'error' });
+        }
+      } catch {
+        const message = 'Could not remove finished items.';
+        setQueueStatusMessage(message);
+        showToast(message, { type: 'error' });
+      } finally {
+        endQueueAction();
+      }
+    });
+  }
+
   if (cancelQueueBtn) {
     cancelQueueBtn.addEventListener('click', () => {
       if (queueActionLocks > 0) return;
@@ -4695,9 +5232,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // download button
   if (downloadBtn) {
     downloadBtn._originalClick = async function () {
+      let operation = -1;
       try {
         if (isDownloading) return;
 
+        operation = beginManualDownloadOperation();
         isDownloading = true;
         hasUrlValidationIntent = true;
         syncPrimaryActionState();
@@ -4705,6 +5244,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const urlInput = document.getElementById('url') as HTMLInputElement | null;
         const url = urlInput ? urlInput.value : null;
         if (!url || url.trim() === '') {
+          failManualDownloadStart(operation);
           isDownloading = false;
           syncPrimaryActionState();
           showToast('Please enter a video URL.', { type: 'warning' });
@@ -4714,6 +5254,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Multiple links go to the queue instead of the single-download path.
         const batch = extractHttpUrls(url);
         if (batch.urls.length > 1) {
+          failManualDownloadStart(operation);
           isDownloading = false;
           const added = await addUrlsToQueue(batch.urls, batch.rejected);
           if (added && urlInput) {
@@ -4727,6 +5268,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Validate URL format
         if (!isValidUrl(url.trim())) {
+          failManualDownloadStart(operation);
           isDownloading = false;
           syncPrimaryActionState();
           showToast('Please enter a valid URL starting with http:// or https://', {
@@ -4735,20 +5277,43 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
-        const videoSelect = document.getElementById('videoFormat') as HTMLSelectElement | null;
-        const audioSelect = document.getElementById('audioFormat') as HTMLSelectElement | null;
+        const formatSelections = readAdvancedFormatSelections(url.trim());
         if (
           settings.advancedOptions &&
-          (!videoSelect || !audioSelect || !videoSelect.value || !audioSelect.value)
+          !formatSelections.videoFormat &&
+          !formatSelections.audioFormat
         ) {
+          failManualDownloadStart(operation);
           isDownloading = false;
           syncPrimaryActionState();
-          showToast('Please check resolutions and select video/audio formats first.', {
+          showToast('Check resolutions and select a video or audio format first.', {
             type: 'warning',
           });
           return;
         }
 
+        // Capture URL-owned controls before a folder prompt or persistence wait.
+        const scopeVisible = isPlaylistScopeVisible();
+        const playlist = resolvePlaylistSelection();
+        if (scopeVisible && !playlist) {
+          failManualDownloadStart(operation);
+          isDownloading = false;
+          syncPrimaryActionState();
+          return;
+        }
+        const activePreset = getSelectedPreset();
+        const presetOverrides = activePreset
+          ? {
+              presetId: activePreset.id,
+              presetName: activePreset.name,
+              ...buildOnScreenPresetOverrides(formatSelections),
+            }
+          : {};
+        const ffmpegPath = settings.ffmpegPath;
+        const convertFormat = settings.convertEnabled
+          ? convertFormatSelect?.value.trim() || undefined
+          : undefined;
+        const keepOriginal = settings.convertEnabled ? keepOriginalToggle?.checked : undefined;
         let savePath = settings.askDownloadLocation
           ? null
           : settings.downloadFolder?.trim() || null;
@@ -4756,6 +5321,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           try {
             savePath = await window.api.selectDownloadLocation();
           } catch (dialogError) {
+            failManualDownloadStart(operation);
             logError('Error opening save dialog', dialogError);
             isDownloading = false;
             syncPrimaryActionState();
@@ -4767,15 +5333,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         if (!savePath) {
+          failManualDownloadStart(operation);
           isDownloading = false;
           syncPrimaryActionState();
-          if (outputEl) outputEl.textContent = '⚠️ Download cancelled: No save location selected.';
+          if (outputEl) {
+            outputEl.replaceChildren();
+            appendConsoleOutput(outputEl, '⚠️ Download cancelled: No save location selected.');
+          }
           return;
         }
         settings.downloadFolder = savePath;
         updateUIFromSettings();
         const saved = await persistSettings(true, true);
         if (!saved) {
+          failManualDownloadStart(operation);
           isDownloading = false;
           syncPrimaryActionState();
           showToast('Could not save download settings. Please try again.', { type: 'error' });
@@ -4783,6 +5354,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         if (outputEl) outputEl.textContent = '';
         downloadAbort = () => {
+          if (operation !== manualDownloadOperation) return;
           isDownloading = false;
           setButtonLoading(downloadBtn, false);
           syncPrimaryActionState();
@@ -4793,25 +5365,14 @@ document.addEventListener('DOMContentLoaded', async () => {
           hideProgressBar();
         });
 
-        const { videoFormat, audioFormat } = readAdvancedFormatSelections();
-        const convertFormat = settings.convertEnabled
-          ? convertFormatSelect?.value.trim() || undefined
-          : undefined;
+        const { videoFormat, audioFormat } = formatSelections;
+
         applyActiveDownloadProgressPhases(settings, 'Starting download...', {
           videoFormat,
           audioFormat,
         });
-        const keepOriginal = settings.convertEnabled ? keepOriginalToggle?.checked : undefined;
-        const scopeVisible = isPlaylistScopeVisible();
-        const playlist = resolvePlaylistSelection();
-        if (scopeVisible && !playlist) {
-          isDownloading = false;
-          setButtonLoading(downloadBtn, false);
-          syncPrimaryActionState();
-          hideProgressBar();
-          return;
-        }
-        const activePreset = getSelectedPreset();
+
+        prepareManualDownloadStart(operation);
         const startResult = await window.api.downloadVideo({
           url: url.trim(),
           videoFormat,
@@ -4819,18 +5380,14 @@ document.addEventListener('DOMContentLoaded', async () => {
           outputPath: savePath,
           convertFormat,
           keepOriginal,
-          ffmpegPath: settings.ffmpegPath,
+          ffmpegPath,
           // When radios are hidden, omit playlist so a selected preset's All/Range applies.
           ...(scopeVisible && playlist ? { playlist } : {}),
-          ...(activePreset
-            ? {
-                presetId: activePreset.id,
-                presetName: activePreset.name,
-                ...buildOnScreenPresetOverrides(),
-              }
-            : {}),
+          ...presetOverrides,
         });
+        if (operation !== manualDownloadOperation) return;
         if (!startResult || startResult.ok !== true) {
+          failManualDownloadStart(operation);
           isDownloading = false;
           setButtonLoading(downloadBtn, false);
           syncPrimaryActionState();
@@ -4839,8 +5396,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             startResult?.error?.message || 'Download request was rejected before starting.',
             { type: 'error' }
           );
+        } else {
+          receiveManualDownloadStart(startResult.data, operation);
         }
       } catch (downloadError) {
+        if (operation < 0 || operation !== manualDownloadOperation) return;
+        failManualDownloadStart(operation);
         logError('Unexpected error starting download', downloadError);
         isDownloading = false;
         setButtonLoading(downloadBtn, false);
@@ -4857,14 +5418,195 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (checkUpdateBtn) {
     checkUpdateBtn.onclick = checkForUpdates;
   }
-  const ipcCleanupFunctions: Array<() => void> = [];
+
+  // After a download the button briefly offers the result ("Open File
+  // Location" / "Download complete") with its own click handler.
+  function beginManualDownloadOperation(): number {
+    manualDownloadOperation += 1;
+    manualDownloadSessionId = null;
+    manualSessionIdentityReceived = false;
+    manualDownloadStartPending = true;
+    pendingManualCompletions.clear();
+    if (downloadResultTimer !== null) clearTimeout(downloadResultTimer);
+    if (progressHideTimer !== null) clearTimeout(progressHideTimer);
+    downloadResultTimer = null;
+    progressHideTimer = null;
+    lastDownloadedFilePath = null;
+    downloadAbort = null;
+    if (downloadBtn) downloadBtn.onclick = downloadBtn._originalClick ?? null;
+    return manualDownloadOperation;
+  }
+
+  function prepareManualDownloadStart(operation: number) {
+    if (operation !== manualDownloadOperation) return;
+    manualDownloadStartPending = true;
+    manualSessionIdentityReceived = false;
+  }
+
+  function receiveManualDownloadStart(
+    started: { started: boolean; sessionId?: number },
+    operation: number
+  ) {
+    if (operation !== manualDownloadOperation) return;
+    manualDownloadStartPending = false;
+    manualSessionIdentityReceived = true;
+    manualDownloadSessionId =
+      typeof started.sessionId === 'number' && Number.isSafeInteger(started.sessionId)
+        ? started.sessionId
+        : null;
+    const earlyCompletion =
+      manualDownloadSessionId === null
+        ? undefined
+        : pendingManualCompletions.get(manualDownloadSessionId);
+    pendingManualCompletions.clear();
+    if (earlyCompletion) showManualDownloadCompletion(earlyCompletion, operation);
+  }
+
+  function failManualDownloadStart(operation: number) {
+    if (operation !== manualDownloadOperation) return;
+    manualDownloadStartPending = false;
+    manualSessionIdentityReceived = true;
+    manualDownloadSessionId = null;
+    pendingManualCompletions.clear();
+  }
+
+  function showDownloadResult(ms: number, operation: number) {
+    if (operation !== manualDownloadOperation) return;
+    if (downloadResultTimer !== null) clearTimeout(downloadResultTimer);
+    downloadResultTimer = setTimeout(() => clearDownloadResult(operation), ms);
+  }
+
+  function scheduleProgressHide(operation: number) {
+    if (progressHideTimer !== null) clearTimeout(progressHideTimer);
+    progressHideTimer = setTimeout(() => {
+      if (operation !== manualDownloadOperation) return;
+      progressHideTimer = null;
+      hideProgressBar();
+    }, 2000);
+  }
+
+  /** Put the Download button back, click handler included. */
+  function clearDownloadResult(operation = manualDownloadOperation) {
+    if (operation !== manualDownloadOperation || downloadResultTimer === null) return;
+    clearTimeout(downloadResultTimer);
+    downloadResultTimer = null;
+    lastDownloadedFilePath = null;
+    setButtonLoading(downloadBtn, false);
+    syncPrimaryActionState();
+  }
+
+  function showManualDownloadCompletion(
+    completion: Pick<
+      RosiDownloadCompletion,
+      'outcome' | 'statusMessage' | 'outputPath' | 'outputPaths'
+    >,
+    operation: number
+  ) {
+    if (operation !== manualDownloadOperation) return;
+    if (!downloadBtn) return;
+    isDownloading = false;
+    manualDownloadStartPending = false;
+    downloadAbort = null;
+    setButtonLoading(downloadBtn, false);
+    syncPrimaryActionState();
+
+    const outputPaths = completion.outputPaths;
+    const outputPath =
+      completion.outputPath ??
+      (outputPaths && outputPaths.length > 0 ? outputPaths[outputPaths.length - 1] : null) ??
+      null;
+    const isSuccess = completion.outcome === 'success';
+    if (isSuccess) {
+      lastDownloadedFilePath = outputPath;
+      updateProgressBar(100, 'Complete!', '');
+      showProgressComplete();
+      if (settings.notifications) {
+        void window.api.showNotification({
+          title: 'Download Complete!',
+          body: outputPath
+            ? `Saved: ${outputPath.split(/[/\\]/).pop()}`
+            : 'Your download has finished.',
+          filePath: outputPath ?? undefined,
+        });
+      }
+
+      if (outputPath) {
+        setButtonIconLabel(downloadBtn, 'folder-open', 'Open File Location');
+        downloadBtn.disabled = false;
+        downloadBtn.onclick = () => {
+          void window.api.openFileLocation(outputPath);
+        };
+        showDownloadResult(8000, operation);
+      } else {
+        setButtonIconLabel(downloadBtn, 'check', 'Download complete');
+        downloadBtn.disabled = false;
+        showDownloadResult(2500, operation);
+      }
+    } else {
+      lastDownloadedFilePath = null;
+      downloadBtn.onclick = downloadBtn._originalClick ?? null;
+    }
+    scheduleProgressHide(operation);
+  }
+
+  function handleManualDownloadCompletion(completion: RosiDownloadCompletion) {
+    if (completion.owner !== 'manual') return;
+    if (manualDownloadStartPending) {
+      if (typeof completion.sessionId === 'number') {
+        if (pendingManualCompletions.size >= 4) {
+          const oldest = pendingManualCompletions.keys().next().value;
+          if (typeof oldest === 'number') pendingManualCompletions.delete(oldest);
+        }
+        pendingManualCompletions.set(completion.sessionId, completion);
+      }
+      return;
+    }
+    if (!manualSessionIdentityReceived) return;
+    if (
+      manualDownloadSessionId !== null
+        ? completion.sessionId !== manualDownloadSessionId
+        : completion.sessionId !== undefined && completion.sessionId !== null
+    ) {
+      return;
+    }
+    showManualDownloadCompletion(completion, manualDownloadOperation);
+  }
+
+  function handleLegacyManualCompletion(statusMessage: string) {
+    if (
+      manualDownloadStartPending ||
+      !manualSessionIdentityReceived ||
+      manualDownloadSessionId !== null ||
+      !isDownloading
+    ) {
+      return;
+    }
+    const normalizedStatus = String(statusMessage || '').toLowerCase();
+    const isCancelled = normalizedStatus.includes('cancel');
+    const isSuccess =
+      !isCancelled && (statusMessage.includes('✅') || normalizedStatus.includes('complete'));
+    showManualDownloadCompletion(
+      {
+        outcome: isSuccess ? 'success' : isCancelled ? 'cancelled' : 'failed',
+        statusMessage,
+        outputPath: isSuccess ? (lastDownloadedFilePath ?? undefined) : undefined,
+      },
+      manualDownloadOperation
+    );
+  }
 
   ipcCleanupFunctions.push(
     window.api.onProgress((message) => {
       if (!outputEl) return;
       appendConsoleOutput(outputEl, message);
 
-      if (message.includes('Identified file:') || message.includes('Successfully converted to')) {
+      if (
+        !manualDownloadStartPending &&
+        manualSessionIdentityReceived &&
+        manualDownloadSessionId === null &&
+        isDownloading &&
+        (message.includes('Identified file:') || message.includes('Successfully converted to'))
+      ) {
         const fileMatch = message.match(/(?:Identified file:|Successfully converted to)\s*(.+)$/);
         if (fileMatch && fileMatch[1]) {
           lastDownloadedFilePath = fileMatch[1].trim();
@@ -4875,6 +5617,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   ipcCleanupFunctions.push(
     window.api.onJobProgress((event) => {
+      if (
+        !event.queueItemId &&
+        (manualDownloadStartPending ||
+          !manualSessionIdentityReceived ||
+          (event.sessionId ?? null) !== manualDownloadSessionId)
+      ) {
+        return;
+      }
+      if (
+        event.queueItemId &&
+        isDownloading &&
+        manualDownloadSessionId !== null &&
+        event.sessionId !== manualDownloadSessionId
+      ) {
+        return;
+      }
       const container = document.getElementById('progress-container');
       if (container && !container.classList.contains('visible') && event.phase !== 'idle') {
         showProgressBar(event.status);
@@ -4912,74 +5670,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   ipcCleanupFunctions.push(
     window.api.onComplete((statusMessage) => {
-      if (downloadBtn) {
-        isDownloading = false;
-        setButtonLoading(downloadBtn, false);
-        syncPrimaryActionState();
-
-        const normalizedStatus = String(statusMessage || '').toLowerCase();
-        const isCancelled = normalizedStatus.includes('cancel');
-        const isSuccess =
-          !isCancelled && (statusMessage.includes('✅') || normalizedStatus.includes('complete'));
-
-        if (isSuccess) {
-          updateProgressBar(100, 'Complete!', '');
-          showProgressComplete();
-
-          if (settings.notifications) {
-            void window.api.showNotification({
-              title: 'Download Complete!',
-              body: lastDownloadedFilePath
-                ? `Saved: ${lastDownloadedFilePath.split(/[/\\]/).pop()}`
-                : 'Your download has finished.',
-              filePath: lastDownloadedFilePath ?? undefined,
-            });
-          }
-        }
-
-        setTimeout(() => {
-          hideProgressBar();
-        }, 2000);
-
-        // Activity records now come from the main process via download-complete.
-        const restoreDefaultDownloadButton = () => {
-          setButtonLoading(downloadBtn, false);
-          syncPrimaryActionState();
-        };
-
-        if (isSuccess && lastDownloadedFilePath) {
-          const filePath = lastDownloadedFilePath;
-          downloadBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg><span>Open File Location</span>`;
-          downloadBtn.disabled = false;
-          downloadBtn.onclick = () => {
-            void window.api.openFileLocation(filePath);
-          };
-          setTimeout(() => {
-            restoreDefaultDownloadButton();
-            lastDownloadedFilePath = null;
-          }, 8000);
-        } else if (isSuccess) {
-          downloadBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span>Download complete</span>`;
-          downloadBtn.disabled = false;
-          setTimeout(() => {
-            restoreDefaultDownloadButton();
-          }, 2500);
-        } else {
-          restoreDefaultDownloadButton();
-          lastDownloadedFilePath = null;
-        }
-      }
       if (fetchFormatsBtn) setButtonLoading(fetchFormatsBtn, false);
-      if (outputEl) {
-        appendConsoleOutput(outputEl, statusMessage);
-      }
+      if (outputEl) appendConsoleOutput(outputEl, statusMessage);
+      handleLegacyManualCompletion(statusMessage);
+    })
+  );
+
+  ipcCleanupFunctions.push(
+    window.api.onDownloadComplete((completion) => {
+      handleManualDownloadCompletion(completion);
     })
   );
 
   if (typeof window.api.onDownloadActivityUpdate === 'function') {
     ipcCleanupFunctions.push(
       window.api.onDownloadActivityUpdate((activity) => {
-        setActivityEntries(activity);
+        activityPanel?.setEntries(activity);
       })
     );
   }
@@ -4992,29 +5698,25 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   ipcCleanupFunctions.push(
     window.api.onSettingsImported((importedSettings) => {
-      settings = importedSettings;
+      const previousChannel = settings.updateChannel ?? 'auto';
+      settingsRevision += 1;
+      reconcileSettingsInPlace(importedSettings);
+      if (window.api.getChannel() !== 'msstore') {
+        window.api.notifyUpdaterChannelChanged?.(
+          settings.updateChannel ?? 'auto',
+          undefined,
+          previousChannel
+        );
+      }
       try {
         updateUIFromSettings();
+        syncDockFromSettings();
         renderPresetOptions();
         applyTheme(settings.theme ?? 'system');
         localStorage.setItem('rosi-flat-ui', settings.flatUi ? 'true' : 'false');
       } catch (e) {
         logError('Failed to refresh UI after settings import', e);
       }
-    })
-  );
-
-  let closePreparationInProgress = false;
-  ipcCleanupFunctions.push(
-    window.api.onPrepareForClose(async () => {
-      if (closePreparationInProgress) {
-        return;
-      }
-      closePreparationInProgress = true;
-      try {
-        await persistSettings(true, true);
-      } catch {}
-      window.api.notifySettingsFlushed();
     })
   );
 
@@ -5053,12 +5755,31 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (settings.firstLaunch) {
-    launchSetupWizard(settings, applyTheme, persistSettings, () => {
-      void checkDenoInstallation(settings, () => void persistSettings());
-      void checkUpdatesOnStartup();
-    });
+    launchSetupWizard(
+      settings,
+      applyTheme,
+      persistSettings,
+      (outcome) => {
+        updateUIFromSettings();
+        if (!outcome.denoReviewed) {
+          void checkDenoInstallation(
+            settings,
+            () => persistSettings(),
+            () => flushBeforeRestart('Restarting ROSI'),
+            isFlatpakBuild
+          );
+        }
+        void checkUpdatesOnStartup();
+      },
+      isFlatpakBuild
+    );
   } else {
-    void checkDenoInstallation(settings, () => void persistSettings());
+    void checkDenoInstallation(
+      settings,
+      () => persistSettings(),
+      () => flushBeforeRestart('Restarting ROSI'),
+      isFlatpakBuild
+    );
     void checkUpdatesOnStartup();
     setTimeout(maybeShowSupportModal, 1500);
   }
@@ -5085,20 +5806,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     const licensesActive = licensesOverlay?.classList.contains('active');
 
     if (event.key === 'Escape') {
-      if (licensesActive) {
+      const topOverlayId = getTopActiveOverlayId();
+      if (topOverlayId === 'app-modal') {
+        const appModal = document.getElementById('app-modal');
+        if (appModal) hideModal(appModal, null);
+        return;
+      }
+      if (topOverlayId === 'licenses-overlay') {
         hideLicenses();
         return;
       }
-
-      const appModal = document.getElementById('app-modal');
-      if (appModal && appModal.classList.contains('active')) {
-        hideModal(appModal, null);
+      if (topOverlayId === 'setup-wizard') return;
+      if (topOverlayId === 'sidebar') {
+        closeSidebar();
         return;
       }
-
-      const sidebar = document.getElementById('sidebar');
-      if (sidebar && sidebar.classList.contains('open')) {
-        closeSidebar();
+      if (isPresetPopoverOpen()) {
+        setPresetPopoverOpen(false);
         return;
       }
     }
@@ -5114,9 +5838,34 @@ document.addEventListener('DOMContentLoaded', async () => {
         message: 'Are you sure you want to restart ROSI?',
         buttons: [
           { label: 'Cancel' },
-          { label: 'Restart', primary: true, action: () => window.api.restartApp() },
+          { label: 'Restart', primary: true, action: () => void restartAfterSettingsFlush() },
         ],
       });
+    }
+
+    // Match the physical key: with Alt held, event.key can be a symbol on macOS.
+    const dockTabKeys: Record<string, string> = {
+      Digit1: 'queue',
+      Digit2: 'activity',
+      Digit3: 'console',
+    };
+    const dockTab = dockTabKeys[event.code];
+    const sidebarOpen = document.getElementById('sidebar')?.classList.contains('open');
+    // On macOS Option+digit types a character, so leave text fields alone there.
+    const typingOnMac =
+      isMac() &&
+      event.target instanceof HTMLElement &&
+      event.target.matches('input, textarea, select, [contenteditable="true"]');
+    if (
+      event.altKey &&
+      !modifierPressed &&
+      !event.shiftKey &&
+      dockTab &&
+      !sidebarOpen &&
+      !typingOnMac
+    ) {
+      event.preventDefault();
+      dockModule?.selectTab(dockTab, { focus: true });
     }
 
     if (modifierPressed && event.key === 'f') {
@@ -5140,4 +5889,21 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (sidebar && !sidebar.classList.contains('open')) toggleSidebar();
     }
   });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  void initializeRenderer()
+    .catch((error: unknown) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      logError('Renderer startup failed', error);
+      setPrepareForCloseHandler(async () => {
+        showModal({
+          title: 'ROSI Could Not Close Safely',
+          message: `ROSI could not finish startup and will remain open.\n\n${detail}`,
+          buttons: [{ label: 'OK', primary: true }],
+          priority: true,
+        });
+      });
+    })
+    .finally(resolveRendererStartupReady);
 });

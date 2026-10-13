@@ -5,8 +5,8 @@
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux |
 | :-- | :-- | :-- |
-| **EXE: [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-MacOS-universal.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-Linux-x64.AppImage) |
-| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div> | **[Universal ZIP](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-MacOS-universal.zip)** | **Flatpak:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.1/ROSI-Linux-x64.flatpak) |
+| **EXE: [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.2/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.2/ROSI-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.2/ROSI-MacOS-universal.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.2/ROSI-Linux-x64.AppImage) |
+| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div> | **[Universal ZIP](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.2/ROSI-MacOS-universal.zip)** | **Flatpak:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.0.0-beta.2/ROSI-Linux-x64.flatpak) |
 
 > macOS downloads require macOS 15 or later.
 
@@ -18,6 +18,38 @@
 ### ℹ️ Enjoying ROSI? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
 
 ROSI! A cross platform yt-dlp GUI built on Tauri V2!
+
+## Unreleased
+
+- **Licensing:** Added `COPYRIGHT.md` covering copyright, MPL-2.0 terms, and name and logo policy.
+- **Downloads:** Downloads that reach many servers (such as playlists and multi-CDN streams) no longer stall after a few connections. ROSI also falls back to IPv4 when an IPv6 route does not answer.
+- **Downloads:** Long conversions no longer fail after 10 minutes. A conversion now stops only if FFmpeg makes no progress for 10 minutes.
+- **Downloads:** A playlist where some entries fail still converts and keeps the entries that downloaded, and reports the run as partially failed.
+- **Downloads:** Very long titles are shortened in file names, so they no longer fail on Linux, macOS or long Windows paths.
+- **Conversion:** MP4 and MOV output plays on Apple devices more often: HEVC copies are tagged for QuickTime and re-encoded H.264 uses 8-bit 4:2:0. GPU acceleration on macOS now uses VideoToolbox.
+- **Queue:** Starting a download while the queue starts no longer fails every queued item. Finished items can be removed one at a time or all at once, and an item interrupted by closing or restarting ROSI goes back to the queue.
+- **Settings:** A folder ROSI cannot download to is refused when you pick it. One invalid setting no longer stops your other settings from saving.
+- **Closing:** ROSI closes normally when its queue or settings were saved by a newer version, and offers Close Without Saving when it cannot confirm a save.
+- **Restarts:** Restarting, resetting settings or installing an update now asks first when a download is running.
+- **Custom profile:** Sites that offer only combined video and audio formats now list them, and a single selected format is enough to download.
+- **Recovery:** The startup cleanup no longer leaves internal bookkeeping files or partial conversions in your download folder.
+- **Flatpak:** Browser cookies and the Deno reminder are hidden in the Flatpak build, which cannot use either.
+- **Microsoft Store:** Open Store now opens the ROSI listing.
+- **Profiles:** The Compatible profile now warns that its files are often low resolution (for example 360p on YouTube).
+
+## Changes in `v5.0.0-beta.2:`
+
+- **UI:** Added docked Downloads and Queue controls, expanded the first-run setup flow, refreshed status icons, and improved keyboard focus and small-window layouts.
+- **Platform:** Synchronized the app theme with the native window and refined scrolling behavior.
+- **Security:** Downloads, previews, and format discovery now route requests through a destination-checking proxy that blocks private network targets across redirects and extractor-provided URLs. Preview thumbnails are fetched by ROSI, size-limited, and embedded only when they are PNG, JPEG, or WebP images.
+- **Release checks:** Release evidence now distinguishes full E2E acceptance from build-VM checks that rely on successful hosted CI for the exact source revision. Strict Cargo notices cover the updated dependency graph, and the reviewed development-tool advisories are recorded with a targeted dependency fix where available.
+- **Quality:** Refreshed package and sidecar metadata and expanded native E2E coverage for the updated UI and security boundaries.
+- **Downloads:** Saving to drives that do not support no-overwrite renames (such as exFAT, FAT, SMB and NFS) now works without ever replacing an existing file.
+- **Recovery:** On startup, ROSI cleans up temporary download folders left by a crash or forced quit that are more than a day old, in your download folders. Complete media found there is moved next to your downloads as `<name> (recovered)`, and yt-dlp temporary files are removed. On Windows these temporary folders are now hidden while a download runs.
+- **Data safety:** Damaged download statistics or activity files are kept as a recovery copy instead of being reset. The queue backup now holds the previous saved copy. If a newer ROSI version saved your queue, activity or statistics, this version will not overwrite them and tells you once.
+- **Breaking - downgrades:** The queue and activity files now carry a version number. ROSI `v5.0.0-beta.1` cannot read them, so going back to beta.1 shows an empty queue and will overwrite it. ROSI 4 is not affected.
+- **Security:** Reserved and shared address ranges (such as `100.64.0.0/10`, `198.18.0.0/15` and `240.0.0.0/4`) are now rejected as soon as you paste a link, not only when downloading. On IPv6-only networks with NAT64, public sites reached through `64:ff9b::/96` now work.
+- **Startup:** The splash screen is now opaque, and ROSI no longer uses private macOS window APIs.
 
 ## Changes in `v5.0.0-beta.1:`
 

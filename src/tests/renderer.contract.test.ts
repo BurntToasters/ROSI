@@ -77,8 +77,9 @@ describe('renderer wiring and accessibility contracts', () => {
     expect(indexHtml).toMatch(
       /id="settingsSectionHeaderApplication"[\s\S]*aria-controls="settingsSectionBodyApplication"/
     );
-    expect(indexHtml).toMatch(/id="historyToggle"[\s\S]*aria-controls="history-list"/);
-    expect(indexHtml).toMatch(/id="consoleToggleBtn"[\s\S]*aria-controls="output"/);
+    expect(indexHtml).toMatch(/id="dockTabQueue"[\s\S]*aria-controls="queueSection"/);
+    expect(indexHtml).toMatch(/id="dockTabActivity"[\s\S]*aria-controls="download-history"/);
+    expect(indexHtml).toMatch(/id="dockTabConsole"[\s\S]*aria-controls="console-section"/);
     expect(indexHtml).toMatch(/id="progress-bar-wrapper"[\s\S]*role="progressbar"/);
     expect(indexHtml).toMatch(/id="settingsBtn"[\s\S]*aria-expanded="false"/);
     expect(indexHtml).toMatch(/<title>ROSI<\/title>/);

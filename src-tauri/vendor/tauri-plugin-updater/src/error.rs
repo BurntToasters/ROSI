@@ -76,6 +76,9 @@ pub enum Error {
     DebInstallFailed,
     #[error("Failed to install package")]
     PackageInstallFailed,
+    /// Application state could not be flushed before beginning installation.
+    #[error("Could not prepare the application for update installation: {0}")]
+    BeforeExit(String),
     #[error("invalid updater binary format")]
     InvalidUpdaterFormat,
     #[error(transparent)]

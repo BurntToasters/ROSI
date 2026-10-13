@@ -1,0 +1,135 @@
+name: yt-dlp watch
+
+# Weekly check for a newer upstream yt-dlp release. When one exists, the job
+# bumps assets/ytdlp-checksums.json from the GPG-verified upstream SHA2-256SUMS,
+# proves every upstream binary matches the new manifest, and opens a PR against
+# beta. A yt-dlp bump ships in a patch release; see build-setup.md.
+#
+# GITHUB_TOKEN pushes and PRs do not start push or pull_request workflows, so
+# the job starts ci.yml itself with workflow_dispatch (the one event GITHUB_TOKEN
+# may trigger). See build-setup.md, yt-dlp freshness.
+
+on:
+  schedule:
+    # Mondays 06:17 UTC, ahead of the CI schedule.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ytdlp-watch
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24.16.0"
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: beta
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Compare pinned yt-dlp with the latest upstream release
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh api repos/yt-dlp/yt-dlp/releases/latest --jq .tag_name)"
+          if ! node -e 'process.exit(/^\d{4}\.\d{2}\.\d{2}(\.\d+)?$/.test(process.argv[1]) ? 0 : 1)' "$tag"; then
+            echo "Unexpected upstream tag: $tag" >&2
+            exit 1
+          fi
+          current="$(node -p 'require("./assets/ytdlp-checksums.json").version')"
+          echo "pinned=$current latest=$tag"
+          newest="$(printf '%s\n%s\n' "$current" "$tag" | sort -V | tail -n 1)"
+          branch="ytdlp-bump-$tag"
+          {
+            echo "current=$current"
+            echo "tag=$tag"
+            echo "branch=$branch"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$tag" = "$current" ] || [ "$newest" != "$tag" ]; then
+            echo "update=false" >> "$GITHUB_OUTPUT"
+            echo "No newer yt-dlp release than the pinned one."
+            exit 0
+          fi
+          open_count="$(gh pr list --head "$branch" --state open --json number --jq 'length')"
+          if [ "$open_count" -gt 0 ]; then
+            echo "update=false" >> "$GITHUB_OUTPUT"
+            echo "A PR for $tag is already open."
+            exit 0
+          fi
+          echo "update=true" >> "$GITHUB_OUTPUT"
+
+      - name: Bump manifest from the signed upstream sums
+        if: steps.latest.outputs.update == 'true'
+        env:
+          TAG: ${{ steps.latest.outputs.tag }}
+        run: node scripts/fetch-ytdlp.cjs --update "$TAG"
+
+      - name: Prove the new manifest against upstream binaries
+        if: steps.latest.outputs.update == 'true'
+        run: |
+          set -euo pipefail
+          node scripts/fetch-ytdlp.cjs --all --missing-only
+          node scripts/check-ytdlp.cjs
+
+      - name: Open the bump pull request
+        if: steps.latest.outputs.update == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.latest.outputs.tag }}
+          CURRENT: ${{ steps.latest.outputs.current }}
+          BRANCH: ${{ steps.latest.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add -A assets src-tauri/tauri.conf.json
+          git commit -m "Bump yt-dlp to $TAG"
+          git push --force-with-lease origin "$BRANCH"
+          body="$RUNNER_TEMP/ytdlp-pr-body.md"
+          {
+            echo "Bumps the pinned yt-dlp from \`$CURRENT\` to \`$TAG\`."
+            echo
+            echo "Branch \`$BRANCH\` holds the bump commit."
+            echo
+            echo "- Hashes come from the upstream SHA2-256SUMS, verified with the pinned yt-dlp signing key (AC0CBBE6848D6A873464AF4E57CF65933B5A7581)."
+            echo "- The job downloaded every upstream binary and confirmed it against the new manifest."
+            echo "- The license file is the upstream THIRD_PARTY_LICENSES.txt at the \`$TAG\` tag."
+            echo
+            echo "Follow-ups before merge (see build-setup.md, yt-dlp freshness):"
+            echo
+            echo "- [ ] Ship in a patch release after merge."
+            echo
+            echo "CI for this branch was started by the yt-dlp watch job (workflow_dispatch). If its checks are missing or stale, re-run CI on the branch."
+          } > "$body"
+          if ! gh pr create --base beta --head "$BRANCH" \
+            --title "Bump yt-dlp to $TAG" --body-file "$body"; then
+            echo "PR creation failed (repository setting?). Opening an issue instead."
+            gh issue create --title "Bump yt-dlp to $TAG" --body-file "$body" \
+              --label dependencies || gh issue create --title "Bump yt-dlp to $TAG" --body-file "$body"
+          else
+            # Required checks need a CI run on the bump commit. A GITHUB_TOKEN
+            # PR gets none on its own, so start ci.yml explicitly. Failure is
+            # annotated, not fatal: the PR exists and a maintainer can re-run CI.
+            if ! gh workflow run ci.yml --ref "$BRANCH"; then
+              echo "::warning::Could not start CI for $BRANCH. Re-run ci.yml on this branch before merging."
+            fi
+          fi

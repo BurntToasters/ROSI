@@ -30,9 +30,10 @@ obligation:
 
 The authoritative, version-specific list of bundled components and their
 licenses is published by the yt-dlp project at:
-  https://github.com/yt-dlp/yt-dlp/blob/master/THIRD_PARTY_LICENSES.txt
-(When updating the bundled yt-dlp binary, drop the matching upstream
-THIRD_PARTY_LICENSES.txt next to this file.)
+  https://github.com/yt-dlp/yt-dlp/blob/2026.08.19/THIRD_PARTY_LICENSES.txt
+The exact notice for the bundled 2026.08.19 binaries is included at
+  assets/yt-dlp-2026.08.19-THIRD_PARTY_LICENSES.txt
+and copied into the app's bundled licenses view and resource directory.
 
 Written Source Offer (GPLv2 Section 3(b))
 -----------------------------------------

@@ -3,40 +3,17 @@
 //! validation for download requests, settings patches, and queue operations.
 
 use crate::constants::*;
+use crate::ip_policy::{is_public_ipv4, is_public_ipv6};
 use crate::ipc::{IpcError, INVALID_PATH, INVALID_URL, VALIDATION_ERROR};
 use crate::types::{
     DownloadPreset, DownloadRequestOptions, NotificationRequest, PlaylistSelection,
 };
 use serde_json::{Map, Value};
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::Ipv4Addr;
 use std::path::{Component, Path, PathBuf};
 
 // ---------------------------------------------------------------------------
 // URLs
-
-fn is_private_ipv4(ip: Ipv4Addr) -> bool {
-    let [a, b, ..] = ip.octets();
-    a == 127
-        || a == 10
-        || a == 0
-        || (a == 172 && (16..=31).contains(&b))
-        || (a == 192 && b == 168)
-        || (a == 169 && b == 254)
-}
-
-fn is_private_ipv6(ip: Ipv6Addr) -> bool {
-    if ip.is_loopback() || ip.is_unspecified() {
-        return true;
-    }
-    if let Some(mapped) = ip.to_ipv4_mapped() {
-        if is_private_ipv4(mapped) {
-            return true;
-        }
-    }
-    let first = ip.segments()[0];
-    // fe80::/10 link-local and fc00::/7 unique-local.
-    (first & 0xffc0) == 0xfe80 || (first & 0xfe00) == 0xfc00
-}
 
 /// inet_aton-style IPv4 parsing (hex/octal/shorthand), matching how resolvers
 /// may interpret a hostname that the URL parser left as a domain.
@@ -96,20 +73,20 @@ fn is_rebinding_hostname(host: &str) -> bool {
         ".xip.io",
     ]
     .iter()
-    .any(|suffix| host.ends_with(suffix))
+    .any(|suffix| host.ends_with(suffix) || host == &suffix[1..])
 }
 
 pub fn is_private_or_local_host(host: &url::Host<&str>) -> bool {
     match host {
-        url::Host::Ipv4(ip) => is_private_ipv4(*ip),
-        url::Host::Ipv6(ip) => is_private_ipv6(*ip),
+        url::Host::Ipv4(ip) => !is_public_ipv4(*ip),
+        url::Host::Ipv6(ip) => !is_public_ipv6(*ip),
         url::Host::Domain(domain) => {
             let host = domain.trim().trim_end_matches('.').to_ascii_lowercase();
             host.is_empty()
                 || host == "localhost"
                 || host.ends_with(".localhost")
                 || is_rebinding_hostname(&host)
-                || canonical_ipv4(&host).is_some_and(is_private_ipv4)
+                || canonical_ipv4(&host).is_some_and(|ip| !is_public_ipv4(ip))
         }
     }
 }
@@ -134,16 +111,33 @@ fn parse_web_url(value: &str) -> Option<url::Url> {
     matches!(url.scheme(), "http" | "https").then_some(url)
 }
 
-pub fn is_safe_http_url(value: &str) -> bool {
+/// Checks stable URL syntax and literal-host policy without consulting DNS.
+/// Persistence and metadata parsing use this so temporary resolver failures
+/// cannot erase user data or unparse otherwise valid extractor output.
+pub fn is_syntactically_safe_http_url(value: &str) -> bool {
     let Some(url) = parse_web_url(value) else {
         return false;
     };
-    match url.host() {
-        Some(host) => e2e_allows_loopback(&host) || !is_private_or_local_host(&host),
-        None => false,
+    if !url.username().is_empty() || url.password().is_some() {
+        return false;
     }
+    let Some(host) = url.host() else {
+        return false;
+    };
+    e2e_allows_loopback(&host) || !is_private_or_local_host(&host)
 }
 
+/// Accepts a syntactically safe internal HTTP(S) URL. DNS is deliberately
+/// deferred until a cancellable operation is reserved and the pinned proxy is
+/// ready to connect to the exact vetted address set.
+pub fn is_safe_http_url(value: &str) -> bool {
+    is_syntactically_safe_http_url(value)
+}
+
+/// Validates DNS answers immediately before handing a URL to the system
+/// browser/opener. ROSI cannot control DNS resolution or redirects performed
+/// after the external application receives the URL; internal preview, formats,
+/// and downloads use the pinned `network_security` proxy instead.
 pub fn is_safe_external_url(value: &str) -> bool {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -154,16 +148,18 @@ pub fn is_safe_external_url(value: &str) -> bool {
     };
     match url.scheme() {
         "mailto" | "ms-windows-store" => true,
-        "http" | "https" => url
-            .host()
-            .is_some_and(|host| !is_private_or_local_host(&host)),
+        "http" | "https" => {
+            url.host()
+                .is_some_and(|host| !is_private_or_local_host(&host))
+                && crate::network_security::is_public_http_destination(trimmed, false)
+        }
         _ => false,
     }
 }
 
 /// Canonical queue URL: a safe http(s) URL without its fragment.
 pub fn normalize_queue_url(value: &str) -> Option<String> {
-    if !is_safe_http_url(value) {
+    if !is_syntactically_safe_http_url(value) {
         return None;
     }
     let mut url = url::Url::parse(value.trim()).ok()?;
@@ -226,7 +222,64 @@ pub fn is_path_within(candidate: &Path, base: &Path) -> bool {
     comparable(&resolve_path(candidate)).starts_with(comparable(&resolve_path(base)))
 }
 
+/// Lexical rules plus, on Unix, the same rules for the real (symlink-resolved)
+/// location of the deepest existing ancestor. This stops aliases such as
+/// `/Volumes/Macintosh HD/...` or a link in the home folder from reaching
+/// system folders.
 fn is_allowed_download_base(resolved: &Path) -> bool {
+    if !is_allowed_download_base_lexical(resolved) {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        let mut existing = resolved;
+        while !existing.exists() {
+            match existing.parent() {
+                Some(parent) => existing = parent,
+                None => return true,
+            }
+        }
+        if let Ok(real) = existing.canonicalize() {
+            return is_allowed_download_base_lexical(&real)
+                || canonical_bases()
+                    .iter()
+                    .any(|base| is_path_within(&real, base));
+        }
+    }
+    true
+}
+
+/// Allowed roots with their own symlinks resolved, for comparing against a
+/// resolved candidate (for example a home folder that is itself a link).
+#[cfg(unix)]
+fn canonical_bases() -> Vec<PathBuf> {
+    let mut bases: Vec<PathBuf> = crate::app_state::home_dir().into_iter().collect();
+    if cfg!(target_os = "macos") {
+        bases.push(PathBuf::from("/Volumes"));
+    }
+    if cfg!(target_os = "linux") {
+        bases.extend(["/mnt", "/media", "/run/media"].map(PathBuf::from));
+        bases.extend(
+            crate::app_state::media_dirs()
+                .iter()
+                .filter(|dir| resolve_path(dir).parent().is_some())
+                .cloned(),
+        );
+        if crate::platform::flatpak() {
+            if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
+                bases.push(Path::new(&runtime).join("doc"));
+            }
+        }
+    }
+    bases
+        .into_iter()
+        .filter_map(|base| base.canonicalize().ok())
+        // A base that resolves to the filesystem root would allow everything.
+        .filter(|base| base.parent().is_some())
+        .collect()
+}
+
+fn is_allowed_download_base_lexical(resolved: &Path) -> bool {
     if let Some(home) = crate::app_state::home_dir() {
         if is_path_within(resolved, &home) {
             return true;
@@ -341,6 +394,24 @@ pub fn validate_ffmpeg_path_value(value: Option<&str>) -> Result<Option<String>,
         return Err(validation_error("ffmpegPath does not exist."));
     }
     Ok(Some(resolved.to_string_lossy().into_owned()))
+}
+
+/// The checks of `validate_ffmpeg_path_value` except existence, for values
+/// loaded from disk.
+pub fn validate_ffmpeg_path_shape(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed == "ffmpeg" {
+        return Some(trimmed.to_string());
+    }
+    if !is_absolute_path(trimmed) {
+        return None;
+    }
+    let resolved = resolve_path(trimmed);
+    let base = resolved
+        .file_name()
+        .map(|name| name.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    (base == "ffmpeg" || base == "ffmpeg.exe").then(|| resolved.to_string_lossy().into_owned())
 }
 
 pub fn validate_file_location(value: &Value) -> Result<String, IpcError> {
@@ -531,7 +602,7 @@ fn validate_preset_list(value: &Value) -> Result<Vec<DownloadPreset>, IpcError> 
                 None | Some(Value::Null) => {}
                 Some(Value::Bool(value)) => set_preset_bool(&mut preset, key, *value),
                 Some(_) => {
-                    return Err(validation_error(format!("Preset {key} must be a boolean.")))
+                    return Err(validation_error(format!("Preset {key} must be a boolean.")));
                 }
             }
         }
@@ -631,12 +702,12 @@ const REQUEST_BOOLEAN_FIELDS: &[&str] = &[
 pub fn validate_download_request(value: &Value) -> Result<DownloadRequestOptions, IpcError> {
     let object = as_object(value, "Download payload must be an object.")?;
     let url = match object.get("url").and_then(Value::as_str) {
-        Some(url) if is_safe_http_url(url) => url.trim().to_string(),
+        Some(url) if is_syntactically_safe_http_url(url) => url.trim().to_string(),
         _ => {
             return Err(IpcError::new(
                 INVALID_URL,
                 "Download URL must be a valid http/https URL.",
-            ))
+            ));
         }
     };
     let output_path = match object.get("outputPath").and_then(Value::as_str) {
@@ -644,7 +715,7 @@ pub fn validate_download_request(value: &Value) -> Result<DownloadRequestOptions
         _ => {
             return Err(path_error(
                 "Download outputPath must be a non-empty string path.",
-            ))
+            ));
         }
     };
     let ffmpeg_path = validate_ffmpeg_path_value(
@@ -680,14 +751,18 @@ pub fn validate_download_request(value: &Value) -> Result<DownloadRequestOptions
             booleans.insert(*key, value);
         }
     }
-    let profile = optional_string(object, "profile")?.map(str::to_string);
+    let mut profile = optional_string(object, "profile")?.map(str::to_string);
     if profile
         .as_deref()
         .is_some_and(|value| !allowed(ALLOWED_DOWNLOAD_PROFILES, value))
     {
         return Err(validation_error(
-            "profile must be best-video, audio, or custom.",
+            "profile must be compatible, best-video, audio, or custom.",
         ));
+    }
+    // Requests stored by earlier builds marked a disabled profile this way.
+    if booleans.get("profileEnabled") == Some(&false) {
+        profile = Some("compatible".into());
     }
     let audio_output_format = optional_string(object, "audioOutputFormat")?.map(str::to_string);
     if audio_output_format
@@ -755,7 +830,6 @@ pub fn validate_download_request(value: &Value) -> Result<DownloadRequestOptions
         video_format,
         audio_format,
         playlist,
-        profile_enabled: flag("profileEnabled"),
         profile,
         preset_id: preset_id.map(str::to_string),
         preset_name: preset_name.map(str::to_string),
@@ -777,9 +851,7 @@ pub fn validate_download_request(value: &Value) -> Result<DownloadRequestOptions
 
 const SETTINGS_BOOLEAN_KEYS: &[&str] = &[
     "showConsoleOutput",
-    "consoleCollapsed",
-    "queueCollapsed",
-    "downloadProfilesEnabled",
+    "dockCollapsed",
     "askDownloadLocation",
     "advancedOptions",
     "audioOnly",
@@ -809,13 +881,45 @@ fn enum_patch(value: &Value, list: &[&str], message: &str) -> Result<Value, IpcE
     }
 }
 
-/// Validate a partial settings update. Unknown keys are ignored; known keys
-/// with invalid values reject the whole patch.
-pub fn validate_settings_patch(value: &Value) -> Result<Map<String, Value>, IpcError> {
+/// A validated settings patch plus the fields that were refused.
+pub struct SettingsPatch {
+    pub values: Map<String, Value>,
+    pub rejected: Vec<RejectedSetting>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RejectedSetting {
+    pub key: String,
+    pub message: String,
+}
+
+/// Validate a partial settings update. Unknown keys are ignored. A known key
+/// with an invalid value is refused on its own, so one bad field never blocks
+/// saving the others (or the close flush).
+pub fn validate_settings_patch(value: &Value) -> Result<SettingsPatch, IpcError> {
     let object = as_object(value, "Settings payload must be an object.")?;
-    let mut patch = Map::new();
+    let mut patch = SettingsPatch {
+        values: Map::new(),
+        rejected: Vec::new(),
+    };
     for (key, raw) in object {
-        let validated = match key.as_str() {
+        match validate_setting_value(key, raw) {
+            Ok(Some(validated)) => {
+                patch.values.insert(key.clone(), validated);
+            }
+            Ok(None) => {}
+            Err(error) => patch.rejected.push(RejectedSetting {
+                key: key.clone(),
+                message: error.message,
+            }),
+        }
+    }
+    Ok(patch)
+}
+
+fn validate_setting_value(key: &str, raw: &Value) -> Result<Option<Value>, IpcError> {
+    {
+        let validated = match key {
             "settingsVersion" => match raw.as_f64() {
                 Some(version)
                     if version.fract() == 0.0
@@ -826,8 +930,8 @@ pub fn validate_settings_patch(value: &Value) -> Result<Map<String, Value>, IpcE
                 }
                 _ => {
                     return Err(validation_error(format!(
-                    "settingsVersion must be an integer between 1 and {CURRENT_SETTINGS_VERSION}."
-                )))
+                        "settingsVersion must be an integer between 1 and {CURRENT_SETTINGS_VERSION}."
+                    )));
                 }
             },
             "downloadPresets" => {
@@ -840,7 +944,12 @@ pub fn validate_settings_patch(value: &Value) -> Result<Map<String, Value>, IpcE
             "downloadMode" => enum_patch(
                 raw,
                 ALLOWED_DOWNLOAD_PROFILES,
-                "downloadMode must be best-video, audio, or custom.",
+                "downloadMode must be compatible, best-video, audio, or custom.",
+            )?,
+            "dockTab" => enum_patch(
+                raw,
+                ALLOWED_DOCK_TABS,
+                "dockTab must be queue, activity, or console.",
             )?,
             "theme" => enum_patch(
                 raw,
@@ -871,9 +980,11 @@ pub fn validate_settings_patch(value: &Value) -> Result<Map<String, Value>, IpcE
                 Some(langs) if langs.len() <= 256 && is_subtitle_langs(langs) => {
                     Value::String(langs.to_string())
                 }
-                _ => return Err(validation_error(
-                    "subtitleLangs must be a comma-separated list of language codes (e.g. en,es).",
-                )),
+                _ => {
+                    return Err(validation_error(
+                        "subtitleLangs must be a comma-separated list of language codes (e.g. en,es).",
+                    ));
+                }
             },
             "browserChoice" => {
                 let Some(choice) = raw.as_str() else {
@@ -911,11 +1022,10 @@ pub fn validate_settings_patch(value: &Value) -> Result<Map<String, Value>, IpcE
                 }
                 Value::String(validate_download_path(folder)?)
             }
-            _ => continue,
+            _ => return Ok(None),
         };
-        patch.insert(key.clone(), validated);
+        Ok(Some(validated))
     }
-    Ok(patch)
 }
 
 pub fn validate_notification(value: &Value) -> Result<NotificationRequest, IpcError> {
@@ -926,7 +1036,7 @@ pub fn validate_notification(value: &Value) -> Result<NotificationRequest, IpcEr
         _ => {
             return Err(validation_error(
                 "Notification title, body, and filePath must be strings when provided.",
-            ))
+            ));
         }
     };
     if title.is_some_and(|value| value.chars().count() > 256)

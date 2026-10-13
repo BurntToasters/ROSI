@@ -5,7 +5,9 @@
  *
  * Every source binary is verified against its committed checksum manifest
  * before it is copied:
- *   - yt-dlp:  assets/ytdlp-checksums.json
+ *   - yt-dlp:  assets/ytdlp-checksums.json (missing binaries are first fetched
+ *              and verified against the GPG-signed upstream sums by
+ *              scripts/fetch-ytdlp.cjs)
  *   - FFmpeg:  resources/ffmpeg/checksums.json
  *
  * A prepared-sidecar manifest (src-tauri/binaries/.sidecar-manifest.json)
@@ -32,6 +34,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = path.join(root, "src-tauri", "binaries");
 const manifestPath = path.join(outDir, ".sidecar-manifest.json");
 const ytdlpChecksumPath = path.join(root, "assets", "ytdlp-checksums.json");
+const ytdlpFetchScript = path.join(root, "scripts", "fetch-ytdlp.cjs");
 const ffmpegChecksumPath = path.join(
   root,
   "resources",
@@ -142,19 +145,34 @@ function readJson(filePath, label) {
   }
 }
 
+/** Fetches (and verifies) any yt-dlp binary the targets need but is absent. */
+function ensureYtdlpBinaries(targets) {
+  const args = [ytdlpFetchScript, "--missing-only"];
+  for (const triple of targets) {
+    args.push("--target", triple);
+  }
+  const result = spawnSync(process.execPath, args, { stdio: "inherit" });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(
+      "yt-dlp binaries are missing or failed upstream verification (see above).",
+    );
+  }
+}
+
 function verifiedYtdlpSource(name, ytdlpChecksums) {
   const source = path.join(root, "assets", name);
   if (!fs.existsSync(source)) {
-    throw new Error(`Missing committed yt-dlp binary: assets/${name}`);
+    throw new Error(`Missing yt-dlp binary: assets/${name}`);
   }
-  const expected = ytdlpChecksums?.binaries?.[name];
+  const expected = ytdlpChecksums?.files?.[name];
   if (!expected) {
     throw new Error(`assets/ytdlp-checksums.json has no entry for ${name}`);
   }
   const actual = sha256File(source);
   if (actual !== expected) {
     throw new Error(
-      `yt-dlp checksum mismatch for assets/${name}\n  expected: ${expected}\n  actual:   ${actual}\nVerify the binary against upstream SHA2-256SUMS, then run npm run ytdlp:check:generate.`,
+      `yt-dlp checksum mismatch for assets/${name}\n  expected: ${expected}\n  actual:   ${actual}\nRe-fetch and verify with: npm run ytdlp:fetch:all`,
     );
   }
   return source;
@@ -211,6 +229,7 @@ export function prepareSidecars(options) {
       : options.all
         ? Object.keys(TARGETS)
         : hostTargets();
+  ensureYtdlpBinaries(targets);
   const ytdlpChecksums = readJson(ytdlpChecksumPath, "yt-dlp checksums");
   const ffmpegChecksums = readJson(ffmpegChecksumPath, "FFmpeg checksums");
   fs.mkdirSync(outDir, { recursive: true });

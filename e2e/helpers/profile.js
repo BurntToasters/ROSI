@@ -33,6 +33,10 @@ export function e2eSettings({ downloadFolder, ffmpegPath = "" }) {
     animateBackground: false,
     showConsoleOutput: true,
     askDownloadLocation: false,
+    // A 5.0 beta profile with profiles off: it must load as Compatible so
+    // upgrading never changes which file a download produces.
+    downloadProfilesEnabled: false,
+    downloadMode: "best-video",
     downloadFolder,
     ffmpegPath,
   };

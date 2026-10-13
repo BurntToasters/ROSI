@@ -27,6 +27,7 @@
 
   type UiModules = {
     ui?: UiModule;
+    dock?: RosiDockModule;
   };
 
   type RosiWindow = Window & typeof globalThis & { rosiModules?: UiModules };
@@ -36,16 +37,17 @@
   };
 
   const TOAST_ICONS: Record<ToastType, string> = {
-    warning:
-      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
-    error:
-      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
-    success:
-      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
-    info: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+    warning: 'triangle-alert',
+    error: 'circle-x',
+    success: 'circle-check',
+    info: 'info',
   };
 
-  const OUTPUT_MAX_CHARS = 200000;
+  function lucide(name: string, size: number) {
+    return global.rosiModules?.icons?.icon(name, size) ?? null;
+  }
+
+  const OUTPUT_MAX_LINES = 4000;
 
   function isMac() {
     return navigator.platform.toLowerCase().includes('mac');
@@ -68,14 +70,18 @@
     }
   }
 
+  /** The console lives in the dock; showing it means offering its tab. */
   function updateConsoleVisibility(show: boolean) {
     const consoleSection = document.getElementById('console-section');
     if (consoleSection) {
-      if (show) {
-        consoleSection.classList.add('visible');
-      } else {
-        consoleSection.classList.remove('visible');
-      }
+      consoleSection.classList.toggle('visible', !!show);
+    }
+    const dock = (global as RosiWindow).rosiModules?.dock;
+    if (dock) {
+      dock.setTabAvailable('console', !!show);
+    } else {
+      const consoleTab = document.getElementById('dockTabConsole');
+      if (consoleTab) consoleTab.hidden = !show;
     }
     document.body.classList.toggle('console-visible', !!show);
   }
@@ -111,8 +117,8 @@
 
     const icon = document.createElement('span');
     icon.className = 'toast-icon';
-    // eslint-disable-next-line no-unsanitized/property -- TOAST_ICONS is a static, code-defined map of trusted SVG markup; no user input.
-    icon.innerHTML = TOAST_ICONS[type] || TOAST_ICONS.info;
+    const toastIcon = lucide(TOAST_ICONS[type] || TOAST_ICONS.info, 20);
+    if (toastIcon) icon.appendChild(toastIcon);
 
     const msg = document.createElement('span');
     msg.className = 'toast-message';
@@ -121,10 +127,10 @@
 
     const dismissBtn = document.createElement('button');
     dismissBtn.type = 'button';
-    dismissBtn.className = 'toast-dismiss';
+    dismissBtn.className = 'toast-dismiss btn btn--ghost btn--xs btn--icon';
     dismissBtn.setAttribute('aria-label', 'Dismiss');
-    dismissBtn.innerHTML =
-      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    const dismissIcon = lucide('x', 14);
+    if (dismissIcon) dismissBtn.appendChild(dismissIcon);
 
     toast.appendChild(icon);
     toast.appendChild(msg);
@@ -158,13 +164,24 @@
     }
   }
 
+  /**
+   * One span per line, each followed by a newline so copied text keeps its
+   * line breaks. Status emoji render as Lucide icons.
+   */
   function appendConsoleOutput(outputEl: HTMLElement | null, text: string) {
     if (!outputEl) return;
-    const nextText = outputEl.textContent + text + '\n';
-    if (nextText.length <= OUTPUT_MAX_CHARS) {
-      outputEl.textContent = nextText;
-    } else {
-      outputEl.textContent = nextText.slice(-OUTPUT_MAX_CHARS);
+    const icons = global.rosiModules?.icons;
+    const lines = String(text).split('\n');
+    for (const line of lines) {
+      const lineEl = document.createElement('span');
+      lineEl.className = 'console-line';
+      if (icons) icons.renderStatus(lineEl, line);
+      else lineEl.textContent = line;
+      outputEl.append(lineEl, '\n');
+    }
+    while (outputEl.childElementCount > OUTPUT_MAX_LINES) {
+      outputEl.firstChild?.remove();
+      if (outputEl.firstChild?.nodeType === Node.TEXT_NODE) outputEl.firstChild.remove();
     }
     outputEl.scrollTop = outputEl.scrollHeight;
   }
@@ -209,6 +226,18 @@
 
   let sidebarTrapHandler: ((event: KeyboardEvent) => void) | null = null;
   let sidebarFocusinHandler: ((event: FocusEvent) => void) | null = null;
+
+  function getTopActiveOverlayId() {
+    for (const id of ['app-modal', 'licenses-overlay', 'setup-wizard', 'sidebar']) {
+      const overlay = document.getElementById(id);
+      const active =
+        id === 'sidebar'
+          ? overlay?.classList.contains('open')
+          : overlay?.classList.contains('active');
+      if (active) return id;
+    }
+    return null;
+  }
   let previousSidebarFocus: HTMLElement | null = null;
 
   function getSidebarFocusableElements(sidebar: HTMLElement): HTMLElement[] {
@@ -244,10 +273,11 @@
     const mainContent =
       document.getElementById('main-content') || document.querySelector('.main-content');
     if (!(mainContent instanceof HTMLElement)) return;
+    const shouldBeInert = isInert || getTopActiveOverlayId() !== null;
     if ('inert' in mainContent) {
-      (mainContent as HTMLElement & { inert: boolean }).inert = isInert;
+      (mainContent as HTMLElement & { inert: boolean }).inert = shouldBeInert;
     }
-    if (isInert) {
+    if (shouldBeInert) {
       mainContent.setAttribute('aria-hidden', 'true');
     } else {
       mainContent.removeAttribute('aria-hidden');
@@ -272,12 +302,12 @@
     if (overlay) overlay.classList.remove('active');
     document.body.classList.remove('sidebar-open');
     setMainContentInert(false);
-    if (previousSidebarFocus && typeof previousSidebarFocus.focus === 'function') {
-      previousSidebarFocus.focus();
-    } else {
-      const settingsBtn = document.getElementById('settingsBtn');
-      if (settingsBtn instanceof HTMLElement) {
-        settingsBtn.setAttribute('aria-expanded', 'false');
+    const settingsBtn = document.getElementById('settingsBtn');
+    if (settingsBtn instanceof HTMLElement) settingsBtn.setAttribute('aria-expanded', 'false');
+    if (!getTopActiveOverlayId()) {
+      if (previousSidebarFocus && typeof previousSidebarFocus.focus === 'function') {
+        previousSidebarFocus.focus();
+      } else if (settingsBtn instanceof HTMLElement) {
         settingsBtn.focus();
       }
     }
@@ -314,6 +344,7 @@
     }
 
     sidebarTrapHandler = (event: KeyboardEvent) => {
+      if (getTopActiveOverlayId() !== 'sidebar') return;
       if (event.key === 'Escape') {
         event.preventDefault();
         closeSidebar();
@@ -343,7 +374,7 @@
     sidebar.addEventListener('keydown', sidebarTrapHandler);
 
     sidebarFocusinHandler = (event: FocusEvent) => {
-      if (!sidebar.classList.contains('open')) return;
+      if (!sidebar.classList.contains('open') || getTopActiveOverlayId() !== 'sidebar') return;
       const target = event.target;
       if (target instanceof Node && sidebar.contains(target)) return;
       focusFirstSidebarElement(sidebar);

@@ -8,7 +8,8 @@
 
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
+import { resolveUpdaterTargets } from "./gpg-sign.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -64,19 +65,12 @@ function hasMinisignEnvelope(value) {
   );
 }
 
-function validateManifest(filePath) {
-  const raw = fs.readFileSync(filePath, "utf8");
-  let data;
-  try {
-    data = JSON.parse(raw);
-  } catch (error) {
-    fail(`${filePath}: invalid JSON (${error.message})`);
-    return;
-  }
-
+export function validateManifestData(data, filePath) {
+  const problems = [];
+  const fail = (message) => problems.push(message);
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     fail(`${filePath}: root must be an object`);
-    return;
+    return problems;
   }
   if (!isNonEmptyString(data.version)) {
     fail(`${filePath}: missing string "version"`);
@@ -91,9 +85,13 @@ function validateManifest(filePath) {
   ) {
     fail(`${filePath}: pub_date must be a normalized ISO-8601 UTC timestamp`);
   }
-  if (!data.platforms || typeof data.platforms !== "object") {
+  if (
+    !data.platforms ||
+    typeof data.platforms !== "object" ||
+    Array.isArray(data.platforms)
+  ) {
     fail(`${filePath}: missing object "platforms"`);
-    return;
+    return problems;
   }
 
   const entries = Object.entries(data.platforms);
@@ -106,6 +104,33 @@ function validateManifest(filePath) {
   const betaFallbackTarget = expectedTarget.includes("-beta-")
     ? expectedTarget.replace(/-(?:aarch64|x86_64)$/i, "")
     : null;
+  const target = expectedTarget.match(
+    /^(darwin|windows|linux)(-beta)?-(x86_64|aarch64)(?:-(app|nsis|msi|appimage))?$/,
+  );
+  if (!target) {
+    fail(`${filePath}: unsupported manifest target ${expectedTarget}`);
+    return problems;
+  }
+  const [, os, channel = "", arch, installer] = target;
+  const primary = `${os}${channel}-${arch}`;
+  const defaultInstaller = {
+    darwin: "app",
+    windows: "nsis",
+    linux: "appimage",
+  }[os];
+  if (
+    installer &&
+    installer !== defaultInstaller &&
+    !(os === "windows" && installer === "msi")
+  ) {
+    fail(`${filePath}: unsupported installer ${installer}`);
+  }
+  const required = installer
+    ? [expectedTarget]
+    : [primary, `${primary}-${defaultInstaller}`];
+  if (!required.some((key) => Object.hasOwn(data.platforms, key))) {
+    fail(`${filePath}: missing required platform ${required.join(" or ")}`);
+  }
   for (const [key, platform] of entries) {
     if (
       key !== expectedTarget &&
@@ -116,7 +141,7 @@ function validateManifest(filePath) {
         `${filePath}: platform key ${key} does not match manifest target ${expectedTarget}`,
       );
     }
-    if (!platform || typeof platform !== "object") {
+    if (!platform || typeof platform !== "object" || Array.isArray(platform)) {
       fail(`${filePath}: platforms.${key} must be an object`);
       continue;
     }
@@ -135,6 +160,34 @@ function validateManifest(filePath) {
     ) {
       fail(`${filePath}: platforms.${key}.url must be an https URL`);
     }
+    if (parsedUrl) {
+      let artifact;
+      try {
+        artifact = decodeURIComponent(
+          parsedUrl.pathname.split("/").at(-1) || "",
+        );
+      } catch {
+        fail(`${filePath}: platform ${key} has an invalid artifact filename`);
+        continue;
+      }
+      const keyInstaller = key.slice(primary.length + 1);
+      const installerForKey =
+        key === primary || key === betaFallbackTarget
+          ? installer || defaultInstaller
+          : keyInstaller;
+      if (
+        !resolveUpdaterTargets(artifact).some(
+          (target) =>
+            target.os === os &&
+            target.arch === arch &&
+            target.installer === installerForKey,
+        )
+      ) {
+        fail(
+          `${filePath}: platform ${key} does not match artifact ${artifact}`,
+        );
+      }
+    }
     if (
       !isNonEmptyString(platform.signature) ||
       !hasMinisignEnvelope(platform.signature)
@@ -144,27 +197,47 @@ function validateManifest(filePath) {
       );
     }
   }
+  return problems;
 }
 
-const targets = process.argv.slice(2);
-const files =
-  targets.length > 0 ? targets : defaultFixtures.filter(fs.existsSync);
-
-if (files.length === 0) {
-  fail("no updater fixtures found; expected testdata/updater/latest-*.json");
-  process.exit(1);
-}
-
-for (const file of files) {
-  if (!fs.existsSync(file)) {
-    fail(`missing file ${file}`);
-    continue;
+function validateManifest(filePath) {
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch (error) {
+    fail(`${filePath}: invalid JSON (${error.message})`);
+    return;
   }
-  validateManifest(file);
+  for (const problem of validateManifestData(data, filePath)) fail(problem);
 }
 
-if (!process.exitCode) {
-  console.log(
-    `updater-manifest: ok (${files.length} file${files.length === 1 ? "" : "s"})`,
-  );
+function main() {
+  const targets = process.argv.slice(2);
+  const files =
+    targets.length > 0 ? targets : defaultFixtures.filter(fs.existsSync);
+
+  if (files.length === 0) {
+    fail("no updater fixtures found; expected testdata/updater/latest-*.json");
+    process.exit(1);
+  }
+
+  for (const file of files) {
+    if (!fs.existsSync(file)) {
+      fail(`missing file ${file}`);
+      continue;
+    }
+    validateManifest(file);
+  }
+
+  if (!process.exitCode) {
+    console.log(
+      `updater-manifest: ok (${files.length} file${files.length === 1 ? "" : "s"})`,
+    );
+  }
 }
+
+if (
+  process.argv[1] &&
+  pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url
+)
+  main();

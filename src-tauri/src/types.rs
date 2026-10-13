@@ -60,9 +60,8 @@ pub struct Settings {
     pub settings_version: u32,
     pub theme: String,
     pub show_console_output: bool,
-    pub console_collapsed: bool,
-    pub queue_collapsed: bool,
-    pub download_profiles_enabled: bool,
+    pub dock_tab: String,
+    pub dock_collapsed: bool,
     pub download_mode: String,
     pub download_presets: Vec<DownloadPreset>,
     pub ask_download_location: bool,
@@ -115,8 +114,6 @@ pub struct DownloadRequestOptions {
     pub audio_format: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub playlist: Option<PlaylistSelection>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub profile_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -203,6 +200,10 @@ pub struct DownloadCompletion {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_paths: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed_paths: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub size_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
@@ -225,6 +226,8 @@ pub enum Phase {
 #[serde(rename_all = "camelCase")]
 pub struct JobProgressEvent {
     pub phase: Phase,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<u64>,
     /// `null` when the phase has no determinate percentage.
     pub phase_percent: Option<f64>,
     /// Progress for only the active item, before queue weighting.

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-e2e-updater-install-probe"
+description = "Enables the e2e_updater_install_probe command without any pre-configured scope."
+commands.allow = ["e2e_updater_install_probe"]
+
+[[permission]]
+identifier = "deny-e2e-updater-install-probe"
+description = "Denies the e2e_updater_install_probe command without any pre-configured scope."
+commands.deny = ["e2e_updater_install_probe"]

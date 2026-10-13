@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-e2e-emit-stale-download-events"
+description = "Enables the e2e_emit_stale_download_events command without any pre-configured scope."
+commands.allow = ["e2e_emit_stale_download_events"]
+
+[[permission]]
+identifier = "deny-e2e-emit-stale-download-events"
+description = "Denies the e2e_emit_stale_download_events command without any pre-configured scope."
+commands.deny = ["e2e_emit_stale_download_events"]

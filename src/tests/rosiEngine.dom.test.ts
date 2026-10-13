@@ -8,7 +8,7 @@ const REPO = path.resolve(__dirname, '..', '..');
 const RENDERER = path.join(REPO, 'src');
 const ENGINE_TS = path.join(RENDERER, 'rosiEngine.ts');
 const INDEX_HTML = path.join(RENDERER, 'index.html');
-const MODULE_FILES = ['ui', 'downloads', 'queue', 'settings', 'updates'];
+const MODULE_FILES = ['ui', 'downloads', 'activity', 'queue', 'settings', 'updates', 'dock'];
 
 function transpile(tsSource: string): string {
   return ts.transpileModule(tsSource, {
@@ -44,10 +44,9 @@ function defaultSettings() {
     settingsVersion: 7,
     theme: 'dark',
     showConsoleOutput: false,
-    consoleCollapsed: false,
-    queueCollapsed: false,
-    downloadProfilesEnabled: false,
-    downloadMode: 'best-video',
+    dockTab: 'queue',
+    dockCollapsed: false,
+    downloadMode: 'compatible',
     downloadPresets: [],
     askDownloadLocation: false,
     advancedOptions: false,
@@ -260,34 +259,11 @@ describe('rosiEngine DOM wiring', () => {
     expect(api.saveSettings).toHaveBeenCalled();
   });
 
-  it('keeps download profiles hidden until enabled in settings', async () => {
-    const api = buildMockApi();
-    await loadEngine(api);
-
-    const composer = document.getElementById('downloadProfilesComposer') as HTMLElement;
-    const profilesToggle = document.getElementById('downloadProfilesToggle') as HTMLInputElement;
-    expect(composer.classList.contains('hidden')).toBe(true);
-
-    profilesToggle.checked = true;
-    profilesToggle.dispatchEvent(new Event('change', { bubbles: true }));
-    await flush();
-
-    expect(composer.classList.contains('hidden')).toBe(false);
-    expect(api.saveSettings).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        downloadProfilesEnabled: true,
-        downloadMode: 'best-video',
-        bestQuality: true,
-      })
-    );
-  });
-
-  it('switches enabled profiles and exposes Audio format choice', async () => {
+  it('switches profiles and exposes Audio format choice', async () => {
     const api = buildMockApi({
       getSettings: vi.fn(() =>
         Promise.resolve({
           ...defaultSettings(),
-          downloadProfilesEnabled: true,
           downloadMode: 'best-video',
           bestQuality: true,
         })
@@ -409,18 +385,27 @@ describe('rosiEngine DOM wiring', () => {
       getSettings: vi.fn(() =>
         Promise.resolve({
           ...defaultSettings(),
-          downloadProfilesEnabled: true,
           downloadMode: 'custom',
           advancedOptions: true,
+        })
+      ) as unknown as ReturnType<typeof vi.fn>,
+      getFormats: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          data: '137 mp4 1920x1080 video only\n140 m4a audio only',
         })
       ) as unknown as ReturnType<typeof vi.fn>,
     });
     await loadEngine(api);
 
+    const urlInput = document.getElementById('url') as HTMLInputElement;
+    urlInput.value = 'https://example.com/watch';
+    urlInput.dispatchEvent(new Event('input', { bubbles: true }));
+    (document.getElementById('fetchFormatsBtn') as HTMLButtonElement).click();
+    await flush();
+
     const videoSelect = document.getElementById('videoFormat') as HTMLSelectElement;
     const audioSelect = document.getElementById('audioFormat') as HTMLSelectElement;
-    videoSelect.appendChild(new Option('137', '137'));
-    audioSelect.appendChild(new Option('140', '140'));
     videoSelect.value = '137';
     audioSelect.value = '140';
 
@@ -458,18 +443,27 @@ describe('rosiEngine DOM wiring', () => {
       getSettings: vi.fn(() =>
         Promise.resolve({
           ...defaultSettings(),
-          downloadProfilesEnabled: true,
           downloadMode: 'custom',
           advancedOptions: true,
+        })
+      ) as unknown as ReturnType<typeof vi.fn>,
+      getFormats: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          data: '137 mp4 1920x1080 video only\n140 m4a audio only',
         })
       ) as unknown as ReturnType<typeof vi.fn>,
     });
     await loadEngine(api);
 
+    const urlInput = document.getElementById('url') as HTMLInputElement;
+    urlInput.value = 'https://example.com/watch';
+    urlInput.dispatchEvent(new Event('input', { bubbles: true }));
+    (document.getElementById('fetchFormatsBtn') as HTMLButtonElement).click();
+    await flush();
+
     const videoSelect = document.getElementById('videoFormat') as HTMLSelectElement;
     const audioSelect = document.getElementById('audioFormat') as HTMLSelectElement;
-    videoSelect.appendChild(new Option('137', '137'));
-    audioSelect.appendChild(new Option('140', '140'));
     videoSelect.value = '137';
     audioSelect.value = '140';
 
@@ -649,31 +643,6 @@ describe('rosiEngine DOM wiring', () => {
     expect(api.addToQueue).toHaveBeenCalledWith(['https://example.com/shortcut']);
   });
 
-  it('collapses queue and persists the preference', async () => {
-    const api = buildMockApi();
-    await loadEngine(api);
-
-    const queueSection = document.getElementById('queueSection') as HTMLElement;
-    const queueBody = document.getElementById('queueBody') as HTMLElement;
-    const queueToggle = document.getElementById('queueToggleBtn') as HTMLButtonElement;
-
-    expect(queueSection.classList.contains('collapsed')).toBe(false);
-    expect(queueToggle.getAttribute('aria-expanded')).toBe('true');
-
-    queueToggle.click();
-    await flush(350);
-
-    expect(queueSection.classList.contains('collapsed')).toBe(true);
-    expect(queueToggle.getAttribute('aria-expanded')).toBe('false');
-    expect(queueBody.getAttribute('aria-hidden')).toBe('true');
-    expect(queueBody.inert).toBe(true);
-    expect(api.saveSettings).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        queueCollapsed: true,
-      })
-    );
-  });
-
   it('accepts dropped URLs in the queue textarea', async () => {
     const api = buildMockApi();
     await loadEngine(api);
@@ -717,9 +686,9 @@ describe('rosiEngine DOM wiring', () => {
   });
 
   it('persists settings and notifies the main process before close', async () => {
-    let prepareForCloseCb = null as (() => Promise<void>) | null;
+    let prepareForCloseCb = null as ((generation: number) => Promise<void>) | null;
     const api = buildMockApi({
-      onPrepareForClose: ((cb: () => Promise<void>) => {
+      onPrepareForClose: ((cb: (generation: number) => Promise<void>) => {
         prepareForCloseCb = cb;
         return () => {};
       }) as unknown as ReturnType<typeof vi.fn>,
@@ -727,10 +696,10 @@ describe('rosiEngine DOM wiring', () => {
     await loadEngine(api);
 
     expect(typeof prepareForCloseCb).toBe('function');
-    await prepareForCloseCb?.();
+    await prepareForCloseCb?.(7);
 
     expect(api.saveSettings).toHaveBeenCalled();
-    expect(api.notifySettingsFlushed).toHaveBeenCalled();
+    expect(api.notifySettingsFlushed).toHaveBeenCalledWith(7);
   });
 
   it('refreshes the visible theme when settings are imported', async () => {
@@ -747,12 +716,13 @@ describe('rosiEngine DOM wiring', () => {
     settingsImportedCb?.({
       ...defaultSettings(),
       theme: 'light',
-      queueCollapsed: true,
+      dockTab: 'activity',
     });
     await flush();
 
     expect(document.documentElement.dataset.theme).toBe('light');
-    expect(document.getElementById('queueSection')?.classList.contains('collapsed')).toBe(true);
+    expect(document.getElementById('download-history')?.hidden).toBe(false);
+    expect(document.getElementById('queueSection')?.hidden).toBe(true);
   });
 
   it('persists flat UI through settings when the toggle changes', async () => {
@@ -853,7 +823,8 @@ describe('rosiEngine DOM wiring', () => {
             title: 'Test Clip',
             uploader: 'Test Channel',
             durationSeconds: 65,
-            thumbnail: 'https://example.com/t.jpg',
+            thumbnail:
+              'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+cRbkAAAAASUVORK5CYII=',
             ext: 'mp4',
             viewCount: 2000,
             isPlaylist: false,
@@ -878,7 +849,9 @@ describe('rosiEngine DOM wiring', () => {
     expect(document.getElementById('preview-title')?.textContent).toBe('Test Clip');
     expect(document.getElementById('preview-duration')?.textContent).toBe('1:05');
     const thumb = document.getElementById('preview-thumb') as HTMLImageElement;
-    expect(thumb.getAttribute('src')).toBe('https://example.com/t.jpg');
+    expect(thumb.getAttribute('src')).toBe(
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+cRbkAAAAASUVORK5CYII='
+    );
   });
 
   it('shows the enhancements subtitle-language field only when subtitles are enabled', async () => {
@@ -983,5 +956,168 @@ describe('rosiEngine DOM wiring', () => {
     const rows = document.querySelectorAll('.history-item');
     expect(rows).toHaveLength(1);
     expect(document.querySelector('.history-error')?.textContent).toBe('network unreachable');
+  });
+  it('waits for the latest save before exporting settings', async () => {
+    let release!: (value: unknown) => void;
+    let defer = false;
+    const api = buildMockApi({
+      saveSettings: vi.fn((value) =>
+        defer
+          ? new Promise((r) => {
+              release = r;
+            })
+          : Promise.resolve({ ok: true, data: value })
+      ),
+    });
+    await loadEngine(api);
+    await flush(350);
+    defer = true;
+    const toggle = document.getElementById('notificationsToggle') as HTMLInputElement;
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event('change'));
+    document.getElementById('exportSettingsBtn')!.click();
+    await flush(350);
+    expect(api.exportSettings).not.toHaveBeenCalled();
+    release({ ok: true, data: { ...defaultSettings(), notifications: false } });
+    await flush(30);
+    expect(api.exportSettings).toHaveBeenCalledOnce();
+  });
+
+  it('does not export after settings persistence fails', async () => {
+    const api = buildMockApi({
+      saveSettings: vi.fn(() => Promise.resolve({ ok: false, error: { message: 'disk full' } })),
+    });
+    await loadEngine(api);
+    const toggle = document.getElementById('notificationsToggle') as HTMLInputElement;
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event('change'));
+    document.getElementById('exportSettingsBtn')!.click();
+    await flush(350);
+    expect(api.exportSettings).not.toHaveBeenCalled();
+  });
+
+  for (const action of ['downloadBtn', 'addToQueueBtn']) {
+    it(`keeps playlist range while ${action} awaits a save`, async () => {
+      let release!: (value: unknown) => void;
+      const api = buildMockApi({
+        getSettings: vi.fn(() =>
+          Promise.resolve({ ...defaultSettings(), downloadFolder: '/tmp/downloads' })
+        ),
+        saveSettings: vi.fn(
+          () =>
+            new Promise((r) => {
+              release = r;
+            })
+        ),
+      });
+      await loadEngine(api);
+      const input = document.getElementById('url') as HTMLInputElement;
+      input.value = 'https://example.com/playlist/old';
+      input.dispatchEvent(new Event('input'));
+      document.getElementById('playlistScope')!.classList.remove('hidden');
+      (
+        document.querySelector('input[name="playlist-scope"][value="range"]') as HTMLInputElement
+      ).checked = true;
+      (document.getElementById('playlistRangeStart') as HTMLInputElement).value = '2';
+      (document.getElementById('playlistRangeEnd') as HTMLInputElement).value = '5';
+      (document.getElementById('queueUrlInput') as HTMLTextAreaElement).value = input.value;
+      document.getElementById(action)!.click();
+      await flush(20);
+      input.value = 'https://example.com/new';
+      input.dispatchEvent(new Event('input'));
+      release({ ok: true, data: { ...defaultSettings(), downloadFolder: '/tmp/downloads' } });
+      await flush(30);
+      if (action === 'downloadBtn')
+        expect(api.downloadVideo).toHaveBeenCalledWith(
+          expect.objectContaining({
+            url: 'https://example.com/playlist/old',
+            playlist: { mode: 'range', start: 2, end: 5 },
+          })
+        );
+      else
+        expect(api.addToQueue).toHaveBeenCalledWith(
+          ['https://example.com/playlist/old'],
+          expect.objectContaining({ playlist: { mode: 'range', start: 2, end: 5 } })
+        );
+    });
+  }
+
+  it('shows cancelled recovery diagnostics in activity', async () => {
+    const api = buildMockApi({
+      getDownloadActivity: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          data: [
+            {
+              id: 'cancel-recovery',
+              owner: 'manual',
+              outcome: 'cancelled',
+              statusMessage: 'Cancelled',
+              url: 'https://example.com/video',
+              request: {},
+              error: 'Staging retained for recovery at /tmp/recovery',
+              startedAt: 1,
+              completedAt: 2,
+            },
+          ],
+        })
+      ),
+    });
+    await loadEngine(api);
+    expect(document.querySelector('.history-error')?.textContent).toContain('/tmp/recovery');
+  });
+
+  for (const result of [{ success: false, error: 'package manager failed' }, {}]) {
+    it(`shows Deno reminder failure for ${JSON.stringify(result)}`, async () => {
+      const api = buildMockApi({
+        getSettings: vi.fn(() =>
+          Promise.resolve({ ...defaultSettings(), denoReminderDismissed: false })
+        ),
+        checkDenoInstalled: vi.fn(() => Promise.resolve(false)),
+        installDeno: vi.fn(() => Promise.resolve(result)),
+      });
+      await loadEngine(api);
+      await flush(50);
+      const install = [
+        ...document.querySelectorAll<HTMLButtonElement>('#modal-buttons button'),
+      ].find((b) => b.textContent === 'Install');
+      expect(install).toBeDefined();
+      install!.click();
+      await flush(350);
+      expect(document.getElementById('modal-title')!.textContent).toBe('Installation Failed');
+    });
+  }
+
+  it('shows Deno setup failure instead of an installed state', async () => {
+    const api = buildMockApi({
+      getSettings: vi.fn(() =>
+        Promise.resolve({
+          ...defaultSettings(),
+          firstLaunch: true,
+          downloadFolder: '/tmp/downloads',
+        })
+      ),
+      checkDenoInstalled: vi.fn(() => Promise.resolve(false)),
+      installDeno: vi.fn(() =>
+        Promise.resolve({ success: false, error: 'package manager failed' })
+      ),
+    });
+    await loadEngine(api);
+    for (
+      let i = 0;
+      i < 6 && (document.getElementById('wizard-deno-action') as HTMLButtonElement).hidden;
+      i++
+    ) {
+      document.getElementById('wizard-next')!.click();
+      await flush(20);
+    }
+    const action = document.getElementById('wizard-deno-action') as HTMLButtonElement;
+    expect(action.hidden).toBe(false);
+    action.click();
+    await flush(20);
+    expect(document.getElementById('wizard-deno-status')!.dataset.state).toBe('error');
+    expect(document.getElementById('wizard-deno-status')!.textContent).toContain(
+      'package manager failed'
+    );
   });
 });

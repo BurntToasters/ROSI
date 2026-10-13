@@ -1,7 +1,10 @@
 //! Atomic, private file writes and bounded reads for persisted JSON state.
 
+use crate::constants::CURRENT_PERSISTED_SCHEMA_VERSION;
+use serde::Serialize;
+use serde_json::Value;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub fn random_hex(bytes: usize) -> String {
     let mut buffer = vec![0u8; bytes];
@@ -61,7 +64,8 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), String> {
             .map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
         drop(file);
-        rename_replacing(&temp, path)
+        rename_replacing(&temp, path)?;
+        sync_directory(parent)
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&temp);
@@ -75,7 +79,11 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), String> {
 pub fn rename_replacing(from: &Path, to: &Path) -> Result<(), String> {
     let mut attempt = 0;
     loop {
-        match std::fs::rename(from, to) {
+        #[cfg(windows)]
+        let rename = windows_rename_replacing(from, to);
+        #[cfg(not(windows))]
+        let rename = std::fs::rename(from, to);
+        match rename {
             Ok(()) => return Ok(()),
             Err(error)
                 if cfg!(windows)
@@ -88,6 +96,51 @@ pub fn rename_replacing(from: &Path, to: &Path) -> Result<(), String> {
             }
             Err(error) => return Err(error.to_string()),
         }
+    }
+}
+
+/// Flush a directory entry after a completed atomic rename. Windows uses the
+/// `MOVEFILE_WRITE_THROUGH` rename flag because Rust does not expose a portable
+/// directory handle flush there.
+pub fn sync_directory(directory: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        std::fs::File::open(directory)
+            .and_then(|file| file.sync_all())
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(windows)]
+    {
+        let _ = directory;
+        Ok(())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = directory;
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn windows_rename_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let from: Vec<u16> = from.as_os_str().encode_wide().chain(Some(0)).collect();
+    let to: Vec<u16> = to.as_os_str().encode_wide().chain(Some(0)).collect();
+    let result = unsafe {
+        MoveFileExW(
+            from.as_ptr(),
+            to.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result != 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
     }
 }
 
@@ -142,4 +195,133 @@ pub fn file_size(path: &Path) -> Option<u64> {
         .ok()
         .filter(|metadata| metadata.is_file())
         .map(|metadata| metadata.len())
+}
+
+/// Recovery copy name for damaged bytes: `<stem>.recovery-<uuid>.json`.
+fn recovery_copy_path(path: &Path) -> PathBuf {
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("data");
+    path.with_file_name(format!("{stem}.recovery-{}.json", uuid_v4()))
+}
+
+/// Run before a save replaces the persisted JSON file at `path`. A missing
+/// file passes. An unreadable or oversized file refuses the write, and so does
+/// a file that `check_schema` rejects. Bytes that are damaged or have the
+/// wrong shape are copied to a recovery file first, so a save never discards
+/// them.
+pub fn guard_before_replace(
+    path: &Path,
+    max_bytes: u64,
+    has_expected_shape: fn(&Value) -> bool,
+    check_schema: impl FnOnce(&Value) -> Result<(), String>,
+) -> Result<(), String> {
+    let Some(raw) = read_bounded(path, max_bytes)? else {
+        return Ok(());
+    };
+    match serde_json::from_str::<Value>(&raw) {
+        Ok(value) if has_expected_shape(&value) => check_schema(&value),
+        _ => {
+            let recovery = recovery_copy_path(path);
+            atomic_write(&recovery, raw.as_bytes())?;
+            crate::logging::warn(&format!(
+                "Damaged file {} preserved at {} before it was replaced.",
+                path.display(),
+                recovery.display()
+            ));
+            Ok(())
+        }
+    }
+}
+
+/// Refuse to touch a file that declares a `schemaVersion` this build does not
+/// know. Such a file is read best-effort but never rewritten.
+pub fn ensure_schema_not_newer(value: &Value, what: &str) -> Result<(), String> {
+    if ensure_schema_version_is_newer(value) {
+        notify_newer_once(what);
+        return Err(format!(
+            "{what} was written by a newer ROSI version. This version will not overwrite it."
+        ));
+    }
+    Ok(())
+}
+
+/// True when `path` holds a JSON object whose `schemaVersion` is newer than
+/// this build. Such a file is preserved on purpose, so a refused write to it is
+/// not a durability failure.
+pub fn is_newer_schema_file(path: &Path, max_bytes: u64) -> bool {
+    read_bounded(path, max_bytes)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .is_some_and(|value| ensure_schema_version_is_newer(&value))
+}
+
+fn ensure_schema_version_is_newer(value: &Value) -> bool {
+    value
+        .get("schemaVersion")
+        .and_then(Value::as_f64)
+        .is_some_and(|version| version > f64::from(CURRENT_PERSISTED_SCHEMA_VERSION))
+}
+
+/// One non-blocking warning per file kind per launch, so changes this version
+/// cannot save are never lost silently.
+pub fn notify_newer_once(what: &str) {
+    static NOTIFIED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    {
+        let mut notified = NOTIFIED.lock().unwrap_or_else(|p| p.into_inner());
+        if notified.iter().any(|kind| kind == what) {
+            return;
+        }
+        notified.push(what.to_string());
+    }
+    crate::logging::warn(&format!(
+        "Told the user that a newer ROSI version owns {what}; changes will not be saved."
+    ));
+    if let Some(app) = crate::app_state::app() {
+        use tauri_plugin_dialog::DialogExt;
+        app.dialog()
+            .message(format!(
+                "{what} was saved by a newer version of ROSI. This version will not overwrite it, so changes you make here will not be kept. Reopen the newer ROSI version to keep working with this data."
+            ))
+            .title("Newer ROSI Data")
+            .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
+            .show(|_| {});
+    }
+}
+
+/// Versioned list files are `{ "schemaVersion": n, "items": [...] }`. Files
+/// written before versioning are bare arrays, and both forms are accepted.
+pub fn is_list_file(value: &Value) -> bool {
+    value.is_array() || value.get("items").is_some_and(Value::is_array)
+}
+
+/// The items of a list file in either form.
+pub fn list_items(value: Value) -> Option<Vec<Value>> {
+    match value {
+        Value::Array(list) => Some(list),
+        Value::Object(mut object) => match object.remove("items") {
+            Some(Value::Array(list)) => Some(list),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ListFile<'a, T: Serialize> {
+    schema_version: u32,
+    items: &'a [T],
+}
+
+/// Pretty-printed versioned list file. Writers and size checks share this
+/// encoder so the measured size is the size on disk.
+pub fn encode_list<T: Serialize>(items: &[T]) -> Result<Vec<u8>, String> {
+    serde_json::to_vec_pretty(&ListFile {
+        schema_version: CURRENT_PERSISTED_SCHEMA_VERSION,
+        items,
+    })
+    .map_err(|error| error.to_string())
 }

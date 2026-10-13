@@ -15,6 +15,8 @@ pub const INVALID_URL: &str = "INVALID_URL";
 pub const INVALID_PATH: &str = "INVALID_PATH";
 pub const NOT_AVAILABLE: &str = "NOT_AVAILABLE";
 pub const INTERNAL_ERROR: &str = "INTERNAL_ERROR";
+/// The file belongs to a newer ROSI version and is intentionally preserved.
+pub const NEWER_VERSION: &str = "NEWER_VERSION";
 
 impl IpcError {
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {

@@ -7,6 +7,7 @@ const { execFileSync, spawnSync } = require("child_process");
 
 const { assertGitHubCliAuthenticated, githubApi } = require("./github-cli.cjs");
 const { assertStableReleaseOverridesAllowed } = require("./release-policy.cjs");
+const { assertReleaseTagMatchesHead } = require("./release-git-tag.cjs");
 const {
   assertExpectedRelease,
   assertReleaseTagName,
@@ -45,11 +46,35 @@ function runVerifyDraft() {
   }
 }
 
+function runReleasePreflight() {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(__dirname, "release-preflight.js")],
+    { stdio: "inherit", cwd: path.resolve(__dirname, "..") },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(
+      "release:preflight failed; publication requires current clean-source and hosted-CI proof.",
+    );
+  }
+}
+
 async function main() {
   assertStableReleaseOverridesAllowed(process.env, VERSION);
   assertGitHubCliAuthenticated();
   const commit = currentReleaseCommit();
   runVerifyDraft();
+
+  const initialTagCommit = assertReleaseTagMatchesHead({
+    owner: REPO_OWNER,
+    repo: REPO_NAME,
+    tag: TAG_NAME,
+    headCommit: commit,
+    api: githubApi,
+    // Draft releases can receive their tag only when GitHub publishes them.
+    allowMissing: true,
+  });
 
   const releases = [];
   for (let page = 1; page <= 20; page += 1) {
@@ -91,6 +116,30 @@ async function main() {
     );
   }
 
+  // This invokes the same current branch/tree/hosted-CI gate used by release
+  // preparation. It stays adjacent to the publish request so old build-time
+  // evidence cannot authorize a later direct publication.
+  runReleasePreflight();
+  const currentCommit = currentReleaseCommit();
+  if (currentCommit !== commit) {
+    throw new Error(
+      `HEAD changed during publication checks: expected ${commit}, now ${currentCommit}.`,
+    );
+  }
+  const prePublishTagCommit = assertReleaseTagMatchesHead({
+    owner: REPO_OWNER,
+    repo: REPO_NAME,
+    tag: TAG_NAME,
+    headCommit: currentCommit,
+    api: githubApi,
+    allowMissing: true,
+  });
+  if (initialTagCommit !== null && prePublishTagCommit !== initialTagCommit) {
+    throw new Error(
+      `Release tag ${TAG_NAME} changed while publication checks were running.`,
+    );
+  }
+
   const published = githubApi(
     "PATCH",
     `/repos/${REPO_OWNER}/${REPO_NAME}/releases/${draft.id}`,
@@ -106,6 +155,13 @@ async function main() {
     TAG_NAME,
     "Published release",
   );
+  assertReleaseTagMatchesHead({
+    owner: REPO_OWNER,
+    repo: REPO_NAME,
+    tag: TAG_NAME,
+    headCommit: commit,
+    api: githubApi,
+  });
   console.log(`Published ${TAG_NAME}: ${validated.html_url}`);
   console.log(
     "Next: npm run release:verify:published (live updater feed + signature proof).",

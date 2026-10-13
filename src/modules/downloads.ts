@@ -18,7 +18,7 @@
   type RosiWindow = Window & typeof globalThis & { rosiModules?: DownloadsModules };
 
   function parseYtdlpProgress(message: string): ParsedYtdlpProgress | null {
-    // Keep in sync with src/utils/downloadJobProgress.ts (canonical for main process).
+    // Mirrors parse_legacy in src-tauri/src/progress.rs.
     const progressMatch = message.match(
       /\[download\]\s+(\d+\.?\d*)%\s+of\s+~?(\S+)\s+at\s+(\S+)\s+ETA\s+(\S+)/
     );
@@ -47,8 +47,8 @@
   function formatBytes(bytes: number) {
     if (bytes === 0) return '0 B';
     const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 

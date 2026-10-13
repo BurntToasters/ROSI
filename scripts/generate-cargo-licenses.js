@@ -76,6 +76,16 @@ const REVIEWED_SOURCE_OMISSIONS = new Map([
     "The crates.io package and its pinned upstream source revision contain no license text beyond the MPL-2.0 declaration in Cargo.toml.",
   ],
   [
+    "selectors@0.38.0",
+    {
+      repository: "https://github.com/servo/stylo",
+      revision: "572ecba2d1600e7c3d490586692a209faf703baa",
+      pathInRepository: "selectors",
+      reason:
+        "The selectors 0.38.0 crate and this exact immutable stylo revision contain no license text under selectors or at the repository root beyond the MPL-2.0 SPDX declaration in Cargo.toml.",
+    },
+  ],
+  [
     "sigchld@0.2.4",
     "The crates.io package and its pinned upstream source revision contain no license text beyond the MIT declaration in Cargo.toml.",
   ],
@@ -372,8 +382,18 @@ function sourceRevisionForPackage(pkg) {
   return { ...packaged, repository: override.repository };
 }
 
-function reviewedSourceOmissionForPackage(pkg) {
-  return REVIEWED_SOURCE_OMISSIONS.get(`${pkg.name}@${pkg.version}`) || null;
+function reviewedSourceOmissionForPackage(pkg, vcs) {
+  const review = REVIEWED_SOURCE_OMISSIONS.get(`${pkg.name}@${pkg.version}`);
+  if (!review || typeof review === "string") return review || null;
+  const repository = vcs?.repository || normalizedRepositoryUrl(pkg.repository);
+  if (
+    repository !== review.repository ||
+    vcs?.revision !== review.revision ||
+    vcs?.pathInRepository !== review.pathInRepository
+  ) {
+    return null;
+  }
+  return review;
 }
 
 function toLicenseEntry(pkg) {
@@ -393,7 +413,7 @@ function toLicenseEntry(pkg) {
     requireComplete && !bundledText && vcs
       ? readSourceRevisionLicenseTexts(pkg, vcs)
       : null;
-  const reviewedOmission = reviewedSourceOmissionForPackage(pkg);
+  const reviewedOmission = reviewedSourceOmissionForPackage(pkg, vcs);
   const sourceOmission =
     !bundledText &&
     !sourceRevisionResult?.text &&
@@ -449,9 +469,15 @@ function toLicenseEntry(pkg) {
   if (sourceOmission) {
     entry.licenseTextReview = {
       status: "source-omission-reviewed",
-      reason: sourceOmission,
+      reason:
+        typeof sourceOmission === "string"
+          ? sourceOmission
+          : sourceOmission.reason,
       repository: vcs?.repository || normalizedRepositoryUrl(pkg.repository),
       revision: vcs?.revision || null,
+      ...(typeof sourceOmission === "string"
+        ? {}
+        : { pathInRepository: sourceOmission.pathInRepository }),
     };
   }
 

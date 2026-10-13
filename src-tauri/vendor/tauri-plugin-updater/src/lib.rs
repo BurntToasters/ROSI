@@ -110,8 +110,13 @@ impl<R: Runtime, T: Manager<R>> UpdaterExt<R> for T {
         let before_exit = before_exit.clone();
         builder = builder.on_before_exit(move || {
             if let Some(before_exit) = before_exit.as_ref() {
-                before_exit();
+                before_exit()?;
             }
+            Ok(())
+        });
+        builder = builder.on_windows_installer_launched(move || {
+            // Windows exits directly after ShellExecuteW starts the installer.
+            // The normal restart path owns Tauri cleanup on other platforms.
             app_handle.cleanup_before_exit();
         });
 
@@ -123,7 +128,7 @@ impl<R: Runtime, T: Manager<R>> UpdaterExt<R> for T {
     }
 }
 
-type AppBeforeExit = Arc<dyn Fn() + Send + Sync + 'static>;
+type AppBeforeExit = Arc<dyn Fn() -> std::result::Result<(), String> + Send + Sync + 'static>;
 
 struct UpdaterState {
     target: Option<String>,
@@ -216,9 +221,12 @@ impl Builder {
         self
     }
 
-    /// App cleanup to run right before the Windows installer is launched and
-    /// the process exits with `std::process::exit` (no `RunEvent::Exit`).
-    pub fn on_before_exit<F: Fn() + Send + Sync + 'static>(mut self, f: F) -> Self {
+    /// Fallible app preparation to run before an update is installed.
+    /// Returning an error aborts installation and leaves the update resource available.
+    pub fn on_before_exit<F: Fn() -> std::result::Result<(), String> + Send + Sync + 'static>(
+        mut self,
+        f: F,
+    ) -> Self {
         self.before_exit.replace(Arc::new(f));
         self
     }

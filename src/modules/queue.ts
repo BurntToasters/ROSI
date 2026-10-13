@@ -123,7 +123,13 @@
   ) {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = `queue-item-action ${className}`;
+    const variant =
+      className === 'queue-item-retry'
+        ? 'btn--primary'
+        : className === 'queue-item-remove'
+          ? 'btn--neutral btn--danger-hover'
+          : 'btn--neutral';
+    button.className = `queue-item-action ${className} btn btn--xs ${variant}`;
     button.dataset.queueId = item.id;
     button.dataset.queueAction = className;
     button.setAttribute('aria-label', ariaLabel);
@@ -233,6 +239,13 @@
     } = deps;
 
     if (!queueList || !queueSection) return;
+    // Broadcasts re-render the whole list; keep keyboard focus on the same
+    // control when it still exists afterwards.
+    const focused = document.activeElement;
+    const focusedRestore =
+      !focusQueueItemId && focused instanceof HTMLElement && queueList.contains(focused)
+        ? { id: focused.dataset.queueId, action: focused.dataset.queueAction }
+        : null;
     if (queueCount) queueCount.textContent = String(queue.length);
     if (queue.length === 0) {
       queueSection.classList.remove('has-items');
@@ -347,6 +360,17 @@
           )
         );
       }
+      if (item.status === 'completed' || item.status === 'failed' || item.status === 'cancelled') {
+        actions.append(
+          createActionButton(
+            'Remove',
+            'queue-item-remove',
+            item,
+            () => removeFromQueue(item.id),
+            `Remove ${item.filename || hostname} from queue`
+          )
+        );
+      }
 
       row.append(statusEl, srEl, content);
       if (actions.childElementCount > 0) row.appendChild(actions);
@@ -370,6 +394,18 @@
     });
 
     queueList.appendChild(fragment);
+
+    if (!focusQueueItemId && focusedRestore?.id && focusedRestore.action) {
+      const row = findQueueRow(queueList, focusedRestore.id);
+      const target = row
+        ? Array.from(row.querySelectorAll<HTMLElement>('[data-queue-action]')).find(
+            (control) =>
+              control.dataset.queueAction === focusedRestore.action &&
+              !control.hasAttribute('disabled')
+          )
+        : null;
+      target?.focus();
+    }
 
     if (focusQueueItemId) {
       // Prefer an enabled control: after a retry or removal the first action can

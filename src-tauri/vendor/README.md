@@ -16,6 +16,10 @@ fixes:
   deleted. Failure restores the backup. Staging lives next to the `.app`, not
   under `/tmp`, so a dropped `TempDir` cannot erase the installed app. `EXDEV`
   copies onto the app's volume before the swap.
+- macOS live, staged, and recovery bundles must each contain executable,
+  non-symlink `rosi-yt-dlp`, `rosi-ffmpeg`, and `rosi-ffprobe` sidecars as well
+  as the host executable and Resources directory. Rust and the privileged
+  AppleScript path enforce the same bundle-completeness contract.
 - Tar extraction must reject `Prefix` / `RootDir` / `ParentDir`, hard links,
   and symlinks that escape the extract root.
 - Linux `pkexec` / `sudo` / `dpkg` / `rpm` must be absolute, root-owned
@@ -28,9 +32,18 @@ fixes:
 - Linux RPM updates run `rpm -U --oldpackage`: RPM sorts `X.Y.Z-beta.N` above
   `X.Y.Z`, so beta -> stable was refused as a downgrade. The plugin has already
   compared versions with semver; `dpkg -i` only warns on the same case.
-- `Builder::on_before_exit` lets the app stop its own work (downloads, queue
-  flush) right before the Windows installer takes over via `process::exit`.
-- Windows must treat `ShellExecuteW <= 32` as failure and must not run
-  `on_before_exit` / `exit` until the installer actually launches.
+- Linux AppImage updates validate the AppImage marker and target ELF header,
+  stage the payload before touching the live file, accept only one regular
+  `.AppImage` tar entry, restore the existing executable mode, and retain the
+  previous image for recovery after a successful swap.
+- `Builder::on_before_exit` is a fallible pre-install flush on every platform.
+  A failed state flush aborts installation and keeps the downloaded update
+  available for retry. It must not perform Tauri cleanup before installation.
+- Windows must treat `ShellExecuteW <= 32` as failure, keep Tauri resources
+  intact on failure, and run Tauri cleanup only after a successful installer
+  launch immediately before the direct process exit. Other platforms use their
+  normal restart cleanup path.
+- Updater package downloads are limited to 512 MiB based on actual streamed
+  bytes, including responses without a `Content-Length` header.
 
 Do not drop the path patch without an equivalent upstream fix.

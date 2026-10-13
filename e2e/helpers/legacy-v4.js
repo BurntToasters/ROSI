@@ -110,8 +110,10 @@ export function expectedImportedSettings({ downloadFolder }) {
   return {
     theme: "purple",
     showConsoleOutput: true,
-    queueCollapsed: true,
-    downloadProfilesEnabled: true,
+    // v4's queueCollapsed and downloadProfilesEnabled have no v5 key; profiles
+    // were on, so the chosen mode survives and the dock opens on its default.
+    dockTab: "queue",
+    dockCollapsed: false,
     downloadMode: "best-video",
     audioFormat: "opus",
     convertFormat: "mov",

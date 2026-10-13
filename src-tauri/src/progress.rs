@@ -275,6 +275,7 @@ pub fn build_event(
     };
     JobProgressEvent {
         phase,
+        session_id: None,
         phase_percent: phase_percent.is_finite().then_some(phase_percent),
         item_overall_percent,
         overall_percent,
@@ -292,6 +293,7 @@ pub fn build_event(
 pub fn idle_event(queue: Option<&QueueProgress>) -> JobProgressEvent {
     JobProgressEvent {
         phase: Phase::Idle,
+        session_id: None,
         phase_percent: Some(0.0),
         item_overall_percent: 0.0,
         overall_percent: 0.0,
@@ -361,25 +363,11 @@ impl FfmpegProgressState {
     }
 }
 
-/// Phase weights follow the profile/quality settings, not only the -f string.
+/// Phase weights follow the effective quality flags (derived from the profile,
+/// then request overrides), not only the -f string.
 pub fn resolve_plan(settings: &Settings) -> Plan {
-    if settings.audio_only
-        || (settings.download_profiles_enabled && settings.download_mode == "audio")
-    {
-        return Plan {
-            expect_merge: false,
-            expect_convert: settings.convert_enabled,
-        };
-    }
-    if settings.download_profiles_enabled {
-        return Plan {
-            expect_merge: settings.download_mode == "best-video"
-                || settings.download_mode == "custom",
-            expect_convert: settings.convert_enabled,
-        };
-    }
     Plan {
-        expect_merge: settings.best_quality || settings.advanced_options,
+        expect_merge: !settings.audio_only && (settings.best_quality || settings.advanced_options),
         expect_convert: settings.convert_enabled,
     }
 }

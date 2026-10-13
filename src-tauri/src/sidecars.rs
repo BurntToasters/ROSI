@@ -151,21 +151,6 @@ pub fn effective_ffmpeg(custom: Option<&str>) -> PathBuf {
     bundled_ffmpeg().unwrap_or_else(|| PathBuf::from("ffmpeg"))
 }
 
-/// Value for yt-dlp `--ffmpeg-location`. yt-dlp derives ffprobe from the
-/// FFmpeg file name (`rosi-ffmpeg` -> `rosi-ffprobe`) or directory.
-pub fn ffmpeg_location_for_ytdlp(custom: Option<&str>) -> Option<String> {
-    if let Some(resolved) = custom.and_then(resolve_custom_ffmpeg) {
-        if is_bare_command(&resolved.to_string_lossy()) {
-            // Let yt-dlp find a PATH ffmpeg on its own.
-            return None;
-        }
-        return resolved
-            .parent()
-            .map(|dir| dir.to_string_lossy().into_owned());
-    }
-    bundled_ffmpeg().map(|path| path.to_string_lossy().into_owned())
-}
-
 /// Log bundled sidecar versions at startup (diagnostics only).
 pub fn verify_bundled() {
     for name in [FFMPEG_SIDECAR, FFPROBE_SIDECAR] {

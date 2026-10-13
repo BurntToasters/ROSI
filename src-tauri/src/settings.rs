@@ -2,7 +2,7 @@
 //! settings commands (load, save, reset, import, export).
 
 use crate::constants::*;
-use crate::ipc::{self, IpcResult, INTERNAL_ERROR};
+use crate::ipc::{self, IpcResult, INTERNAL_ERROR, NEWER_VERSION};
 use crate::types::{DownloadPreset, DownloadRequestOptions, PlaylistSelection, Settings};
 use crate::validation::{set_preset_bool, validate_download_path, validate_ffmpeg_path_value};
 use serde_json::{Map, Value};
@@ -17,10 +17,9 @@ pub fn default_settings() -> Settings {
         settings_version: CURRENT_SETTINGS_VERSION,
         theme: "system".into(),
         show_console_output: false,
-        console_collapsed: false,
-        queue_collapsed: false,
-        download_profiles_enabled: false,
-        download_mode: "best-video".into(),
+        dock_tab: "queue".into(),
+        dock_collapsed: false,
+        download_mode: "compatible".into(),
         download_presets: Vec::new(),
         ask_download_location: false,
         advanced_options: false,
@@ -100,12 +99,19 @@ fn read_browser_choice(raw: &Map<String, Value>, fallback: &str) -> String {
     }
 }
 
-fn read_ffmpeg_path(raw: &Map<String, Value>) -> String {
+fn read_ffmpeg_path(raw: &Map<String, Value>, own_profile: bool) -> String {
     let value = raw.get("ffmpegPath").and_then(Value::as_str).unwrap_or("");
     let capped = truncate_chars(value, 1024).trim();
     if capped.is_empty() {
         return String::new();
     }
+    if own_profile {
+        // ROSI 5's own setting survives an FFmpeg that is missing right now
+        // (an unmounted volume or a package upgrade in progress); downloads
+        // fall back to the bundled FFmpeg until it returns.
+        return crate::validation::validate_ffmpeg_path_shape(capped).unwrap_or_default();
+    }
+    // Imported values (ROSI 4 or a settings file) must point at a real binary.
     validate_ffmpeg_path_value(Some(capped))
         .ok()
         .flatten()
@@ -142,8 +148,22 @@ fn infer_download_mode(raw: &Map<String, Value>) -> &'static str {
     } else if raw.get("advancedOptions").and_then(Value::as_bool) == Some(true) {
         "custom"
     } else {
-        "best-video"
+        "compatible"
     }
+}
+
+/// Earlier builds hid profiles behind `downloadProfilesEnabled`; with it off,
+/// downloads used the compatible format whatever `downloadMode` said.
+fn read_download_mode(raw: &Map<String, Value>) -> String {
+    if raw.get("downloadProfilesEnabled").and_then(Value::as_bool) == Some(false) {
+        return "compatible".into();
+    }
+    read_choice(
+        raw,
+        "downloadMode",
+        ALLOWED_DOWNLOAD_PROFILES,
+        infer_download_mode(raw),
+    )
 }
 
 fn sanitize_preset_name(
@@ -303,7 +323,6 @@ pub fn sanitize_download_presets(value: Option<&Value>) -> Vec<DownloadPreset> {
 /// so request/on-screen values keep precedence.
 pub fn preset_to_request_options(preset: &DownloadPreset) -> Map<String, Value> {
     let options = DownloadRequestOptions {
-        profile_enabled: Some(true),
         profile: Some(preset.profile.clone()),
         preset_id: Some(preset.id.clone()),
         preset_name: Some(preset.name.clone()),
@@ -340,39 +359,34 @@ pub fn preset_to_request_options(preset: &DownloadPreset) -> Map<String, Value> 
     map
 }
 
-/// Coerce any JSON value into a valid, current-schema settings object.
+/// Coerce imported JSON (ROSI 4 or a settings export) into valid,
+/// current-schema settings.
 pub fn migrate_settings(raw: &Value) -> Settings {
+    migrate_settings_from(raw, false)
+}
+
+/// Like `migrate_settings`, for ROSI 5's own settings file.
+fn migrate_profile_settings(raw: &Value) -> Settings {
+    migrate_settings_from(raw, true)
+}
+
+fn migrate_settings_from(raw: &Value, own_profile: bool) -> Settings {
     let defaults = default_settings();
     let Some(raw) = raw.as_object() else {
         return defaults;
     };
-    let download_profiles_enabled = read_bool(
-        raw,
-        "downloadProfilesEnabled",
-        defaults.download_profiles_enabled,
+    let download_mode = read_download_mode(raw);
+    let (advanced_options, audio_only, best_quality) = (
+        download_mode == "custom",
+        download_mode == "audio",
+        download_mode == "best-video",
     );
-    let download_mode = read_choice(
-        raw,
-        "downloadMode",
-        ALLOWED_DOWNLOAD_PROFILES,
-        infer_download_mode(raw),
-    );
-    let (advanced_options, audio_only, best_quality) = if download_profiles_enabled {
-        (
-            download_mode == "custom",
-            download_mode == "audio",
-            download_mode == "best-video",
-        )
-    } else {
-        (false, false, false)
-    };
     Settings {
         settings_version: read_settings_version(raw),
         theme: read_choice(raw, "theme", ALLOWED_THEMES, &defaults.theme),
         show_console_output: read_bool(raw, "showConsoleOutput", defaults.show_console_output),
-        console_collapsed: read_bool(raw, "consoleCollapsed", defaults.console_collapsed),
-        queue_collapsed: read_bool(raw, "queueCollapsed", defaults.queue_collapsed),
-        download_profiles_enabled,
+        dock_tab: read_choice(raw, "dockTab", ALLOWED_DOCK_TABS, &defaults.dock_tab),
+        dock_collapsed: read_bool(raw, "dockCollapsed", defaults.dock_collapsed),
         download_mode,
         download_presets: sanitize_download_presets(raw.get("downloadPresets")),
         ask_download_location: read_bool(
@@ -414,7 +428,7 @@ pub fn migrate_settings(raw: &Value) -> Settings {
         gpu_acceleration: read_bool(raw, "gpuAcceleration", defaults.gpu_acceleration),
         gpu_type: read_choice(raw, "gpuType", ALLOWED_GPU_TYPES, &defaults.gpu_type),
         best_quality,
-        ffmpeg_path: read_ffmpeg_path(raw),
+        ffmpeg_path: read_ffmpeg_path(raw, own_profile),
         download_folder: read_download_folder(raw),
         hide_support_modal: read_bool(raw, "hideSupportModal", defaults.hide_support_modal),
         check_updates_on_startup: read_bool(
@@ -448,7 +462,7 @@ fn normalized(mut settings: Settings) -> Settings {
 
 fn load_unlocked() -> Settings {
     match crate::fs_util::read_json(&settings_path(), MAX_SETTINGS_FILE_BYTES) {
-        Some(value) => normalized(migrate_settings(&value)),
+        Some(value) => normalized(migrate_profile_settings(&value)),
         None => default_settings(),
     }
 }
@@ -459,7 +473,30 @@ pub fn load() -> Settings {
 }
 
 fn write_unlocked(settings: &Settings) -> Result<(), String> {
+    protect_existing_settings()?;
     crate::fs_util::write_json(&settings_path(), settings)
+}
+
+fn check_schema(value: &Value) -> Result<(), String> {
+    if value
+        .get("settingsVersion")
+        .and_then(Value::as_f64)
+        .is_some_and(|version| version > f64::from(CURRENT_SETTINGS_VERSION))
+    {
+        return Err("These settings belong to a newer ROSI version. Reopen that version to change settings; this version will preserve the original file.".into());
+    }
+    Ok(())
+}
+
+/// Preserve damaged bytes before a defaults-based save, and never downgrade
+/// a newer schema or replace settings that cannot be read safely.
+fn protect_existing_settings() -> Result<(), String> {
+    crate::fs_util::guard_before_replace(
+        &settings_path(),
+        MAX_SETTINGS_FILE_BYTES,
+        Value::is_object,
+        check_schema,
+    )
 }
 
 /// Merge a validated patch into the persisted settings.
@@ -473,7 +510,7 @@ pub fn save_patch(patch: &Map<String, Value>) -> Result<Settings, String> {
     for (key, value) in patch {
         merged.insert(key.clone(), value.clone());
     }
-    let complete = normalized(migrate_settings(&Value::Object(merged)));
+    let complete = normalized(migrate_profile_settings(&Value::Object(merged)));
     if complete.ffmpeg_path != existing.ffmpeg_path
         || complete.gpu_acceleration != existing.gpu_acceleration
     {
@@ -490,6 +527,7 @@ pub fn save_all(settings: &Settings) -> Result<(), String> {
 
 /// Validate a ROSI 4 settings object and save it as the ROSI 5 settings.
 pub fn import_legacy(raw: &Value) -> Result<(), String> {
+    check_schema(raw)?;
     save_all(&normalized(migrate_settings(raw)))
 }
 
@@ -505,6 +543,32 @@ fn show_save_error(message: &str) {
 
 #[tauri::command(async)]
 pub fn get_settings() -> Settings {
+    static REPORTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    let path = settings_path();
+    let problem = match crate::fs_util::read_bounded(&path, MAX_SETTINGS_FILE_BYTES) {
+        Ok(Some(raw)) => match serde_json::from_str::<Value>(&raw) {
+            Ok(value @ Value::Object(_)) => check_schema(&value).err(),
+            _ => Some("Your settings file is damaged. ROSI is showing defaults and will preserve a recovery copy before saving changes.".to_string()),
+        },
+        Ok(None) => None,
+        Err(error) => Some(format!(
+            "ROSI could not read your settings file at {}: {error}. ROSI is showing defaults and will not overwrite it. Check that the file is readable and no larger than 2 MB, fix or move it, then restart ROSI.",
+            path.display()
+        )),
+    }
+    .or_else(crate::legacy::recovery_message);
+    if let Some(message) = problem {
+        REPORTED.get_or_init(|| {
+            crate::logging::warn(&message);
+            if let Some(app) = crate::app_state::app() {
+                app.dialog()
+                    .message(message)
+                    .title("ROSI Profile Recovery")
+                    .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
+                    .show(|_| {});
+            }
+        });
+    }
     load()
 }
 
@@ -513,30 +577,79 @@ pub fn get_default_settings() -> IpcResult<Settings> {
     ipc::ok(default_settings())
 }
 
+fn settings_file_is_newer() -> bool {
+    crate::fs_util::read_bounded(&settings_path(), MAX_SETTINGS_FILE_BYTES)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .is_some_and(|value| check_schema(&value).is_err())
+}
+
 #[tauri::command(async)]
 pub fn save_settings(settings: Value) -> IpcResult<Settings> {
+    // The renderer sends its whole snapshot. Values equal to the stored ones
+    // are not changes, so they are not validated again; a stored FFmpeg path
+    // that is missing right now must not be reported on every save.
+    let settings = match (settings, serde_json::to_value(load())) {
+        (Value::Object(mut incoming), Ok(Value::Object(stored))) => {
+            incoming.retain(|key, value| stored.get(key) != Some(value));
+            Value::Object(incoming)
+        }
+        (settings, _) => settings,
+    };
     let patch = match crate::validation::validate_settings_patch(&settings) {
         Ok(patch) => patch,
         Err(error) => return ipc::from_error(error),
     };
-    match save_patch(&patch) {
-        Ok(saved) => ipc::ok(saved),
+    for rejected in &patch.rejected {
+        crate::logging::warn(&format!(
+            "Refused setting {}: {}",
+            rejected.key, rejected.message
+        ));
+    }
+    match save_patch(&patch.values) {
+        Ok(saved) if patch.rejected.is_empty() => ipc::ok(saved),
+        Ok(_) => {
+            // The valid fields were saved. Report the refused ones as a
+            // validation error; `details` lists their keys (JSON array) so the
+            // renderer can restore just those controls.
+            let message = patch
+                .rejected
+                .iter()
+                .map(|rejected| rejected.message.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let keys: Vec<&str> = patch
+                .rejected
+                .iter()
+                .map(|rejected| rejected.key.as_str())
+                .collect();
+            ipc::from_error(crate::ipc::IpcError {
+                code: crate::ipc::VALIDATION_ERROR,
+                message,
+                details: serde_json::to_string(&keys).ok(),
+            })
+        }
+        Err(error) if settings_file_is_newer() => {
+            // The newer file is kept as-is. Tell the user once per launch
+            // instead of on every change, and report a distinct code so the
+            // close flow can treat the preserved file as durable.
+            crate::logging::warn(&format!("Settings were not saved: {error}"));
+            crate::fs_util::notify_newer_once("Settings");
+            ipc::err(NEWER_VERSION, error)
+        }
         Err(error) => {
             crate::logging::error(&format!("Failed to save settings: {error}"));
             show_save_error(&error);
-            ipc::err(INTERNAL_ERROR, "Failed to persist settings.")
+            ipc::err(INTERNAL_ERROR, error)
         }
     }
 }
 
 #[tauri::command(async)]
-pub fn reset_settings(app: tauri::AppHandle) {
-    if let Err(error) = save_all(&default_settings()) {
-        crate::logging::error(&format!(
-            "Failed to save default settings during reset: {error}"
-        ));
-    }
-    crate::window::restart(&app);
+pub fn reset_settings(app: tauri::AppHandle) -> Result<(), String> {
+    let defaults = default_settings();
+    crate::window::restart_with(&app, || save_all(&defaults))
 }
 
 #[derive(serde::Serialize)]
@@ -605,6 +718,7 @@ pub async fn import_settings(app: tauri::AppHandle) -> IpcResult<Imported> {
         if !parsed.is_object() {
             return Err("Imported settings file has invalid structure.".to_string());
         }
+        check_schema(&parsed)?;
         let migrated = normalized(migrate_settings(&parsed));
         save_all(&migrated)?;
         crate::gpu::clear_cache();

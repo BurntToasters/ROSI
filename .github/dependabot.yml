@@ -8,6 +8,9 @@ updates:
       dev-dependencies:
         dependency-type: development
       tauri:
+        # @tauri-apps/plugin-updater must move in lockstep with the vendored
+        # Rust crate in src-tauri/vendor/tauri-plugin-updater (see its PATCHES.md).
+        # Review its bumps by hand against that rebase procedure.
         patterns:
           - "@tauri-apps/*"
 
@@ -15,6 +18,10 @@ updates:
     directory: "/src-tauri"
     schedule:
       interval: weekly
+    # [patch.crates-io] points tauri-plugin-updater at vendor/, so a version
+    # bump here would change nothing. Rebase the vendored fork by hand instead.
+    ignore:
+      - dependency-name: "tauri-plugin-updater"
     groups:
       tauri:
         patterns:
