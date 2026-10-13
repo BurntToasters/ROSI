@@ -164,16 +164,12 @@ fn exec_capable_tmpdir() -> Option<PathBuf> {
 pub fn executable_temp_dir() -> Result<PathBuf, String> {
     let current = std::env::temp_dir();
     #[cfg(target_os = "linux")]
-    {
-        if !mounted_noexec(&current) {
-            return Ok(current);
-        }
+    if mounted_noexec(&current) {
         return exec_capable_tmpdir().ok_or_else(|| {
             "The system temporary directory is noexec and no executable helper directory is available."
                 .to_string()
         });
     }
-    #[cfg(not(target_os = "linux"))]
     Ok(current)
 }
 
@@ -356,6 +352,7 @@ impl ManagedChild {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    #[cfg(unix)]
     pub fn id(&self) -> u32 {
         self.child.id()
     }

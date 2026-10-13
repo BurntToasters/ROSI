@@ -566,7 +566,7 @@ mod audit4_tests {
     fn probe_uses_the_selected_sibling_and_never_ffmpeg() {
         let root = std::env::temp_dir().join(crate::fs_util::uuid_v4());
         fs::create_dir(&root).unwrap();
-        let ffmpeg = root.join("FFMPEG");
+        let ffmpeg = root.join(format!("FFMPEG{}", std::env::consts::EXE_SUFFIX));
         let ffprobe = root.join(format!("ffprobe{}", std::env::consts::EXE_SUFFIX));
         fs::write(&ffmpeg, "ffmpeg fixture").unwrap();
         fs::write(&ffprobe, "ffprobe fixture").unwrap();

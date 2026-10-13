@@ -2116,13 +2116,7 @@ fn reserve_conversion_temp(input: &Path, target: &str) -> Result<ConversionTemp,
     let parent = input.parent().unwrap_or_else(|| Path::new("."));
     for _ in 0..32 {
         let directory = parent.join(format!(".rosi-convert-{}", crate::fs_util::uuid_v4()));
-        let mut builder = std::fs::DirBuilder::new();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
-        }
-        match builder.create(&directory) {
+        match crate::fs_util::private_dir_builder().create(&directory) {
             Ok(()) => {
                 crate::staging::hide_on_windows(&directory);
                 return Ok(ConversionTemp {
@@ -2773,15 +2767,9 @@ fn retire_staged_source(
     };
 
     for _ in 0..32 {
-        let mut builder = std::fs::DirBuilder::new();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
-        }
         let quarantine_dir =
             parent.join(format!(".rosi-source-retire-{}", crate::fs_util::uuid_v4()));
-        match builder.create(&quarantine_dir) {
+        match crate::fs_util::private_dir_builder().create(&quarantine_dir) {
             Ok(()) => crate::staging::hide_on_windows(&quarantine_dir),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
