@@ -67,7 +67,14 @@ modules:
         esac
       - npm run licenses
       - npm run build
-      - npx tauri build --no-bundle -- --locked
+      # The SDK's CFLAGS carry -O2, which cc-rs appends after aws-lc-sys's -O0
+      # for jitterentropy, and that source refuses to compile optimized. cc-rs
+      # already sets -O from the Cargo profile, so drop only the -O flags and
+      # keep the SDK hardening flags.
+      - |
+        CFLAGS="$(printf '%s' "$CFLAGS" | sed -E 's/(^| )-O[0-9sgz]?( |$)/ /g')" \
+        CXXFLAGS="$(printf '%s' "$CXXFLAGS" | sed -E 's/(^| )-O[0-9sgz]?( |$)/ /g')" \
+          npx tauri build --no-bundle -- --locked
       - install -Dm755 src-tauri/target/release/rosi /app/bin/rosi
       - |
         case "$FLATPAK_ARCH" in
