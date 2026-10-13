@@ -193,6 +193,7 @@ async function loadEngine(api: MockApi) {
 
 describe('rosiEngine DOM wiring', () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
     clearTrackedDocListeners();
     document.body.innerHTML = '';
@@ -1067,8 +1068,14 @@ describe('rosiEngine DOM wiring', () => {
     expect(document.querySelector('.history-error')?.textContent).toContain('/tmp/recovery');
   });
 
+  // The in-app Deno installer is only offered on Windows/macOS; Linux gets
+  // install instructions instead, and jsdom reports the host OS in its UA.
+  const pretendNonLinux = () =>
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (win32) jsdom');
+
   for (const result of [{ success: false, error: 'package manager failed' }, {}]) {
     it(`shows Deno reminder failure for ${JSON.stringify(result)}`, async () => {
+      pretendNonLinux();
       const api = buildMockApi({
         getSettings: vi.fn(() =>
           Promise.resolve({ ...defaultSettings(), denoReminderDismissed: false })
@@ -1089,6 +1096,7 @@ describe('rosiEngine DOM wiring', () => {
   }
 
   it('shows Deno setup failure instead of an installed state', async () => {
+    pretendNonLinux();
     const api = buildMockApi({
       getSettings: vi.fn(() =>
         Promise.resolve({
