@@ -55,7 +55,7 @@ function runReleasePreflight() {
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(
-      "release:preflight failed; publication requires current clean-source and hosted-CI proof.",
+      "release:preflight failed; publication requires a clean, pushed release source.",
     );
   }
 }
@@ -116,7 +116,7 @@ async function main() {
     );
   }
 
-  // This invokes the same current branch/tree/hosted-CI gate used by release
+  // This invokes the same branch, clean-tree and pushed-HEAD check used by release
   // preparation. It stays adjacent to the publish request so old build-time
   // evidence cannot authorize a later direct publication.
   runReleasePreflight();

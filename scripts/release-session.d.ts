@@ -31,26 +31,11 @@ export interface QualityGateProof extends ReleaseIdentity {
         finishedAt: number;
       }
     | { status: "skipped" };
-  hostedCi?: {
-    checkName: "ci-gate";
-    status: "completed";
-    conclusion: "success";
-    event: "push";
-    branch: string;
-    headSha: string;
-    checkRunId: number;
-    url: string;
-    completedAt: number;
-    artifactSha256: string;
-    workflowRunId: number;
-    workflowPath: string;
-  };
   gateStartedAt: number;
   completedAt: number;
 }
 
 export const DEFAULT_MAX_AGE_MS: number;
-export const HOSTED_CI_RELATIVE_PATH: string;
 export const QUALITY_GATE_RELATIVE_PATH: string;
 export const RELEASE_SESSION_RELATIVE_PATH: string;
 
@@ -59,8 +44,6 @@ export function porcelainPaths(statusText: string): string[];
 export function isIgnorableReleaseDirtyPath(filePath: string): boolean;
 export function createReleaseSession(root?: string): ReleaseSession;
 export function clearQualityGateProof(root?: string): void;
-export function clearHostedCiProof(root?: string): void;
-export function recordHostedCiProof(evidence: object, root?: string): object;
 export function recordSuccessfulQualityGate(
   root?: string,
   options?: { skipE2e?: boolean; gateStartedAt?: number },
