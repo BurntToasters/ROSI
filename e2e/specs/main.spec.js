@@ -3021,12 +3021,13 @@ describe("ROSI main window", () => {
     const stubDeno = (mode) =>
       browser.execute((how) => {
         window.__rosiDeno = { installs: 0, external: [] };
-        if (how.linux) {
-          Object.defineProperty(navigator, "userAgent", {
-            configurable: true,
-            get: () => "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15",
-          });
-        }
+        Object.defineProperty(navigator, "userAgent", {
+          configurable: true,
+          get: () =>
+            how.linux
+              ? "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15"
+              : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        });
         window.api.checkDenoInstalled = async () => {
           if (how.check === "throw") throw new Error("lookup failed");
           return false;
