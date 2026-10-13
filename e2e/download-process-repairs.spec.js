@@ -1286,6 +1286,7 @@ describe("ROSI downloader and process repairs", () => {
     // direct download, and block its nested private HTTP reference.
     try {
       const requestPath = process.env.ROSI_REPAIRS_FALLBACK_REQUESTS_FILE;
+      const traceStart = readToolInvocations().length;
       fs.writeFileSync(requestPath, "[]\n");
       const directUrl = `${media}/a.mp4?repair-ffprobe-only=1`;
       const direct = await download(directUrl);
@@ -1301,11 +1302,13 @@ describe("ROSI downloader and process repairs", () => {
       const blocked = blockedAttempt.completion;
       await pause(250);
       const requests = JSON.parse(fs.readFileSync(requestPath, "utf8"));
-      const probeCalls = readToolInvocations().filter(
-        (entry) =>
-          entry.toolKind === "ffprobe" &&
-          entry.input?.includes("ffprobe-escape"),
-      );
+      const probeCalls = readToolInvocations()
+        .slice(traceStart)
+        .filter(
+          (entry) =>
+            entry.toolKind === "ffprobe" &&
+            entry.input?.includes("ffprobe-escape"),
+        );
       const probeRejected = probeCalls.some((entry) =>
         /protocol ['"]?http['"]? not on whitelist/i.test(
           entry.stderrTail ?? "",

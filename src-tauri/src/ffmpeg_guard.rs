@@ -541,8 +541,13 @@ fn is_bare_name(path: &Path) -> bool {
 }
 
 fn resolve_from_path(name: &OsStr) -> Option<PathBuf> {
-    let search_path = crate::process_util::enhanced_path();
-    for directory in std::env::split_paths(&search_path) {
+    // Respect an explicit PATH before GUI fallback locations. This keeps
+    // isolated tool overrides authoritative while retaining fallback lookup.
+    let current_path = std::env::var_os("PATH").unwrap_or_default();
+    let fallback_path = crate::process_util::enhanced_path();
+    for directory in
+        std::env::split_paths(&current_path).chain(std::env::split_paths(&fallback_path))
+    {
         let candidate = directory.join(name);
         if candidate.is_file() {
             return candidate.canonicalize().ok();
