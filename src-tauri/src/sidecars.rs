@@ -110,8 +110,9 @@ pub fn bundled_ffmpeg() -> Option<PathBuf> {
 pub fn resolve_from_path(name: &OsStr) -> Option<PathBuf> {
     let current_path = std::env::var_os("PATH").unwrap_or_default();
     let fallback_path = crate::process_util::enhanced_path();
-    for directory in
-        std::env::split_paths(&current_path).chain(std::env::split_paths(&fallback_path))
+    for directory in std::env::split_paths(&current_path)
+        .chain(std::env::split_paths(&fallback_path))
+        .filter(|directory| directory.is_absolute())
     {
         let candidate = directory.join(name);
         if candidate.is_file() {

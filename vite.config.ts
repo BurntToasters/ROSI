@@ -13,8 +13,8 @@ export default defineConfig(({ mode }) => ({
   build: {
     outDir: '../dist',
     emptyOutDir: true,
-    // WKWebView on macOS 26 and WebView2/WebKitGTK are the supported engines.
-    target: ['es2022', 'safari26', 'chrome105'],
+    // macOS 15+ WKWebView (Safari 18), WebView2 and WebKitGTK are the supported engines.
+    target: ['es2022', 'safari18', 'chrome105'],
     rollupOptions: {
       input: {
         main: resolve(import.meta.dirname, 'src/index.html'),

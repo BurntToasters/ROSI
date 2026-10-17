@@ -82,7 +82,6 @@ pub fn enhanced_path() -> std::ffi::OsString {
                 .join("WinGet")
                 .join("Links"),
             PathBuf::from("C:\\Program Files\\deno"),
-            PathBuf::from("C:\\deno"),
         ]
     } else {
         let home = crate::app_state::home_dir().unwrap_or_default();

@@ -36,7 +36,6 @@ fn search_paths() -> Vec<PathBuf> {
                 .join("Links")
                 .join("deno.exe"),
             PathBuf::from("C:\\Program Files\\deno\\deno.exe"),
-            PathBuf::from("C:\\deno\\deno.exe"),
         ];
     }
     let home = crate::app_state::home_dir().unwrap_or_default();
