@@ -9,6 +9,10 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import {
+  E2E_WEBVIEW2_BROWSER_ARGS,
+  mergeWebView2BrowserArgs,
+} from "../../helpers/profile.js";
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -268,8 +272,10 @@ function createIsolatedEnvironment(root) {
     XDG_STATE_HOME: xdgState,
     XDG_CACHE_HOME: xdgCache,
     WEBVIEW2_USER_DATA_FOLDER: webview2,
-    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
-      "--disable-gpu --disable-features=CalculateNativeWindowOcclusion,RendererCodeIntegrity",
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: mergeWebView2BrowserArgs(
+      process.env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
+      E2E_WEBVIEW2_BROWSER_ARGS,
+    ),
   };
 }
 
