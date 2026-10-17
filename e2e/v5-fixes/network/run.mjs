@@ -55,13 +55,14 @@ const resultsDirectory = path.join(artifactRoot, "app");
 const result = spawnSync(
   process.execPath,
   [
-    path.join(REPO_ROOT, "node_modules", ".bin", "wdio"),
+    path.join(REPO_ROOT, "node_modules", "@wdio", "cli", "bin", "wdio.js"),
     "run",
     "e2e/wdio.conf.js",
   ],
   {
     cwd: REPO_ROOT,
     env: {
+      ...process.env,
       ...profile.env,
       ROSI_E2E_BINARY: binary,
       ROSI_E2E_DOWNLOADS: profile.downloads,
@@ -71,13 +72,20 @@ const result = spawnSync(
       ROSI_V5_NETWORK_RESULTS_DIR: resultsDirectory,
     },
     encoding: "utf8",
+    windowsHide: true,
     timeout: 300_000,
     maxBuffer: 8 * 1024 * 1024,
   },
 );
+const launchError = result.error
+  ? {
+      message: result.error.message,
+      code: result.error.code ?? null,
+    }
+  : null;
 fs.writeFileSync(
   path.join(artifactRoot, "wdio.log"),
-  `${result.stdout ?? ""}${result.stderr ?? ""}`,
+  `${result.stdout ?? ""}${result.stderr ?? ""}${result.error ? `\n[WDIO launcher error]\n${result.error.stack ?? result.error.message}\n` : ""}`,
 );
 
 let observations = [];
@@ -90,6 +98,8 @@ const body = {
   suite: "v5-fixes-network-policy",
   startedAt: new Date().toISOString(),
   exitStatus: result.status,
+  signal: result.signal ?? null,
+  launchError,
   binarySha256: hash(fs.readFileSync(binary)),
   workingTreeDiffSha256: hash(
     fs.readFileSync(path.join(artifactRoot, "working-tree.patch")),

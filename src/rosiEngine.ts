@@ -2600,6 +2600,33 @@ async function initializeRenderer() {
     return settled;
   }
 
+  function settingsValuesMatch(left: unknown, right: unknown): boolean {
+    if (Object.is(left, right)) return true;
+    if (Array.isArray(left) || Array.isArray(right)) {
+      return (
+        Array.isArray(left) &&
+        Array.isArray(right) &&
+        left.length === right.length &&
+        left.every((value, index) => settingsValuesMatch(value, right[index]))
+      );
+    }
+    if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') {
+      return false;
+    }
+    const leftRecord = left as Record<string, unknown>;
+    const rightRecord = right as Record<string, unknown>;
+    const leftKeys = Object.keys(leftRecord);
+    const rightKeys = Object.keys(rightRecord);
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (key) =>
+          Object.prototype.hasOwnProperty.call(rightRecord, key) &&
+          settingsValuesMatch(leftRecord[key], rightRecord[key])
+      )
+    );
+  }
+
   async function drainSettingsSaves() {
     if (settingsSaveInFlight || settingsSaveWaiters.length === 0) return;
     settingsSaveInFlight = true;
@@ -2627,10 +2654,17 @@ async function initializeRenderer() {
         const refused = JSON.parse(result.error.details) as string[];
         const stored = (await window.api.getSettings()) as unknown as Record<string, unknown>;
         const current = settings as unknown as Record<string, unknown>;
+        const rejectedSnapshot = snapshot as unknown as Record<string, unknown>;
         reconcilingSettings = true;
         try {
           refused.forEach((key) => {
-            if (key in stored) current[key] = stored[key];
+            if (
+              key in stored &&
+              key in rejectedSnapshot &&
+              settingsValuesMatch(current[key], rejectedSnapshot[key])
+            ) {
+              current[key] = stored[key];
+            }
           });
         } finally {
           reconcilingSettings = false;

@@ -149,8 +149,8 @@ enum ToolKind {
     Ffprobe,
 }
 
-/// Run before Tauri startup. Only the two exact private alias names enter this
-/// mode; an invalid/missing config fails closed instead of opening the GUI.
+/// Run before Tauri startup. Only the private FFmpeg/FFprobe alias names enter
+/// this mode; an invalid/missing config fails closed instead of opening the GUI.
 pub fn dispatch_from_argv() -> Option<i32> {
     let mut arguments = std::env::args_os();
     let _argv0 = PathBuf::from(arguments.next()?);
@@ -187,13 +187,12 @@ pub fn dispatch_from_argv() -> Option<i32> {
     }
     #[cfg(windows)]
     {
-        let name = _argv0.file_name()?.to_str()?;
-        let kind = if name == alias_name("ffmpeg") {
-            ToolKind::Ffmpeg
-        } else if name == alias_name("ffprobe") {
-            ToolKind::Ffprobe
-        } else {
-            return None;
+        let name = _argv0.file_name()?.to_str()?.to_ascii_lowercase();
+        let stem = name.strip_suffix(".exe").unwrap_or(&name);
+        let kind = match stem {
+            "ffmpeg" => ToolKind::Ffmpeg,
+            "ffprobe" => ToolKind::Ffprobe,
+            _ => return None,
         };
         let directory = _argv0.parent()?;
         Some(run_tool(
@@ -493,7 +492,7 @@ fn validate_tool_path(path: &Path) -> Result<(), String> {
 
 fn resolve_executable(path: &Path) -> Option<PathBuf> {
     if is_bare_name(path) {
-        return resolve_from_path(path.as_os_str());
+        return crate::sidecars::resolve_from_path(path.as_os_str());
     }
     path.canonicalize()
         .ok()
@@ -530,7 +529,7 @@ fn resolve_probe(ffmpeg: &Path) -> Option<PathBuf> {
 }
 
 fn resolve_path_probe() -> Option<PathBuf> {
-    resolve_from_path(OsStr::new(&format!(
+    crate::sidecars::resolve_from_path(OsStr::new(&format!(
         "ffprobe{}",
         std::env::consts::EXE_SUFFIX
     )))
@@ -538,29 +537,6 @@ fn resolve_path_probe() -> Option<PathBuf> {
 
 fn is_bare_name(path: &Path) -> bool {
     path.components().count() == 1 && path.file_name().is_some()
-}
-
-fn resolve_from_path(name: &OsStr) -> Option<PathBuf> {
-    // Respect an explicit PATH before GUI fallback locations. This keeps
-    // isolated tool overrides authoritative while retaining fallback lookup.
-    let current_path = std::env::var_os("PATH").unwrap_or_default();
-    let fallback_path = crate::process_util::enhanced_path();
-    for directory in
-        std::env::split_paths(&current_path).chain(std::env::split_paths(&fallback_path))
-    {
-        let candidate = directory.join(name);
-        if candidate.is_file() {
-            return candidate.canonicalize().ok();
-        }
-        #[cfg(windows)]
-        if candidate.extension().is_none() {
-            let with_exe = candidate.with_extension("exe");
-            if with_exe.is_file() {
-                return with_exe.canonicalize().ok();
-            }
-        }
-    }
-    None
 }
 
 #[cfg(test)]

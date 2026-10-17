@@ -195,6 +195,25 @@ advisories that beta 2 reported without review.
     audio stream. An audio-only selector that requires `bestaudio` then fails
     before FFmpeg extraction; retain the guarded audio preference with a
     guarded combined-format fallback.
+40. A manual download owns an active network guard, but its guard is started
+    without the session cancellation token. The captured full E2E run at
+    `e2e/artifacts/beta3-dispatch-fixes/full-e2e.log` reports a cancelled manual
+    activity after about 3.35 seconds while its decision trace contains
+    `dns-resolving` followed by a later `connection` event to `127.0.0.1`.
+    The same run reports that a cancelled streamed response's origin remained
+    active after its socket closed; retain this as an independent observable
+    failure until the rerun confirms it. Create a unique cancellation flag for
+    each reserved download session and pass it to the network guard. If cancel
+    arrives before guard construction, construction must see the already-set
+    flag and fail closed before any proxy request can reach a destination; a
+    cancellation-driven startup error must retain the cancelled outcome. If
+    cancel races guard startup or arrives during DNS or a streamed response,
+    the guard must stop its listener and active sockets before cancellation
+    settles, with no later connection decision from that session. Both
+    cancellation entry points must set the flag before waiting on helper
+    termination. Ordinary completion must release its guard and token, and a
+    replacement session must receive a distinct clear flag. Preserve the
+    existing session boolean, completion outcome, and callback ordering.
 
 ## F07 advisory review: two unreviewed development findings
 

@@ -32,6 +32,9 @@ struct QueueState {
 }
 
 static QUEUE: OnceLock<Mutex<QueueState>> = OnceLock::new();
+/// Serialize queue snapshots through their event emission. This is acquired
+/// before the queue lock and never while holding queue state.
+static QUEUE_PUBLICATION: Mutex<()> = Mutex::new(());
 const MAX_QUEUE_FILE_BYTES: usize = 32 * 1024 * 1024;
 // Reserve space for completion paths, filenames, and error messages.
 const MAX_QUEUE_ADMISSION_BYTES: usize = 24 * 1024 * 1024;
@@ -373,8 +376,12 @@ pub fn init() {
 }
 
 fn broadcast() {
+    let publication = QUEUE_PUBLICATION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let (_, items) = revisioned_snapshot(true);
     crate::app_state::emit("queue-update", items);
+    drop(publication);
     schedule_persist();
 }
 

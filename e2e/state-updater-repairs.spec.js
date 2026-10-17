@@ -162,6 +162,159 @@ describe("state and updater repair E2E", () => {
     }
   });
 
+  it("preserves a newer refused-field edit across save and settings reads", async () => {
+    assert.ok(DATA_DIR, "ROSI_E2E_DATA_DIR is not set");
+    const original = await api("getSettings");
+    const settingsFile = path.join(DATA_DIR, "settings.json");
+    const invalidPath = path.join(DATA_DIR, "missing-ffmpeg", "ffmpeg");
+    const editedDuringSave = path.join(
+      DATA_DIR,
+      "newer-missing-ffmpeg",
+      "ffmpeg",
+    );
+    const desiredTheme = original.theme === "dark" ? "light" : "dark";
+
+    await browser.execute(
+      (invalidFfmpegPath, theme) => {
+        window.auditOriginalSettingsSave = window.api.saveSettings;
+        window.auditOriginalSettingsRead = window.api.getSettings;
+        window.auditInvalidSettingsSaveHeld = false;
+        window.auditSettingsReadHeld = false;
+        window.auditHoldSettingsRead = false;
+        window.auditSettingsSaveSnapshot = null;
+        window.auditSettingsSaveResponse = null;
+        window.api.saveSettings = async (settings) => {
+          const snapshot = JSON.parse(JSON.stringify(settings));
+          const response = await window.auditOriginalSettingsSave(snapshot);
+          if (snapshot.ffmpegPath === invalidFfmpegPath) {
+            window.auditSettingsSaveSnapshot = snapshot;
+            window.auditSettingsSaveResponse = response;
+            window.auditInvalidSettingsSaveHeld = true;
+            await new Promise((resolve) => {
+              window.auditReleaseInvalidSettingsSave = resolve;
+            });
+          }
+          return response;
+        };
+        window.api.getSettings = async (...args) => {
+          const settings = await window.auditOriginalSettingsRead(...args);
+          if (window.auditHoldSettingsRead) {
+            window.auditSettingsReadHeld = true;
+            await new Promise((resolve) => {
+              window.auditReleaseSettingsRead = resolve;
+            });
+          }
+          return settings;
+        };
+
+        const ffmpegInput = document.getElementById("ffmpegPathInput");
+        ffmpegInput.value = invalidFfmpegPath;
+        ffmpegInput.dispatchEvent(new Event("input", { bubbles: true }));
+        ffmpegInput.dispatchEvent(new Event("change", { bubbles: true }));
+        const themeSelect = document.getElementById("themeSelect");
+        themeSelect.value = theme;
+        themeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      },
+      invalidPath,
+      desiredTheme,
+    );
+
+    try {
+      await browser.waitUntil(
+        () => browser.execute(() => window.auditInvalidSettingsSaveHeld),
+        {
+          timeout: 10_000,
+          timeoutMsg: "invalid FFmpeg save response was not held",
+        },
+      );
+      await browser.execute((nextPath) => {
+        const ffmpegInput = document.getElementById("ffmpegPathInput");
+        ffmpegInput.value = nextPath;
+        ffmpegInput.dispatchEvent(new Event("input", { bubbles: true }));
+      }, editedDuringSave);
+      await browser.execute(() => {
+        window.auditHoldSettingsRead = true;
+        window.auditReleaseInvalidSettingsSave();
+      });
+      await browser.waitUntil(
+        () => browser.execute(() => window.auditSettingsReadHeld),
+        {
+          timeout: 10_000,
+          timeoutMsg: "rejection handler did not wait for getSettings",
+        },
+      );
+
+      await browser.execute(() => {
+        const ffmpegInput = document.getElementById("ffmpegPathInput");
+        ffmpegInput.value = "ffmpeg";
+        ffmpegInput.dispatchEvent(new Event("input", { bubbles: true }));
+        ffmpegInput.dispatchEvent(new Event("change", { bubbles: true }));
+        window.auditHoldSettingsRead = false;
+        window.auditReleaseSettingsRead();
+      });
+
+      await browser.waitUntil(
+        () => {
+          try {
+            const stored = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+            return (
+              stored.ffmpegPath === "ffmpeg" && stored.theme === desiredTheme
+            );
+          } catch {
+            return false;
+          }
+        },
+        {
+          timeout: 10_000,
+          interval: 100,
+          timeoutMsg: "newer settings were not persisted after rejection",
+        },
+      );
+
+      const result = await browser.execute(() => ({
+        response: window.auditSettingsSaveResponse,
+        submittedPath: window.auditSettingsSaveSnapshot?.ffmpegPath,
+        visiblePath: document.getElementById("ffmpegPathInput").value,
+        visibleTheme: document.getElementById("themeSelect").value,
+      }));
+      const stored = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+      result.storedPath = stored.ffmpegPath;
+      result.storedTheme = stored.theme;
+      assert.equal(result.response.error.code, "VALIDATION_ERROR");
+      assert.deepEqual(JSON.parse(result.response.error.details), [
+        "ffmpegPath",
+      ]);
+      assert.equal(result.submittedPath, invalidPath);
+      assert.equal(result.visiblePath, "ffmpeg");
+      assert.equal(result.storedPath, "ffmpeg");
+      assert.equal(result.visibleTheme, desiredTheme);
+      assert.equal(result.storedTheme, desiredTheme);
+      record("settings-rejection-preserves-newer-field", {
+        rejectedPath: result.submittedPath,
+        editedDuringSave,
+        visiblePath: result.visiblePath,
+        storedPath: result.storedPath,
+        visibleTheme: result.visibleTheme,
+        storedTheme: result.storedTheme,
+        rejectedFields: JSON.parse(result.response.error.details),
+      });
+    } finally {
+      await browser.execute(() => {
+        window.auditReleaseInvalidSettingsSave?.();
+        window.auditReleaseSettingsRead?.();
+        if (window.auditOriginalSettingsSave) {
+          window.api.saveSettings = window.auditOriginalSettingsSave;
+        }
+        if (window.auditOriginalSettingsRead) {
+          window.api.getSettings = window.auditOriginalSettingsRead;
+        }
+      });
+      const restored = await api("saveSettings", original);
+      assert.equal(restored.ok, true, restored.error?.message);
+      await reloadRenderer();
+    }
+  });
+
   it("waits for settings changed during an immediate close flush", async () => {
     assert.ok(DATA_DIR, "ROSI_E2E_DATA_DIR is not set");
     const original = await api("getSettings");

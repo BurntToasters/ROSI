@@ -6,8 +6,70 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(__dirname, "..", "..");
 export const APP_ID = "run.rosie.rosi";
-export const E2E_WEBVIEW2_BROWSER_ARGS =
-  "--disable-gpu --disable-features=CalculateNativeWinOcclusion,RendererCodeIntegrity";
+const permanentDisabledFeatures = [
+  "CalculateNativeWinOcclusion",
+  "RendererCodeIntegrity",
+];
+// TEMP_WEBVIEW2_LOCKOUT_WORKAROUND: TEMPORARY UPSTREAM WORKAROUND, REMOVE.
+// Cause: a fresh WebView2 environment can generate a failed Windows interactive
+// logon (Event 4625, not an app password attempt); repeated E2E launches
+// increment the bad-password counter and can lock the account.
+// Tracking: MicrosoftEdge/WebView2Feedback #5722, Chromium #562403601.
+// Chromium runs the probe when either feature is enabled
+// (chrome_autofill_client.cc).
+// REMOVE after the fixed stable WebView2 runtime is verified to no longer log
+// Event 4625 on fresh environment creation; see
+// e2e/webview2-lockout.failure-modes.md
+export const TEMP_WEBVIEW2_LOCKOUT_FEATURES = [
+  "AutofillAiWalletPrivatePasses",
+  "AutofillAmbientAutofill",
+];
+export const E2E_WEBVIEW2_BROWSER_ARGS = `--disable-gpu --disable-features=${[
+  ...permanentDisabledFeatures,
+  ...TEMP_WEBVIEW2_LOCKOUT_FEATURES,
+].join(",")}`;
+
+const FEATURE_SWITCHES = ["--disable-features=", "--enable-features="];
+
+/**
+ * Merges WebView2 browser-argument strings. All --disable-features and
+ * --enable-features values collapse into one switch each, placed where the
+ * first occurrence appeared; other switches are kept once, in order.
+ */
+export function mergeWebView2BrowserArgs(...argStrings) {
+  const order = [];
+  const seen = new Set();
+  const features = new Map(FEATURE_SWITCHES.map((prefix) => [prefix, []]));
+  for (const argString of argStrings) {
+    if (!argString) continue;
+    for (const token of String(argString).split(/\s+/)) {
+      if (!token) continue;
+      const prefix = FEATURE_SWITCHES.find((item) => token.startsWith(item));
+      if (prefix) {
+        const names = features.get(prefix);
+        if (!seen.has(prefix)) {
+          seen.add(prefix);
+          order.push(prefix);
+        }
+        for (const name of token.slice(prefix.length).split(",")) {
+          const trimmed = name.trim();
+          if (trimmed && !names.includes(trimmed)) names.push(trimmed);
+        }
+      } else if (!seen.has(token)) {
+        seen.add(token);
+        order.push(token);
+      }
+    }
+  }
+  return order
+    .map((item) => {
+      const names = features.get(item);
+      if (!names) return item;
+      return names.length ? `${item}${names.join(",")}` : null;
+    })
+    .filter((item) => item !== null)
+    .join(" ");
+}
 
 export function hostBinaryName(platform = process.platform) {
   return platform === "win32" ? "rosi.exe" : "rosi";
@@ -78,7 +140,10 @@ export function createE2eProfile({
     const webview2 = path.join(profileDir, "webview2");
     fs.mkdirSync(webview2, { recursive: true });
     env.WEBVIEW2_USER_DATA_FOLDER = webview2;
-    env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = E2E_WEBVIEW2_BROWSER_ARGS;
+    env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = mergeWebView2BrowserArgs(
+      process.env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
+      E2E_WEBVIEW2_BROWSER_ARGS,
+    );
     // %APPDATA% comes from the shell API, so a temp USERPROFILE cannot hide
     // the developer's real ROSI 4 folder; E2E builds honor this override.
     env.ROSI_E2E_LEGACY_V4_DIR = path.join(

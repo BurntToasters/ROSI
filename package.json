@@ -1,6 +1,6 @@
 {
   "name": "rosi",
-  "version": "5.0.0-beta.2",
+  "version": "5.0.0-beta.3",
   "license": "MPL-2.0",
   "private": true,
   "packageManager": "npm@12.0.2",
@@ -85,8 +85,9 @@
     "vi": "node scripts/vi.js",
     "b": "git fetch origin && git reset --hard && git clean -fd && git switch -C beta origin/beta && git reset --hard origin/beta && git clean -fd && npm run vi",
     "r": "git fetch origin && git reset --hard && git clean -fd && git switch -C main origin/main && git reset --hard origin/main && git clean -fd && npm run vi && npm run gitprune:force",
-    "u": "node scripts/npm-safe-update.mjs && node scripts/cargo-safe-update.mjs --manifest-path src-tauri/Cargo.toml && node scripts/sync-version.js && node scripts/update-metainfo.js",
-    "u2": "node scripts/npm-safe-update.mjs && node scripts/cargo-safe-update.mjs --manifest-path src-tauri/Cargo.toml && node scripts/sync-version.js && node scripts/update-metainfo.js",
+    "u": "node scripts/npm-safe-update.mjs && node scripts/cargo-safe-update.mjs --manifest-path src-tauri/Cargo.toml && node scripts/sync-version.js && node scripts/update-metainfo.js && npm run check:tauri-alignment",
+    "check:tauri-alignment": "node scripts/check-tauri-alignment.mjs",
+    "u2": "node scripts/npm-safe-update.mjs && node scripts/cargo-safe-update.mjs --manifest-path src-tauri/Cargo.toml && node scripts/sync-version.js && node scripts/update-metainfo.js && npm run check:tauri-alignment",
     "win-compiler:x64": "powershell -NoProfile -ExecutionPolicy Bypass -NoExit -File scripts/launch-vs-devshell.ps1 -Arch x64",
     "win-compiler:arm64": "powershell -NoProfile -ExecutionPolicy Bypass -NoExit -File scripts/launch-vs-devshell.ps1 -Arch arm64",
     "setup:win:artifact-signing": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/setup-windows-artifact-signing.ps1",
@@ -158,12 +159,12 @@
     "git:reset:dry": "node scripts/git-reset.js --dry-run"
   },
   "dependencies": {
-    "@tauri-apps/api": "2.12.0",
+    "@tauri-apps/api": "^2.12.0",
     "@tauri-apps/plugin-updater": "2.10.1",
     "lucide-static": "1.49.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "2.12.0",
+    "@tauri-apps/cli": "^2.12.0",
     "@types/node": "24.13.6",
     "@typescript-eslint/eslint-plugin": "8.70.0",
     "@typescript-eslint/parser": "8.70.0",

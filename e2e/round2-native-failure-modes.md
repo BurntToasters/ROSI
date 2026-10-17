@@ -62,6 +62,23 @@ profile, record each observation, and write a repeatable JSON artifact.
     one failed queue activity, one successful retry activity, an existing final
     output in the selected folder, and no remaining private staging directory.
     Require at least two GETs without assuming exactly one request per attempt.
+11. **Fresh Windows media-alias discovery and invocation.** `ffmpeg_guard`
+    creates Windows launchers in `app-data/media-tools`; scanning only operating
+    system temp folders and `app-data/tmp` misses the active alias. The captured
+    E2E baseline at
+    `e2e/artifacts/round2-native/2026-10-17T18-27-54-247Z-4792/observations.json`
+    records a cancelled outcome and no visible cancel files, but no observed
+    launchers and a failed alias invariant. The companion live process capture
+    at `e2e/artifacts/beta3-release-audit/live-helper-command.json` records the
+    helper as `ffmpeg.exe` while its command line uses the extensionless
+    `.../ffmpeg -bsfs` form. The probe must snapshot and search the production
+    root plus existing platform temp fallbacks, identify a fresh launcher,
+    verify its alias is app-owned, then invoke the real executable with the
+    extensionless argv0 form within a bound. Missing/unreadable roots, stale
+    launchers, missing or invalid config, a non-app alias, spawn errors,
+    extensionless dispatch failures, timeouts, and failure to terminate the
+    probe tree must remain observable failures. Cancellation must still leave
+    no output or owned staging behind.
 
 The E2E evidence is intentionally limited to observable app behavior and
 filesystem state. It does not prove survival of real power loss or run the

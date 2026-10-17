@@ -26,7 +26,7 @@ use serde_json::{Map, Value};
 use std::collections::{HashSet, VecDeque};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 pub type CompletionCallback = Box<dyn FnOnce(DownloadCompletion) + Send + 'static>;
@@ -43,6 +43,7 @@ struct Session {
     request: DownloadRequestOptions,
     owner: Owner,
     cancelled: bool,
+    network_cancellation: Arc<AtomicBool>,
     cancel_notify: bool,
     ytdlp: Option<Arc<crate::process_util::ManagedChild>>,
     ytdlp_exit_pending: bool,
@@ -544,6 +545,7 @@ pub fn cancel_active_session(notify: bool) {
             return;
         };
         session.cancelled = true;
+        session.network_cancellation.store(true, Ordering::Release);
         session.cancel_notify = notify || session.owner == Owner::Manual;
         let wait_for_ytdlp =
             session.ytdlp_exit_pending || session.conversion_pending || session.ytdlp.is_some();
@@ -590,6 +592,7 @@ pub fn kill_all_processes() {
             return;
         };
         session.cancelled = true;
+        session.network_cancellation.store(true, Ordering::Release);
         session.cancel_notify = false;
         let wait_for_ytdlp =
             session.ytdlp_exit_pending || session.conversion_pending || session.ytdlp.is_some();
@@ -944,6 +947,7 @@ pub fn start_download(
         None => {}
     }
     let id = COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
+    let network_cancellation = Arc::new(AtomicBool::new(false));
     let session = Session {
         id,
         completion_id: crate::fs_util::uuid_v4(),
@@ -951,6 +955,7 @@ pub fn start_download(
         request: snapshot,
         owner,
         cancelled: false,
+        network_cancellation: Arc::clone(&network_cancellation),
         cancel_notify: false,
         ytdlp: None,
         ytdlp_exit_pending: false,
@@ -1126,10 +1131,16 @@ pub fn start_download(
         }
     };
     let ffmpeg_location = ffmpeg_guard.location().to_string_lossy().into_owned();
-    let network_guard = match crate::network_security::NetworkSecurityGuard::start() {
+    let network_guard = match crate::network_security::NetworkSecurityGuard::start_with_cancellation(
+        Arc::clone(&network_cancellation),
+    ) {
         Ok(guard) => guard,
         Err(error) => {
             let _ = std::fs::remove_file(&path_output_file);
+            if !active_not_cancelled(id) {
+                drop(startup.take());
+                return Ok(id);
+            }
             send_progress(id, format!("❌ Secure network setup failed: {error}"));
             drop(startup.take());
             complete_session(
@@ -3351,6 +3362,7 @@ mod audit4_tests {
             request: DownloadRequestOptions::default(),
             owner: Owner::Queue,
             cancelled: false,
+            network_cancellation: Arc::new(AtomicBool::new(false)),
             cancel_notify: false,
             ytdlp: None,
             ytdlp_exit_pending: false,
