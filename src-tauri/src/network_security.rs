@@ -494,6 +494,7 @@ pub struct NetworkSecurityGuard {
 impl NetworkSecurityGuard {
     /// Starts an authenticated loopback proxy. Any bind, entropy, or thread
     /// startup failure is returned; callers must not fall back to direct I/O.
+    #[cfg(feature = "e2e")]
     pub fn start() -> Result<Self, String> {
         Self::start_inner(None)
     }

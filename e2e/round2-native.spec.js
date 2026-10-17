@@ -162,6 +162,9 @@ async function waitForNoStaging(timeout = 10_000) {
 
 function guardTempRoots() {
   return [
+    ...(process.platform === "win32"
+      ? [path.join(dataDirectory, "media-tools")]
+      : []),
     os.tmpdir(),
     env.TMPDIR,
     env.TMP,
@@ -293,7 +296,9 @@ async function probeAppCreatedFfmpegAlias(existingLaunchers) {
       invariantPassed: false,
     };
   }
+  const aliasInvocationArgv0 = launcher.aliasPath.replace(/\.exe$/i, "");
   const child = spawn(launcher.aliasPath, ["-version"], {
+    argv0: aliasInvocationArgv0,
     stdio: "ignore",
     windowsHide: true,
   });
@@ -321,6 +326,7 @@ async function probeAppCreatedFfmpegAlias(existingLaunchers) {
     launcherConfigPath: launcher.configPath,
     configuredFfmpeg: launcher.config.ffmpeg,
     configuredFfprobe: launcher.config.ffprobe,
+    aliasInvocationArgv0,
     aliasOwnedByApp,
     ...result,
     invariantPassed:

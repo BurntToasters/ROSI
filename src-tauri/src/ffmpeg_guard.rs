@@ -149,8 +149,8 @@ enum ToolKind {
     Ffprobe,
 }
 
-/// Run before Tauri startup. Only the two exact private alias names enter this
-/// mode; an invalid/missing config fails closed instead of opening the GUI.
+/// Run before Tauri startup. Only the private FFmpeg/FFprobe alias names enter
+/// this mode; an invalid/missing config fails closed instead of opening the GUI.
 pub fn dispatch_from_argv() -> Option<i32> {
     let mut arguments = std::env::args_os();
     let _argv0 = PathBuf::from(arguments.next()?);
@@ -187,13 +187,12 @@ pub fn dispatch_from_argv() -> Option<i32> {
     }
     #[cfg(windows)]
     {
-        let name = _argv0.file_name()?.to_str()?;
-        let kind = if name == alias_name("ffmpeg") {
-            ToolKind::Ffmpeg
-        } else if name == alias_name("ffprobe") {
-            ToolKind::Ffprobe
-        } else {
-            return None;
+        let name = _argv0.file_name()?.to_str()?.to_ascii_lowercase();
+        let stem = name.strip_suffix(".exe").unwrap_or(&name);
+        let kind = match stem {
+            "ffmpeg" => ToolKind::Ffmpeg,
+            "ffprobe" => ToolKind::Ffprobe,
+            _ => return None,
         };
         let directory = _argv0.parent()?;
         Some(run_tool(
