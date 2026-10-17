@@ -1,8 +1,9 @@
 [advisories]
-# All ignored advisories are "unmaintained" or "unsound" warnings (not
-# vulnerabilities) originating from transitive dependencies pulled in by
-# Tauri v2 / wry / webkit2gtk. They are not directly controllable from this
-# crate and are resolved upstream as Tauri migrates off the GTK3 stack.
+# Ignored advisories are "unmaintained" or "unsound" warnings originating from
+# transitive dependencies pulled in by Tauri v2 / wry / webkit2gtk / zbus, plus
+# a small set of reviewed zip vulnerabilities (see the zip entry below). The
+# warnings are not directly controllable from this crate and are resolved
+# upstream as Tauri migrates off the GTK3 stack.
 # Plain `cargo audit` still fails on any new advisory in any other crate.
 # scripts/check-rustsec-ignore-policy.mjs makes this exact reviewed set expire
 # on 2026-12-01 so transitive debt cannot become a permanent silent allowlist.
@@ -28,4 +29,19 @@ ignore = [
     "RUSTSEC-2025-0081",
     "RUSTSEC-2025-0098",
     "RUSTSEC-2025-0100",
+    # zbus_names / zvariant / zvariant_derive unmaintained (transitive via zbus
+    # from tauri-plugin-single-instance, opener and notification)
+    "RUSTSEC-2026-0370",
+    "RUSTSEC-2026-0371",
+    "RUSTSEC-2026-0372",
+    # zip 4.6.1 vulnerabilities, reviewed and not bumped: zip is only a Windows
+    # dependency of the vendored tauri-plugin-updater (src-tauri/vendor, kept
+    # byte-identical to upstream 2.10.1). The issues concern Unix SUID/permission
+    # bits and symlinks escaping the destination, and extraction only happens
+    # after minisign verification of the update bytes, so exploiting them needs
+    # a validly signed malicious update. The fix needs zip >=9, which requires an
+    # upstream updater rebase.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
 ]

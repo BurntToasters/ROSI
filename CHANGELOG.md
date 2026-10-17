@@ -21,10 +21,13 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 
 ## Changes in `v5.0.0-beta.3:`
 
-- **Fix:** (add release notes)
-
-## Unreleased
-
+- **Downloads:** Cancelling a download now also stops its secure network setup, so a cancelled download no longer reports a network setup error.
+- **Queue:** Queue updates are now delivered in the order they happen, so the list no longer shows an older state after a newer one.
+- **Settings:** A rejected settings save no longer overwrites edits you made while it was being saved.
+- **Conversion:** AV1 video is copied without re-encoding only when the output is MP4. MOV output re-encodes AV1 video.
+- **Conversion:** A custom FFmpeg command name is now found on your PATH, and the system FFmpeg is located the same way for probes and conversions.
+- **Windows:** FFmpeg helper aliases work regardless of filename case.
+- **Windows:** Secure proxy connections no longer fail because accepted sockets inherited non-blocking mode.
 - **Release checks:** The test suite and Rust lint checks pass on both Windows and Linux, and the Flatpak builds with the GNOME SDK's default compiler flags.
 
 ## Changes in `v5.0.0-beta.2:`
