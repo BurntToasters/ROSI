@@ -87,7 +87,7 @@
     "r": "git fetch origin && git reset --hard && git clean -fd && git switch -C main origin/main && git reset --hard origin/main && git clean -fd && npm run vi && npm run gitprune:force",
     "u": "node scripts/npm-safe-update.mjs && node scripts/cargo-safe-update.mjs --manifest-path src-tauri/Cargo.toml && node scripts/sync-version.js && node scripts/update-metainfo.js && npm run check:tauri-alignment",
     "check:tauri-alignment": "node scripts/check-tauri-alignment.mjs",
-    "u2": "node scripts/npm-safe-update.mjs && node scripts/cargo-safe-update.mjs --manifest-path src-tauri/Cargo.toml && node scripts/sync-version.js && node scripts/update-metainfo.js",
+    "u2": "node scripts/npm-safe-update.mjs && node scripts/cargo-safe-update.mjs --manifest-path src-tauri/Cargo.toml && node scripts/sync-version.js && node scripts/update-metainfo.js && npm run check:tauri-alignment",
     "win-compiler:x64": "powershell -NoProfile -ExecutionPolicy Bypass -NoExit -File scripts/launch-vs-devshell.ps1 -Arch x64",
     "win-compiler:arm64": "powershell -NoProfile -ExecutionPolicy Bypass -NoExit -File scripts/launch-vs-devshell.ps1 -Arch arm64",
     "setup:win:artifact-signing": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/setup-windows-artifact-signing.ps1",
