@@ -77,3 +77,16 @@ only for public embedded IPv4), 9c (documented, no proxy chaining).
 24. A bare rebinding apex such as `localtest.me` (public DNS answers 127.0.0.1)
     passes the URL pre-check because only subdomains were matched. Detected by
     the `http://localtest.me/` URL matrix row.
+25. On Windows, launching `node_modules/.bin/wdio` with Node treats the POSIX
+    shim as JavaScript and fails before WDIO starts. Launch the installed
+    `@wdio/cli/bin/wdio.js` entry point with `process.execPath`; the E2E report
+    and log show whether the suite ran.
+26. Replacing the child environment with only the temporary profile variables
+    drops inherited values such as `PATH` and `SystemRoot`, preventing native
+    tools or the app from starting. Merge the inherited environment first,
+    then the profile and suite overrides, and confirm the three policy probes
+    pass with the isolated profile.
+27. A child-process startup error (including a missing runner or timeout) is
+    absent from captured stdout/stderr, leaving only an unhelpful null exit
+    status. Include the spawn error in `wdio.log` and the JSON report so the
+    artifact identifies launch failures.

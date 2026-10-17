@@ -58,10 +58,20 @@ pub fn parse_codecs(stderr: &str) -> SourceCodecs {
     }
 }
 
-const CONTAINER_COMPATIBLE_VIDEO: &[&str] =
-    &["h264", "avc1", "hevc", "h265", "av1", "av01", "mpeg4"];
+const CONTAINER_COMPATIBLE_VIDEO: &[&str] = &["h264", "avc1", "hevc", "h265", "mpeg4"];
+const MP4_COMPATIBLE_VIDEO: &[&str] = &["av1", "av01"];
 const CONTAINER_COMPATIBLE_AUDIO: &[&str] = &["aac", "mp4a", "mp3", "ac3", "alac"];
 const MP4_TEXT_SUBTITLES: &[&str] = &["subrip", "ass", "ssa", "webvtt", "mov_text"];
+
+fn video_stream_copy_compatible(target_format: &str, codec: &str) -> bool {
+    match target_format.to_ascii_lowercase().as_str() {
+        "mp4" => {
+            CONTAINER_COMPATIBLE_VIDEO.contains(&codec) || MP4_COMPATIBLE_VIDEO.contains(&codec)
+        }
+        "mov" => CONTAINER_COMPATIBLE_VIDEO.contains(&codec),
+        _ => false,
+    }
+}
 
 pub fn target_subtitle_codec(target_format: &str, source: &SourceCodecs) -> Option<&'static str> {
     let target = target_format.to_ascii_lowercase();
@@ -254,7 +264,7 @@ pub fn build_ffmpeg_args(
     let source_video = source.and_then(|codecs| lower(&codecs.video));
     let source_audio = source.and_then(|codecs| lower(&codecs.audio));
     let video = match (source, source_video.as_deref()) {
-        (Some(_), Some(codec)) if CONTAINER_COMPATIBLE_VIDEO.contains(&codec) => "copy",
+        (Some(_), Some(codec)) if video_stream_copy_compatible(target_format, codec) => "copy",
         _ => video_encoder,
     };
     let audio = match (source, source_audio.as_deref()) {

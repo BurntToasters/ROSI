@@ -7,6 +7,7 @@
 //! `yt-dlp` files in /usr/bin.
 
 use crate::constants::MAX_ERROR_BUFFER;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -103,6 +104,35 @@ pub fn bundled_ffmpeg() -> Option<PathBuf> {
     bundled_path(FFMPEG_SIDECAR).filter(|path| path.is_file())
 }
 
+/// Resolve a media tool from the inherited PATH first, then from the extra
+/// locations used for GUI-launched processes. Returning a canonical path makes
+/// direct probes, conversions, and guarded yt-dlp calls use one executable.
+pub fn resolve_from_path(name: &OsStr) -> Option<PathBuf> {
+    let current_path = std::env::var_os("PATH").unwrap_or_default();
+    let fallback_path = crate::process_util::enhanced_path();
+    for directory in
+        std::env::split_paths(&current_path).chain(std::env::split_paths(&fallback_path))
+    {
+        let candidate = directory.join(name);
+        if candidate.is_file() {
+            return candidate.canonicalize().ok();
+        }
+        #[cfg(windows)]
+        if candidate.extension().is_none() {
+            let with_exe = candidate.with_extension("exe");
+            if with_exe.is_file() {
+                return with_exe.canonicalize().ok();
+            }
+        }
+    }
+    None
+}
+
+fn system_ffmpeg() -> PathBuf {
+    resolve_from_path(OsStr::new(&format!("ffmpeg{EXE_SUFFIX}")))
+        .unwrap_or_else(|| PathBuf::from("ffmpeg"))
+}
+
 fn is_bare_command(value: &str) -> bool {
     !Path::new(value).is_absolute() && !value.contains('/') && !value.contains('\\')
 }
@@ -139,7 +169,15 @@ pub fn effective_ffmpeg(custom: Option<&str>) -> PathBuf {
                 "Custom ffmpeg path has invalid basename, falling back: {}",
                 resolved.display()
             ));
-        } else if is_bare_command(&resolved.to_string_lossy()) || resolved.exists() {
+        } else if is_bare_command(&resolved.to_string_lossy()) {
+            if let Some(found) = resolve_from_path(resolved.as_os_str()) {
+                return found;
+            }
+            crate::logging::warn(&format!(
+                "Custom ffmpeg command was not found on PATH, falling back: {}",
+                resolved.display()
+            ));
+        } else if resolved.exists() {
             return resolved;
         } else {
             crate::logging::warn(&format!(
@@ -148,7 +186,7 @@ pub fn effective_ffmpeg(custom: Option<&str>) -> PathBuf {
             ));
         }
     }
-    bundled_ffmpeg().unwrap_or_else(|| PathBuf::from("ffmpeg"))
+    bundled_ffmpeg().unwrap_or_else(system_ffmpeg)
 }
 
 /// Log bundled sidecar versions at startup (diagnostics only).

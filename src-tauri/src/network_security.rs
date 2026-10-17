@@ -602,8 +602,10 @@ impl Drop for NetworkSecurityGuard {
 
 fn proxy_worker(shared: Arc<ProxyShared>, expected_auth: Arc<str>) {
     while let Some(mut client) = shared.next_client() {
-        let _ = client.set_read_timeout(Some(IO_TIMEOUT));
-        let _ = client.set_write_timeout(Some(IO_TIMEOUT));
+        if configure_proxy_client_socket(&client).is_err() {
+            let _ = client.shutdown(Shutdown::Both);
+            continue;
+        }
         let id = shared.next_id.fetch_add(1, Ordering::Relaxed);
         let active = ActiveSockets {
             shared: Arc::clone(&shared),
@@ -614,6 +616,15 @@ fn proxy_worker(shared: Arc<ProxyShared>, expected_auth: Arc<str>) {
         }
         handle_proxy_client(&mut client, &expected_auth, &active);
     }
+}
+
+fn configure_proxy_client_socket(client: &TcpStream) -> io::Result<()> {
+    // Windows accepted sockets inherit the listener's nonblocking mode. HTTP
+    // parsing and body copying use blocking reads bounded by these timeouts.
+    client.set_nonblocking(false)?;
+    client.set_read_timeout(Some(IO_TIMEOUT))?;
+    client.set_write_timeout(Some(IO_TIMEOUT))?;
+    Ok(())
 }
 
 fn handle_proxy_client(client: &mut TcpStream, expected_auth: &str, active: &ActiveSockets) {
