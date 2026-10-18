@@ -93,6 +93,7 @@ export const EXPECTED_SCENARIOS = [
   "settings-controls",
   "settings-reset-all",
   "settings-response-revision",
+  "settings-rejection-preserves-newer-field",
   "settings-lifecycle-latest-revision",
   "settings-captured-wizard-deno",
   "compatible-profile-wording",
