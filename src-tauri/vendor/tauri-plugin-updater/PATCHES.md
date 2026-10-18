@@ -87,7 +87,13 @@ patch -p1 -d <pristine-2.14.0-dir> -i ROSI.patch
 - Not adopted from 2.14.0: its swap-based macOS install (`swap_bundle`, `replace_bundle`,
   `privileged_install_command`, `keep_backup_if_not_restored`, `SWAP_BUNDLE_JXA`, `sh_quote`,
   `applescript_string`) and `Updater::tmp_dir_locations`. ROSI's `install_inner_locked` and
-  its Linux `try_tmp_locations` replace them. Their tests are dropped too.
+  its Linux `try_tmp_locations` replace them. Their tests are dropped too. `try_tmp_locations`
+  builds its own local list of candidate directories (system temp, user cache, app directory).
+- Upstream 2.14.0 AppImage tests in `updater.rs` `offline_tests` are kept but use
+  `appimage_install::test_fixtures::host_appimage` for both the live and the new image,
+  because ROSI validates real AppImage structure, not only the ELF magic. A payload that is
+  not an AppImage fails with `Error::Io` of kind `InvalidData` instead of
+  `Error::InvalidUpdaterFormat`.
 
 ## Clippy warnings (resolved without deleting code)
 

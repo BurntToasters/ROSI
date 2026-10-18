@@ -881,7 +881,7 @@ mod tests {
         bytes
     }
 
-    fn host_machine() -> u16 {
+    pub(super) fn host_machine() -> u16 {
         #[cfg(target_arch = "x86_64")]
         {
             return 62;
@@ -1106,5 +1106,10 @@ mod tests {
 pub(crate) mod test_fixtures {
     pub(crate) fn valid_appimage(marker: u8, machine: u16, suffix: u8) -> Vec<u8> {
         super::tests::appimage(marker, machine, suffix)
+    }
+
+    /// A Type 2 AppImage for the host architecture that passes ROSI validation.
+    pub(crate) fn host_appimage(suffix: u8) -> Vec<u8> {
+        super::tests::appimage(2, super::tests::host_machine(), suffix)
     }
 }
