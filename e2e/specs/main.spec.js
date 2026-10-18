@@ -2219,37 +2219,73 @@ describe("ROSI main window", () => {
   });
 
   it("keeps the save folder name visible on a long path", async () => {
-    const folder = settingsOnDisk().downloadFolder;
-    assert.ok(folder, "no download folder is saved");
-    await resizeWindow(900, 560);
-    const summary = await browser.execute(() => {
-      const target = document.getElementById("downloadFolderSummary");
-      const head = target.querySelector(".download-destination-head");
-      const tail = target.querySelector(".download-destination-tail");
-      const box = target.getBoundingClientRect();
-      return {
-        text: target.textContent,
-        title: target.title,
-        tail: tail?.textContent ?? null,
-        tailClipped: tail ? tail.scrollWidth > tail.clientWidth : null,
-        tailInside: tail
-          ? tail.getBoundingClientRect().right <= box.right + 1
-          : null,
-        headClipped: head ? head.scrollWidth > head.clientWidth : null,
-      };
-    });
-    await resizeWindow(1200, 900);
-    const name = folder
-      .replace(/[\\/]+$/, "")
-      .split(/[\\/]/)
-      .pop();
-    assert.equal(summary.text, folder, "summary lost part of the path");
-    assert.equal(summary.title, folder);
-    assert.equal(summary.tail, name);
-    assert.equal(summary.tailClipped, false, "folder name was truncated");
-    assert.equal(summary.tailInside, true, "folder name overflows the row");
-    assert.equal(summary.headClipped, true, "parent folders did not truncate");
-    record("save-path", { folderName: name, length: folder.length });
+    const original = settingsOnDisk().downloadFolder;
+    assert.ok(original, "no download folder is saved");
+    // The seeded profile folder is short on Linux (/tmp), so the parent part
+    // would never clip. Build a deeply nested folder under the profile's
+    // Downloads (downloads must stay under HOME) so the path is long on every
+    // OS. Only the top segment is created by this test, and it is removed in
+    // the finally block.
+    const created = path.join(DOWNLOADS, "Long-Parent-Folder-Alpha");
+    const longPath = path.join(
+      created,
+      "Long-Parent-Folder-Bravo",
+      "Long-Parent-Folder-Charlie",
+      "Save Folder Name Stays Visible",
+    );
+    // Long enough that the parent part clips at 900px on every OS, while
+    // staying under Windows' MAX_PATH with the temp-directory prefix.
+    const MIN_LENGTH = 150;
+    try {
+      fs.mkdirSync(longPath, { recursive: true });
+      const saved = await api("saveSettings", { downloadFolder: longPath });
+      assert.equal(saved.ok, true, saved.error?.message);
+      const folder = saved.data.downloadFolder;
+      assert.ok(
+        folder.length >= MIN_LENGTH,
+        `test setup path is only ${folder.length} chars (need ${MIN_LENGTH})`,
+      );
+      await reloadRenderer();
+      await resizeWindow(900, 560);
+      const summary = await browser.execute(() => {
+        const target = document.getElementById("downloadFolderSummary");
+        const head = target.querySelector(".download-destination-head");
+        const tail = target.querySelector(".download-destination-tail");
+        const box = target.getBoundingClientRect();
+        return {
+          text: target.textContent,
+          title: target.title,
+          tail: tail?.textContent ?? null,
+          tailClipped: tail ? tail.scrollWidth > tail.clientWidth : null,
+          tailInside: tail
+            ? tail.getBoundingClientRect().right <= box.right + 1
+            : null,
+          headClipped: head ? head.scrollWidth > head.clientWidth : null,
+        };
+      });
+      await resizeWindow(1200, 900);
+      const name = folder
+        .replace(/[\\/]+$/, "")
+        .split(/[\\/]/)
+        .pop();
+      assert.equal(summary.text, folder, "summary lost part of the path");
+      assert.equal(summary.title, folder);
+      assert.equal(summary.tail, name);
+      assert.equal(summary.tailClipped, false, "folder name was truncated");
+      assert.equal(summary.tailInside, true, "folder name overflows the row");
+      assert.equal(
+        summary.headClipped,
+        true,
+        "parent folders did not truncate",
+      );
+      record("save-path", { folderName: name, length: folder.length });
+    } finally {
+      await resizeWindow(1200, 900);
+      const restored = await api("saveSettings", { downloadFolder: original });
+      assert.equal(restored.ok, true, restored.error?.message);
+      await reloadRenderer();
+      fs.rmSync(created, { recursive: true, force: true });
+    }
   });
 
   it("draws every icon from the bundled Lucide set", async () => {

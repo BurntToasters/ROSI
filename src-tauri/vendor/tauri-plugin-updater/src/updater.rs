@@ -5,40 +5,38 @@
 use std::{
     collections::HashMap,
     ffi::OsString,
-    io::Cursor,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
     time::Duration,
 };
 
-#[cfg(not(target_os = "macos"))]
-use std::ffi::OsStr;
-
 use base64::Engine;
 use futures_util::StreamExt;
-use http::{header::ACCEPT, HeaderName};
+use http::{HeaderName, header::ACCEPT};
 use minisign_verify::{PublicKey, Signature};
 use percent_encoding::{AsciiSet, CONTROLS};
 use reqwest::{
-    header::{HeaderMap, HeaderValue},
     ClientBuilder, StatusCode,
+    header::{HeaderMap, HeaderValue},
 };
 use semver::Version;
-use serde::{de::Error as DeError, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
+#[cfg(any(windows, target_os = "linux"))]
+use std::ffi::OsStr;
 use tauri::{
+    AppHandle, Resource, Runtime,
     utils::{
         config::BundleType,
         platform::{bundle_type, current_exe},
     },
-    AppHandle, Resource, Runtime,
 };
 use time::OffsetDateTime;
 use url::Url;
 
 use crate::{
-    error::{Error, Result},
     Config,
+    error::{Error, Result},
 };
 
 #[cfg(any(
@@ -68,15 +66,26 @@ mod appimage_archive;
 
 const UPDATER_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
 
+/// The kind of bundle the running application was installed from.
+///
+/// Its name is appended to the updater target string (`{os}-{arch}-{bundle_type}`) when looking
+/// up the release in the update manifest and replaces the `{{bundle_type}}` variable in the
+/// endpoint URLs.
 #[derive(Copy, Clone)]
 pub enum Installer {
+    /// Linux AppImage bundle, named `appimage`.
     AppImage,
+    /// Debian package, named `deb`.
     Deb,
+    /// RPM package, named `rpm`.
     Rpm,
 
+    /// macOS application bundle, named `app`. Also used for applications distributed as DMG.
     App,
 
+    /// Windows WiX (MSI) installer, named `msi`.
     Msi,
+    /// Windows NSIS installer, named `nsis`.
     Nsis,
 }
 
@@ -93,6 +102,7 @@ impl Installer {
     }
 }
 
+/// The update information of a single platform in the update manifest.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ReleaseManifestPlatform {
     /// Download URL for the platform
@@ -101,11 +111,18 @@ pub struct ReleaseManifestPlatform {
     pub signature: String,
 }
 
+/// The platform specific data of a [`RemoteRelease`], in either of the two supported shapes.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(untagged)]
 pub enum RemoteReleaseInner {
+    /// Server Format: the endpoint resolved the platform itself and returned a single
+    /// download URL and signature.
     Dynamic(ReleaseManifestPlatform),
+    /// Static Format: the manifest describes every platform it supports and the updater
+    /// picks the entry matching the current target.
     Static {
+        /// Update information for each platform, keyed by the updater target string
+        /// (e.g. `darwin-aarch64`).
         platforms: HashMap<String, ReleaseManifestPlatform>,
     },
 }
@@ -151,9 +168,17 @@ impl RemoteRelease {
     }
 }
 
+/// Function executed right before the updater is launched. Returning an error aborts the installation,
+/// keeping the downloaded update retryable. See [`UpdaterBuilder::on_before_exit`].
 pub type OnBeforeExit = Arc<dyn Fn() -> std::result::Result<(), String> + Send + Sync + 'static>;
 type OnWindowsInstallerLaunched = Arc<dyn Fn() + Send + Sync + 'static>;
+/// Function that customizes the `reqwest` client builder used for the updater requests.
+/// See [`UpdaterBuilder::configure_client`].
 pub type OnBeforeRequest = Arc<dyn Fn(ClientBuilder) -> ClientBuilder + Send + Sync + 'static>;
+/// Function that decides whether a remote release must be installed.
+///
+/// It receives the current application version and the remote release,
+/// and returns `true` when the release should be treated as an update.
 pub type VersionComparator = Arc<dyn Fn(Version, RemoteRelease) -> bool + Send + Sync>;
 fn run_preinstall_flush(
     hook: Option<&OnBeforeExit>,
@@ -224,17 +249,41 @@ fn append_download_chunk(
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 type MainThreadClosure = Box<dyn FnOnce() + Send + Sync + 'static>;
-type RunOnMainThread =
-    Box<dyn Fn(MainThreadClosure) -> std::result::Result<(), tauri::Error> + Send + Sync + 'static>;
+#[cfg(target_os = "macos")]
+type RunOnMainThread = Arc<dyn Fn(MainThreadClosure) -> tauri::Result<()> + Send + Sync + 'static>;
 
-pub struct UpdaterBuilder {
-    #[allow(dead_code)]
-    run_on_main_thread: RunOnMainThread,
-    app_name: String,
-    bundle_identifier: String,
-    current_version: Version,
+// TODO: Move more fields to this in v3 if we can mark those fields non `pub`
+/// Updater context shared between [`UpdaterBuilder`], [`Updater`] and [`Update`]
+#[derive(Clone)]
+struct UpdaterContext {
     config: Config,
+    configure_client: Option<OnBeforeRequest>,
+    #[cfg(target_os = "macos")]
+    run_on_main_thread: RunOnMainThread,
+    /// App name, used for creating named tempfiles
+    #[cfg(windows)]
+    app_name: String,
+    #[cfg_attr(not(target_os = "macos"), allow(unused))]
+    bundle_identifier: String,
+    #[cfg(windows)]
+    installer_args: Vec<OsString>,
+    #[cfg(windows)]
+    current_exe_args: Vec<OsString>,
+    on_before_exit: Option<OnBeforeExit>,
+    #[cfg(windows)]
+    on_windows_installer_launched: Option<OnWindowsInstallerLaunched>,
+    #[cfg(windows)]
+    restart_after_install: bool,
+}
+
+/// Builder for an [`Updater`] instance.
+///
+/// Get one from [`crate::UpdaterExt::updater_builder`], which pre-fills it with the plugin
+/// configuration, then call [`UpdaterBuilder::build`].
+pub struct UpdaterBuilder {
+    current_version: Version,
     pub(crate) version_comparator: Option<VersionComparator>,
     executable_path: Option<PathBuf>,
     target: Option<String>,
@@ -243,29 +292,40 @@ pub struct UpdaterBuilder {
     timeout: Option<Duration>,
     proxy: Option<Url>,
     no_proxy: bool,
-    installer_args: Vec<OsString>,
-    current_exe_args: Vec<OsString>,
-    on_before_exit: Option<OnBeforeExit>,
-    on_windows_installer_launched: Option<OnWindowsInstallerLaunched>,
-    configure_client: Option<OnBeforeRequest>,
+    context: UpdaterContext,
 }
 
 impl UpdaterBuilder {
     pub(crate) fn new<R: Runtime>(app: &AppHandle<R>, config: crate::Config) -> Self {
-        let app_ = app.clone();
-        let run_on_main_thread = move |f| app_.run_on_main_thread(f);
+        #[cfg(target_os = "macos")]
+        let run_on_main_thread = {
+            let app_ = app.clone();
+            Arc::new(move |f| app_.run_on_main_thread(f))
+        };
         Self {
-            run_on_main_thread: Box::new(run_on_main_thread),
-            installer_args: config
-                .windows
-                .as_ref()
-                .map(|w| w.installer_args.clone())
-                .unwrap_or_default(),
-            current_exe_args: Vec::new(),
-            app_name: app.package_info().name.clone(),
-            bundle_identifier: app.config().identifier.clone(),
+            context: UpdaterContext {
+                #[cfg(windows)]
+                installer_args: config
+                    .windows
+                    .as_ref()
+                    .map(|w| w.installer_args.clone())
+                    .unwrap_or_default(),
+                config,
+                configure_client: None,
+                #[cfg(target_os = "macos")]
+                run_on_main_thread,
+                #[cfg(windows)]
+                app_name: app.package_info().name.clone(),
+                bundle_identifier: app.config().identifier.clone(),
+                #[cfg(windows)]
+                current_exe_args: Vec::new(),
+                on_before_exit: None,
+                #[cfg(windows)]
+                on_windows_installer_launched: None,
+                #[cfg(windows)]
+                restart_after_install: true,
+            },
             current_version: app.package_info().version.clone(),
-            config,
             version_comparator: None,
             executable_path: None,
             target: None,
@@ -274,12 +334,15 @@ impl UpdaterBuilder {
             timeout: None,
             proxy: None,
             no_proxy: false,
-            on_before_exit: None,
-            on_windows_installer_launched: None,
-            configure_client: None,
         }
     }
 
+    /// Sets the function used to decide whether the remote release must be installed,
+    /// replacing the comparator set with [`crate::Builder::default_version_comparator`]
+    /// and the behavior of the `allowDowngrades` configuration value.
+    ///
+    /// When no comparator is set, a release is only installed if its version is greater
+    /// than the current application version.
     pub fn version_comparator<F: Fn(Version, RemoteRelease) -> bool + Send + Sync + 'static>(
         mut self,
         f: F,
@@ -288,26 +351,52 @@ impl UpdaterBuilder {
         self
     }
 
+    /// Sets the target name used when checking for updates.
+    ///
+    /// It replaces the `{{target}}` variable in the endpoint URLs and is used as the key to look
+    /// up the release in the `platforms` object of a static update manifest.
+    ///
+    /// When it is not set, the updater uses the current operating system name (`linux`, `darwin`
+    /// or `windows`) in the endpoint URLs and looks for `{os}-{arch}-{bundle_type}` then
+    /// `{os}-{arch}` in the manifest.
     pub fn target(mut self, target: impl Into<String>) -> Self {
         self.target.replace(target.into());
         self
     }
 
+    /// Sets the endpoints to fetch the update manifest from,
+    /// overriding the `endpoints` configuration value.
+    ///
+    /// They are checked in order and the first one that returns a valid release wins.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InsecureTransportProtocol`] on release builds if an endpoint does not use
+    /// the `https` protocol and the `dangerousInsecureTransportProtocol` configuration value is
+    /// not enabled. On debug builds a warning is printed instead.
     pub fn endpoints(mut self, endpoints: Vec<Url>) -> Result<Self> {
         crate::config::validate_endpoints(
             &endpoints,
-            self.config.dangerous_insecure_transport_protocol,
+            self.context.config.dangerous_insecure_transport_protocol,
         )?;
 
         self.endpoints.replace(endpoints);
         Ok(self)
     }
 
+    /// Sets the path of the application executable, which is used to determine where the update
+    /// must be installed. Defaults to the path of the current executable, or to the AppImage path
+    /// when the application runs as an AppImage.
     pub fn executable_path<P: AsRef<Path>>(mut self, p: P) -> Self {
         self.executable_path.replace(p.as_ref().into());
         self
     }
 
+    /// Adds a header to be sent on the update check and download requests.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the header name or the header value is not valid.
     pub fn header<K, V>(mut self, key: K, value: V) -> Result<Self>
     where
         HeaderName: TryFrom<K>,
@@ -323,21 +412,28 @@ impl UpdaterBuilder {
         Ok(self)
     }
 
+    /// Replaces all the headers sent on the update check and download requests with the given map,
+    /// discarding the ones previously added with [`Self::header`].
     pub fn headers(mut self, headers: HeaderMap) -> Self {
         self.headers = headers;
         self
     }
 
+    /// Removes all the headers previously set on this builder.
     pub fn clear_headers(mut self) -> Self {
         self.headers.clear();
         self
     }
 
+    /// Sets the timeout of the update check and download requests.
+    /// When it is not set, the requests do not time out.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
     }
 
+    /// Sets the proxy used for the update check and download requests.
+    /// It is ignored when [`Self::no_proxy`] was called.
     pub fn proxy(mut self, proxy: Url) -> Self {
         self.proxy.replace(proxy);
         self
@@ -349,27 +445,43 @@ impl UpdaterBuilder {
         self
     }
 
+    /// Sets the public key used to verify the update signature,
+    /// overriding the `pubkey` value of the plugin configuration.
     pub fn pubkey<S: Into<String>>(mut self, pubkey: S) -> Self {
-        self.config.pubkey = pubkey.into();
+        self.context.config.pubkey = pubkey.into();
         self
     }
 
     /// Adds an argument to pass to the Windows installer.
+    ///
+    /// Note: this applies to both WiX and NSIS installers
+    #[cfg_attr(not(windows), allow(unused))]
     pub fn installer_arg<S>(mut self, arg: S) -> Self
     where
         S: Into<OsString>,
     {
-        self.installer_args.push(arg.into());
+        #[cfg(windows)]
+        {
+            self.context.installer_args.push(arg.into());
+        }
         self
     }
 
     /// Adds multiple arguments to pass to the Windows installer.
+    ///
+    /// Note: this applies to both WiX and NSIS installers
+    #[cfg_attr(not(windows), allow(unused))]
     pub fn installer_args<I, S>(mut self, args: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<OsString>,
     {
-        self.installer_args.extend(args.into_iter().map(Into::into));
+        #[cfg(windows)]
+        {
+            self.context
+                .installer_args
+                .extend(args.into_iter().map(Into::into));
+        }
         self
     }
 
@@ -379,8 +491,12 @@ impl UpdaterBuilder {
     /// [`Self::installer_arg`], [`crate::Builder::installer_arg`]
     /// and the `plugins > updater > windows > installerArgs` config,
     /// not the ones managed by us (e.g. `/UPDATER` flag passed to the NSIS installer)
+    #[cfg_attr(not(windows), allow(unused))]
     pub fn clear_installer_args(mut self) -> Self {
-        self.installer_args.clear();
+        #[cfg(windows)]
+        {
+            self.context.installer_args.clear();
+        }
         self
     }
 
@@ -390,15 +506,29 @@ impl UpdaterBuilder {
         mut self,
         f: F,
     ) -> Self {
-        self.on_before_exit.replace(Arc::new(f));
+        self.context.on_before_exit.replace(Arc::new(f));
         self
     }
 
+    /// If the Windows installer should restart the app after installed, default is `true`
+    #[cfg_attr(not(windows), allow(unused))]
+    pub fn restart_after_install(mut self, restart_after_install: bool) -> Self {
+        #[cfg(windows)]
+        {
+            self.context.restart_after_install = restart_after_install;
+        }
+        self
+    }
+
+    #[cfg_attr(not(windows), allow(unused))]
     pub(crate) fn on_windows_installer_launched<F: Fn() + Send + Sync + 'static>(
         mut self,
         f: F,
     ) -> Self {
-        self.on_windows_installer_launched = Some(Arc::new(f));
+        #[cfg(windows)]
+        {
+            self.context.on_windows_installer_launched = Some(Arc::new(f));
+        }
         self
     }
 
@@ -410,14 +540,23 @@ impl UpdaterBuilder {
         mut self,
         f: F,
     ) -> Self {
-        self.configure_client.replace(Arc::new(f));
+        self.context.configure_client.replace(Arc::new(f));
         self
     }
 
+    /// Builds the [`Updater`].
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::EmptyEndpoints`]: neither [`Self::endpoints`] nor the `endpoints`
+    ///   configuration value provided an endpoint to check.
+    /// - [`Error::UnsupportedArch`]: the updater does not support the current architecture.
+    /// - [`Error::FailedToDetermineExtractPath`]: the install directory could not be resolved
+    ///   from the executable path.
     pub fn build(self) -> Result<Updater> {
         let endpoints = self
             .endpoints
-            .unwrap_or_else(|| self.config.endpoints.clone());
+            .unwrap_or_else(|| self.context.config.endpoints.clone());
 
         if endpoints.is_empty() {
             return Err(Error::EmptyEndpoints);
@@ -439,10 +578,6 @@ impl UpdaterBuilder {
         };
 
         Ok(Updater {
-            run_on_main_thread: Arc::new(self.run_on_main_thread),
-            config: self.config,
-            app_name: self.app_name,
-            bundle_identifier: self.bundle_identifier,
             executable_name,
             current_version: self.current_version,
             version_comparator: self.version_comparator,
@@ -450,37 +585,33 @@ impl UpdaterBuilder {
             proxy: self.proxy,
             no_proxy: self.no_proxy,
             endpoints,
-            installer_args: self.installer_args,
-            current_exe_args: self.current_exe_args,
             arch,
             target: self.target,
             headers: self.headers,
             extract_path,
-            on_before_exit: self.on_before_exit,
-            on_windows_installer_launched: self.on_windows_installer_launched,
-            configure_client: self.configure_client,
+            context: self.context.clone(),
         })
     }
 }
 
+#[cfg(windows)]
 impl UpdaterBuilder {
     pub(crate) fn current_exe_args<I, S>(mut self, args: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<OsString>,
     {
-        self.current_exe_args
+        self.context
+            .current_exe_args
             .extend(args.into_iter().map(Into::into));
         self
     }
 }
 
+/// Checks the configured endpoints for an application update.
+///
+/// Get one from [`crate::UpdaterExt::updater`] or by calling [`UpdaterBuilder::build`].
 pub struct Updater {
-    #[allow(dead_code)]
-    run_on_main_thread: Arc<RunOnMainThread>,
-    config: Config,
-    app_name: String,
-    bundle_identifier: String,
     executable_name: Option<String>,
     current_version: Version,
     version_comparator: Option<VersionComparator>,
@@ -494,16 +625,29 @@ pub struct Updater {
     target: Option<String>,
     headers: HeaderMap,
     extract_path: PathBuf,
-    on_before_exit: Option<OnBeforeExit>,
-    on_windows_installer_launched: Option<OnWindowsInstallerLaunched>,
-    configure_client: Option<OnBeforeRequest>,
-    #[allow(unused)]
-    installer_args: Vec<OsString>,
-    #[allow(unused)]
-    current_exe_args: Vec<OsString>,
+    context: UpdaterContext,
 }
 
 impl Updater {
+    /// Checks the endpoints for an update, returning the first release that the version
+    /// comparator accepts.
+    ///
+    /// Each endpoint is requested in order, with the `{{current_version}}`, `{{target}}`,
+    /// `{{arch}}` and `{{bundle_type}}` variables replaced in its URL, until one of them
+    /// answers with a release manifest the updater can parse.
+    ///
+    /// Resolves to `None` when an endpoint replies with `204 No Content` or when the release it
+    /// announced is not considered an update - by default when its version is not greater than the
+    /// current application version.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::UnsupportedOs`]: no target was set and the updater does not support the
+    ///   current operating system.
+    /// - [`Error::ReleaseNotFound`]: no endpoint returned a release manifest.
+    /// - The last request or deserialization error when every endpoint failed.
+    /// - [`Error::TargetNotFound`] or [`Error::TargetsNotFound`]: the manifest has no entry
+    ///   for the current target.
     pub async fn check(&self) -> Result<Option<Update>> {
         // we want JSON only
         let mut headers = self.headers.clone();
@@ -520,20 +664,19 @@ impl Updater {
                     "/etc/pki/tls/certs/ca-bundle.crt",
                 ] {
                     if std::path::Path::new(candidate).is_file() {
-                        std::env::set_var("SSL_CERT_FILE", candidate);
+                        // SAFETY: runs before this request reads the environment; no other thread
+                        // is spawned by this crate to read or write it.
+                        unsafe { std::env::set_var("SSL_CERT_FILE", candidate) };
                         break;
                     }
                 }
             }
             if std::env::var_os("SSL_CERT_DIR").is_none() {
-                std::env::set_var("SSL_CERT_DIR", "/etc/ssl/certs");
+                // SAFETY: see above.
+                unsafe { std::env::set_var("SSL_CERT_DIR", "/etc/ssl/certs") };
             }
         }
-        let target = if let Some(target) = &self.target {
-            target
-        } else {
-            updater_os().ok_or(Error::UnsupportedOs)?
-        };
+        let target = self.current_target()?;
 
         let mut remote_release: Option<RemoteRelease> = None;
         let mut raw_json: Option<serde_json::Value> = None;
@@ -578,10 +721,10 @@ impl Updater {
             }
 
             let mut request = ClientBuilder::new().user_agent(UPDATER_USER_AGENT);
-            if self.config.dangerous_accept_invalid_certs {
+            if self.context.config.dangerous_accept_invalid_certs {
                 request = request.danger_accept_invalid_certs(true);
             }
-            if self.config.dangerous_accept_invalid_hostnames {
+            if self.context.config.dangerous_accept_invalid_hostnames {
                 request = request.danger_accept_invalid_hostnames(true);
             }
             if let Some(timeout) = self.timeout {
@@ -596,7 +739,7 @@ impl Updater {
                 request = request.proxy(proxy);
             }
 
-            if let Some(ref configure_client) = self.configure_client {
+            if let Some(ref configure_client) = self.context.configure_client {
                 request = configure_client(request);
             }
 
@@ -656,45 +799,85 @@ impl Updater {
         // Extracted remote metadata
         let release = remote_release.ok_or(Error::ReleaseNotFound)?;
 
+        self.update_from_release(release, raw_json.unwrap(), target)
+    }
+
+    /// Restores an update from a previously saved [`Update::raw_json`] without making a request.
+    ///
+    /// Applies the same target selection and version comparator as [`Self::check`]. Runtime
+    /// configuration, including the public key and installation path, comes from this updater,
+    /// not from the cached metadata. Returns `None` if the release is no longer an update.
+    ///
+    /// The cached metadata is not authenticated, so the restored update always requires the
+    /// package signature to bind the announced version, as if [`Config::require_signed_version`]
+    /// was enabled. Otherwise modified metadata could pair a newer version number with an older,
+    /// validly signed package. Packages signed without a version (by Tauri CLI releases that
+    /// predate `--app-version`) are rejected with [`Error::MissingSignedVersion`].
+    ///
+    /// [`Update::install`] verifies the bytes it is given, and [`Update::verify`] can be used to
+    /// check a cached package before installing it.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::UnsupportedOs`]: no target was set and the updater does not support the
+    ///   current operating system.
+    /// - A deserialization error when the metadata is not a valid release manifest.
+    /// - [`Error::TargetNotFound`] or [`Error::TargetsNotFound`]: the release is an update but
+    ///   the manifest has no entry for the current target.
+    pub fn restore_update(&self, raw_json: serde_json::Value) -> Result<Option<Update>> {
+        let target = self.current_target()?;
+        let release = serde_json::from_value(raw_json.clone())?;
+        let mut update = self.update_from_release(release, raw_json, target)?;
+        if let Some(update) = &mut update {
+            update.context.config.require_signed_version = true;
+        }
+        Ok(update)
+    }
+
+    /// The `{{target}}` value: the user provided target or the current operating system.
+    fn current_target(&self) -> Result<&str> {
+        match &self.target {
+            Some(target) => Ok(target),
+            None => updater_os().ok_or(Error::UnsupportedOs),
+        }
+    }
+
+    fn update_from_release(
+        &self,
+        release: RemoteRelease,
+        raw_json: serde_json::Value,
+        target: &str,
+    ) -> Result<Option<Update>> {
         let should_update = match self.version_comparator.as_ref() {
             Some(comparator) => comparator(self.current_version.clone(), release.clone()),
             None => release.version > self.current_version,
         };
 
+        // a release that is not an update is not an error, even if it has no entry for this target
+        if !should_update {
+            return Ok(None);
+        }
+
         let installer = installer_for_bundle_type(bundle_type());
         let (download_url, signature) = self.get_urls(&release, &installer)?;
 
-        let update = if should_update {
-            Some(Update {
-                run_on_main_thread: self.run_on_main_thread.clone(),
-                config: self.config.clone(),
-                on_before_exit: self.on_before_exit.clone(),
-                on_windows_installer_launched: self.on_windows_installer_launched.clone(),
-                app_name: self.app_name.clone(),
-                bundle_identifier: self.bundle_identifier.clone(),
-                executable_name: self.executable_name.clone(),
-                current_version: self.current_version.to_string(),
-                target: target.to_owned(),
-                extract_path: self.extract_path.clone(),
-                version: release.version.to_string(),
-                date: release.pub_date,
-                download_url: download_url.clone(),
-                signature: signature.to_owned(),
-                body: release.notes,
-                raw_json: raw_json.unwrap(),
-                timeout: None,
-                proxy: self.proxy.clone(),
-                no_proxy: self.no_proxy,
-                headers: self.headers.clone(),
-                installer_args: self.installer_args.clone(),
-                current_exe_args: self.current_exe_args.clone(),
-                configure_client: self.configure_client.clone(),
-            })
-        } else {
-            None
-        };
-
-        Ok(update)
+        Ok(Some(Update {
+            current_version: self.current_version.to_string(),
+            target: target.to_owned(),
+            extract_path: self.extract_path.clone(),
+            executable_name: self.executable_name.clone(),
+            version: release.version.to_string(),
+            date: release.pub_date,
+            download_url: download_url.clone(),
+            signature: signature.to_owned(),
+            body: release.notes,
+            raw_json,
+            timeout: None,
+            proxy: self.proxy.clone(),
+            no_proxy: self.no_proxy,
+            headers: self.headers.clone(),
+            context: self.context.clone(),
+        }))
     }
 
     fn get_urls<'a>(
@@ -730,15 +913,12 @@ impl Updater {
     }
 }
 
+/// An update announced by the remote server, returned by [`Updater::check`].
+///
+/// Use [`Update::download`] followed by [`Update::install`], or [`Update::download_and_install`],
+/// to apply it.
 #[derive(Clone)]
 pub struct Update {
-    #[allow(dead_code)]
-    run_on_main_thread: Arc<RunOnMainThread>,
-    config: Config,
-    #[allow(unused)]
-    on_before_exit: Option<OnBeforeExit>,
-    #[allow(unused)]
-    on_windows_installer_launched: Option<OnWindowsInstallerLaunched>,
     /// Update description
     pub body: Option<String>,
     /// Version used to check for update
@@ -767,18 +947,9 @@ pub struct Update {
     /// Extract path
     #[allow(unused)]
     extract_path: PathBuf,
-    /// App name, used for creating named tempfiles on Windows
-    #[allow(unused)]
-    app_name: String,
-    #[allow(unused)]
-    bundle_identifier: String,
     #[allow(unused)]
     executable_name: Option<String>,
-    #[allow(unused)]
-    installer_args: Vec<OsString>,
-    #[allow(unused)]
-    current_exe_args: Vec<OsString>,
-    configure_client: Option<OnBeforeRequest>,
+    context: UpdaterContext,
 }
 
 impl Resource for Update {}
@@ -792,6 +963,18 @@ impl Update {
         mut on_chunk: C,
         on_download_finish: D,
     ) -> Result<Vec<u8>> {
+        // not enforced (unlike for the endpoints) as that would break existing releases, but the
+        // artifact then travels in plaintext: only its signature protects it
+        // TODO(v3): enforce it
+        if self.download_url.scheme() != "https"
+            && !self.context.config.dangerous_insecure_transport_protocol
+        {
+            log::warn!(
+                "the update download URL {} does not use the `https` protocol",
+                self.download_url
+            );
+        }
+
         // set our headers
         let mut headers = self.headers.clone();
         if !headers.contains_key(ACCEPT) {
@@ -799,10 +982,10 @@ impl Update {
         }
 
         let mut request = ClientBuilder::new().user_agent(UPDATER_USER_AGENT);
-        if self.config.dangerous_accept_invalid_certs {
+        if self.context.config.dangerous_accept_invalid_certs {
             request = request.danger_accept_invalid_certs(true);
         }
-        if self.config.dangerous_accept_invalid_hostnames {
+        if self.context.config.dangerous_accept_invalid_hostnames {
             request = request.danger_accept_invalid_hostnames(true);
         }
         if let Some(timeout) = self.timeout {
@@ -814,7 +997,7 @@ impl Update {
             let proxy = reqwest::Proxy::all(proxy.as_str())?;
             request = request.proxy(proxy);
         }
-        if let Some(ref configure_client) = self.configure_client {
+        if let Some(ref configure_client) = self.context.configure_client {
             request = configure_client(request);
         }
         let response = request
@@ -853,19 +1036,48 @@ impl Update {
         }
         on_download_finish();
 
-        verify_signature(&buffer, &self.signature, &self.config.pubkey)?;
+        self.verify(&buffer)?;
 
         Ok(buffer)
     }
 
-    /// Installs the updater package downloaded by [`Update::download`]
+    /// Verifies package bytes using this update's signature and the configured public key.
+    ///
+    /// This performs the same checks as [`Self::download`] and [`Self::install`], including
+    /// signed-version validation, without making a request or installing anything. Use it to
+    /// discard a corrupted or tampered cached package early.
+    pub fn verify(&self, bytes: &[u8]) -> Result<()> {
+        verify_signature(
+            bytes,
+            &self.signature,
+            &self.context.config.pubkey,
+            &self.version,
+            self.context.config.require_signed_version,
+        )
+    }
+
+    /// Installs the updater package downloaded by [`Update::download`] or cached from a previous
+    /// download.
+    ///
+    /// The bytes are verified with [`Self::verify`] first, so a package that does not match this
+    /// update's signature is never installed.
+    ///
+    /// ## Platform-specific:
+    ///
+    /// - **Windows:** This function exits the app after launching the updater installer successfully
+    /// - **macOS / Linux:** You need to relaunch the app to run the newly install version
     pub fn install(&self, bytes: impl AsRef<[u8]>) -> Result<()> {
-        run_preinstall_flush(self.on_before_exit.as_ref(), || {
-            self.install_inner(bytes.as_ref())
-        })
+        let bytes = bytes.as_ref();
+        self.verify(bytes)?;
+        run_preinstall_flush(self.context.on_before_exit.as_ref(), || self.install_inner(bytes))
     }
 
     /// Downloads and installs the updater package
+    ///
+    /// ## Platform-specific:
+    ///
+    /// - **Windows:** This function exits the app after launching the updater installer successfully
+    /// - **macOS / Linux:** You need to relaunch the app to run the newly install version
     pub async fn download_and_install<C: FnMut(usize, Option<u64>), D: FnOnce()>(
         &self,
         on_chunk: C,
@@ -875,9 +1087,20 @@ impl Update {
         self.install(bytes)
     }
 
+    /// Updates are not supported on mobile, where apps are updated through the app stores.
     #[cfg(mobile)]
     fn install_inner(&self, _bytes: &[u8]) -> Result<()> {
-        Ok(())
+        Err(Error::UnsupportedOs)
+    }
+
+    /// Whether the Windows installer should restart the app after installed, default is `true`
+    #[cfg_attr(not(windows), allow(unused))]
+    pub fn restart_after_install(mut self, restart_after_install: bool) -> Self {
+        #[cfg(windows)]
+        {
+            self.context.restart_after_install = restart_after_install;
+        }
+        self
     }
 }
 
@@ -931,54 +1154,13 @@ impl Update {
     /// │   └──[AppName]_[version]_x64-setup.exe           # NSIS installer
     /// └── ...
     fn install_inner(&self, bytes: &[u8]) -> Result<()> {
-        use std::iter::once;
         use windows_sys::{
-            w,
             Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOW},
+            w,
         };
 
         let updater_type = self.extract(bytes)?;
 
-        let install_mode = self.config.install_mode();
-        let current_args = &self.current_exe_args()[1..];
-        let msi_args;
-        let nsis_args;
-
-        let installer_args: Vec<&OsStr> = match &updater_type {
-            WindowsUpdaterType::Nsis { .. } => {
-                nsis_args = current_args
-                    .iter()
-                    .map(escape_nsis_current_exe_arg)
-                    .collect::<Vec<_>>();
-
-                install_mode
-                    .nsis_args()
-                    .iter()
-                    .map(OsStr::new)
-                    .chain(once(OsStr::new("/UPDATE")))
-                    .chain(once(OsStr::new("/ARGS")))
-                    .chain(nsis_args.iter().map(OsStr::new))
-                    .chain(self.installer_args())
-                    .collect()
-            }
-            WindowsUpdaterType::Msi { path, .. } => {
-                let escaped_args = current_args
-                    .iter()
-                    .map(escape_msi_property_arg)
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                msi_args = OsString::from(format!("LAUNCHAPPARGS=\"{escaped_args}\""));
-
-                [OsStr::new("/i"), path.as_os_str()]
-                    .into_iter()
-                    .chain(install_mode.msiexec_args().iter().map(OsStr::new))
-                    .chain(once(OsStr::new("/promptrestart")))
-                    .chain(self.installer_args())
-                    .chain(once(OsStr::new("AUTOLAUNCHAPP=True")))
-                    .chain(once(msi_args.as_os_str()))
-                    .collect()
-            }
-        };
 
         let file = match &updater_type {
             WindowsUpdaterType::Nsis { path, .. } => path.as_os_str().to_os_string(),
@@ -987,9 +1169,11 @@ impl Update {
                 |p| OsString::from(format!("{p}\\System32\\msiexec.exe")),
             ),
         };
-        let file = encode_wide(file);
+        let parameters = self.updater_parameters(&updater_type);
 
-        let parameters = installer_args.join(OsStr::new(" "));
+        log::debug!("Executing updater {file:?} with parameters: {parameters:?}");
+
+        let file = encode_wide(file);
         let parameters = encode_wide(parameters);
 
         let launched = unsafe {
@@ -1005,7 +1189,7 @@ impl Update {
         finish_windows_installer_launch(
             launched,
             || {
-                if let Some(cleanup) = &self.on_windows_installer_launched {
+                if let Some(cleanup) = &self.context.on_windows_installer_launched {
                     cleanup();
                 }
             },
@@ -1013,18 +1197,72 @@ impl Update {
         )
     }
 
-    fn installer_args(&self) -> Vec<&OsStr> {
-        self.installer_args
-            .iter()
-            .map(OsStr::new)
-            .collect::<Vec<_>>()
+    fn updater_parameters(&self, updater_type: &WindowsUpdaterType) -> OsString {
+        let install_mode = self.context.config.install_mode();
+        let current_args = &self.context.current_exe_args[1..];
+
+        match updater_type {
+            WindowsUpdaterType::Nsis { .. } => {
+                let mut installer_args: Vec<&OsStr> = Vec::new();
+                installer_args.extend(install_mode.nsis_args().iter().map(OsStr::new));
+                installer_args.push(OsStr::new("/UPDATE"));
+
+                let nsis_current_exe_arg;
+                if self.context.restart_after_install {
+                    nsis_current_exe_arg = current_args
+                        .iter()
+                        .map(escape_nsis_current_exe_arg)
+                        .collect::<Vec<_>>();
+
+                    installer_args.extend(
+                        install_mode
+                            .nsis_restart_after_install_args()
+                            .iter()
+                            .map(OsStr::new),
+                    );
+                    installer_args.push(OsStr::new("/ARGS"));
+                    installer_args.extend(nsis_current_exe_arg.iter().map(OsStr::new));
+                }
+
+                installer_args.extend(self.installer_args());
+
+                installer_args.join(OsStr::new(" "))
+            }
+            WindowsUpdaterType::Msi { path, .. } => {
+                let mut installer_args: Vec<&OsStr> = vec![OsStr::new("/i"), path.as_os_str()];
+                installer_args.extend(install_mode.msiexec_args().iter().map(OsStr::new));
+                installer_args.push(OsStr::new("/promptrestart"));
+                installer_args.extend(self.installer_args());
+
+                let msi_current_exe_arg;
+                if self.context.restart_after_install {
+                    msi_current_exe_arg = format!(
+                        "LAUNCHAPPARGS=\"{}\"",
+                        current_args
+                            .iter()
+                            .map(escape_msi_property_arg)
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    );
+
+                    installer_args.extend(
+                        install_mode
+                            .msi_restart_after_install_args()
+                            .iter()
+                            .map(OsStr::new),
+                    );
+                    installer_args.push(OsStr::new(&msi_current_exe_arg));
+                }
+
+                installer_args.join(OsStr::new(" "))
+            }
+        }
     }
 
-    fn current_exe_args(&self) -> Vec<&OsStr> {
-        self.current_exe_args
-            .iter()
-            .map(OsStr::new)
-            .collect::<Vec<_>>()
+    fn installer_args(
+        &self,
+    ) -> std::iter::Map<std::slice::Iter<'_, OsString>, fn(&OsString) -> &OsStr> {
+        self.context.installer_args.iter().map(OsStr::new)
     }
 
     fn extract(&self, bytes: &[u8]) -> Result<WindowsUpdaterType> {
@@ -1038,7 +1276,10 @@ impl Update {
 
     fn make_temp_dir(&self) -> Result<PathBuf> {
         Ok(tempfile::Builder::new()
-            .prefix(&format!("{}-{}-updater-", self.app_name, self.version))
+            .prefix(&format!(
+                "{}-{}-updater-",
+                self.context.app_name, self.version
+            ))
             .tempdir()?
             .keep())
     }
@@ -1047,7 +1288,7 @@ impl Update {
     fn extract_zip(&self, bytes: &[u8]) -> Result<WindowsUpdaterType> {
         let temp_dir = self.make_temp_dir()?;
 
-        let archive = Cursor::new(bytes);
+        let archive = std::io::Cursor::new(bytes);
         let mut extractor = zip::ZipArchive::new(archive)?;
         extractor.extract(&temp_dir)?;
 
@@ -1086,7 +1327,10 @@ impl Update {
 
         let temp_dir = self.make_temp_dir()?;
         let mut temp_file = tempfile::Builder::new()
-            .prefix(&format!("{}-{}-installer", self.app_name, self.version))
+            .prefix(&format!(
+                "{}-{}-installer",
+                self.context.app_name, self.version
+            ))
             .suffix(ext)
             .rand_bytes(0)
             .tempfile_in(temp_dir)?;
@@ -1180,13 +1424,6 @@ impl Update {
         install_args: &[&str],
         package_extension: &str,
     ) -> Result<()> {
-        // Try different temp directories
-        let tmp_dir_locations = vec![
-            Box::new(|| Some(std::env::temp_dir())) as Box<dyn FnOnce() -> Option<PathBuf>>,
-            Box::new(dirs::cache_dir),
-            Box::new(|| Some(self.extract_path.parent().unwrap().to_path_buf())),
-        ];
-
         // Try writing to multiple temp locations until one succeeds
         for tmp_dir_location in tmp_dir_locations {
             if let Some(path) = tmp_dir_location() {
@@ -1205,6 +1442,7 @@ impl Update {
                     }
                     // If write fails, continue to next temp location
                 }
+                // If write fails, continue to next temp location
             }
         }
 
@@ -1422,7 +1660,7 @@ impl Update {
             .ok_or(Error::FailedToDetermineExtractPath)?;
 
         let expected_identity = MacosBundleIdentity {
-            bundle_identifier: self.bundle_identifier.clone(),
+            bundle_identifier: self.context.bundle_identifier.clone(),
             executable: self.executable_name.clone().ok_or_else(|| {
                 Error::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -1536,7 +1774,7 @@ impl Update {
                 let bundle_identifier = expected_identity.bundle_identifier.clone();
                 let executable = expected_identity.executable.clone();
                 let (tx, rx) = std::sync::mpsc::channel();
-                let res = (self.run_on_main_thread)(Box::new(move || {
+                let res = (self.context.run_on_main_thread)(Box::new(move || {
                     let mut script = osakit::Script::new_from_source(
                         osakit::Language::AppleScript,
                         MACOS_PRIVILEGED_INSTALL_SCRIPT,
@@ -1898,6 +2136,14 @@ fn updater_arch() -> Option<&'static str> {
     }
 }
 
+/// Resolves the path the update must be installed to from the path of the application executable.
+///
+/// This is the directory holding the executable, except on macOS where the `.app` bundle path is
+/// returned for executables living in `Contents/MacOS`.
+///
+/// # Errors
+///
+/// Returns [`Error::FailedToDetermineExtractPath`] when the path has no parent directory.
 pub fn extract_path_from_executable(executable_path: &Path) -> Result<PathBuf> {
     // Return the path of the current executable by default
     // Example C:\Program Files\My App\
@@ -1998,7 +2244,13 @@ where
 }
 
 // Validate signature
-fn verify_signature(data: &[u8], release_signature: &str, pub_key: &str) -> Result<bool> {
+fn verify_signature(
+    data: &[u8],
+    release_signature: &str,
+    pub_key: &str,
+    announced_version: &str,
+    require_signed_version: bool,
+) -> Result<()> {
     // we need to convert the pub key
     let pub_key_decoded = base64_to_string(pub_key)?;
     let public_key = PublicKey::decode(&pub_key_decoded)?;
@@ -2007,7 +2259,65 @@ fn verify_signature(data: &[u8], release_signature: &str, pub_key: &str) -> Resu
 
     // Validate signature or bail out
     public_key.verify(data, &signature, true)?;
-    Ok(true)
+
+    // Only now is the trusted comment usable: minisign's global signature covers it, and
+    // `verify` above is what checks that global signature. Reading it before this point would
+    // be trusting attacker controlled data.
+    verify_signed_version(
+        signature.trusted_comment(),
+        announced_version,
+        require_signed_version,
+    )
+}
+
+/// Checks the version the artifact was signed for against the version the update endpoint
+/// announced.
+///
+/// The endpoint response is not signed, so its `version` field on its own does not prove which
+/// release the `url` and `signature` actually point at. Comparing it against the signed version
+/// is what stops a tampered response from pairing a new version number with an older release.
+fn verify_signed_version(
+    trusted_comment: &str,
+    announced_version: &str,
+    require_signed_version: bool,
+) -> Result<()> {
+    let Some(signed_version) = signed_version(trusted_comment) else {
+        // Signatures produced before the Tauri CLI started recording the version carry none, so
+        // this can only be enforced when the app opts in. Note that leaving it off means an
+        // attacker can bypass the check outright by serving one of those older signatures.
+        return if require_signed_version {
+            Err(Error::MissingSignedVersion)
+        } else {
+            Ok(())
+        };
+    };
+
+    // compare as semver so that equivalent spellings like `1.2.3` and `v1.2.3` match, falling
+    // back to a literal comparison for versions that are not valid semver
+    let matches = match (
+        Version::from_str(signed_version.trim_start_matches('v')),
+        Version::from_str(announced_version.trim_start_matches('v')),
+    ) {
+        (Ok(signed), Ok(announced)) => signed == announced,
+        _ => signed_version == announced_version,
+    };
+
+    if matches {
+        Ok(())
+    } else {
+        Err(Error::SignedVersionMismatch {
+            signed: signed_version.to_string(),
+            announced: announced_version.to_string(),
+        })
+    }
+}
+
+/// Reads the `version` field out of a signature's trusted comment, which the Tauri CLI writes as
+/// tab separated `key:value` pairs, e.g. `timestamp:1700000000\tfile:app.tar.gz\tversion:1.2.3`.
+fn signed_version(trusted_comment: &str) -> Option<&str> {
+    trusted_comment
+        .split('\t')
+        .find_map(|field| field.strip_prefix("version:"))
 }
 
 fn base64_to_string(base64_string: &str) -> Result<String> {
@@ -2046,25 +2356,31 @@ impl PathExt for PathBuf {
 
 // adapted from https://github.com/rust-lang/rust/blob/1c047506f94cd2d05228eb992b0a6bbed1942349/library/std/src/sys/args/windows.rs#L174
 #[cfg(windows)]
-fn escape_nsis_current_exe_arg(arg: &&OsStr) -> String {
-    let arg = arg.to_string_lossy();
-    let mut cmd: Vec<char> = Vec::new();
+fn escape_nsis_current_exe_arg(arg: impl AsRef<OsStr>) -> OsString {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+    let arg = arg.as_ref();
+    let mut cmd: Vec<u16> = Vec::new();
 
     // compared to std we additionally escape `/` so that nsis won't interpret them as a beginning of an nsis argument.
-    let quote = arg.chars().any(|c| c == ' ' || c == '\t' || c == '/') || arg.is_empty();
+    let quote = arg
+        .as_encoded_bytes()
+        .iter()
+        .any(|c| *c == b' ' || *c == b'\t' || *c == b'/')
+        || arg.is_empty();
     let escape = true;
     if quote {
-        cmd.push('"');
+        cmd.push('"' as u16);
     }
     let mut backslashes: usize = 0;
-    for x in arg.chars() {
+    for x in arg.encode_wide() {
         if escape {
-            if x == '\\' {
+            if x == '\\' as u16 {
                 backslashes += 1;
             } else {
-                if x == '"' {
+                if x == '"' as u16 {
                     // Add n+1 backslashes to total 2n+1 before internal '"'.
-                    cmd.extend((0..=backslashes).map(|_| '\\'));
+                    cmd.extend((0..=backslashes).map(|_| '\\' as u16));
                 }
                 backslashes = 0;
             }
@@ -2073,10 +2389,10 @@ fn escape_nsis_current_exe_arg(arg: &&OsStr) -> String {
     }
     if quote {
         // Add n backslashes to total 2n before ending '"'.
-        cmd.extend((0..backslashes).map(|_| '\\'));
-        cmd.push('"');
+        cmd.extend((0..backslashes).map(|_| '\\' as u16));
+        cmd.push('"' as u16);
     }
-    cmd.into_iter().collect()
+    OsString::from_wide(&cmd)
 }
 
 #[cfg(windows)]
@@ -2106,10 +2422,399 @@ fn escape_msi_property_arg(arg: impl AsRef<OsStr>) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+mod offline_tests {
+    use super::*;
+    use serde_json::{Value, json};
 
-    use super::{finish_windows_installer_launch, OnBeforeExit, Update};
-    use crate::{Config, Error};
+    // A throwaway key pair generated with `tauri signer generate`, and the signature of the
+    // payload `test` made with `tauri signer sign --app-version 2.0.0`.
+    pub(super) const PUBLIC_KEY: &str = "untrusted comment: minisign public key: A49EF4746FA6E6D7\nRWTX5qZvdPSepDGWg2bz8n6ArQnBMwgQK1geVosorcbLzcunD+KJ+cYe";
+    pub(super) const SIGNATURE: &str = "untrusted comment: signature from tauri secret key\nRUTX5qZvdPSepPF2zsjvP/L/TQtBLRnWRvaq+4omK1UEugtQp/USrGiI1v762sDy3id3aor7bRC9ETyeot6lMHHrWoZ5hjUM1Qc=\ntrusted comment: timestamp:1791649051\tfile:payload\tversion:2.0.0\nDDq2CLOEl5cQmC2eJRHlnZPVViOZsu1CjpPKQoei4A/XBfkDqGO0B+QMrcrHgEQ5qV3mne75tdFWhJpqUXh9AA==";
+    // The public `test` payload vector from minisign-verify, signed without a version.
+    const UNVERSIONED_PUBLIC_KEY: &str = "untrusted comment: minisign public key E7620F1842B4E81F\nRWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3";
+    const UNVERSIONED_SIGNATURE: &str = "untrusted comment: signature from minisign secret key\nRUQf6LRCGA9i559r3g7V1qNyJDApGip8MfqcadIgT9CuhV3EMhHoN1mGTkUidF/z7SrlQgXdy8ofjb7bNJJylDOocrCo8KLzZwo=\ntrusted comment: timestamp:1633700835\tfile:test\tprehashed\nwLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJAgAooBQ==";
+
+    pub(super) fn encode(value: &str) -> String {
+        base64::engine::general_purpose::STANDARD.encode(value)
+    }
+
+    fn builder() -> UpdaterBuilder {
+        let app = tauri::test::mock_app();
+        let config = Config {
+            pubkey: encode(PUBLIC_KEY),
+            ..Default::default()
+        };
+        let mut builder = UpdaterBuilder::new(app.handle(), config)
+            .target("test-target")
+            .executable_path("runtime-path/app")
+            .timeout(Duration::from_secs(30))
+            .no_proxy()
+            .configure_client(|_| panic!("unexpected network request"))
+            .endpoints(vec!["https://example.invalid/update".parse().unwrap()])
+            .unwrap();
+        builder.current_version = Version::new(1, 0, 0);
+        builder
+    }
+
+    fn updater() -> Updater {
+        builder().build().unwrap()
+    }
+
+    fn manifest() -> Value {
+        json!({
+            "version": "2.0.0",
+            "notes": "Cached release notes",
+            "pub_date": "2025-01-01T00:00:00Z",
+            "platforms": {
+                "test-target": {
+                    "url": "https://example.invalid/package",
+                    "signature": encode(SIGNATURE)
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn restores_release_metadata_with_runtime_context() {
+        let updater = builder()
+            .header("x-test", "runtime")
+            .unwrap()
+            .build()
+            .unwrap();
+        let mut metadata = manifest();
+        metadata["extract_path"] = json!("untrusted-path");
+        metadata["config"] = json!({ "pubkey": "untrusted-key" });
+        let update = updater.restore_update(metadata.clone()).unwrap().unwrap();
+
+        assert_eq!(update.raw_json, metadata);
+        assert_eq!(update.current_version, "1.0.0");
+        assert_eq!(update.version, "2.0.0");
+        assert_eq!(update.body.as_deref(), Some("Cached release notes"));
+        assert!(update.date.is_some());
+        assert_eq!(update.target, "test-target");
+        assert_eq!(update.extract_path, updater.extract_path);
+        assert_eq!(update.context.config.pubkey, updater.context.config.pubkey);
+        assert_eq!(update.headers, updater.headers);
+        assert!(update.no_proxy);
+        assert!(update.timeout.is_none());
+        update.verify(b"test").unwrap();
+    }
+
+    #[test]
+    fn restores_dynamic_manifests() {
+        let update = updater()
+            .restore_update(json!({
+                "version": "2.0.0",
+                "url": "https://example.invalid/dynamic-package",
+                "signature": encode(SIGNATURE)
+            }))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            update.download_url.as_str(),
+            "https://example.invalid/dynamic-package"
+        );
+        update.verify(b"test").unwrap();
+    }
+
+    #[test]
+    fn respects_default_and_custom_version_comparators() {
+        let mut updater = updater();
+        for version in ["0.9.0", "1.0.0"] {
+            let mut metadata = manifest();
+            metadata["version"] = json!(version);
+            assert!(updater.restore_update(metadata).unwrap().is_none());
+        }
+        updater.version_comparator = Some(Arc::new(|_, _| false));
+        assert!(updater.restore_update(manifest()).unwrap().is_none());
+        updater.version_comparator = Some(Arc::new(|current, release| release.version != current));
+        let mut metadata = manifest();
+        metadata["version"] = json!("0.9.0");
+        assert!(updater.restore_update(metadata).unwrap().is_some());
+    }
+
+    #[test]
+    fn stale_release_without_this_target_is_not_an_update() {
+        let mut metadata = manifest();
+        metadata["version"] = json!("0.9.0");
+        metadata["platforms"] = json!({ "other-target": metadata["platforms"]["test-target"] });
+        assert!(updater().restore_update(metadata).unwrap().is_none());
+    }
+
+    #[test]
+    fn rejects_malformed_and_incompatible_manifests() {
+        let updater = updater();
+        assert!(updater.restore_update(json!({})).is_err());
+        let mut metadata = manifest();
+        metadata["platforms"] = json!({});
+        assert!(matches!(
+            updater.restore_update(metadata),
+            Err(Error::TargetNotFound(_))
+        ));
+        let mut metadata = manifest();
+        metadata["version"] = json!("not-a-version");
+        assert!(updater.restore_update(metadata).is_err());
+    }
+
+    #[test]
+    fn verifies_cached_bytes_and_rejects_tampering() {
+        let mut update = updater().restore_update(manifest()).unwrap().unwrap();
+        update.verify(b"test").unwrap();
+        assert!(update.verify(b"tampered").is_err());
+        update.signature = encode(&SIGNATURE.replace("file:payload", "file:other"));
+        assert!(update.verify(b"test").is_err());
+        update.signature = "invalid signature".into();
+        assert!(update.verify(b"test").is_err());
+        update.signature = encode(SIGNATURE);
+        update.context.config.pubkey = encode(&PUBLIC_KEY.replace("RWTX", "RWTY"));
+        assert!(update.verify(b"test").is_err());
+    }
+
+    #[test]
+    fn install_rejects_bytes_that_do_not_match_the_signature() {
+        let update = updater().restore_update(manifest()).unwrap().unwrap();
+        assert!(matches!(
+            update.install(b"tampered"),
+            Err(Error::Minisign(_))
+        ));
+    }
+
+    #[test]
+    fn restored_updates_require_a_signed_version() {
+        let mut builder = builder().pubkey(encode(UNVERSIONED_PUBLIC_KEY));
+        builder.context.config.require_signed_version = false;
+        let updater = builder.build().unwrap();
+        let mut metadata = manifest();
+        metadata["platforms"]["test-target"]["signature"] = json!(encode(UNVERSIONED_SIGNATURE));
+        metadata["config"] = json!({ "requireSignedVersion": false });
+        let update = updater.restore_update(metadata).unwrap().unwrap();
+        assert!(matches!(
+            update.verify(b"test"),
+            Err(Error::MissingSignedVersion)
+        ));
+        assert!(matches!(
+            update.install(b"test"),
+            Err(Error::MissingSignedVersion)
+        ));
+    }
+
+    #[test]
+    fn restored_updates_reject_a_version_the_package_was_not_signed_for() {
+        let mut metadata = manifest();
+        metadata["version"] = json!("3.0.0");
+        let update = updater().restore_update(metadata).unwrap().unwrap();
+        assert!(matches!(
+            update.verify(b"test"),
+            Err(Error::SignedVersionMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn online_and_restored_updates_use_the_same_metadata() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let metadata = manifest();
+        let response = metadata.to_string();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut reader = BufReader::new(&mut socket);
+            loop {
+                let mut line = String::new();
+                assert!(reader.read_line(&mut line).unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response).unwrap();
+        });
+        let mut updater = updater();
+        updater.context.configure_client = None;
+        updater.endpoints = vec![format!("http://{address}").parse().unwrap()];
+        let online = tauri::async_runtime::block_on(updater.check())
+            .unwrap()
+            .unwrap();
+        server.join().unwrap();
+        let restored = updater
+            .restore_update(online.raw_json.clone())
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored.raw_json, metadata);
+        assert_eq!(restored.version, online.version);
+        assert_eq!(restored.current_version, online.current_version);
+        assert_eq!(restored.target, online.target);
+        assert_eq!(restored.download_url, online.download_url);
+        assert_eq!(restored.signature, online.signature);
+        assert_eq!(restored.extract_path, online.extract_path);
+        assert_eq!(restored.timeout, online.timeout);
+        assert!(!online.context.config.require_signed_version);
+        assert!(restored.context.config.require_signed_version);
+    }
+
+    #[cfg(target_os = "linux")]
+    const INSTALLED_APPIMAGE: &[u8] = b"\x7fELF installed AppImage";
+
+    /// An update for an AppImage installed in a fresh directory.
+    #[cfg(target_os = "linux")]
+    fn appimage_update() -> (tempfile::TempDir, PathBuf, Update) {
+        let dir = tempfile::tempdir().unwrap();
+        let appimage = dir.path().join("app.AppImage");
+        std::fs::write(&appimage, INSTALLED_APPIMAGE).unwrap();
+        let update = builder()
+            .executable_path(&appimage)
+            .build()
+            .unwrap()
+            .restore_update(manifest())
+            .unwrap()
+            .unwrap();
+        (dir, appimage, update)
+    }
+
+    /// The smallest buffer `infer` recognizes as an ELF executable: a full ELF header.
+    #[cfg(target_os = "linux")]
+    fn new_appimage() -> Vec<u8> {
+        let mut appimage = b"\x7fELF new AppImage".to_vec();
+        appimage.resize(64, 0);
+        appimage
+    }
+
+    #[cfg(all(target_os = "linux", feature = "zip"))]
+    fn compressed_appimage(name: &str, contents: &[u8]) -> Vec<u8> {
+        let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
+            Vec::new(),
+            flate2::Compression::default(),
+        ));
+        let mut header = tar::Header::new_gnu();
+        header.set_size(contents.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        archive.append_data(&mut header, name, contents).unwrap();
+        archive.into_inner().unwrap().finish().unwrap()
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn appimage_install_rejects_a_payload_that_is_not_an_appimage() {
+        let (_dir, appimage, update) = appimage_update();
+        assert!(matches!(
+            update.install_appimage(b"not an AppImage"),
+            Err(Error::InvalidUpdaterFormat)
+        ));
+        assert_eq!(std::fs::read(&appimage).unwrap(), INSTALLED_APPIMAGE);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn appimage_install_writes_an_appimage_payload() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (_dir, appimage, update) = appimage_update();
+        std::fs::set_permissions(&appimage, std::fs::Permissions::from_mode(0o755)).unwrap();
+        update.install_appimage(&new_appimage()).unwrap();
+        assert_eq!(std::fs::read(&appimage).unwrap(), new_appimage());
+        assert_eq!(
+            std::fs::metadata(&appimage).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+    }
+
+    #[test]
+    #[cfg(all(target_os = "linux", feature = "zip"))]
+    fn appimage_install_extracts_a_compressed_appimage() {
+        let (_dir, appimage, update) = appimage_update();
+        update
+            .install_appimage(&compressed_appimage("app.AppImage", &new_appimage()))
+            .unwrap();
+        assert_eq!(std::fs::read(&appimage).unwrap(), new_appimage());
+    }
+
+    #[test]
+    #[cfg(all(target_os = "linux", feature = "zip"))]
+    fn appimage_install_restores_the_app_when_the_archive_has_no_appimage() {
+        let (_dir, appimage, update) = appimage_update();
+        assert!(matches!(
+            update.install_appimage(&compressed_appimage("readme.txt", b"hello")),
+            Err(Error::BinaryNotFoundInArchive)
+        ));
+        assert_eq!(std::fs::read(&appimage).unwrap(), INSTALLED_APPIMAGE);
+    }
+
+    #[test]
+    #[cfg(all(target_os = "linux", not(feature = "zip")))]
+    fn appimage_install_rejects_a_compressed_appimage_without_the_zip_feature() {
+        let (_dir, appimage, update) = appimage_update();
+        // the gzip magic, which is all the check looks at
+        assert!(matches!(
+            update.install_appimage(b"\x1f\x8b\x08\x00 compressed AppImage"),
+            Err(Error::InvalidUpdaterFormat)
+        ));
+        assert_eq!(std::fs::read(&appimage).unwrap(), INSTALLED_APPIMAGE);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{signed_version, verify_signed_version};
+    use crate::error::Error;
+
+    const CURRENT: &str = "timestamp:1700000000\tfile:app_1.2.3_x64.msi.zip\tversion:1.2.3";
+    // signatures produced before the CLI started embedding the version
+    const LEGACY: &str = "timestamp:1600000000\tfile:app_1.0.0_x64.msi.zip";
+
+    #[test]
+    fn reads_the_signed_version() {
+        assert_eq!(signed_version(CURRENT), Some("1.2.3"));
+        assert_eq!(signed_version(LEGACY), None);
+        // must not match on a field that merely ends in `version:`
+        assert_eq!(signed_version("timestamp:1\tfile:app-version:2.zip"), None);
+    }
+
+    #[test]
+    fn accepts_a_matching_version() {
+        assert!(verify_signed_version(CURRENT, "1.2.3", true).is_ok());
+        assert!(verify_signed_version(CURRENT, "1.2.3", false).is_ok());
+        // the endpoint and the CLI may spell the same version differently
+        assert!(verify_signed_version(CURRENT, "v1.2.3", true).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_version_the_artifact_was_not_signed_for() {
+        // the rollback the flag exists to stop: an old artifact announced as a new version
+        let err = verify_signed_version(CURRENT, "9.9.9", false).unwrap_err();
+        assert!(
+            matches!(err, Error::SignedVersionMismatch { ref signed, ref announced }
+                if signed == "1.2.3" && announced == "9.9.9"),
+            "unexpected error: {err}"
+        );
+        // rejected regardless of whether the app opted in, since the signature does say
+        // which version it covers
+        assert!(verify_signed_version(CURRENT, "9.9.9", true).is_err());
+        assert!(verify_signed_version(CURRENT, "1.2.4", true).is_err());
+    }
+
+    #[test]
+    fn only_requires_a_signed_version_when_configured() {
+        assert!(verify_signed_version(LEGACY, "9.9.9", false).is_ok());
+        assert!(matches!(
+            verify_signed_version(LEGACY, "9.9.9", true).unwrap_err(),
+            Error::MissingSignedVersion
+        ));
+    }
+
+    #[test]
+    fn compares_non_semver_versions_literally() {
+        let comment = "timestamp:1700000000\tfile:app.zip\tversion:2024-01-01";
+        assert!(verify_signed_version(comment, "2024-01-01", true).is_ok());
+        assert!(verify_signed_version(comment, "2024-01-02", true).is_err());
+    }
+
+    use super::{finish_windows_installer_launch, OnBeforeExit, Update, UpdaterContext};
+    use crate::Config;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -2117,31 +2822,43 @@ mod tests {
 
     fn round2_update_with_hook(before_exit: OnBeforeExit, cleanup: Arc<AtomicUsize>) -> Update {
         Update {
-            run_on_main_thread: Arc::new(Box::new(|_| Ok(()))),
-            config: Config::default(),
-            on_before_exit: Some(before_exit),
-            on_windows_installer_launched: Some(Arc::new(move || {
-                cleanup.fetch_add(1, Ordering::SeqCst);
-            })),
             body: None,
             current_version: "1.0.0".to_string(),
-            version: "1.0.1".to_string(),
+            version: "2.0.0".to_string(),
             date: None,
             target: "test".to_string(),
             download_url: url::Url::parse("https://example.invalid/update").unwrap(),
-            signature: String::new(),
+            signature: super::offline_tests::encode(super::offline_tests::SIGNATURE),
             raw_json: serde_json::Value::Null,
             timeout: None,
             proxy: None,
             no_proxy: false,
             headers: Default::default(),
             extract_path: std::path::PathBuf::from("/unused/round2-app"),
-            app_name: "ROSI".to_string(),
-            bundle_identifier: "run.rosie.rosi".to_string(),
             executable_name: Some("rosi".to_string()),
-            installer_args: Vec::new(),
-            current_exe_args: Vec::new(),
-            configure_client: None,
+            context: UpdaterContext {
+                #[cfg(target_os = "macos")]
+                run_on_main_thread: Arc::new(Box::new(|_| Ok(()))),
+                config: Config {
+                    pubkey: super::offline_tests::encode(super::offline_tests::PUBLIC_KEY),
+                    ..Config::default()
+                },
+                #[cfg(windows)]
+                app_name: "ROSI".to_string(),
+                bundle_identifier: "run.rosie.rosi".to_string(),
+                #[cfg(windows)]
+                installer_args: Vec::new(),
+                #[cfg(windows)]
+                current_exe_args: Vec::new(),
+                on_before_exit: Some(before_exit),
+                #[cfg(windows)]
+                on_windows_installer_launched: Some(Arc::new(move || {
+                    cleanup.fetch_add(1, Ordering::SeqCst);
+                })),
+                #[cfg(windows)]
+                restart_after_install: true,
+                configure_client: None,
+            },
         }
     }
 
@@ -2159,7 +2876,7 @@ mod tests {
         );
 
         let error = update
-            .install(b"invalid installer bytes")
+            .install(b"test")
             .expect_err("a failed pre-install hook must reject the actual install call");
         assert!(matches!(
             error,
@@ -2310,7 +3027,7 @@ mod tests {
         assert_eq!(cases.len(), cases_escaped.len());
 
         for (orig, escaped) in cases.iter().zip(cases_escaped) {
-            assert_eq!(escape_nsis_current_exe_arg(&OsStr::new(orig)), escaped);
+            assert_eq!(escape_nsis_current_exe_arg(OsStr::new(orig)), escaped);
         }
     }
 

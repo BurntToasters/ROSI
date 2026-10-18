@@ -18,22 +18,25 @@ reason (`.github/dependabot.yml`).
 | Field | Value |
 | --- | --- |
 | Crate | `tauri-plugin-updater` |
-| Base version | `2.10.1` |
-| Source | `https://crates.io/api/v1/crates/tauri-plugin-updater/2.10.1/download` |
-| crates.io sha256 | `806d9dac662c2e4594ff03c647a552f2c9bd544e7d0f683ec58f872f952ce4af` |
-| Upstream git sha1 | `d6a3898001a4bcc659e045f9501498751b77dbe6` (`.cargo_vcs_info.json`, path `plugins/updater`) |
-| Newest stable 2.x seen | `2.13.2` (checked 2026-10-07 via crates.io; `2.13.1` is no longer newest) |
+| Base version | `2.14.0` |
+| Source | `https://crates.io/api/v1/crates/tauri-plugin-updater/2.14.0/download` |
+| crates.io sha256 | `7259989d4fe11b2bf51f7d671642249b1837c4ae2da1430dc713ae38f98ceeec` |
+| Upstream git sha1 | `44293a5722efcaf27060504e63b17aeba721b40f` (`.cargo_vcs_info.json`, path `plugins/updater`) |
+| Newest stable 2.x seen | `2.14.0` (checked 2026-10-17 via crates.io; `2.13.3` and `2.13.2` are older) |
 
 `Cargo.toml`, `Cargo.toml.orig`, `README.md`, `build.rs`, `permissions/`,
-`guest-js/` and the JS build files are byte-identical to upstream 2.10.1.
+`CHANGELOG.md`, `SECURITY.md`, `api-iife.js`, the `LICENSE*` files and
+`.cargo_vcs_info.json` are byte-identical to upstream 2.14.0. Upstream 2.14.0
+excludes `guest-js/`, `package.json`, `rollup.config.js`, `tsconfig.json` and
+`banner.png` from the crate, so they are not vendored any more.
 All ROSI changes are under `src/`. `ROSI.patch` is the complete diff
 (upstream `src/` to vendored `src/`), excluding `target/`, `Cargo.lock`,
-`.cargo-ok` and `.cargo_vcs_info.json`.
+`.cargo-ok`, `.cargo_vcs_info.json`, `PATCHES.md` and `ROSI.patch`.
 
 Apply the patch to a pristine copy with:
 
 ```sh
-patch -p1 -d <pristine-2.10.1-dir> -i ROSI.patch
+patch -p1 -d <pristine-2.14.0-dir> -i ROSI.patch
 ```
 
 ## Patched files
@@ -46,7 +49,7 @@ patch -p1 -d <pristine-2.10.1-dir> -i ROSI.patch
 | `src/updater.rs` | modified | See details below. |
 | `src/lib.rs` | modified | Adds `mod install_safety;`. Plumbs the fallible `on_before_exit` hook and a new `on_windows_installer_launched` hook into the updater state. Windows cleanup now runs from the launched hook, not before launch. |
 | `src/error.rs` | modified | Adds `Error::BeforeExit(String)` so a failed app-state flush aborts installation and keeps the update retryable. |
-| `src/commands.rs` | modified | `allow_downgrades` is accepted but ignored (`let _ = allow_downgrades;`). ROSI decision: the flag cannot select an older release, so the default newer-only comparator always applies. Upstream honours the flag by replacing `version_comparator`. |
+| `src/commands.rs` | modified | `allow_downgrades` is accepted but ignored (`let _ = allow_downgrades;`). ROSI decision: the flag cannot select an older release, so the default newer-only comparator always applies. Upstream honours the flag by replacing `version_comparator`. The config-level `allowDowngrades` (`Config::allow_downgrades`, parsed from `tauri.conf`) is not applied either: `lib.rs` does not install the downgrade comparator from it. |
 
 ### `src/updater.rs` details
 
@@ -73,6 +76,18 @@ patch -p1 -d <pristine-2.10.1-dir> -i ROSI.patch
   `appimage_install`.
 - Tests: `#[cfg(test)]` modules in `updater.rs`, `install_safety.rs`, `appimage_install.rs` and
   `appimage_archive.rs` are ROSI additions. They run under `cargo test` in the `rust-check` CI job.
+- Rebased onto 2.14.0 (2026-10-17). Upstream 2.14.0 features kept: `Update::verify`,
+  `restore_update`, `require_signed_version` and the signed-version checks,
+  `configure_client`, `restart_after_install`, and the `updater_parameters` installer argument
+  builder. The upstream `UpdaterContext` struct holds the ROSI fields too (`on_before_exit`,
+  `on_windows_installer_launched`, `bundle_identifier`). `Updater` and `Update` keep
+  `executable_name` as a plain field.
+- `install()`: verified first (upstream 2.14.0), then `on_before_exit` runs before any install
+  step. `download_and_install` goes through `install()`, so the hook runs there too.
+- Not adopted from 2.14.0: its swap-based macOS install (`swap_bundle`, `replace_bundle`,
+  `privileged_install_command`, `keep_backup_if_not_restored`, `SWAP_BUNDLE_JXA`, `sh_quote`,
+  `applescript_string`) and `Updater::tmp_dir_locations`. ROSI's `install_inner_locked` and
+  its Linux `try_tmp_locations` replace them. Their tests are dropped too.
 
 ## Clippy warnings (resolved without deleting code)
 
@@ -100,6 +115,14 @@ compile on macOS so their tests keep running.
   `https://rustsec.org/packages/tauri-plugin-updater.html` by hand when rebasing.
 - Only the macOS clippy result was checked locally. Linux-only code paths are covered
   by the `rust-check` and `smoke-build` CI jobs, not by a local run.
+- The 2.14.0 rebase was checked on Windows only. Cross-target checks for Linux and macOS
+  need a C toolchain (`ring`, `libdbus-sys`, `objc2-exception-helper`), which the rebase host
+  lacked. The Linux and macOS code was merged by hand and needs CI (`rust-check`, `smoke-build`).
+- The vendored crate has its own `Cargo.lock`, regenerated for 2.14.0 with the lock from
+  `src-tauri` as the seed. It is a standalone root package, so its unit tests run with
+  `cargo test --locked --manifest-path src-tauri/vendor/tauri-plugin-updater/Cargo.toml --lib`
+  (CI gate `vendorUpdater` in `scripts/test-all.js`). The root `cargo test --all-targets`
+  gate does not run them. Last run: 34 pass.
 
 ## Rebase procedure (new upstream version X)
 

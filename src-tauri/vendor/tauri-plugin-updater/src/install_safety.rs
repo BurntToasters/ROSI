@@ -79,10 +79,10 @@ fn xml_plist_string(contents: &str, key: &str) -> Option<String> {
 }
 
 fn read_plist_string(path: &Path, key: &str) -> Option<String> {
-    if let Ok(contents) = std::fs::read_to_string(path) {
-        if let Some(value) = xml_plist_string(&contents, key) {
-            return Some(value);
-        }
+    if let Ok(contents) = std::fs::read_to_string(path)
+        && let Some(value) = xml_plist_string(&contents, key)
+    {
+        return Some(value);
     }
     #[cfg(target_os = "macos")]
     {
@@ -838,7 +838,8 @@ mod tests {
     #[test]
     fn trusted_helpers_never_search_path() {
         let old = std::env::var("PATH").ok();
-        std::env::set_var("PATH", "/tmp/hostile-updater-path:/opt/evil/bin");
+        // SAFETY: this test is the only code in the test binary that changes PATH, and it restores it below.
+        unsafe { std::env::set_var("PATH", "/tmp/hostile-updater-path:/opt/evil/bin") };
         let candidates = trusted_system_helper_candidates("pkexec");
         assert_eq!(candidates[0], PathBuf::from("/usr/bin/pkexec"));
         assert_eq!(candidates[1], PathBuf::from("/bin/pkexec"));
@@ -856,9 +857,10 @@ mod tests {
                 "hostile PATH must not change trusted helper resolution, got {resolved:?}"
             );
         }
+        // SAFETY: restores the PATH value saved above.
         match old {
-            Some(value) => std::env::set_var("PATH", value),
-            None => std::env::remove_var("PATH"),
+            Some(value) => unsafe { std::env::set_var("PATH", value) },
+            None => unsafe { std::env::remove_var("PATH") },
         }
     }
 
@@ -868,9 +870,7 @@ mod tests {
         assert!(LINUX_PRIVILEGED_ENV_ALLOWLIST.contains(&"WAYLAND_DISPLAY"));
         assert!(LINUX_PRIVILEGED_ENV_ALLOWLIST.contains(&"DBUS_SESSION_BUS_ADDRESS"));
         assert!(LINUX_PRIVILEGED_ENV_ALLOWLIST.contains(&"XDG_RUNTIME_DIR"));
-        assert!(!LINUX_PRIVILEGED_ENV_ALLOWLIST
-            .iter()
-            .any(|key| *key == "PATH"));
+        assert!(!LINUX_PRIVILEGED_ENV_ALLOWLIST.contains(&"PATH"));
     }
 
     #[cfg(unix)]
