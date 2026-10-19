@@ -22,7 +22,7 @@ use reqwest::{
 };
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(windows)]
 use std::ffi::OsStr;
 use tauri::{
     AppHandle, Resource, Runtime,
@@ -1424,6 +1424,13 @@ impl Update {
         install_args: &[&str],
         package_extension: &str,
     ) -> Result<()> {
+        // Try different temp directories
+        let tmp_dir_locations = [
+            Box::new(|| Some(std::env::temp_dir())) as Box<dyn FnOnce() -> Option<PathBuf>>,
+            Box::new(dirs::cache_dir),
+            Box::new(|| self.extract_path.parent().map(Path::to_path_buf)),
+        ];
+
         // Try writing to multiple temp locations until one succeeds
         for tmp_dir_location in tmp_dir_locations {
             if let Some(path) = tmp_dir_location() {
@@ -2656,15 +2663,22 @@ mod offline_tests {
         assert!(restored.context.config.require_signed_version);
     }
 
+    /// ROSI validates both the live and the replacement image, so the fixtures
+    /// must be structurally valid AppImages rather than bare ELF magic.
     #[cfg(target_os = "linux")]
-    const INSTALLED_APPIMAGE: &[u8] = b"\x7fELF installed AppImage";
+    fn installed_appimage() -> Vec<u8> {
+        super::appimage_install::test_fixtures::host_appimage(b'o')
+    }
 
-    /// An update for an AppImage installed in a fresh directory.
+    /// An update for an executable AppImage installed in a fresh directory.
     #[cfg(target_os = "linux")]
     fn appimage_update() -> (tempfile::TempDir, PathBuf, Update) {
+        use std::os::unix::fs::PermissionsExt;
+
         let dir = tempfile::tempdir().unwrap();
         let appimage = dir.path().join("app.AppImage");
-        std::fs::write(&appimage, INSTALLED_APPIMAGE).unwrap();
+        std::fs::write(&appimage, installed_appimage()).unwrap();
+        std::fs::set_permissions(&appimage, std::fs::Permissions::from_mode(0o755)).unwrap();
         let update = builder()
             .executable_path(&appimage)
             .build()
@@ -2675,12 +2689,9 @@ mod offline_tests {
         (dir, appimage, update)
     }
 
-    /// The smallest buffer `infer` recognizes as an ELF executable: a full ELF header.
     #[cfg(target_os = "linux")]
     fn new_appimage() -> Vec<u8> {
-        let mut appimage = b"\x7fELF new AppImage".to_vec();
-        appimage.resize(64, 0);
-        appimage
+        super::appimage_install::test_fixtures::host_appimage(b'n')
     }
 
     #[cfg(all(target_os = "linux", feature = "zip"))]
@@ -2701,11 +2712,12 @@ mod offline_tests {
     #[cfg(target_os = "linux")]
     fn appimage_install_rejects_a_payload_that_is_not_an_appimage() {
         let (_dir, appimage, update) = appimage_update();
+        // ROSI's validator reports a rejected payload as `InvalidData`.
         assert!(matches!(
             update.install_appimage(b"not an AppImage"),
-            Err(Error::InvalidUpdaterFormat)
+            Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::InvalidData
         ));
-        assert_eq!(std::fs::read(&appimage).unwrap(), INSTALLED_APPIMAGE);
+        assert_eq!(std::fs::read(&appimage).unwrap(), installed_appimage());
     }
 
     #[test]
@@ -2714,7 +2726,6 @@ mod offline_tests {
         use std::os::unix::fs::PermissionsExt;
 
         let (_dir, appimage, update) = appimage_update();
-        std::fs::set_permissions(&appimage, std::fs::Permissions::from_mode(0o755)).unwrap();
         update.install_appimage(&new_appimage()).unwrap();
         assert_eq!(std::fs::read(&appimage).unwrap(), new_appimage());
         assert_eq!(
@@ -2741,7 +2752,7 @@ mod offline_tests {
             update.install_appimage(&compressed_appimage("readme.txt", b"hello")),
             Err(Error::BinaryNotFoundInArchive)
         ));
-        assert_eq!(std::fs::read(&appimage).unwrap(), INSTALLED_APPIMAGE);
+        assert_eq!(std::fs::read(&appimage).unwrap(), installed_appimage());
     }
 
     #[test]
@@ -2753,7 +2764,7 @@ mod offline_tests {
             update.install_appimage(b"\x1f\x8b\x08\x00 compressed AppImage"),
             Err(Error::InvalidUpdaterFormat)
         ));
-        assert_eq!(std::fs::read(&appimage).unwrap(), INSTALLED_APPIMAGE);
+        assert_eq!(std::fs::read(&appimage).unwrap(), installed_appimage());
     }
 }
 

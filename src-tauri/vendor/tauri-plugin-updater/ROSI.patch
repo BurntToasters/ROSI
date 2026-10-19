@@ -396,7 +396,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/app
 diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/appimage_install.rs b/src/appimage_install.rs
 --- a/src/appimage_install.rs
 +++ b/src/appimage_install.rs
-@@ -0,0 +1,1110 @@
+@@ -0,0 +1,1115 @@
 +// The AppImage helpers are compiled for macOS only because the shared module
 +// list includes it; their callers are Linux and BSD only. Keep dead_code quiet there.
 +#![cfg_attr(target_os = "macos", allow(dead_code))]
@@ -1280,7 +1280,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/app
 +        bytes
 +    }
 +
-+    fn host_machine() -> u16 {
++    pub(super) fn host_machine() -> u16 {
 +        #[cfg(target_arch = "x86_64")]
 +        {
 +            return 62;
@@ -1505,6 +1505,11 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/app
 +pub(crate) mod test_fixtures {
 +    pub(crate) fn valid_appimage(marker: u8, machine: u16, suffix: u8) -> Vec<u8> {
 +        super::tests::appimage(marker, machine, suffix)
++    }
++
++    /// A Type 2 AppImage for the host architecture that passes ROSI validation.
++    pub(crate) fn host_appimage(suffix: u8) -> Vec<u8> {
++        super::tests::appimage(2, super::tests::host_machine(), suffix)
 +    }
 +}
 diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/commands.rs b/src/commands.rs
@@ -2584,6 +2589,15 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/lib
 diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/updater.rs b/src/updater.rs
 --- a/src/updater.rs
 +++ b/src/updater.rs
+@@ -22,7 +22,7 @@
+ };
+ use semver::Version;
+ use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
+-#[cfg(any(windows, target_os = "linux"))]
++#[cfg(windows)]
+ use std::ffi::OsStr;
+ use tauri::{
+     AppHandle, Resource, Runtime,
 @@ -39,6 +39,31 @@
      error::{Error, Result},
  };
@@ -3041,11 +3055,11 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -                };
 -            }
 -        }
-+        let payload = bytes.to_vec();
- 
+-
 -        Err(Error::TempDirNotOnSameMountPoint)
 -    }
--
++        let payload = bytes.to_vec();
+ 
 -    /// Directories to try, in order, for the temporary files of an install: the system temporary
 -    /// directory, the user cache directory and the directory holding the app.
 -    fn tmp_dir_locations(&self) -> Vec<Box<dyn FnOnce() -> Option<PathBuf> + '_>> {
@@ -3084,7 +3098,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
      }
  
      fn install_rpm(&self, bytes: &[u8]) -> Result<()> {
-@@ -1341,29 +1411,36 @@
+@@ -1341,29 +1411,43 @@
          if !infer::archive::is_rpm(bytes) {
              return Err(Error::InvalidUpdaterFormat);
          }
@@ -3103,6 +3117,13 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +        install_args: &[&str],
          package_extension: &str,
      ) -> Result<()> {
++        // Try different temp directories
++        let tmp_dir_locations = [
++            Box::new(|| Some(std::env::temp_dir())) as Box<dyn FnOnce() -> Option<PathBuf>>,
++            Box::new(dirs::cache_dir),
++            Box::new(|| self.extract_path.parent().map(Path::to_path_buf)),
++        ];
++
          // Try writing to multiple temp locations until one succeeds
 -        for tmp_dir_location in self.tmp_dir_locations() {
 -            let Some(path) = tmp_dir_location() else {
@@ -3135,7 +3156,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
                  }
                  // If write fails, continue to next temp location
              }
-@@ -1377,68 +1454,78 @@
+@@ -1377,68 +1461,78 @@
          &self,
          pkg_path: &Path,
          install_cmd: &str,
@@ -3264,7 +3285,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
          }
  
          Err(Error::AuthenticationFailed)
-@@ -1446,34 +1533,105 @@
+@@ -1446,34 +1540,105 @@
  
      fn install_with_sudo(
          &self,
@@ -3381,7 +3402,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
  /// MacOS
  #[cfg(target_os = "macos")]
  impl Update {
-@@ -1484,143 +1642,192 @@
+@@ -1484,143 +1649,192 @@
      /// │          └── ...
      /// └── ...
      fn install_inner(&self, bytes: &[u8]) -> Result<()> {
@@ -3700,7 +3721,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
          }
  
          let _ = std::process::Command::new("touch")
-@@ -1631,115 +1838,262 @@
+@@ -1631,115 +1845,262 @@
      }
  }
  
@@ -3762,7 +3783,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +            std::io::ErrorKind::InvalidData,
 +            "refusing to retire an incomplete or identity-mismatched updater backup",
 +        ));
-     }
++    }
 +    let parent = backup.parent().ok_or_else(|| {
 +        std::io::Error::new(
 +            std::io::ErrorKind::InvalidInput,
@@ -3821,7 +3842,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +            return Ok(());
 +        }
 +        return Err(error);
-+    }
+     }
 +
      Ok(())
  }
@@ -3831,7 +3852,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -/// Automation can call `renamex_np` (`2` is `RENAME_SWAP`), and ships with every macOS.
 -/// It prints `swapped` or `failed`, so the caller can tell a swap that did not happen
 -/// from an `osascript` failure that leaves unknown whether it did.
- #[cfg(target_os = "macos")]
+-#[cfg(target_os = "macos")]
 -const SWAP_BUNDLE_JXA: &str = r#"function run(argv) {
 -  ObjC.import("stdio");
 -  return $.renamex_np(argv[0], argv[1], 2) === 0 ? "swapped" : "failed";
@@ -3841,7 +3862,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -/// where the file system cannot swap, the same moves as [`replace_bundle`], deleting the
 -/// previous app only once the new one is in place. The moves only run once the swap is
 -/// known not to have happened, since after a swap they would put the previous app back.
--#[cfg(target_os = "macos")]
+ #[cfg(target_os = "macos")]
 -fn privileged_install_command(target: &Path, staged: &Path, backup: &Path) -> String {
 -    let swap = sh_quote(Path::new(SWAP_BUNDLE_JXA));
 -    let target = sh_quote(target);
@@ -3995,7 +4016,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +                std::io::ErrorKind::InvalidData,
 +                "updater archive member path is not confined",
 +            )));
-         }
++        }
 +        let kind = entry.header().entry_type();
 +        if kind == EntryType::Link {
 +            return Err(Error::Io(std::io::Error::new(
@@ -4037,7 +4058,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +                Err(err) => return Err(err.into()),
 +            }
 +            continue;
-+        }
+         }
 +        if kind.is_file() || matches!(kind, EntryType::GNUSparse) {
 +            create_confined_parent_dirs(dest_root, &dest)?;
 +            entry.unpack(&dest)?;
@@ -4052,7 +4073,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
  }
  
  /// Gets the base target string used by the updater. If bundle type is available it
-@@ -1985,48 +2339,6 @@
+@@ -1985,48 +2346,6 @@
          .collect()
  }
  
@@ -4101,7 +4122,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
  #[cfg(windows)]
  trait PathExt {
      fn wrap_in_quotes(&self) -> Self;
-@@ -2116,13 +2428,13 @@
+@@ -2116,13 +2435,13 @@
  
      // A throwaway key pair generated with `tauri signer generate`, and the signature of the
      // payload `test` made with `tauri signer sign --app-version 2.0.0`.
@@ -4118,7 +4139,88 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
          base64::engine::general_purpose::STANDARD.encode(value)
      }
  
-@@ -2501,277 +2813,119 @@
+@@ -2344,15 +2663,22 @@
+         assert!(restored.context.config.require_signed_version);
+     }
+ 
++    /// ROSI validates both the live and the replacement image, so the fixtures
++    /// must be structurally valid AppImages rather than bare ELF magic.
+     #[cfg(target_os = "linux")]
+-    const INSTALLED_APPIMAGE: &[u8] = b"\x7fELF installed AppImage";
++    fn installed_appimage() -> Vec<u8> {
++        super::appimage_install::test_fixtures::host_appimage(b'o')
++    }
+ 
+-    /// An update for an AppImage installed in a fresh directory.
++    /// An update for an executable AppImage installed in a fresh directory.
+     #[cfg(target_os = "linux")]
+     fn appimage_update() -> (tempfile::TempDir, PathBuf, Update) {
++        use std::os::unix::fs::PermissionsExt;
++
+         let dir = tempfile::tempdir().unwrap();
+         let appimage = dir.path().join("app.AppImage");
+-        std::fs::write(&appimage, INSTALLED_APPIMAGE).unwrap();
++        std::fs::write(&appimage, installed_appimage()).unwrap();
++        std::fs::set_permissions(&appimage, std::fs::Permissions::from_mode(0o755)).unwrap();
+         let update = builder()
+             .executable_path(&appimage)
+             .build()
+@@ -2363,12 +2689,9 @@
+         (dir, appimage, update)
+     }
+ 
+-    /// The smallest buffer `infer` recognizes as an ELF executable: a full ELF header.
+     #[cfg(target_os = "linux")]
+     fn new_appimage() -> Vec<u8> {
+-        let mut appimage = b"\x7fELF new AppImage".to_vec();
+-        appimage.resize(64, 0);
+-        appimage
++        super::appimage_install::test_fixtures::host_appimage(b'n')
+     }
+ 
+     #[cfg(all(target_os = "linux", feature = "zip"))]
+@@ -2389,11 +2712,12 @@
+     #[cfg(target_os = "linux")]
+     fn appimage_install_rejects_a_payload_that_is_not_an_appimage() {
+         let (_dir, appimage, update) = appimage_update();
++        // ROSI's validator reports a rejected payload as `InvalidData`.
+         assert!(matches!(
+             update.install_appimage(b"not an AppImage"),
+-            Err(Error::InvalidUpdaterFormat)
++            Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::InvalidData
+         ));
+-        assert_eq!(std::fs::read(&appimage).unwrap(), INSTALLED_APPIMAGE);
++        assert_eq!(std::fs::read(&appimage).unwrap(), installed_appimage());
+     }
+ 
+     #[test]
+@@ -2402,7 +2726,6 @@
+         use std::os::unix::fs::PermissionsExt;
+ 
+         let (_dir, appimage, update) = appimage_update();
+-        std::fs::set_permissions(&appimage, std::fs::Permissions::from_mode(0o755)).unwrap();
+         update.install_appimage(&new_appimage()).unwrap();
+         assert_eq!(std::fs::read(&appimage).unwrap(), new_appimage());
+         assert_eq!(
+@@ -2429,7 +2752,7 @@
+             update.install_appimage(&compressed_appimage("readme.txt", b"hello")),
+             Err(Error::BinaryNotFoundInArchive)
+         ));
+-        assert_eq!(std::fs::read(&appimage).unwrap(), INSTALLED_APPIMAGE);
++        assert_eq!(std::fs::read(&appimage).unwrap(), installed_appimage());
+     }
+ 
+     #[test]
+@@ -2441,7 +2764,7 @@
+             update.install_appimage(b"\x1f\x8b\x08\x00 compressed AppImage"),
+             Err(Error::InvalidUpdaterFormat)
+         ));
+-        assert_eq!(std::fs::read(&appimage).unwrap(), INSTALLED_APPIMAGE);
++        assert_eq!(std::fs::read(&appimage).unwrap(), installed_appimage());
+     }
+ }
+ 
+@@ -2501,277 +2824,119 @@
          assert!(verify_signed_version(comment, "2024-01-02", true).is_err());
      }
  
@@ -4260,7 +4362,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
          );
 -        assert!(!backup.exists());
 -    }
- 
+-
 -    /// A directory whose name `sh` and AppleScript would both misread unquoted.
 -    #[cfg(target_os = "macos")]
 -    fn hostile_dir() -> tempfile::TempDir {
@@ -4269,7 +4371,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -            .tempdir()
 -            .unwrap()
 -    }
--
+ 
 -    #[cfg(target_os = "macos")]
 -    fn assert_privileged_install_command_moved(dir: &std::path::Path) {
 -        let target = dir.join("Bob's \"App\".app");
@@ -4490,7 +4592,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
      }
  
      #[test]
-@@ -2876,4 +3030,45 @@
+@@ -2876,4 +3041,45 @@
              assert_eq!(escape_nsis_current_exe_arg(OsStr::new(orig)), escaped);
          }
      }
