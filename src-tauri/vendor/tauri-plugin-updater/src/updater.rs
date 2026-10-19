@@ -171,6 +171,7 @@ impl RemoteRelease {
 /// Function executed right before the updater is launched. Returning an error aborts the installation,
 /// keeping the downloaded update retryable. See [`UpdaterBuilder::on_before_exit`].
 pub type OnBeforeExit = Arc<dyn Fn() -> std::result::Result<(), String> + Send + Sync + 'static>;
+#[cfg(windows)]
 type OnWindowsInstallerLaunched = Arc<dyn Fn() + Send + Sync + 'static>;
 /// Function that customizes the `reqwest` client builder used for the updater requests.
 /// See [`UpdaterBuilder::configure_client`].
@@ -2027,7 +2028,7 @@ fn extract_macos_app_archive(bytes: &[u8], dest_root: &Path) -> Result<()> {
     use flate2::read::GzDecoder;
     use tar::EntryType;
 
-    let decoder = GzDecoder::new(Cursor::new(bytes));
+    let decoder = GzDecoder::new(std::io::Cursor::new(bytes));
     let mut archive = tar::Archive::new(decoder);
     for entry in archive.entries()? {
         let mut entry = entry?;
