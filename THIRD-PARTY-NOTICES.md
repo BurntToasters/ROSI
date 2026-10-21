@@ -33,6 +33,17 @@
    A written source offer is included with the distributed binaries at
    `ffmpeg/SOURCE_OFFER.txt`. <br>
 
+8. **Node.js** <br>
+   License: MIT for Node.js itself, plus the licenses of its bundled
+   dependencies (see the LICENSE file) <br>
+   Link: https://github.com/nodejs/node/blob/main/LICENSE <br>
+   Source: https://nodejs.org/en/download <br>
+   ROSI ships Node.js only in the Flatpak build, as yt-dlp's JavaScript
+   runtime. It is installed at `/app/lib/rosi/js-runtime/node` and is not
+   included in the AppImage, macOS, Windows, or other builds. The license text
+   is at `/app/share/rosi/licenses/node/LICENSE` and appears in the in-app
+   licenses view of the Flatpak build. <br>
+
 # Python intepreter full license
 
 ---

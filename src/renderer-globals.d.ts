@@ -1,14 +1,9 @@
-// Ambient global declarations for the renderer (rosiEngine.ts).
-// rosiEngine runs as a plain browser script (no ES module import/export),
-// so the window.api / window.rosiModules contracts are declared here rather
-// than imported. The authoritative RendererApi shape lives in src/types.ts and
-// is guarded by src/tests/preload.test.ts.
+// Ambient global declarations for the renderer. The window.api and
+// window.rosiModules contracts are declared here so the IIFE renderer modules
+// can use them without imports. IPC payload shapes come from
+// src/generated/ipc-types.ts, and command names from src/commands.ts.
 
-interface RosiIpcError {
-  code: string;
-  message: string;
-  details?: string;
-}
+type RosiIpcError = import('./generated/ipc-types').IpcError;
 type RosiIpcResult<T = void> = { ok: true; data: T } | { ok: false; error: RosiIpcError };
 
 interface RosiUpdaterStatusEvent {
@@ -18,6 +13,7 @@ interface RosiUpdaterStatusEvent {
   version?: string;
   releaseNotes?: unknown;
   isBeta?: boolean;
+  manualInstall?: boolean;
   message?: string;
 }
 interface RosiUpdaterProgressEvent {
@@ -26,81 +22,38 @@ interface RosiUpdaterProgressEvent {
   transferred: number;
   total: number;
 }
-interface RosiJobProgressEvent {
-  sessionId?: number;
-  phase: 'download' | 'merge' | 'convert' | 'idle';
-  phasePercent: number | null;
-  itemOverallPercent: number;
-  overallPercent: number;
-  queueItemId?: string;
-  status: string;
-  details?: string;
-  indeterminate?: boolean;
-  downloadedBytes?: number;
-  totalBytes?: number;
-  speedBytesPerSecond?: number;
-  etaSeconds?: number;
-}
-interface RosiDownloadStats {
-  totalDownloads: number;
-  successfulDownloads: number;
-  failedDownloads: number;
-  cancelledDownloads: number;
-  totalBytesDownloaded: number;
-  formatCounts: Record<string, number>;
-  firstDownloadAt: number | null;
-  lastDownloadAt: number | null;
-}
-interface RosiDownloadCompletion {
-  id: string;
-  sessionId?: number;
-  owner: 'manual' | 'queue';
-  queueItemId?: string;
-  outcome: 'success' | 'failed' | 'cancelled';
-  statusMessage: string;
-  url: string;
-  profile?: 'compatible' | 'best-video' | 'audio' | 'custom';
-  presetId?: string;
-  presetName?: string;
-  request: Record<string, unknown>;
-  filename?: string;
-  outputPath?: string;
-  outputPaths?: string[];
-  failedPaths?: string[];
-  sizeBytes?: number;
-  format?: string;
-  error?: string;
-  startedAt: number;
-  completedAt: number;
-}
+// IPC shapes come from the Rust types (src/generated/ipc-types.ts).
+type RosiJobProgressEvent = import('./generated/ipc-types').JobProgressEvent;
+type RosiDownloadStats = import('./generated/ipc-types').DownloadStats;
+type RosiDownloadCompletion = import('./generated/ipc-types').DownloadCompletion;
+type RosiDownloadRequestOptions = import('./generated/ipc-types').DownloadRequestOptions;
+type RosiSettings = import('./generated/ipc-types').Settings;
 type RosiDownloadActivity = RosiDownloadCompletion;
 
 interface RosiRendererApi {
   restartApp: () => Promise<void>;
   getChannel: () => 'github' | 'msstore';
   getFormats: (url: string) => Promise<RosiIpcResult<string>>;
-  getVideoInfo: (url: string, playlistMode?: 'current' | 'all') => Promise<RosiIpcResult<unknown>>;
+  getVideoInfo: (
+    url: string,
+    playlistMode?: 'current' | 'all'
+  ) => Promise<RosiIpcResult<import('./generated/ipc-types').VideoInfo>>;
   cancelVideoInfo: () => void;
   selectDownloadLocation: () => Promise<string | null>;
-  getSettings: () => Promise<unknown>;
-  getDefaultSettings: () => Promise<RosiIpcResult<unknown>>;
-  saveSettings: (settings: Record<string, unknown>) => Promise<RosiIpcResult<unknown>>;
+  getSettings: () => Promise<RosiSettings>;
+  getDefaultSettings: () => Promise<RosiIpcResult<RosiSettings>>;
+  saveSettings: (settings: Partial<RosiSettings>) => Promise<RosiIpcResult<RosiSettings>>;
   resetSettings: () => Promise<void>;
   openExternal: (url: string) => Promise<RosiIpcResult<{ opened: boolean }>>;
   downloadVideo: (
-    options: Record<string, unknown>
-  ) => Promise<RosiIpcResult<{ started: boolean; sessionId?: number }>>;
+    options: Partial<RosiDownloadRequestOptions>
+  ) => Promise<RosiIpcResult<import('./generated/ipc-types').DownloadStarted>>;
   cancelDownload: () => void;
   cancelFormats: () => void;
   getAppVersion: () => Promise<string>;
   getAppPlatform: () => Promise<NodeJS.Platform>;
   checkDenoInstalled: () => Promise<boolean>;
-  installDeno: () => Promise<{
-    success?: boolean;
-    cancelled?: boolean;
-    output?: string;
-    error?: string;
-  }>;
+  installDeno: () => Promise<import('./generated/ipc-types').InstallResult>;
   detectGpu: () => Promise<{ nvidia: boolean; amd: boolean; intel: boolean }>;
   isPackaged: () => Promise<boolean>;
   checkForUpdates: () => Promise<{ error: string; message?: string } | null>;
@@ -145,8 +98,8 @@ interface RosiRendererApi {
   notifySettingsFlushed: (generation: number) => Promise<void>;
   addToQueue: (
     urls: string[],
-    options?: Record<string, unknown>
-  ) => Promise<RosiIpcResult<{ added: number; skipped: number }>>;
+    options?: Partial<RosiDownloadRequestOptions>
+  ) => Promise<RosiIpcResult<import('./generated/ipc-types').AddResult>>;
   removeFromQueue: (id: string) => Promise<RosiIpcResult<void>>;
   retryQueueItem: (id: string) => Promise<RosiIpcResult<void>>;
   reorderQueueItem: (request: {
@@ -220,20 +173,10 @@ interface RosiActivityModule {
   initActivityPanel: (deps: RosiActivityPanelDeps) => RosiActivityPanel;
 }
 
-interface RosiQueueItem {
-  id: string;
-  status: 'pending' | 'downloading' | 'completed' | 'failed' | 'cancelled';
-  url: string;
-  addedAt?: number;
-  startedAt?: number;
-  completedAt?: number;
-  request?: Record<string, unknown>;
+// `progress` is attached by the renderer, not sent by the backend.
+type RosiQueueItem = import('./generated/ipc-types').QueueItem & {
   progress?: RosiJobProgressEvent;
-  filename?: string;
-  outputPath?: string;
-  sizeBytes?: number;
-  error?: string;
-}
+};
 
 interface RosiQueueModule {
   renderQueue: (

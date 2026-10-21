@@ -7,6 +7,17 @@ function readRendererFile(relativePath: string) {
   return fs.readFileSync(filePath, 'utf8');
 }
 
+// The renderer controller is rosiEngine.ts plus its src/engine/ modules.
+function readEngineSources() {
+  const engineDir = path.join(process.cwd(), 'src', 'engine');
+  const parts = fs
+    .readdirSync(engineDir, { recursive: true, encoding: 'utf8' })
+    .filter((name) => name.endsWith('.ts'))
+    .sort()
+    .map((name) => fs.readFileSync(path.join(engineDir, name), 'utf8'));
+  return [readRendererFile('rosiEngine.ts'), ...parts].join('\n');
+}
+
 describe('renderer wiring and accessibility contracts', () => {
   it('keeps renderer module sources in TypeScript', () => {
     const moduleFiles = ['ui.ts', 'downloads.ts', 'queue.ts', 'settings.ts', 'updates.ts'];
@@ -18,7 +29,7 @@ describe('renderer wiring and accessibility contracts', () => {
 
   it('keeps queue section id aligned between HTML and renderer logic', () => {
     const indexHtml = readRendererFile('index.html');
-    const engine = readRendererFile('rosiEngine.ts');
+    const engine = readEngineSources();
 
     expect(indexHtml).toMatch(/id="queueSection"/);
     expect(engine).toMatch(/'queueSection'/);
@@ -26,7 +37,7 @@ describe('renderer wiring and accessibility contracts', () => {
   });
 
   it('loads queue once on startup to avoid duplicate bootstrap fetches', () => {
-    const engine = readRendererFile('rosiEngine.ts');
+    const engine = readEngineSources();
     const getQueueCalls = engine.match(/\.getQueue\(\)/g) || [];
     expect(getQueueCalls).toHaveLength(1);
   });
@@ -84,12 +95,12 @@ describe('renderer wiring and accessibility contracts', () => {
     expect(indexHtml).toMatch(/id="settingsBtn"[\s\S]*aria-expanded="false"/);
     expect(indexHtml).toMatch(/<title>ROSI<\/title>/);
     expect(indexHtml).toMatch(/aria-label="Learn more about SponsorBlock"/);
-    expect(readRendererFile('rosiEngine.ts')).toMatch(/onSettingsImported/);
+    expect(readEngineSources()).toMatch(/onSettingsImported/);
     expect(readRendererFile('modules/settings.ts')).toMatch(/stopPropagation/);
   });
 
   it('supports arrow-key ergonomics for collapsible header controls', () => {
-    const engine = readRendererFile('rosiEngine.ts');
+    const engine = readEngineSources();
 
     expect(engine).toContain("e.key === 'ArrowLeft'");
     expect(engine).toContain("e.key === 'ArrowRight'");
@@ -101,7 +112,7 @@ describe('renderer wiring and accessibility contracts', () => {
 
   it('keeps overlay, wizard, and progress accessibility contracts', () => {
     const indexHtml = readRendererFile('index.html');
-    const engine = readRendererFile('rosiEngine.ts');
+    const engine = readEngineSources();
     const uiModule = readRendererFile('modules/ui.ts');
 
     expect(indexHtml).toMatch(/id="licenses-overlay"[\s\S]*aria-hidden="true"/);

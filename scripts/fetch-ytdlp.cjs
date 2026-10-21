@@ -136,12 +136,40 @@ function resolveGpg({
   return "";
 }
 
+function gpgVersionText(command) {
+  const probe = spawnSync(command, ["--version"], { encoding: "utf8" });
+  return !probe.error && probe.status === 0 ? String(probe.stdout) : "";
+}
+
 /**
- * MSYS gpg (Git for Windows) reads Windows paths only with forward slashes.
- * Native Windows gpg accepts them too, so every Windows path is converted.
+ * Tells MSYS gpg (Git for Windows) from native GnuPG. MSYS is recognized by
+ * its Git `usr/bin` location, or by a `Home:` line that is a POSIX path.
+ * @returns {"posix" | "msys" | "native"}
  */
-function gpgPath(filePath, platform = process.platform) {
-  return platform === "win32" ? filePath.replace(/\\/g, "/") : filePath;
+function gpgFlavor(
+  gpg,
+  { platform = process.platform, probe = gpgVersionText } = {},
+) {
+  if (platform !== "win32") return "posix";
+  if (/\/git\/usr\/bin\/gpg(\.exe)?$/i.test(gpg.replace(/\\/g, "/"))) {
+    return "msys";
+  }
+  const home = probe(gpg).match(/^Home:\s*(.*)$/m);
+  return home && home[1].trim().startsWith("/") ? "msys" : "native";
+}
+
+/**
+ * Converts a path for gpg. Native GnuPG takes `C:/x/y`. MSYS gpg needs
+ * `/c/x/y`, since `C:/x/y` is read as relative to its working directory.
+ * Non-Windows paths are returned unchanged.
+ */
+function gpgPath(filePath, platform = process.platform, flavor = "native") {
+  if (platform !== "win32") return filePath;
+  const slashed = filePath.replace(/\\/g, "/");
+  if (flavor !== "msys") return slashed;
+  const drive = slashed.match(/^([A-Za-z]):(\/?)(.*)$/);
+  if (!drive) return slashed;
+  return `/${drive[1].toLowerCase()}/${drive[3]}`;
 }
 
 function sha256File(filePath) {
@@ -199,17 +227,19 @@ function verifySumsSignature({
   pinnedFingerprint = PINNED_FINGERPRINT,
 }) {
   const gpg = resolveGpg();
+  const flavor = gpgFlavor(gpg);
+  const toGpg = (filePath) => gpgPath(filePath, process.platform, flavor);
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ytdlp-gpg-"));
   try {
     fs.chmodSync(home, 0o700);
     const base = [
       "--homedir",
-      gpgPath(home),
+      toGpg(home),
       "--batch",
       "--no-autostart",
       "--quiet",
     ];
-    const imported = spawnSync(gpg, [...base, "--import", gpgPath(keyPath)], {
+    const imported = spawnSync(gpg, [...base, "--import", toGpg(keyPath)], {
       encoding: "utf8",
     });
     if (imported.error) {
@@ -225,8 +255,8 @@ function verifySumsSignature({
         "1",
         ...base,
         "--verify",
-        gpgPath(sigPath),
-        gpgPath(sumsPath),
+        toGpg(sigPath),
+        toGpg(sumsPath),
       ],
       { encoding: "utf8" },
     );
@@ -642,6 +672,7 @@ module.exports = {
   isTransient,
   withRetries,
   parseArgs,
+  gpgFlavor,
   gpgPath,
   parseSums,
   resolveGpg,

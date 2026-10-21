@@ -19,6 +19,10 @@ const STABLE_CANONICAL_ENV = {
   GH_REPO_NAME: "ROSI",
 };
 
+// The accepted beta tag must be at least this old before stable preflight
+// passes. Enforced by release-preflight.js; the runbook states the same gate.
+const STABLE_MIN_BETA_SOAK_DAYS = 14;
+
 function isExplicitTruthy(value) {
   return /^(1|true|yes|on)$/i.test(String(value || "").trim());
 }
@@ -87,6 +91,7 @@ if (require.main === module) {
 
 module.exports = {
   STABLE_FORBIDDEN_ENV,
+  STABLE_MIN_BETA_SOAK_DAYS,
   isExplicitFalsy,
   isExplicitTruthy,
   isStableReleaseVersion,

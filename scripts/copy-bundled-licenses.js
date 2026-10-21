@@ -8,6 +8,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -60,6 +61,19 @@ export function copyBundledNotices(root = defaultRoot) {
       destination: join(publicDir, "ffmpeg-source-offer.txt"),
     },
   ];
+  // Set only by the Flatpak manifest, which bundles Node.js as yt-dlp's
+  // JavaScript runtime. Other builds keep the list unchanged.
+  const flatpakNodeLicense = process.env.ROSI_FLATPAK_NODE_LICENSE;
+  if (flatpakNodeLicense) {
+    notices.push({
+      label: "Node.js runtime (Flatpak build only)",
+      source: flatpakNodeLicense,
+      destination: join(publicDir, "node-license.txt"),
+    });
+  } else {
+    // Drop a copy left by an earlier Flatpak-style run so it never ships.
+    rmSync(join(publicDir, "node-license.txt"), { force: true });
+  }
 
   mkdirSync(publicDir, { recursive: true });
   const index = [];

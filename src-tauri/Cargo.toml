@@ -1,6 +1,6 @@
 [package]
 name = "rosi"
-version = "5.0.0-beta.3"
+version = "5.0.0"
 description = "Cross-platform yt-dlp GUI built with Tauri."
 license = "MPL-2.0"
 authors = ["BurntToasters <code@rosie.run>"]
@@ -56,3 +56,5 @@ strip = true
 
 [dev-dependencies]
 minisign-verify = "0.2.5"
+# Test-only: generates src/generated/ipc-types.ts from the IPC types.
+ts-rs = "12.0.1"

@@ -121,11 +121,12 @@ const WEBVIEW_GUARD_SCRIPT: &str = r#"
 /// Native title bar appearance for a saved theme preference. Dark and purple
 /// pin a dark bar so it matches the page even when the system appearance is
 /// light; the renderer keeps it in sync on later theme changes.
-fn window_theme(preference: &str) -> Option<tauri::Theme> {
+fn window_theme(preference: crate::types::Theme) -> Option<tauri::Theme> {
+    use crate::types::Theme;
     match preference {
-        "light" => Some(tauri::Theme::Light),
-        "dark" | "purple" => Some(tauri::Theme::Dark),
-        _ => None,
+        Theme::Light => Some(tauri::Theme::Light),
+        Theme::Dark | Theme::Purple => Some(tauri::Theme::Dark),
+        Theme::System => None,
     }
 }
 
@@ -140,9 +141,15 @@ fn build_main(app: &AppHandle) -> Result<WebviewWindow, String> {
         .ok_or_else(|| "tauri.conf.json has no main window".to_string())?;
     let navigation_app = app.clone();
     let popup_app = app.clone();
-    WebviewWindowBuilder::from_config(app, &config)
-        .map_err(|error| error.to_string())?
-        .theme(window_theme(&crate::settings::load().theme))
+    let builder =
+        WebviewWindowBuilder::from_config(app, &config).map_err(|error| error.to_string())?;
+    // E2E specs keep sampling the page while the window sits behind other apps.
+    #[cfg(feature = "e2e")]
+    let builder = builder
+        .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
+        .focused(!e2e_background());
+    builder
+        .theme(window_theme(crate::settings::load().theme))
         .initialization_script_for_all_frames(WEBVIEW_GUARD_SCRIPT)
         .on_navigation(move |url| {
             if is_app_url(url) {
@@ -190,8 +197,22 @@ fn fit_to_work_area(window: &WebviewWindow) {
     let _ = window.center();
 }
 
+/// Background E2E runs on macOS: the app never takes focus and its window
+/// stays below other apps. scripts/test-e2e.js sets `ROSI_E2E_BACKGROUND=1`
+/// unless CI or `ROSI_E2E_FOREGROUND=1` is set.
+#[cfg(feature = "e2e")]
+pub fn e2e_background() -> bool {
+    cfg!(target_os = "macos") && std::env::var("ROSI_E2E_BACKGROUND").as_deref() == Ok("1")
+}
+
 fn reveal(window: &WebviewWindow) {
     let _ = window.unminimize();
+    #[cfg(feature = "e2e")]
+    if e2e_background() {
+        let _ = window.set_always_on_bottom(true);
+        let _ = window.show();
+        return;
+    }
     let _ = window.show();
     let _ = window.set_focus();
 }

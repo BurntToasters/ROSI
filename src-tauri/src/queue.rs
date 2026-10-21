@@ -6,7 +6,7 @@ use crate::downloader::{self, CompletionCallback};
 use crate::ipc::{self, IpcResult, NOT_AVAILABLE, VALIDATION_ERROR};
 use crate::types::{
     DownloadCompletion, DownloadRequestOptions, Outcome, Owner, PlaylistSelection, QueueItem,
-    QueueProgress, Settings,
+    QueueProgress, QueueStatus, Settings,
 };
 use crate::validation::{
     normalize_queue_url, validate_download_path, validate_download_request, validate_file_location,
@@ -29,6 +29,9 @@ struct QueueState {
     /// When the current run started. Progress weighting counts only items
     /// finished during this run, not results kept from earlier runs.
     run_started_at: u64,
+    /// Set while `stop()` waits for the runner to exit, so a start cannot
+    /// replace that runner and leave `stop()` waiting on the new one.
+    stopping: bool,
 }
 
 static QUEUE: OnceLock<Mutex<QueueState>> = OnceLock::new();
@@ -236,14 +239,18 @@ fn normalize_item(value: &Value, used_ids: &mut HashSet<String>) -> Option<Queue
         id = generate_id();
     }
     used_ids.insert(id.clone());
+    // Only terminal states survive a reload. An interrupted "downloading" item and
+    // any unknown value restart as pending.
     let status = match object.get("status").and_then(Value::as_str) {
-        Some(status @ ("pending" | "completed" | "failed" | "cancelled")) => status.to_string(),
-        _ => "pending".to_string(),
+        Some("completed") => QueueStatus::Completed,
+        Some("failed") => QueueStatus::Failed,
+        Some("cancelled") => QueueStatus::Cancelled,
+        _ => QueueStatus::Pending,
     };
     let mut item = QueueItem {
         id,
         url: url.clone(),
-        status: status.clone(),
+        status,
         added_at: positive_ms(object.get("addedAt")).unwrap_or_else(crate::app_state::now_ms),
         started_at: None,
         completed_at: None,
@@ -253,7 +260,7 @@ fn normalize_item(value: &Value, used_ids: &mut HashSet<String>) -> Option<Queue
         size_bytes: None,
         error: None,
     };
-    if status != "pending" {
+    if status != QueueStatus::Pending {
         item.started_at = positive_ms(object.get("startedAt"));
         item.completed_at = positive_ms(object.get("completedAt"));
         item.filename = object
@@ -271,7 +278,7 @@ fn normalize_item(value: &Value, used_ids: &mut HashSet<String>) -> Option<Queue
             .and_then(Value::as_f64)
             .filter(|n| n.is_finite() && *n >= 0.0)
             .map(|n| n as u64);
-        if status == "failed" {
+        if status == QueueStatus::Failed {
             item.error = object
                 .get("error")
                 .and_then(Value::as_str)
@@ -293,7 +300,7 @@ fn read_queue(path: &std::path::Path) -> Option<Vec<QueueItem>> {
         let Some(item) = normalize_item(raw, &mut used_ids) else {
             continue;
         };
-        if item.status == "pending" && !nonterminal.insert(item.url.clone()) {
+        if item.status == QueueStatus::Pending && !nonterminal.insert(item.url.clone()) {
             continue;
         }
         items.push(item);
@@ -412,7 +419,7 @@ fn request_from_settings(url: &str, settings: &Settings) -> DownloadRequestOptio
             start: None,
             end: None,
         }),
-        profile: Some(settings.download_mode.clone()),
+        profile: Some(settings.download_mode.as_str().to_string()),
         best_quality: Some(settings.best_quality),
         advanced_options: Some(settings.advanced_options),
         audio_only: Some(settings.audio_only),
@@ -420,7 +427,7 @@ fn request_from_settings(url: &str, settings: &Settings) -> DownloadRequestOptio
         hook_browser: Some(settings.hook_browser),
         browser_choice: Some(settings.browser_choice.clone()),
         gpu_acceleration: Some(settings.gpu_acceleration),
-        gpu_type: Some(settings.gpu_type.clone()),
+        gpu_type: Some(settings.gpu_type.as_str().to_string()),
         write_subtitles: Some(settings.write_subtitles),
         subtitle_langs: Some(settings.subtitle_langs.clone()),
         embed_thumbnail: Some(settings.embed_thumbnail),
@@ -529,11 +536,10 @@ fn synthetic_completion(
 
 fn apply_completion(item: &mut QueueItem, completion: &DownloadCompletion) {
     item.status = match completion.outcome {
-        Outcome::Success => "completed",
-        Outcome::Failed => "failed",
-        Outcome::Cancelled => "cancelled",
-    }
-    .to_string();
+        Outcome::Success => QueueStatus::Completed,
+        Outcome::Failed => QueueStatus::Failed,
+        Outcome::Cancelled => QueueStatus::Cancelled,
+    };
     item.request = Some(completion.request.clone());
     item.completed_at = Some(completion.completed_at);
     item.filename = completion.filename.clone();
@@ -544,16 +550,77 @@ fn apply_completion(item: &mut QueueItem, completion: &DownloadCompletion) {
     });
 }
 
+/// Apply a completion to the matching item (if still present). Returns true
+/// when this completion ended the run.
+fn apply_completion_in_state(
+    queue: &mut QueueState,
+    item_id: &str,
+    completion: &DownloadCompletion,
+) -> bool {
+    if let Some(item) = queue.items.iter_mut().find(|item| item.id == item_id) {
+        apply_completion(item, completion);
+    }
+    if queue.active_item_id.as_deref() == Some(item_id) {
+        queue.active_item_id = None;
+    }
+    end_run_if_drained(queue)
+}
+
+/// Ends a live run once no item is left pending or downloading. Called under
+/// the same lock as the completion, so a retry after this point sees the run
+/// as over and leaves its item pending. The runner thread exits on its own.
+/// Returns true when this call ended the run.
+fn end_run_if_drained(queue: &mut QueueState) -> bool {
+    let has_work = queue
+        .items
+        .iter()
+        .any(|item| matches!(item.status, QueueStatus::Pending | QueueStatus::Downloading));
+    if !queue.running || has_work {
+        return false;
+    }
+    queue.running = false;
+    queue.active_item_id = None;
+    true
+}
+
+/// Claim the next pending item for the runner. When nothing can be claimed,
+/// the runner's run is over, so the state is reset and `None` is returned.
+fn claim_next_in_state(queue: &mut QueueState) -> Option<QueueItem> {
+    let next_index = queue
+        .items
+        .iter()
+        .position(|item| item.status == QueueStatus::Pending);
+    match next_index {
+        Some(index) if queue.running && !queue.cancelled => {
+            let item = &mut queue.items[index];
+            clear_attempt(item);
+            item.status = QueueStatus::Downloading;
+            item.started_at = Some(crate::app_state::now_ms());
+            let item = item.clone();
+            queue.active_item_id = Some(item.id.clone());
+            Some(item)
+        }
+        _ => {
+            queue.running = false;
+            queue.cancelled = false;
+            queue.active_item_id = None;
+            None
+        }
+    }
+}
+
+/// Whether `start_queue` should wait for a runner that is still exiting after
+/// its run drained. A stop in progress is never waited on: `stop()` waits for
+/// the runner to exit too, and a start must not replace that runner first.
+fn start_waits_for_exit(queue: &QueueState) -> bool {
+    queue.runner_alive && !queue.running && !queue.stopping
+}
+
 /// Apply a completion to the matching item (if still present) and record it.
 fn finish_item(item_id: &str, completion: DownloadCompletion) {
     {
         let mut queue = state();
-        if let Some(item) = queue.items.iter_mut().find(|item| item.id == item_id) {
-            apply_completion(item, &completion);
-        }
-        if queue.active_item_id.as_deref() == Some(item_id) {
-            queue.active_item_id = None;
-        }
+        apply_completion_in_state(&mut queue, item_id, &completion);
     }
     crate::activity::record(&completion);
     broadcast();
@@ -571,11 +638,12 @@ fn finish_unstarted_item(item: &QueueItem, request: &DownloadRequestOptions) {
         let Some(entry) = queue
             .items
             .iter_mut()
-            .find(|entry| entry.id == item.id && entry.status == "downloading")
+            .find(|entry| entry.id == item.id && entry.status == QueueStatus::Downloading)
         else {
             return;
         };
         apply_completion(entry, &completion);
+        end_run_if_drained(&mut queue);
     }
     crate::activity::record(&completion);
     broadcast();
@@ -584,30 +652,9 @@ fn finish_unstarted_item(item: &QueueItem, request: &DownloadRequestOptions) {
 fn run_queue() {
     let _finished = RunnerFinished;
     loop {
-        let next = {
-            let mut queue = state();
-            let next_index = queue.items.iter().position(|item| item.status == "pending");
-            match next_index {
-                Some(index) if queue.running && !queue.cancelled => {
-                    let item = &mut queue.items[index];
-                    clear_attempt(item);
-                    item.status = "downloading".into();
-                    item.started_at = Some(crate::app_state::now_ms());
-                    let item = item.clone();
-                    queue.active_item_id = Some(item.id.clone());
-                    Some(item)
-                }
-                _ => {
-                    queue.running = false;
-                    queue.cancelled = false;
-                    queue.active_item_id = None;
-                    drop(queue);
-                    broadcast();
-                    None
-                }
-            }
-        };
+        let next = claim_next_in_state(&mut state());
         let Some(item) = next else {
+            broadcast();
             return;
         };
         broadcast();
@@ -620,16 +667,23 @@ fn run_queue() {
             }
             let run_started_at = queue.run_started_at;
             let finished_this_run = |entry: &&QueueItem| {
-                matches!(entry.status.as_str(), "completed" | "failed" | "cancelled")
-                    && entry
-                        .completed_at
-                        .is_some_and(|completed| completed >= run_started_at)
+                matches!(
+                    entry.status,
+                    QueueStatus::Completed | QueueStatus::Failed | QueueStatus::Cancelled
+                ) && entry
+                    .completed_at
+                    .is_some_and(|completed| completed >= run_started_at)
             };
             let completed_items = queue.items.iter().filter(finished_this_run).count();
             let remaining = queue
                 .items
                 .iter()
-                .filter(|entry| matches!(entry.status.as_str(), "pending" | "downloading"))
+                .filter(|entry| {
+                    matches!(
+                        entry.status,
+                        QueueStatus::Pending | QueueStatus::Downloading
+                    )
+                })
                 .count();
             QueueProgress {
                 completed_items,
@@ -659,10 +713,9 @@ fn run_queue() {
                     let queue = state();
                     queue.running
                         && !queue.cancelled
-                        && queue
-                            .items
-                            .iter()
-                            .any(|entry| entry.id == item.id && entry.status == "downloading")
+                        && queue.items.iter().any(|entry| {
+                            entry.id == item.id && entry.status == QueueStatus::Downloading
+                        })
                 };
                 if !still_wanted {
                     None
@@ -706,6 +759,7 @@ fn run_queue() {
 #[cfg(test)]
 mod persistence_tests {
     use super::*;
+    use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{mpsc, Arc};
 
@@ -732,7 +786,7 @@ mod persistence_tests {
         QueueItem {
             id: id.into(),
             url: url.into(),
-            status: "pending".into(),
+            status: QueueStatus::Pending,
             added_at: 1,
             started_at: None,
             completed_at: None,
@@ -832,6 +886,259 @@ mod persistence_tests {
             .flush(2, vec![item("saved", "https://queue.invalid/saved")])
             .expect("a later successful flush can be acknowledged");
     }
+
+    fn raw_item(id: &str, status: Value) -> Value {
+        json!({
+            "id": id,
+            "url": format!("https://example.com/{id}"),
+            "status": status,
+            "addedAt": 1,
+            "startedAt": 10,
+            "completedAt": 20,
+            "filename": "video.mp4",
+            "sizeBytes": 5,
+            "error": "boom"
+        })
+    }
+
+    fn with_url(mut value: Value, url: &str) -> Value {
+        value["url"] = json!(url);
+        value
+    }
+
+    fn write_json(path: &Path, value: &Value) {
+        std::fs::write(path, serde_json::to_vec(value).expect("encode fixture"))
+            .expect("write queue fixture");
+    }
+
+    fn statuses_of(items: &[QueueItem]) -> Vec<Value> {
+        serde_json::to_value(items)
+            .expect("items serialize")
+            .as_array()
+            .expect("items are an array")
+            .iter()
+            .map(|entry| entry["status"].clone())
+            .collect()
+    }
+
+    #[test]
+    fn each_status_round_trips_through_the_item_json_unchanged() {
+        for status in ["pending", "downloading", "completed", "failed", "cancelled"] {
+            let raw = raw_item("q_round", json!(status));
+            let item: QueueItem = serde_json::from_value(raw.clone()).expect("item deserializes");
+            assert_eq!(serde_json::to_value(&item).expect("item serializes"), raw);
+        }
+        let minimal = json!({
+            "id": "q_min",
+            "url": "https://example.com/min",
+            "status": "pending",
+            "addedAt": 1
+        });
+        let item: QueueItem =
+            serde_json::from_value(minimal.clone()).expect("minimal item deserializes");
+        assert_eq!(
+            serde_json::to_value(&item).expect("item serializes"),
+            minimal
+        );
+    }
+
+    #[test]
+    fn persisted_file_keeps_envelope_and_lowercase_statuses_including_downloading() {
+        let directory = TestDirectory::new();
+        let primary = directory.0.join("download-queue.json");
+        let backup = directory.0.join("download-queue.backup.json");
+        let statuses = ["pending", "downloading", "completed", "failed", "cancelled"];
+        let items: Vec<QueueItem> = statuses
+            .iter()
+            .enumerate()
+            .map(|(index, status)| {
+                serde_json::from_value(raw_item(&format!("q_disk_{index}"), json!(status)))
+                    .expect("fixture item deserializes")
+            })
+            .collect();
+        persist_queue_files(&primary, &backup, &items).expect("write queue files");
+
+        let expected: Vec<Value> = statuses.iter().map(|status| json!(status)).collect();
+        for path in [&primary, &backup] {
+            let saved: Value =
+                serde_json::from_slice(&std::fs::read(path).expect("queue file is readable"))
+                    .expect("queue file is JSON");
+            assert_eq!(saved["schemaVersion"], json!(1));
+            let on_disk: Vec<Value> = saved["items"]
+                .as_array()
+                .expect("items array")
+                .iter()
+                .map(|entry| entry["status"].clone())
+                .collect();
+            assert_eq!(on_disk, expected);
+        }
+
+        // Reloading turns the interrupted "downloading" item back into pending.
+        let reloaded = read_queue(&primary).expect("persisted queue reloads");
+        let reloaded_statuses = statuses_of(&reloaded);
+        assert_eq!(
+            reloaded_statuses,
+            ["pending", "pending", "completed", "failed", "cancelled"]
+                .iter()
+                .map(|status| json!(status))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn legacy_bare_array_and_items_wrapper_load_with_per_status_fields() {
+        let directory = TestDirectory::new();
+        let bare = directory.0.join("legacy-array.json");
+        write_json(
+            &bare,
+            &json!([
+                raw_item("q_done", json!("completed")),
+                raw_item("q_failed", json!("failed")),
+                raw_item("q_cancelled", json!("cancelled")),
+                raw_item("q_waiting", json!("pending")),
+            ]),
+        );
+        let loaded = read_queue(&bare).expect("ROSI 4 bare array loads");
+        assert_eq!(
+            serde_json::to_value(&loaded).expect("items serialize"),
+            json!([
+                {
+                    "id": "q_done",
+                    "url": "https://example.com/q_done",
+                    "status": "completed",
+                    "addedAt": 1,
+                    "startedAt": 10,
+                    "completedAt": 20,
+                    "filename": "video.mp4",
+                    "sizeBytes": 5
+                },
+                {
+                    "id": "q_failed",
+                    "url": "https://example.com/q_failed",
+                    "status": "failed",
+                    "addedAt": 1,
+                    "startedAt": 10,
+                    "completedAt": 20,
+                    "filename": "video.mp4",
+                    "sizeBytes": 5,
+                    "error": "boom"
+                },
+                {
+                    "id": "q_cancelled",
+                    "url": "https://example.com/q_cancelled",
+                    "status": "cancelled",
+                    "addedAt": 1,
+                    "startedAt": 10,
+                    "completedAt": 20,
+                    "filename": "video.mp4",
+                    "sizeBytes": 5
+                },
+                {
+                    "id": "q_waiting",
+                    "url": "https://example.com/q_waiting",
+                    "status": "pending",
+                    "addedAt": 1
+                }
+            ])
+        );
+
+        let wrapped = directory.0.join("wrapped.json");
+        write_json(
+            &wrapped,
+            &json!({"schemaVersion": 1, "items": [raw_item("q_wrapped", json!("failed"))]}),
+        );
+        assert_eq!(
+            statuses_of(&read_queue(&wrapped).expect("items wrapper loads")),
+            [json!("failed")]
+        );
+    }
+
+    #[test]
+    fn interrupted_downloading_item_reloads_as_pending_without_attempt_fields() {
+        let directory = TestDirectory::new();
+        let path = directory.0.join("download-queue.json");
+        write_json(
+            &path,
+            &json!({"schemaVersion": 1, "items": [raw_item("q_live", json!("downloading"))]}),
+        );
+        let loaded = read_queue(&path).expect("interrupted queue loads");
+        assert_eq!(
+            serde_json::to_value(&loaded).expect("items serialize"),
+            json!([{
+                "id": "q_live",
+                "url": "https://example.com/q_live",
+                "status": "pending",
+                "addedAt": 1
+            }])
+        );
+    }
+
+    #[test]
+    fn unknown_and_odd_statuses_normalize_to_pending_and_keep_the_item() {
+        let odd = [
+            json!("running"),
+            json!(""),
+            json!("Completed"),
+            json!("FAILED"),
+            json!(5),
+            json!(null),
+            json!(["failed"]),
+        ];
+        for (index, status) in odd.into_iter().enumerate() {
+            let id = format!("q_odd_{index}");
+            let raw = raw_item(&id, status);
+            let item = normalize_item(&raw, &mut HashSet::new()).expect("odd status keeps item");
+            assert_eq!(
+                serde_json::to_value(&item).expect("item serializes"),
+                json!({
+                    "id": id,
+                    "url": format!("https://example.com/{id}"),
+                    "status": "pending",
+                    "addedAt": 1
+                })
+            );
+        }
+
+        let mut missing = raw_item("q_missing", json!("pending"));
+        missing
+            .as_object_mut()
+            .expect("fixture is an object")
+            .remove("status");
+        let item = normalize_item(&missing, &mut HashSet::new()).expect("missing status is kept");
+        assert_eq!(statuses_of(&[item]), [json!("pending")]);
+    }
+
+    #[test]
+    fn duplicate_urls_dedupe_only_among_normalized_pending_items() {
+        let directory = TestDirectory::new();
+        let path = directory.0.join("download-queue.json");
+        let shared = "https://example.com/shared";
+        write_json(
+            &path,
+            &json!([
+                with_url(raw_item("a1", json!("downloading")), shared),
+                with_url(raw_item("a2", json!("downloading")), shared),
+                with_url(raw_item("a3", json!("pending")), shared),
+                with_url(raw_item("a4", json!("completed")), shared),
+                with_url(raw_item("a5", json!("completed")), shared),
+            ]),
+        );
+        let loaded = read_queue(&path).expect("duplicate queue loads");
+        let ids: Vec<&str> = loaded.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(ids, ["a1", "a4", "a5"]);
+        assert_eq!(
+            statuses_of(&loaded),
+            [json!("pending"), json!("completed"), json!("completed")]
+        );
+    }
+
+    #[test]
+    fn corrupt_primary_reads_as_unreadable_so_backup_fallback_can_run() {
+        let directory = TestDirectory::new();
+        let path = directory.0.join("download-queue.json");
+        std::fs::write(&path, "{\"schemaVersion\":1,\"items\":[").expect("write corrupt file");
+        assert!(read_queue(&path).is_none());
+    }
 }
 
 pub fn is_running() -> bool {
@@ -847,6 +1154,7 @@ pub fn stop() {
         let mut queue = state();
         queue.cancelled = true;
         queue.running = false;
+        queue.stopping = true;
         queue.active_item_id.take()
     };
     downloader::cancel_active_session(false);
@@ -863,13 +1171,14 @@ pub fn stop() {
         queue
             .items
             .iter_mut()
-            .find(|item| item.id == id && item.status == "cancelled")
+            .find(|item| item.id == id && item.status == QueueStatus::Cancelled)
             .map(|item| {
                 clear_attempt(item);
-                item.status = "pending".into();
+                item.status = QueueStatus::Pending;
             })
             .is_some()
     });
+    queue.stopping = false;
     drop(queue);
     if requeued {
         broadcast();
@@ -877,6 +1186,7 @@ pub fn stop() {
 }
 
 #[derive(serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct AddResult {
     added: usize,
     skipped: usize,
@@ -897,7 +1207,9 @@ pub fn add_to_queue(urls: Value, options: Option<Value>) -> IpcResult<AddResult>
     let nonterminal: HashSet<String> = queue
         .items
         .iter()
-        .filter(|item| item.status == "pending" || item.status == "downloading")
+        .filter(|item| {
+            item.status == QueueStatus::Pending || item.status == QueueStatus::Downloading
+        })
         .map(|item| item.url.clone())
         .collect();
     let mut batch = HashSet::new();
@@ -936,7 +1248,7 @@ pub fn add_to_queue(urls: Value, options: Option<Value>) -> IpcResult<AddResult>
         pending.push(QueueItem {
             id: generate_id(),
             url,
-            status: "pending".into(),
+            status: QueueStatus::Pending,
             added_at: crate::app_state::now_ms(),
             started_at: None,
             completed_at: None,
@@ -984,7 +1296,7 @@ pub fn remove_from_queue(id: Value) -> IpcResult<()> {
     let Some(index) = queue.items.iter().position(|item| item.id == id) else {
         return ipc::err(NOT_AVAILABLE, "Queue item not found.");
     };
-    if queue.items[index].status == "downloading" {
+    if queue.items[index].status == QueueStatus::Downloading {
         return ipc::err(
             VALIDATION_ERROR,
             "Cannot remove an actively downloading item.",
@@ -1006,14 +1318,14 @@ pub fn retry_queue_item(id: Value) -> IpcResult<()> {
     let Some(item) = queue.items.iter_mut().find(|item| item.id == id) else {
         return ipc::err(NOT_AVAILABLE, "Queue item not found.");
     };
-    if item.status != "failed" && item.status != "cancelled" {
+    if item.status != QueueStatus::Failed && item.status != QueueStatus::Cancelled {
         return ipc::err(
             VALIDATION_ERROR,
             "Only failed or cancelled queue items can be retried.",
         );
     }
     clear_attempt(item);
-    item.status = "pending".into();
+    item.status = QueueStatus::Pending;
     drop(queue);
     broadcast();
     ipc::ok(())
@@ -1029,7 +1341,7 @@ pub fn reorder_queue_item(request: Value) -> IpcResult<()> {
     let Some(index) = queue.items.iter().position(|item| item.id == id) else {
         return ipc::err(NOT_AVAILABLE, "Queue item not found.");
     };
-    if queue.items[index].status != "pending" {
+    if queue.items[index].status != QueueStatus::Pending {
         return ipc::err(
             VALIDATION_ERROR,
             "Only pending queue items can be reordered.",
@@ -1039,7 +1351,7 @@ pub fn reorder_queue_item(request: Value) -> IpcResult<()> {
         .items
         .iter()
         .enumerate()
-        .filter(|(_, item)| item.status == "pending")
+        .filter(|(_, item)| item.status == QueueStatus::Pending)
         .map(|(position, _)| position)
         .collect();
     let position = pending
@@ -1103,7 +1415,7 @@ pub fn clear_finished_queue() -> IpcResult<RemovedCount> {
         let before = queue.items.len();
         queue
             .items
-            .retain(|item| matches!(item.status.as_str(), "pending" | "downloading"));
+            .retain(|item| matches!(item.status, QueueStatus::Pending | QueueStatus::Downloading));
         before - queue.items.len()
     };
     if removed > 0 {
@@ -1113,6 +1425,7 @@ pub fn clear_finished_queue() -> IpcResult<RemovedCount> {
 }
 
 #[derive(serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct RemovedCount {
     removed: usize,
 }
@@ -1122,14 +1435,35 @@ pub fn get_queue() -> Vec<QueueItem> {
     state().items.clone()
 }
 
+/// Longest a start waits for the previous runner to exit after its run drained.
+/// The runner exits within a loop turn, so this only bounds a stuck runner.
+const RUNNER_EXIT_WAIT: Duration = Duration::from_secs(2);
+
 #[tauri::command(async)]
 pub fn start_queue() -> IpcResult<Started> {
-    let mut queue = state();
-    if !queue.items.iter().any(|item| item.status == "pending") {
+    let (mut queue, _) = RUNNER_CHANGED
+        .wait_timeout_while(state(), RUNNER_EXIT_WAIT, |queue| {
+            start_waits_for_exit(queue)
+        })
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !queue
+        .items
+        .iter()
+        .any(|item| item.status == QueueStatus::Pending)
+    {
         return ipc::err(NOT_AVAILABLE, "No pending items in queue.");
     }
-    if queue.running || queue.runner_alive {
+    if queue.stopping {
+        return ipc::err(NOT_AVAILABLE, "Queue is stopping.");
+    }
+    if queue.running {
         return ipc::err(VALIDATION_ERROR, "Queue is already running.");
+    }
+    if queue.runner_alive {
+        return ipc::err(
+            NOT_AVAILABLE,
+            "Queue is still finishing. Try again shortly.",
+        );
     }
     if !downloader::can_start(Owner::Queue) {
         return ipc::err(NOT_AVAILABLE, "A manual download is already in progress.");
@@ -1144,6 +1478,8 @@ pub fn start_queue() -> IpcResult<Started> {
 }
 
 #[derive(serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(rename = "QueueStarted"))]
 pub struct Started {
     started: bool,
 }
@@ -1174,7 +1510,7 @@ fn cancel_queue_blocking() -> IpcResult<()> {
     let remaining: Vec<QueueItem> = state()
         .items
         .iter()
-        .filter(|item| item.status == "pending")
+        .filter(|item| item.status == QueueStatus::Pending)
         .cloned()
         .collect();
     let mut completions = Vec::new();
@@ -1191,7 +1527,7 @@ fn cancel_queue_blocking() -> IpcResult<()> {
             if let Some(item) = queue
                 .items
                 .iter_mut()
-                .find(|item| &item.id == id && item.status == "pending")
+                .find(|item| &item.id == id && item.status == QueueStatus::Pending)
             {
                 apply_completion(item, completion);
             }
@@ -1203,4 +1539,233 @@ fn cancel_queue_blocking() -> IpcResult<()> {
     }
     broadcast();
     ipc::ok(())
+}
+
+#[cfg(test)]
+mod run_drain_tests {
+    use super::*;
+
+    fn item(id: &str, status: QueueStatus) -> QueueItem {
+        QueueItem {
+            id: id.into(),
+            url: format!("https://example.com/{id}"),
+            status,
+            added_at: 1,
+            started_at: None,
+            completed_at: None,
+            request: None,
+            filename: None,
+            output_path: None,
+            size_bytes: None,
+            error: None,
+        }
+    }
+
+    fn live_run(items: Vec<QueueItem>, active: Option<&str>) -> QueueState {
+        QueueState {
+            items,
+            running: true,
+            runner_alive: true,
+            active_item_id: active.map(str::to_string),
+            ..QueueState::default()
+        }
+    }
+
+    fn completion(item_id: &str, outcome: Outcome) -> DownloadCompletion {
+        DownloadCompletion {
+            id: format!("completion-{item_id}"),
+            session_id: None,
+            owner: Owner::Queue,
+            queue_item_id: Some(item_id.into()),
+            outcome,
+            status_message: String::new(),
+            url: format!("https://example.com/{item_id}"),
+            profile: None,
+            preset_id: None,
+            preset_name: None,
+            request: DownloadRequestOptions::default(),
+            filename: None,
+            output_path: None,
+            output_paths: None,
+            failed_paths: None,
+            size_bytes: None,
+            format: None,
+            error: None,
+            started_at: 1,
+            completed_at: 2,
+        }
+    }
+
+    /// Mirrors the state change in `retry_queue_item`.
+    fn retry_in_state(queue: &mut QueueState, id: &str) {
+        let item = queue
+            .items
+            .iter_mut()
+            .find(|item| item.id == id)
+            .expect("retry target exists");
+        clear_attempt(item);
+        item.status = QueueStatus::Pending;
+    }
+
+    #[test]
+    fn last_completed_item_ends_the_run_in_the_same_state_update() {
+        let mut queue = live_run(vec![item("a", QueueStatus::Downloading)], Some("a"));
+        let ended = apply_completion_in_state(&mut queue, "a", &completion("a", Outcome::Success));
+        assert!(ended);
+        assert!(!queue.running);
+        assert_eq!(queue.active_item_id, None);
+        assert_eq!(queue.items[0].status, QueueStatus::Completed);
+    }
+
+    #[test]
+    fn last_failed_and_cancelled_items_end_the_run() {
+        for (outcome, status) in [
+            (Outcome::Failed, QueueStatus::Failed),
+            (Outcome::Cancelled, QueueStatus::Cancelled),
+        ] {
+            let mut queue = live_run(vec![item("a", QueueStatus::Downloading)], Some("a"));
+            assert!(apply_completion_in_state(
+                &mut queue,
+                "a",
+                &completion("a", outcome)
+            ));
+            assert!(!queue.running);
+            assert_eq!(queue.items[0].status, status);
+        }
+    }
+
+    #[test]
+    fn completion_with_pending_items_keeps_the_run_going() {
+        let mut queue = live_run(
+            vec![
+                item("a", QueueStatus::Downloading),
+                item("b", QueueStatus::Pending),
+            ],
+            Some("a"),
+        );
+        let ended = apply_completion_in_state(&mut queue, "a", &completion("a", Outcome::Success));
+        assert!(!ended);
+        assert!(queue.running);
+        assert_eq!(queue.items[1].status, QueueStatus::Pending);
+    }
+
+    #[test]
+    fn completion_with_another_downloading_item_keeps_the_run_going() {
+        let mut queue = live_run(
+            vec![
+                item("a", QueueStatus::Downloading),
+                item("b", QueueStatus::Downloading),
+            ],
+            Some("a"),
+        );
+        let ended = apply_completion_in_state(&mut queue, "a", &completion("a", Outcome::Success));
+        assert!(!ended);
+        assert!(queue.running);
+    }
+
+    #[test]
+    fn retry_after_drain_stays_pending_and_is_not_claimed() {
+        let mut queue = live_run(vec![item("a", QueueStatus::Downloading)], Some("a"));
+        assert!(apply_completion_in_state(
+            &mut queue,
+            "a",
+            &completion("a", Outcome::Failed)
+        ));
+        retry_in_state(&mut queue, "a");
+        assert!(claim_next_in_state(&mut queue).is_none());
+        assert_eq!(queue.items[0].status, QueueStatus::Pending);
+        assert!(!queue.running);
+    }
+
+    #[test]
+    fn retry_while_others_pending_joins_the_active_run() {
+        let mut queue = live_run(
+            vec![
+                item("a", QueueStatus::Failed),
+                item("b", QueueStatus::Downloading),
+                item("c", QueueStatus::Pending),
+            ],
+            Some("b"),
+        );
+        assert!(!apply_completion_in_state(
+            &mut queue,
+            "b",
+            &completion("b", Outcome::Success)
+        ));
+        retry_in_state(&mut queue, "a");
+        let claimed = claim_next_in_state(&mut queue).expect("retried item joins the run");
+        assert_eq!(claimed.id, "a");
+        assert_eq!(queue.items[0].status, QueueStatus::Downloading);
+        assert_eq!(queue.active_item_id.as_deref(), Some("a"));
+        assert!(queue.running);
+    }
+
+    #[test]
+    fn claim_with_nothing_pending_ends_the_run() {
+        let mut queue = live_run(vec![item("a", QueueStatus::Completed)], None);
+        assert!(claim_next_in_state(&mut queue).is_none());
+        assert!(!queue.running);
+    }
+
+    #[test]
+    fn completion_for_removed_item_ends_only_a_drained_run() {
+        // Clear during a drain: nothing is left, so the completion ends the run.
+        let mut drained = live_run(vec![], Some("gone"));
+        assert!(apply_completion_in_state(
+            &mut drained,
+            "gone",
+            &completion("gone", Outcome::Cancelled)
+        ));
+        assert!(!drained.running);
+        assert_eq!(drained.active_item_id, None);
+
+        // The removed item's completion while another item is still pending.
+        let mut pending = live_run(vec![item("b", QueueStatus::Pending)], Some("gone"));
+        assert!(!apply_completion_in_state(
+            &mut pending,
+            "gone",
+            &completion("gone", Outcome::Success)
+        ));
+        assert!(pending.running);
+        assert_eq!(pending.items[0].status, QueueStatus::Pending);
+    }
+
+    #[test]
+    fn completion_after_the_run_ended_changes_nothing() {
+        // stop() and cancel_queue() clear `running` and set `cancelled` before the
+        // interrupted session's completion arrives.
+        let mut queue = QueueState {
+            items: vec![item("a", QueueStatus::Downloading)],
+            cancelled: true,
+            runner_alive: true,
+            active_item_id: Some("a".into()),
+            ..QueueState::default()
+        };
+        assert!(!apply_completion_in_state(
+            &mut queue,
+            "a",
+            &completion("a", Outcome::Cancelled)
+        ));
+        assert!(queue.cancelled);
+        assert!(!queue.running);
+        assert_eq!(queue.items[0].status, QueueStatus::Cancelled);
+    }
+
+    #[test]
+    fn start_waits_only_while_an_exiting_runner_is_alive() {
+        assert!(!start_waits_for_exit(&QueueState::default()));
+        let running = live_run(vec![item("a", QueueStatus::Downloading)], Some("a"));
+        assert!(!start_waits_for_exit(&running));
+        let drained = QueueState {
+            runner_alive: true,
+            ..QueueState::default()
+        };
+        assert!(start_waits_for_exit(&drained));
+        let stopping = QueueState {
+            runner_alive: true,
+            stopping: true,
+            ..QueueState::default()
+        };
+        assert!(!start_waits_for_exit(&stopping));
+    }
 }

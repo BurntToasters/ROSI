@@ -4,9 +4,76 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// A closed set of setting values, serialized as fixed strings.
+macro_rules! string_enum {
+    ($(#[$meta:meta])* $name:ident { $($variant:ident => $text:literal),+ $(,)? }) => {
+        $(#[$meta])*
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+        #[cfg_attr(test, derive(ts_rs::TS))]
+        pub enum $name {
+            $(#[serde(rename = $text)] $variant),+
+        }
+
+        impl $name {
+            pub const NAMES: &'static [&'static str] = &[$($text),+];
+
+            // Not every enum is converted back to its name outside serde.
+            #[allow(dead_code)]
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $text),+
+                }
+            }
+
+            pub fn parse(value: &str) -> Option<Self> {
+                match value {
+                    $($text => Some(Self::$variant),)+
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
+string_enum!(Theme {
+    System => "system",
+    Light => "light",
+    Dark => "dark",
+    Purple => "purple",
+});
+
+string_enum!(DockTab {
+    Queue => "queue",
+    Activity => "activity",
+    Console => "console",
+});
+
+string_enum!(DownloadProfile {
+    Compatible => "compatible",
+    BestVideo => "best-video",
+    Audio => "audio",
+    Custom => "custom",
+});
+
+string_enum!(GpuType {
+    Auto => "auto",
+    Nvidia => "nvidia",
+    Amd => "amd",
+    Intel => "intel",
+});
+
+string_enum!(UpdateChannel {
+    Auto => "auto",
+    Stable => "stable",
+    Beta => "beta",
+});
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(optional_fields = nullable))]
 pub struct PlaylistSelection {
+    #[cfg_attr(test, ts(type = "\"current\" | \"all\" | \"range\""))]
     pub mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start: Option<u32>,
@@ -16,9 +83,12 @@ pub struct PlaylistSelection {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(optional_fields = nullable))]
 pub struct DownloadPreset {
     pub id: String,
     pub name: String,
+    #[cfg_attr(test, ts(as = "DownloadProfile"))]
     pub profile: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub best_quality: Option<bool>,
@@ -39,6 +109,7 @@ pub struct DownloadPreset {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gpu_acceleration: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(as = "Option<GpuType>"))]
     pub gpu_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub write_subtitles: Option<bool>,
@@ -56,13 +127,15 @@ pub struct DownloadPreset {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(optional_fields = nullable))]
 pub struct Settings {
     pub settings_version: u32,
-    pub theme: String,
+    pub theme: Theme,
     pub show_console_output: bool,
-    pub dock_tab: String,
+    pub dock_tab: DockTab,
     pub dock_collapsed: bool,
-    pub download_mode: String,
+    pub download_mode: DownloadProfile,
     pub download_presets: Vec<DownloadPreset>,
     pub ask_download_location: bool,
     pub advanced_options: bool,
@@ -79,13 +152,14 @@ pub struct Settings {
     pub notifications: bool,
     pub deno_reminder_dismissed: bool,
     pub gpu_acceleration: bool,
-    pub gpu_type: String,
+    pub gpu_type: GpuType,
     pub best_quality: bool,
     pub ffmpeg_path: String,
+    pub upstream_proxy: String,
     pub download_folder: String,
     pub hide_support_modal: bool,
     pub check_updates_on_startup: bool,
-    pub update_channel: String,
+    pub update_channel: UpdateChannel,
     pub write_subtitles: bool,
     pub subtitle_langs: String,
     pub embed_thumbnail: bool,
@@ -96,6 +170,8 @@ pub struct Settings {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(optional_fields = nullable))]
 pub struct DownloadRequestOptions {
     pub url: String,
     pub output_path: String,
@@ -115,6 +191,7 @@ pub struct DownloadRequestOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub playlist: Option<PlaylistSelection>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(as = "Option<DownloadProfile>"))]
     pub profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preset_id: Option<String>,
@@ -136,6 +213,7 @@ pub struct DownloadRequestOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gpu_acceleration: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(as = "Option<GpuType>"))]
     pub gpu_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub write_subtitles: Option<bool>,
@@ -151,6 +229,7 @@ pub struct DownloadRequestOptions {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub enum Owner {
     Manual,
     Queue,
@@ -158,6 +237,7 @@ pub enum Owner {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub enum Outcome {
     Success,
     Failed,
@@ -178,6 +258,8 @@ impl Outcome {
 /// Structured result of one download session. Activity entries share this shape.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(optional_fields = nullable))]
 pub struct DownloadCompletion {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -189,6 +271,7 @@ pub struct DownloadCompletion {
     pub status_message: String,
     pub url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(as = "Option<DownloadProfile>"))]
     pub profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preset_id: Option<String>,
@@ -215,6 +298,7 @@ pub struct DownloadCompletion {
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub enum Phase {
     Download,
     Merge,
@@ -224,6 +308,8 @@ pub enum Phase {
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(optional_fields = nullable))]
 pub struct JobProgressEvent {
     pub phase: Phase,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -250,12 +336,25 @@ pub struct JobProgressEvent {
     pub eta_seconds: Option<f64>,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum QueueStatus {
+    Pending,
+    Downloading,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(optional_fields = nullable))]
 pub struct QueueItem {
     pub id: String,
     pub url: String,
-    pub status: String,
+    pub status: QueueStatus,
     pub added_at: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub started_at: Option<u64>,
@@ -275,6 +374,8 @@ pub struct QueueItem {
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(optional_fields = nullable))]
 pub struct VideoInfo {
     pub title: String,
     pub uploader: Option<String>,
@@ -289,6 +390,8 @@ pub struct VideoInfo {
 
 #[derive(Clone, Debug, Default, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(optional_fields = nullable))]
 pub struct DownloadStats {
     pub total_downloads: u64,
     pub successful_downloads: u64,
@@ -301,6 +404,8 @@ pub struct DownloadStats {
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(optional_fields = nullable))]
 pub struct GpuDetectionResult {
     pub nvidia: bool,
     pub amd: bool,
@@ -318,4 +423,75 @@ pub struct QueueProgress {
     pub completed_items: usize,
     pub queue_total: usize,
     pub queue_item_id: Option<String>,
+}
+
+#[cfg(test)]
+mod ts_bindings {
+    //! `src/generated/ipc-types.ts` is generated from these types. Run
+    //! `ROSI_UPDATE_IPC_TYPES=1 cargo test ts_bindings` after changing them.
+    //! `ts(as)`/`ts(type)` field attributes narrow `String` fields that IPC
+    //! validation already restricts to a closed set.
+    use super::*;
+    use ts_rs::{Config, TS};
+
+    const GENERATED: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/generated/ipc-types.ts");
+
+    fn render() -> String {
+        // Timestamps and byte counts stay below 2^53, so plain numbers are exact.
+        let cfg = Config::new().with_large_int("number");
+        let decls = [
+            Theme::decl(&cfg),
+            DockTab::decl(&cfg),
+            DownloadProfile::decl(&cfg),
+            GpuType::decl(&cfg),
+            UpdateChannel::decl(&cfg),
+            PlaylistSelection::decl(&cfg),
+            DownloadPreset::decl(&cfg),
+            Settings::decl(&cfg),
+            DownloadRequestOptions::decl(&cfg),
+            Owner::decl(&cfg),
+            Outcome::decl(&cfg),
+            DownloadCompletion::decl(&cfg),
+            Phase::decl(&cfg),
+            JobProgressEvent::decl(&cfg),
+            QueueStatus::decl(&cfg),
+            QueueItem::decl(&cfg),
+            VideoInfo::decl(&cfg),
+            DownloadStats::decl(&cfg),
+            GpuDetectionResult::decl(&cfg),
+            crate::ipc::IpcError::decl(&cfg),
+            crate::downloader::Started::decl(&cfg),
+            crate::queue::Started::decl(&cfg),
+            crate::queue::AddResult::decl(&cfg),
+            crate::queue::RemovedCount::decl(&cfg),
+            crate::platform::Opened::decl(&cfg),
+            crate::platform::Shown::decl(&cfg),
+            crate::settings::Exported::decl(&cfg),
+            crate::settings::Imported::decl(&cfg),
+            crate::deno::InstallResult::decl(&cfg),
+        ];
+        let mut out = String::from(
+            "// Generated from src-tauri/src/types.rs by the ts_bindings test. Do not edit.\n",
+        );
+        for decl in decls {
+            out.push_str("\nexport ");
+            out.push_str(&decl);
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn generated_ipc_types_are_current() {
+        let rendered = render();
+        if std::env::var("ROSI_UPDATE_IPC_TYPES").as_deref() == Ok("1") {
+            std::fs::write(GENERATED, &rendered).expect("write generated IPC types");
+            return;
+        }
+        let committed = std::fs::read_to_string(GENERATED).unwrap_or_default();
+        assert!(
+            committed == rendered,
+            "src/generated/ipc-types.ts is stale; run ROSI_UPDATE_IPC_TYPES=1 cargo test ts_bindings"
+        );
+    }
 }

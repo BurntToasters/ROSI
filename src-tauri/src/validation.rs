@@ -1011,6 +1011,14 @@ fn validate_setting_value(key: &str, raw: &Value) -> Result<Option<Value>, IpcEr
                         .unwrap_or_default(),
                 )
             }
+            "upstreamProxy" => {
+                let Some(proxy) = raw.as_str() else {
+                    return Err(validation_error("upstreamProxy must be a string."));
+                };
+                // Not trimmed: a value with surrounding whitespace is refused.
+                crate::network_security::parse_upstream_proxy(proxy).map_err(validation_error)?;
+                Value::String(proxy.to_string())
+            }
             "downloadFolder" => {
                 let Some(folder) = raw.as_str() else {
                     return Err(validation_error("downloadFolder must be a string."));

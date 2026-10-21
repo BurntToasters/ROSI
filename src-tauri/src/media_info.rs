@@ -144,8 +144,10 @@ fn fetch_formats(url: String, reservation: TrackedReservation<'static>) -> Resul
     if !ytdlp.exists() {
         return Err(format!("yt-dlp binary not found at {}", ytdlp.display()));
     }
+    let settings = crate::settings::load();
     let guard = crate::network_security::NetworkSecurityGuard::start_with_cancellation(
         reservation.cancellation_flag(),
+        &settings.upstream_proxy,
     )
     .map_err(|error| {
         if reservation.is_cancelled() {
@@ -157,7 +159,6 @@ fn fetch_formats(url: String, reservation: TrackedReservation<'static>) -> Resul
     if reservation.is_cancelled() {
         return Err("Format fetch cancelled.".into());
     }
-    let settings = crate::settings::load();
     let ffmpeg_guard = crate::ffmpeg_guard::FfmpegToolGuard::create(Some(&settings.ffmpeg_path))
         .map_err(|error| {
             if reservation.is_cancelled() {
@@ -226,8 +227,10 @@ fn fetch_video_info(
     }
     let mode = resolve_playlist_mode(&url, playlist_mode.as_deref());
     let cancellation = reservation.cancellation_flag();
+    let settings = crate::settings::load();
     let guard = crate::network_security::NetworkSecurityGuard::start_with_cancellation(
         std::sync::Arc::clone(&cancellation),
+        &settings.upstream_proxy,
     )
     .map_err(|error| {
         if reservation.is_cancelled() {
@@ -239,7 +242,6 @@ fn fetch_video_info(
     if reservation.is_cancelled() {
         return Err("Video info request cancelled.".into());
     }
-    let settings = crate::settings::load();
     let ffmpeg_guard = crate::ffmpeg_guard::FfmpegToolGuard::create(Some(&settings.ffmpeg_path))
         .map_err(|error| {
             if reservation.is_cancelled() {

@@ -1,5 +1,6 @@
 //! Limits and allow-lists shared by validation, settings, and the downloader.
 
+use crate::types::{DockTab, DownloadProfile, GpuType, Theme, UpdateChannel};
 use std::time::Duration;
 
 pub const SPLASH_FADE_DELAY: Duration = Duration::from_millis(800);
@@ -20,11 +21,11 @@ pub const ALLOWED_CONVERT_FORMATS: &[&str] = &["mp4", "mov", "mp3", "m4a"];
 pub const ALLOWED_BROWSERS: &[&str] = &[
     "brave", "chrome", "chromium", "edge", "firefox", "opera", "safari", "vivaldi", "whale",
 ];
-pub const ALLOWED_GPU_TYPES: &[&str] = &["auto", "nvidia", "amd", "intel"];
-pub const ALLOWED_UPDATE_CHANNELS: &[&str] = &["auto", "stable", "beta"];
-pub const ALLOWED_THEMES: &[&str] = &["system", "light", "dark", "purple"];
-pub const ALLOWED_DOWNLOAD_PROFILES: &[&str] = &["compatible", "best-video", "audio", "custom"];
-pub const ALLOWED_DOCK_TABS: &[&str] = &["queue", "activity", "console"];
+pub const ALLOWED_GPU_TYPES: &[&str] = GpuType::NAMES;
+pub const ALLOWED_UPDATE_CHANNELS: &[&str] = UpdateChannel::NAMES;
+pub const ALLOWED_THEMES: &[&str] = Theme::NAMES;
+pub const ALLOWED_DOWNLOAD_PROFILES: &[&str] = DownloadProfile::NAMES;
+pub const ALLOWED_DOCK_TABS: &[&str] = DockTab::NAMES;
 
 pub const MAX_QUEUE_SIZE: usize = 500;
 pub const MAX_DOWNLOAD_PRESETS: usize = 20;
@@ -34,6 +35,8 @@ pub const MAX_PLAYLIST_ITEM_INDEX: u32 = 10_000;
 pub const MAX_DOWNLOAD_ACTIVITY: usize = 100;
 pub const MAX_FORMAT_COUNTS: usize = 10_000;
 pub const MAX_SETTINGS_IMPORT_BYTES: u64 = 1_048_576;
+/// Longest accepted `upstreamProxy` value, in bytes.
+pub const MAX_UPSTREAM_PROXY_BYTES: usize = 2048;
 pub const CURRENT_SETTINGS_VERSION: u32 = 7;
 /// `schemaVersion` written into queue, activity and stats files.
 pub const CURRENT_PERSISTED_SCHEMA_VERSION: u32 = 1;

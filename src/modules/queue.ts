@@ -1,29 +1,8 @@
 (function initRosiQueueModule(global: Window & typeof globalThis) {
-  type QueueStatus = 'pending' | 'downloading' | 'completed' | 'failed' | 'cancelled';
+  type QueueStatus = RosiQueueItem['status'];
   type QueueDirection = 'up' | 'down';
 
-  interface QueueProgress {
-    phase: 'download' | 'merge' | 'convert' | 'idle';
-    phasePercent: number | null;
-    itemOverallPercent: number;
-    overallPercent: number;
-    status: string;
-    details?: string;
-    indeterminate?: boolean;
-    speedBytesPerSecond?: number;
-    etaSeconds?: number;
-  }
-
-  interface QueueItem {
-    id: string;
-    status: QueueStatus;
-    url: string;
-    filename?: string;
-    outputPath?: string;
-    sizeBytes?: number;
-    error?: string;
-    progress?: QueueProgress;
-  }
+  type QueueItem = RosiQueueItem;
 
   interface QueueElements {
     queueList: HTMLElement | null;
@@ -94,7 +73,7 @@
     }
   }
 
-  function formatBytes(bytes: number | undefined) {
+  function formatBytes(bytes: number | null | undefined) {
     if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return '';
     if (bytes === 0) return '0 B';
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -103,7 +82,7 @@
     return `${value >= 10 || index === 0 ? Math.round(value) : value.toFixed(1)} ${units[index]}`;
   }
 
-  function formatEta(seconds: number | undefined) {
+  function formatEta(seconds: number | null | undefined) {
     if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return '';
     const rounded = Math.round(seconds);
     const hours = Math.floor(rounded / 3600);
@@ -427,3 +406,6 @@
   };
   windowRef.rosiModules = moduleTarget;
 })(window);
+
+// Imported for its side effect of attaching to window.rosiModules.
+export {};

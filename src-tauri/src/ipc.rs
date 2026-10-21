@@ -3,7 +3,15 @@
 use serde::Serialize;
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(optional_fields = nullable))]
 pub struct IpcError {
+    #[cfg_attr(
+        test,
+        ts(
+            type = "\"VALIDATION_ERROR\" | \"INVALID_URL\" | \"INVALID_PATH\" | \"NOT_AVAILABLE\" | \"INTERNAL_ERROR\" | \"NEWER_VERSION\""
+        )
+    )]
     pub code: &'static str,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]

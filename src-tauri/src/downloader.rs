@@ -6,6 +6,20 @@
 //! callback takes the queue lock). `EVENT_PUBLISH` serializes lifecycle event
 //! publication with replacing the active session so older terminal events
 //! cannot arrive after a newer session becomes current.
+//!
+//! Lock order, outermost first. A path may skip links but never reverses one:
+//!
+//! - Session chain: `STARTUP` -> `EVENT_PUBLISH` -> `ACTIVE` -> `FINALIZING`.
+//! - Queue chain: `START_GUARD` (queue.rs) is taken before `STARTUP`, `ACTIVE`
+//!   and `QUEUE`. `QUEUE` is not held across `start_download` or
+//!   `cancel_active_session`; `start_queue` is the one place that calls into
+//!   the session lock while holding it (`QUEUE` -> `ACTIVE`, via `can_start`).
+//! - `QUEUE_PUBLICATION` -> `QUEUE` (queue.rs `broadcast`). `PERSIST_SIGNAL` is a leaf.
+//! - Completion callbacks run after `EVENT_PUBLISH` and `ACTIVE` are released,
+//!   with the session still listed in `FINALIZING`. The queue callback then
+//!   takes `QUEUE`, then `QUEUE_PUBLICATION`.
+//! - Condvars release their lock while waiting: `SESSION_CHANGED` with `ACTIVE`,
+//!   `FINALIZATION_CHANGED` with `FINALIZING`, `RUNNER_CHANGED` with `QUEUE`.
 
 use crate::command_builders::{
     build_ffmpeg_args, build_ytdlp_args, resolve_video_encoder, YtdlpArgsInput,
@@ -18,8 +32,8 @@ use crate::staging::{
     sync_staged_file, DownloadStage, FileIdentity,
 };
 use crate::types::{
-    DownloadCompletion, DownloadRequestOptions, JobProgressEvent, Outcome, Owner, Phase,
-    QueueProgress, Settings,
+    DownloadCompletion, DownloadProfile, DownloadRequestOptions, GpuType, JobProgressEvent,
+    Outcome, Owner, Phase, QueueProgress, Settings,
 };
 use crate::validation::{is_path_within, is_safe_http_url, resolve_path};
 use serde_json::{Map, Value};
@@ -533,8 +547,22 @@ fn complete_session(id: u64, status_message: &str, outcome: Outcome, meta: Compl
 
 /// Cancel the active session. `notify` controls whether the user-facing
 /// cancellation message and legacy `complete` event are sent for queue runs.
+/// Manual sessions always announce their cancellation.
 pub fn cancel_active_session(notify: bool) {
-    let (id, owner, children, partial, wait_for_ytdlp) = {
+    cancel_session(notify, true, false);
+}
+
+/// Shutdown and stop path: never announces the cancellation, and kills yt-dlp
+/// before ffmpeg.
+pub fn kill_all_processes() {
+    cancel_session(false, false, true);
+}
+
+/// Shared cancel body. `notify` and `notify_manual` decide whether the cancel
+/// is announced (`show`). `ytdlp_first` sets the child termination order:
+/// ffmpeg then yt-dlp for cancels, yt-dlp then ffmpeg for shutdown.
+fn cancel_session(notify: bool, notify_manual: bool, ytdlp_first: bool) {
+    let (id, children, partial, wait_for_ytdlp, show) = {
         let mut guard = lock();
         let Some(session) = guard.as_mut() else {
             // Snapshot under ACTIVE so completion cannot clear the slot before
@@ -546,18 +574,24 @@ pub fn cancel_active_session(notify: bool) {
         };
         session.cancelled = true;
         session.network_cancellation.store(true, Ordering::Release);
-        session.cancel_notify = notify || session.owner == Owner::Manual;
+        let show = notify || (notify_manual && session.owner == Owner::Manual);
+        session.cancel_notify = show;
         let wait_for_ytdlp =
             session.ytdlp_exit_pending || session.conversion_pending || session.ytdlp.is_some();
         if wait_for_ytdlp {
             session.ytdlp_exit_pending = true;
         }
+        let children = if ytdlp_first {
+            [session.ytdlp.take(), session.ffmpeg.take()]
+        } else {
+            [session.ffmpeg.take(), session.ytdlp.take()]
+        };
         (
             session.id,
-            session.owner,
-            [session.ffmpeg.take(), session.ytdlp.take()],
+            children,
             partial_completion_meta(session),
             wait_for_ytdlp,
+            show,
         )
     };
     for child in children.into_iter().flatten() {
@@ -567,7 +601,6 @@ pub fn cancel_active_session(notify: bool) {
         wait_for_session_completion(id);
         return;
     }
-    let show = notify || owner == Owner::Manual;
     complete_session(
         id,
         CANCELLED_STATUS,
@@ -575,50 +608,6 @@ pub fn cancel_active_session(notify: bool) {
         CompletionMeta {
             progress_message: show.then(|| CANCELLED_PROGRESS.to_string()),
             suppress_legacy_complete: !show,
-            ..partial
-        },
-    );
-}
-
-pub fn kill_all_processes() {
-    let (id, children, partial, wait_for_ytdlp) = {
-        let mut guard = lock();
-        let Some(session) = guard.as_mut() else {
-            // Snapshot under ACTIVE so completion cannot clear the slot before
-            // registering its pending callback. Do not wait on future sessions.
-            let pending = finalizing_ids();
-            drop(guard);
-            wait_for_finalizations(&pending);
-            return;
-        };
-        session.cancelled = true;
-        session.network_cancellation.store(true, Ordering::Release);
-        session.cancel_notify = false;
-        let wait_for_ytdlp =
-            session.ytdlp_exit_pending || session.conversion_pending || session.ytdlp.is_some();
-        if wait_for_ytdlp {
-            session.ytdlp_exit_pending = true;
-        }
-        (
-            session.id,
-            [session.ytdlp.take(), session.ffmpeg.take()],
-            partial_completion_meta(session),
-            wait_for_ytdlp,
-        )
-    };
-    for child in children.into_iter().flatten() {
-        crate::process_util::terminate_tree(&child);
-    }
-    if wait_for_ytdlp {
-        wait_for_session_completion(id);
-        return;
-    }
-    complete_session(
-        id,
-        CANCELLED_STATUS,
-        Outcome::Cancelled,
-        CompletionMeta {
-            suppress_legacy_complete: true,
             ..partial
         },
     );
@@ -655,12 +644,13 @@ fn resolve_preset_options(
 
 fn apply_request_to_settings(settings: &Settings, options: &DownloadRequestOptions) -> Settings {
     let mut effective = settings.clone();
-    if let Some(profile) = &options.profile {
-        effective.download_mode = profile.clone();
+    // IPC validation admits only known names, so an unknown value cannot reach here.
+    if let Some(profile) = options.profile.as_deref().and_then(DownloadProfile::parse) {
+        effective.download_mode = profile;
     }
-    effective.advanced_options = effective.download_mode == "custom";
-    effective.audio_only = effective.download_mode == "audio";
-    effective.best_quality = effective.download_mode == "best-video";
+    effective.advanced_options = effective.download_mode == DownloadProfile::Custom;
+    effective.audio_only = effective.download_mode == DownloadProfile::Audio;
+    effective.best_quality = effective.download_mode == DownloadProfile::BestVideo;
     if let Some(value) = options.advanced_options {
         effective.advanced_options = value;
     }
@@ -702,8 +692,8 @@ fn apply_request_to_settings(settings: &Settings, options: &DownloadRequestOptio
     if let Some(value) = options.gpu_acceleration {
         effective.gpu_acceleration = value;
     }
-    if let Some(value) = &options.gpu_type {
-        effective.gpu_type = value.clone();
+    if let Some(value) = options.gpu_type.as_deref().and_then(GpuType::parse) {
+        effective.gpu_type = value;
     }
     if let Some(value) = options.write_subtitles {
         effective.write_subtitles = value;
@@ -757,7 +747,7 @@ fn resolved_snapshot(
                     end: None,
                 }),
         ),
-        profile: Some(effective.download_mode.clone()),
+        profile: Some(effective.download_mode.as_str().to_string()),
         preset_id: options.preset_id.clone(),
         preset_name: options.preset_name.clone(),
         best_quality: Some(effective.best_quality),
@@ -767,7 +757,7 @@ fn resolved_snapshot(
         hook_browser: Some(effective.hook_browser),
         browser_choice: Some(effective.browser_choice.clone()),
         gpu_acceleration: Some(effective.gpu_acceleration),
-        gpu_type: Some(effective.gpu_type.clone()),
+        gpu_type: Some(effective.gpu_type.as_str().to_string()),
         write_subtitles: Some(effective.write_subtitles),
         subtitle_langs: Some(effective.subtitle_langs.clone()),
         embed_thumbnail: Some(effective.embed_thumbnail),
@@ -1133,6 +1123,7 @@ pub fn start_download(
     let ffmpeg_location = ffmpeg_guard.location().to_string_lossy().into_owned();
     let network_guard = match crate::network_security::NetworkSecurityGuard::start_with_cancellation(
         Arc::clone(&network_cancellation),
+        &effective.upstream_proxy,
     ) {
         Ok(guard) => guard,
         Err(error) => {
@@ -3310,6 +3301,8 @@ fn run_conversion(
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(rename = "DownloadStarted"))]
 pub struct Started {
     started: bool,
     session_id: u64,

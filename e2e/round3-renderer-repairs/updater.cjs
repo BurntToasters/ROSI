@@ -149,16 +149,7 @@ w.api.installUpdate = (candidateId) => {
   installCalls.push(candidateId);
   return updaterExports.installUpdate(candidateId);
 };
-function load(p) {
-  w.eval(
-    ts.transpileModule(fs.readFileSync(root + "/src/" + p, "utf8"), {
-      compilerOptions: {
-        target: ts.ScriptTarget.ES2020,
-        module: ts.ModuleKind.None,
-      },
-    }).outputText,
-  );
-}
+const load = require("./load-renderer.cjs").createRendererLoader(w, root, ts);
 for (const m of ["ui", "downloads", "queue", "settings", "updates", "dock"])
   load("modules/" + m + ".ts");
 load("rosiEngine.ts");

@@ -2,7 +2,7 @@
 //! stream copy vs re-encode during conversion.
 
 use crate::constants::*;
-use crate::types::{DownloadRequestOptions, Settings};
+use crate::types::{DownloadRequestOptions, GpuType, Settings};
 use std::path::Path;
 
 #[derive(Clone, Debug, Default)]
@@ -102,16 +102,16 @@ pub fn must_preserve_original(target: &str, source: &SourceCodecs, probe_complet
 }
 
 fn resolve_gpu_video_encoder(settings: &Settings) -> &'static str {
-    if cfg!(target_os = "macos") && settings.gpu_type == "auto" {
+    if cfg!(target_os = "macos") && settings.gpu_type == GpuType::Auto {
         // Every supported Mac has a VideoToolbox H.264 encoder. A failed
         // attempt still falls back to libx264.
         return "h264_videotoolbox";
     }
-    match settings.gpu_type.as_str() {
-        "nvidia" => return "h264_nvenc",
-        "amd" => return "h264_amf",
-        "intel" => return "h264_qsv",
-        _ => {}
+    match settings.gpu_type {
+        GpuType::Nvidia => return "h264_nvenc",
+        GpuType::Amd => return "h264_amf",
+        GpuType::Intel => return "h264_qsv",
+        GpuType::Auto => {}
     }
     let detected = crate::gpu::detect();
     if detected.nvidia {
@@ -148,11 +148,45 @@ pub fn build_browser_cookie_args(hook_browser: bool, browser: &str) -> Vec<Strin
     }
 }
 
+/// Where run.rosie.rosi.yml installs the Node.js runtime inside the Flatpak.
+const FLATPAK_JS_RUNTIME_PATH: &str = "/app/lib/rosi/js-runtime/node";
+
+/// Adds the bundled JavaScript runtime without disabling yt-dlp's defaults
+/// (deno stays enabled). Only the Flatpak ships it, so other builds get
+/// nothing; a missing or unrunnable file also gets nothing.
+fn js_runtime_args_for(flatpak: bool, runtime: &Path) -> Vec<String> {
+    if !flatpak || !is_runnable_file(runtime) {
+        return Vec::new();
+    }
+    vec![
+        "--js-runtimes".into(),
+        format!("node:{}", runtime.display()),
+    ]
+}
+
+fn is_runnable_file(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
 /// Runtime flags shared by every yt-dlp operation. Configuration files and
 /// plugin discovery are disabled so user-controlled downloader settings
 /// cannot replace the attempt-owned proxy or add a network path around it.
 pub fn build_ytdlp_runtime_args() -> Vec<String> {
-    let args = vec![
+    let mut args = vec![
         "--ignore-config".into(),
         "--no-plugin-dirs".into(),
         // HlsFD may bypass its selected native downloader and instantiate
@@ -173,9 +207,12 @@ pub fn build_ytdlp_runtime_args() -> Vec<String> {
         "--downloader".into(),
         "dash:native".into(),
     ];
+    args.extend(js_runtime_args_for(
+        crate::platform::flatpak(),
+        Path::new(FLATPAK_JS_RUNTIME_PATH),
+    ));
     #[cfg(feature = "e2e")]
     {
-        let mut args = args;
         if ytdlp_e2e_ca_path().is_some() {
             args.extend(["--compat-options".into(), "no-certifi".into()]);
         }
@@ -373,7 +410,7 @@ pub fn build_ytdlp_args(input: YtdlpArgsInput<'_>) -> (Vec<String>, Vec<String>)
     let profile = options
         .profile
         .clone()
-        .or_else(|| Some(settings.download_mode.clone()));
+        .or_else(|| Some(settings.download_mode.as_str().to_string()));
     let mut best_quality = settings.best_quality;
     let mut audio_only = settings.audio_only;
     match profile.as_deref() {
@@ -576,5 +613,82 @@ mod audit4_tests {
             parse_codecs("Input #0\n Stream #0:0: Video: h264\n Stream #0:1: Subtitle: subrip\n");
         assert!(must_preserve_original("mp3", &captions, true));
         assert!(!must_preserve_original("mp4", &captions, true));
+    }
+
+    fn runtime_scratch(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("rosi-js-runtime-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create scratch dir");
+        dir
+    }
+
+    fn write_runtime(path: &std::path::Path, mode: u32) {
+        std::fs::write(path, b"#!/bin/sh\n").expect("write runtime");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+                .expect("chmod runtime");
+        }
+        #[cfg(not(unix))]
+        let _ = mode;
+    }
+
+    #[test]
+    fn js_runtime_flag_only_for_flatpak_with_executable_regular_file() {
+        let dir = runtime_scratch("present");
+        let runtime = dir.join("node");
+        write_runtime(&runtime, 0o755);
+        let args = js_runtime_args_for(true, &runtime);
+        assert_eq!(
+            args,
+            vec![
+                "--js-runtimes".to_string(),
+                format!("node:{}", runtime.display()),
+            ]
+        );
+        // Deno and the other default runtimes stay enabled, so nothing may
+        // disable them or name another runtime.
+        assert!(args
+            .iter()
+            .all(|arg| !arg.contains("deno") && !arg.contains("no-js-runtimes")));
+        assert!(js_runtime_args_for(false, &runtime).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn js_runtime_flag_is_absent_when_runtime_is_missing_or_not_a_file() {
+        let dir = runtime_scratch("missing");
+        assert!(js_runtime_args_for(true, &dir.join("node")).is_empty());
+        assert!(js_runtime_args_for(true, &dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn js_runtime_flag_is_absent_when_runtime_is_not_executable() {
+        let dir = runtime_scratch("not-exec");
+        let runtime = dir.join("node");
+        write_runtime(&runtime, 0o644);
+        assert!(js_runtime_args_for(true, &runtime).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn js_runtime_path_with_spaces_is_one_unquoted_argument() {
+        let dir = runtime_scratch("with space");
+        let runtime = dir.join("node bin");
+        write_runtime(&runtime, 0o755);
+        let args = js_runtime_args_for(true, &runtime);
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[1], format!("node:{}", runtime.display()));
+        assert!(!args[1].contains('"') && !args[1].contains('\''));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn flatpak_runtime_constant_matches_manifest_install_target() {
+        assert_eq!(FLATPAK_JS_RUNTIME_PATH, "/app/lib/rosi/js-runtime/node");
     }
 }

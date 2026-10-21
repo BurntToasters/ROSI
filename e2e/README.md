@@ -5,6 +5,15 @@ E2E binary once, runs every suite below against that binary, writes evidence to
 `e2e/artifacts/`, and fails if any suite fails, skips without an allowance in
 `ALLOWED_E2E_SKIPS`, or does not report. CI runs the same command.
 
+`ROSI_E2E_ONLY=<spec>` runs one ad-hoc spec for debugging. Its verdict comes
+from that spec alone, and its report sets `fullSuite: false` and `onlySpec`, so
+release evidence rejects it. A blank value counts as unset.
+
+On a local Mac the gate runs ROSI in background mode (`ROSI_E2E_BACKGROUND=1`):
+the E2E app has no Dock icon, never takes focus, and its window stays below
+other apps. Native alert dialogs that specs open on purpose still appear. CI
+runs in the foreground; set `ROSI_E2E_FOREGROUND=1` to do the same locally.
+
 | Suite                                                                     | Area                                                                              | How the gate runs it                                                          |
 | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | `specs/legacy-import.spec.js`                                             | Legacy import                                                                     | WebdriverIO pass, twice: import and corrupt settings                          |

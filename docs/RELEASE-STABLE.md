@@ -31,6 +31,56 @@ Confirm the repository Settings page shows the rule before continuing.
 
 ## 2. Freeze and prove the stable candidate
 
+### Soak gate
+
+Stable promotion needs a soaked beta. Every condition below must hold before
+the candidate is frozen:
+
+- The accepted beta tag `vX.Y.Z-beta.N` is at least 14 days old, counted from
+  the tag's date (the annotated tag date, or the commit date for a lightweight
+  tag). Run `git fetch --tags origin` first so the tag exists locally.
+  `npm run release:preflight` enforces the age for stable versions. It uses the
+  highest-numbered local beta tag for `X.Y.Z` and fails if that tag is younger
+  than 14 days. The constant is `STABLE_MIN_BETA_SOAK_DAYS` in
+  `scripts/release-policy.cjs`.
+- No runtime change has landed since that tag. The production-tree comparison
+  in the candidate proof below shows it.
+- No open regression is known for that beta. Every report filed against it is
+  either fixed in a later beta or closed with a recorded reason.
+- The field exposure check is recorded. Download counts are a proxy, not a count
+  of installs or updates. Record them before the gate opens:
+
+  ```sh
+  gh release view vX.Y.Z-beta.N --json assets --jq '.assets[] | [.name, .downloadCount] | @tsv'
+  ```
+
+  The maintainer sets the minimum download count before the soak starts. Write
+  it, with the observed counts and the date, in the stable promotion record.
+  Until that minimum is recorded and met, the gate is not met.
+
+### Microsoft Store gate
+
+Decision: v5 ships to the Microsoft Store as an MSIX bundle under the existing
+Partner Center product (`9P4Q134B2JW3`), the same way the IYERIS project does.
+`npm run build:msstore` builds that bundle (see the Microsoft Store section in
+`build-setup.md`). The earlier NSIS `msstore` build was the wrong package type
+for this product and is replaced.
+
+- The Store is a low-priority follow-up after the GitHub stable release. It
+  does not block stable. Stable can ship to GitHub while the Store package is
+  still pending.
+- Store packages are stable only, and their version is `X.Y.Z.0`. The version
+  must be greater than ROSI 4's last Store version (see the Microsoft Store
+  section of `build-setup.md`).
+- Before the Store release goes public, run a Partner Center package flight of
+  the signed bundle. The flight must prove the v4 to v5 data import from the
+  Store package folder. The v4 import reads that folder through
+  `store_package_dirs` in `src-tauri/src/legacy.rs`. The flight must show
+  settings, queue, and statistics imported. Record the flight ID and the result
+  in the release record.
+
+### Candidate freeze and proof
+
 The only stable candidate source branch is `next-X.Y.Z`, promoted directly to
 `main`; promotion CI enforces this source/target pairing. The published `beta`
 branch is not an intermediate merge target and does not need to contain
@@ -135,7 +185,9 @@ Also confirm:
 
 ## 5. Build and sign on isolated platform VMs
 
-Use clean, isolated release VMs. The normal entry points run release preflight,
+Use clean, isolated release VMs. Load their signing secrets for the session
+only and delete `.env` afterwards, as [KEY-COMPROMISE.md](KEY-COMPROMISE.md)
+describes. The normal entry points run release preflight,
 prepare locked dependencies, regenerate notices and sidecars, and create or
 reuse the commit-bound draft:
 
@@ -163,6 +215,25 @@ Before publishing, install each signed artifact on its platform and verify:
 launch, a real download, an FFmpeg conversion, the queue, notifications, the
 updater (stable and beta channels), macOS notarization and sidecar signatures,
 and Linux desktop integration (AppImage/Flatpak launchers).
+
+### Updater gate
+
+Test the update path from the accepted beta to the stable candidate on each
+platform. Install the accepted beta artifact, then update in-app to the stable
+candidate's signed artifacts:
+
+- **macOS, user-owned app location:** the update replaces the app, and the app
+  relaunches as `X.Y.Z`.
+- **macOS, admin-owned `/Applications`:** the update asks for administrator
+  approval where needed and replaces the app. Record any failure in full.
+- **Windows x64 NSIS and Windows ARM64 NSIS:** the update installs over the beta,
+  and the app starts as `X.Y.Z`. Active downloads stop and the queue is saved
+  first.
+- **Linux AppImage:** the update replaces the AppImage, and it starts as `X.Y.Z`.
+- **Flatpak:** the in-app updater does not apply. Reinstall the stable Flatpak
+  asset manually, then confirm the installed version.
+
+Record each result with the artifact name and its SHA-256 checksum.
 
 Fix and rebuild any failing artifact. Do not publish a draft that has not
 passed this matrix.

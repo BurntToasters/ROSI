@@ -115,6 +115,8 @@ pub async fn check_deno_installed() -> bool {
 }
 
 #[derive(Default, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(optional_fields = nullable))]
 pub struct InstallResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     success: Option<bool>,

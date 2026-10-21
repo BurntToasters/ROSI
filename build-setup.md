@@ -63,9 +63,11 @@ Tauri ships three `externalBin` sidecars next to the ROSI executable:
   disk offline. `prepare:sidecars`, `tauri:dev` and `tauri:build` fetch any
   missing yt-dlp binary first. gpg must be installed. The script looks for
   `gpg` on PATH, then (Windows only) Git for Windows' `usr\bin\gpg.exe`; set
-  `ROSI_GPG` to an explicit path to override both. `--allow-unsigned-sums`
-  exists only for offline development; it is refused when `CI` or
-  `ROSI_RELEASE` is set and with `--update`.
+  `ROSI_GPG` to an explicit path to override both. Git for Windows' gpg is
+  MSYS gpg, which needs `/c/...` paths, while native GnuPG takes `C:/...`; the
+  script detects which one it runs and converts paths to match.
+  `--allow-unsigned-sums` exists only for offline development; it is refused
+  when `CI` or `ROSI_RELEASE` is set and with `--update`.
 - FFmpeg: never committed. `npm run get:ffmpeg` downloads them from
   `FFMPEG_DL_SERVER` (see `.env.example`) into `resources/ffmpeg/`; they are
   verified against `resources/ffmpeg/checksums.json`. The universal macOS
@@ -216,7 +218,10 @@ been cryptographically matched to its artifact with the public key in
 `tauri.conf.json`. The generated manifests are schema-validated before upload.
 
 The `b`, `r`, and `release:*` scripts intentionally reset and clean their Git
-worktrees. Run them only on disposable, isolated build VMs. Before publishing,
+worktrees. Run them only on disposable, isolated build VMs. `b`, `r` and
+`release:finalize` start with `scripts/require-release-vm.cjs`, which refuses to
+run unless the host is a release VM: set `ROSI_RELEASE_VM=1`, or create an empty
+`~/.rosi-release-vm` marker file on the VM. Before publishing,
 verify that the draft contains the Windows x64/ARM64 NSIS installers, the
 universal macOS DMG/ZIP, Linux x64 AppImage/Flatpak, updater
 manifests/signatures, SHA-256 lists, and GPG detached signatures
@@ -224,6 +229,51 @@ manifests/signatures, SHA-256 lists, and GPG detached signatures
 
 ## Microsoft Store
 
-`npm run build:msstore` builds NSIS installers with the Microsoft Store channel
-compiled in (`ROSI_DISTRIBUTION_CHANNEL=msstore`), which hides the in-app
-updater and "check for updates" menu item.
+The Store package is an MSIX bundle under the existing Partner Center product
+(9P4Q134B2JW3), the same packaging as ROSI 4 (identity `BurntToasters.ROSI`).
+It is not an NSIS installer.
+
+Setup (Windows release machine with the Windows SDK, which provides
+`makeappx.exe`). Put these in `.env` (see `.env.example`):
+
+- `MSSTORE_IDENTITY_NAME=BurntToasters.ROSI`
+- `MSSTORE_PUBLISHER=CN=BC0CB990-55E8-4580-97B7-1E2DAA4B44F6`
+- `MSSTORE_PUBLISHER_DISPLAY_NAME=BurntToasters`
+
+Commands:
+
+- `npm run build:msstore`: builds both architectures and writes
+  `msstore/ROSI_<X.Y.Z>.0.msixbundle`.
+- `npm run build:msstore:x64` or `npm run build:msstore:arm64`: one
+  architecture, writes only its `.msix`. Use these for local testing.
+- `npm run build:msstore:win:x64` (or `:arm64`, `:win`): only the Store exe, no
+  packaging.
+
+The top-level `build:msstore*` commands run `sync-version`, `licenses` and
+`prepare:sidecars` first. The exe is built with `tauri build --no-bundle` and `ROSI_DISTRIBUTION_CHANNEL=msstore`,
+which hides the in-app updater and "check for updates" menu item. The
+packaging script (`scripts/msstore-pack.js`) copies the exe, the three sidecars
+(`rosi-yt-dlp.exe`, `rosi-ffmpeg.exe`, `rosi-ffprobe.exe`) and the
+`bundle.resources` notices into a pack folder, renders
+`src-tauri/msstore-assets/AppxManifest.xml`, and runs `makeappx`. It refuses to
+pack when a sidecar is missing, is a development stub, or does not match the
+prepared sidecar manifest.
+
+Version rules:
+
+- Store packages are stable only. A prerelease such as `5.0.0-beta.4` is
+  refused. `--allow-prerelease` (`node scripts/msstore-pack.js --allow-prerelease`)
+  is for local packaging tests only, and its output says so. Never submit it.
+- The Store version is `X.Y.Z.0`. The revision must be `0`.
+- The version must be greater than ROSI 4's last Store version, `4.4.1.0`.
+
+Submission:
+
+1. Upload the `.msixbundle` to the Partner Center product. Partner Center signs
+   it. Do not upload the `.msix` files or sign them yourself.
+2. Run a package flight before the Store release goes public. The flight must
+   prove the v4 to v5 data import from the Store package folder
+   (`%LOCALAPPDATA%\Packages\burnttoasters.rosi_*\LocalCache\Roaming\rosi`,
+   and the redirected `%APPDATA%\rosi`; see `src-tauri/src/legacy.rs`).
+3. The Store release is a low-priority follow-up after the GitHub stable
+   release. It does not block the stable release. See `docs/RELEASE-STABLE.md`.

@@ -2517,17 +2517,27 @@ describe("ROSI main window", () => {
         )
         .focus(),
     );
-    await settle();
-    const focused = await browser.execute(() => {
-      const button = document.querySelector(
-        "#history-list .history-item .history-item-actions button",
-      );
-      return {
-        opacity: Number(getComputedStyle(button).opacity),
-        active: document.activeElement === button,
-        windowFocused: document.hasFocus(),
-      };
-    });
+    // The opacity transition can run slowly while the window sits behind
+    // other apps, so poll until it finishes instead of sampling once.
+    let focused;
+    await browser
+      .waitUntil(
+        async () => {
+          focused = await browser.execute(() => {
+            const button = document.querySelector(
+              "#history-list .history-item .history-item-actions button",
+            );
+            return {
+              opacity: Number(getComputedStyle(button).opacity),
+              active: document.activeElement === button,
+              windowFocused: document.hasFocus(),
+            };
+          });
+          return !focused.windowFocused || focused.opacity === 1;
+        },
+        { timeout: 5_000, interval: 100 },
+      )
+      .catch(() => {});
     assert.ok(rest.opacity < 1, `actions are loud at rest (${rest.opacity})`);
     // WebKit can report the button as active while the embedded window is not
     // focused; CSS :focus-within is unavailable in that harness state.

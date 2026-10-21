@@ -190,3 +190,6 @@ initializeIcons();
 const windowRef = window as Window & typeof globalThis;
 windowRef.rosiModules = windowRef.rosiModules ?? {};
 windowRef.rosiModules.icons = { icon, initializeIcons, parseStatus, renderStatus };
+
+// Imported for its side effect of attaching to window.rosiModules.
+export {};

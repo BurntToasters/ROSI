@@ -113,6 +113,7 @@ jobs:
     needs: quality-gate
     if: ${{ success() && github.event_name != 'schedule' }}
     strategy:
+      fail-fast: false
       matrix:
         os: [windows-latest, macos-26]
     runs-on: ${{ matrix.os }}
@@ -141,6 +142,10 @@ jobs:
       - run: npm run prepare:rust-tests
       - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
+      # test:all runs the vendored updater tests on Ubuntu only. Its install
+      # paths differ per OS, so they run here on each host.
+      - name: Vendored updater tests
+        run: cargo test --locked --manifest-path src-tauri/vendor/tauri-plugin-updater/Cargo.toml --lib
       - name: Install FFmpeg for E2E conversion scenarios
         shell: bash
         run: |
@@ -184,6 +189,7 @@ jobs:
     needs: quality-gate
     if: ${{ success() && github.event_name != 'schedule' }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-24.04

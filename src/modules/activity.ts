@@ -39,10 +39,10 @@
     subtitle: string;
     timestamp: number;
     url: string | null;
-    outputPath?: string;
-    outputPaths?: string[];
-    error?: string;
-    request?: Record<string, unknown>;
+    outputPath?: string | null;
+    outputPaths?: string[] | null;
+    error?: string | null;
+    request?: RosiDownloadCompletion['request'];
   }
 
   function hostFromUrl(url: string | null | undefined) {
@@ -336,3 +336,6 @@
   moduleTarget.activity = { initActivityPanel };
   windowRef.rosiModules = moduleTarget;
 })(window);
+
+// Imported for its side effect of attaching to window.rosiModules.
+export {};

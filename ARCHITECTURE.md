@@ -39,7 +39,7 @@ split into focused modules:
 | `ip_policy.rs`        | Shared destination rules for IP literals, used by URL pre-checks and the outbound proxy |
 | `ipc.rs`              | `{ ok, data } \| { ok: false, error }` envelopes shared with the frontend           |
 | `logging.rs`          | Rolling local diagnostics log (`logs/rosi.log`)                                    |
-| `network_security.rs` | Per-operation outbound proxy that pins each destination to a vetted IP             |
+| `network_security.rs` | Per-operation outbound proxy that pins each destination to a vetted IP, optionally reached through the user's upstream HTTP proxy |
 | `staging.rs`          | Startup sweep of stale ROSI scratch entries in the download folder (no symlink following) |
 | `types.rs`            | Shared data model, serialized as camelCase to match the v4 bridge shapes          |
 
@@ -60,18 +60,35 @@ normal loaders validate everything, and the result is recorded in
 
 ## Frontend (`src/`)
 
+- `commands.ts` is the typed map of the Rust commands the renderer calls, with
+  argument and result types from `generated/ipc-types.ts`. It is the only place
+  that calls `invoke()`; `src/tests/commands.contract.test.ts` checks its names
+  against `src-tauri/build.rs` and the main window capability.
 - `tauri-bridge.ts` implements the renderer API (`window.api`) on top of
-  `invoke()` and Tauri events.
+  `commands.ts` and Tauri events. `window.api` stays the seam that the vitest
+  DOM tests and the E2E specs drive.
 - `updater.ts` wraps `@tauri-apps/plugin-updater`. Stable checks use the default
   `latest-{target}-{arch}.json` endpoints; beta checks pass the
   `{os}-beta-{arch}-{installer}` target from `get_beta_updater_target`.
 - `main.ts` is the entry point. It imports the bridge first, then the renderer
   modules, then `rosiEngine.ts`. After the renderer reports startup readiness it
   calls `mark_main_window_ready`, which lets the backend close the splash.
-- `rosiEngine.ts` is the main renderer controller: download, queue, and
-  settings flows, and the event handling that drives the UI. It calls the same
-  `window.api` contract the v4 Electron preload exposed, which `tauri-bridge.ts`
-  implements.
+- `rosiEngine.ts` is the renderer controller's startup: it loads settings,
+  looks up the DOM, and calls the `engine/bind/*` functions in order, which bind
+  each feature's controls and the backend events. It calls the same `window.api` contract the v4 Electron preload
+  exposed, which `tauri-bridge.ts` implements.
+- `engine/*` are ES modules split out of the controller by feature:
+  `settings-store.ts` (settings state and serialized saves), `settings-view.ts`,
+  `queue-controller.ts`, `manual-download.ts`, `preview-controller.ts`,
+  `presets.ts`, `playlist.ts`, `url-actions.ts`, `formats.ts`, `overlays.ts`
+  (modals and licenses), `updater-ui.ts`, `wizard.ts`, `deno.ts`, `theme.ts`,
+  `progress.ts`, and shared helpers in `core.ts` and `ui-helpers.ts`. Startup
+  DOM elements are registered in `refs.ts`; mutable state lives in one exported
+  state object per module.
+- `generated/ipc-types.ts` holds the IPC shapes (settings, queue items,
+  completions, progress events). The `ts_bindings` test in
+  `src-tauri/src/types.rs` renders it from the Rust types and fails when it is
+  stale; refresh it with `ROSI_UPDATE_IPC_TYPES=1 cargo test ts_bindings`.
 - `modules/*` are self-contained IIFE modules that attach to `window` and
   are loaded by `main.ts`. `ui.ts` holds toasts and shared UI helpers, `queue.ts`
   renders the queue, `dock.ts` the queue, activity, and console tabs,
@@ -150,6 +167,13 @@ Deno entries in `process_util::enhanced_path`, the startup reminder and the
 setup wizard step in `rosiEngine.ts`. Keep new runtime work generic until
 yt-dlp decides, and replace these pieces when it does.
 
+The Flatpak sandbox cannot use a host Deno, so the Flatpak installs the
+node22 SDK extension's Node.js at `/app/lib/rosi/js-runtime/node`.
+`build_ytdlp_runtime_args()` in `command_builders.rs` adds
+`--js-runtimes node:<path>` only in Flatpak when that file is a runnable
+regular file. yt-dlp's other runtimes stay enabled, so this works the same
+after Deno changes.
+
 ## Testing
 
 - E2E (`npm run test:e2e`): WebdriverIO drives an unpackaged `--features e2e`
@@ -158,3 +182,10 @@ yt-dlp decides, and replace these pieces when it does.
   `e2e/artifacts/`.
 - Vitest + jsdom cover renderer contracts in `src/tests/`.
 - `npm run test:all` is the full quality gate.
+
+## Roadmap
+
+- [ROADMAP-5.1.md](docs/ROADMAP-5.1.md) lists the deferred long-term work, with
+  the problem, plan, and acceptance criteria for each item.
+- [KEY-COMPROMISE.md](docs/KEY-COMPROMISE.md) inventories the release secrets
+  and the response for each one if it leaks.

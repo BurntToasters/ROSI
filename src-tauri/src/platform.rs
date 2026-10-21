@@ -112,11 +112,13 @@ pub fn is_packaged() -> bool {
 }
 
 #[derive(Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Opened {
     opened: bool,
 }
 
 #[derive(Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Shown {
     shown: bool,
 }

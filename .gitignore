@@ -45,6 +45,8 @@ src-tauri/.cargo/*
 # Build outputs
 dist/
 release/
+# Microsoft Store MSIX packages (npm run build:msstore)
+msstore/
 flatpak-build/
 flatpak-repo/
 .flatpak-source/

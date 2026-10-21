@@ -196,3 +196,6 @@
   };
   windowRef.rosiModules = moduleTarget;
 })(window);
+
+// Imported for its side effect of attaching to window.rosiModules.
+export {};

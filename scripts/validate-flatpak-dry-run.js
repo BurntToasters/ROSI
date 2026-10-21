@@ -97,6 +97,27 @@ if (fs.existsSync(manifest)) {
   if (yaml.includes("--filesystem=home")) {
     fail("Flatpak must keep least-privilege filesystem access");
   }
+  // yt-dlp's bundled JavaScript runtime: the manifest install target and the
+  // Rust constant that passes it to yt-dlp must name the same path.
+  const jsRuntimePath = "/app/lib/rosi/js-runtime/node";
+  const commandBuilders = fs.readFileSync(
+    path.join(root, "src-tauri", "src", "command_builders.rs"),
+    "utf8",
+  );
+  if (
+    !commandBuilders.includes(
+      `const FLATPAK_JS_RUNTIME_PATH: &str = "${jsRuntimePath}";`,
+    )
+  ) {
+    fail(`command_builders.rs must use the Flatpak runtime ${jsRuntimePath}`);
+  }
+  if (
+    !yaml.includes(`install -Dm755 "$node_bin" ${jsRuntimePath}`) ||
+    !yaml.includes("ROSI_FLATPAK_NODE_LICENSE=") ||
+    !yaml.includes("/app/share/rosi/licenses/node/LICENSE")
+  ) {
+    fail("manifest must install the bundled Node.js runtime and its license");
+  }
 }
 
 const metainfo = path.join(root, "run.rosie.rosi.metainfo.xml");

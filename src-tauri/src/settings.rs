@@ -3,7 +3,10 @@
 
 use crate::constants::*;
 use crate::ipc::{self, IpcResult, INTERNAL_ERROR, NEWER_VERSION};
-use crate::types::{DownloadPreset, DownloadRequestOptions, PlaylistSelection, Settings};
+use crate::types::{
+    DockTab, DownloadPreset, DownloadProfile, DownloadRequestOptions, GpuType, PlaylistSelection,
+    Settings, Theme, UpdateChannel,
+};
 use crate::validation::{set_preset_bool, validate_download_path, validate_ffmpeg_path_value};
 use serde_json::{Map, Value};
 use std::sync::Mutex;
@@ -15,11 +18,11 @@ const MAX_SETTINGS_FILE_BYTES: u64 = 2 * 1024 * 1024;
 pub fn default_settings() -> Settings {
     Settings {
         settings_version: CURRENT_SETTINGS_VERSION,
-        theme: "system".into(),
+        theme: Theme::System,
         show_console_output: false,
-        dock_tab: "queue".into(),
+        dock_tab: DockTab::Queue,
         dock_collapsed: false,
-        download_mode: "compatible".into(),
+        download_mode: DownloadProfile::Compatible,
         download_presets: Vec::new(),
         ask_download_location: false,
         advanced_options: false,
@@ -36,13 +39,14 @@ pub fn default_settings() -> Settings {
         notifications: true,
         deno_reminder_dismissed: false,
         gpu_acceleration: false,
-        gpu_type: "auto".into(),
+        gpu_type: GpuType::Auto,
         best_quality: false,
         ffmpeg_path: String::new(),
+        upstream_proxy: String::new(),
         download_folder: String::new(),
         hide_support_modal: false,
         check_updates_on_startup: true,
-        update_channel: "auto".into(),
+        update_channel: UpdateChannel::Auto,
         write_subtitles: false,
         subtitle_langs: "en".into(),
         embed_thumbnail: false,
@@ -66,6 +70,19 @@ fn read_choice(raw: &Map<String, Value>, key: &str, list: &[&str], fallback: &st
         .filter(|value| allowed(list, value))
         .unwrap_or(fallback)
         .to_string()
+}
+
+/// An unknown or mistyped value falls back for this key only.
+fn read_enum<T>(
+    raw: &Map<String, Value>,
+    key: &str,
+    parse: fn(&str) -> Option<T>,
+    fallback: T,
+) -> T {
+    raw.get(key)
+        .and_then(Value::as_str)
+        .and_then(parse)
+        .unwrap_or(fallback)
 }
 
 fn read_subtitle_langs(raw: &Map<String, Value>, fallback: &str) -> String {
@@ -118,6 +135,19 @@ fn read_ffmpeg_path(raw: &Map<String, Value>, own_profile: bool) -> String {
         .unwrap_or_default()
 }
 
+/// An invalid stored value (a hand-edited file, for example) falls back to
+/// direct connections for this key only; other settings still load.
+fn read_upstream_proxy(raw: &Map<String, Value>) -> String {
+    let value = raw
+        .get("upstreamProxy")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    match crate::network_security::parse_upstream_proxy(value) {
+        Ok(_) => value.to_string(),
+        Err(_) => String::new(),
+    }
+}
+
 fn read_download_folder(raw: &Map<String, Value>) -> String {
     let value = raw
         .get("downloadFolder")
@@ -142,26 +172,26 @@ fn read_settings_version(raw: &Map<String, Value>) -> u32 {
         .unwrap_or(CURRENT_SETTINGS_VERSION)
 }
 
-fn infer_download_mode(raw: &Map<String, Value>) -> &'static str {
+fn infer_download_mode(raw: &Map<String, Value>) -> DownloadProfile {
     if raw.get("audioOnly").and_then(Value::as_bool) == Some(true) {
-        "audio"
+        DownloadProfile::Audio
     } else if raw.get("advancedOptions").and_then(Value::as_bool) == Some(true) {
-        "custom"
+        DownloadProfile::Custom
     } else {
-        "compatible"
+        DownloadProfile::Compatible
     }
 }
 
 /// Earlier builds hid profiles behind `downloadProfilesEnabled`; with it off,
 /// downloads used the compatible format whatever `downloadMode` said.
-fn read_download_mode(raw: &Map<String, Value>) -> String {
+fn read_download_mode(raw: &Map<String, Value>) -> DownloadProfile {
     if raw.get("downloadProfilesEnabled").and_then(Value::as_bool) == Some(false) {
-        return "compatible".into();
+        return DownloadProfile::Compatible;
     }
-    read_choice(
+    read_enum(
         raw,
         "downloadMode",
-        ALLOWED_DOWNLOAD_PROFILES,
+        DownloadProfile::parse,
         infer_download_mode(raw),
     )
 }
@@ -377,15 +407,15 @@ fn migrate_settings_from(raw: &Value, own_profile: bool) -> Settings {
     };
     let download_mode = read_download_mode(raw);
     let (advanced_options, audio_only, best_quality) = (
-        download_mode == "custom",
-        download_mode == "audio",
-        download_mode == "best-video",
+        download_mode == DownloadProfile::Custom,
+        download_mode == DownloadProfile::Audio,
+        download_mode == DownloadProfile::BestVideo,
     );
     Settings {
         settings_version: read_settings_version(raw),
-        theme: read_choice(raw, "theme", ALLOWED_THEMES, &defaults.theme),
+        theme: read_enum(raw, "theme", Theme::parse, defaults.theme),
         show_console_output: read_bool(raw, "showConsoleOutput", defaults.show_console_output),
-        dock_tab: read_choice(raw, "dockTab", ALLOWED_DOCK_TABS, &defaults.dock_tab),
+        dock_tab: read_enum(raw, "dockTab", DockTab::parse, defaults.dock_tab),
         dock_collapsed: read_bool(raw, "dockCollapsed", defaults.dock_collapsed),
         download_mode,
         download_presets: sanitize_download_presets(raw.get("downloadPresets")),
@@ -426,9 +456,10 @@ fn migrate_settings_from(raw: &Value, own_profile: bool) -> Settings {
             defaults.deno_reminder_dismissed,
         ),
         gpu_acceleration: read_bool(raw, "gpuAcceleration", defaults.gpu_acceleration),
-        gpu_type: read_choice(raw, "gpuType", ALLOWED_GPU_TYPES, &defaults.gpu_type),
+        gpu_type: read_enum(raw, "gpuType", GpuType::parse, defaults.gpu_type),
         best_quality,
         ffmpeg_path: read_ffmpeg_path(raw, own_profile),
+        upstream_proxy: read_upstream_proxy(raw),
         download_folder: read_download_folder(raw),
         hide_support_modal: read_bool(raw, "hideSupportModal", defaults.hide_support_modal),
         check_updates_on_startup: read_bool(
@@ -436,11 +467,11 @@ fn migrate_settings_from(raw: &Value, own_profile: bool) -> Settings {
             "checkUpdatesOnStartup",
             defaults.check_updates_on_startup,
         ),
-        update_channel: read_choice(
+        update_channel: read_enum(
             raw,
             "updateChannel",
-            ALLOWED_UPDATE_CHANNELS,
-            &defaults.update_channel,
+            UpdateChannel::parse,
+            defaults.update_channel,
         ),
         write_subtitles: read_bool(raw, "writeSubtitles", defaults.write_subtitles),
         subtitle_langs: read_subtitle_langs(raw, &defaults.subtitle_langs),
@@ -653,11 +684,13 @@ pub fn reset_settings(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[derive(serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Exported {
     exported: bool,
 }
 
 #[derive(serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Imported {
     imported: bool,
 }
@@ -740,5 +773,87 @@ pub async fn import_settings(app: tauri::AppHandle) -> IpcResult<Imported> {
             crate::logging::error(&format!("Import settings worker failed: {error}"));
             ipc::err(INTERNAL_ERROR, "Failed to import settings.")
         }
+    }
+}
+
+#[cfg(test)]
+mod enum_tests {
+    //! Pins settings JSON for the enum-typed fields.
+    //! Failure modes: e2e/v5-fixes/persistence/settings-enums.failure-modes.md
+    use super::*;
+    use serde_json::json;
+
+    fn field(settings: &Settings, key: &str) -> Value {
+        serde_json::to_value(settings).expect("settings serialize")[key].clone()
+    }
+
+    #[test]
+    fn defaults_keep_their_json_names() {
+        let defaults = default_settings();
+        assert_eq!(field(&defaults, "theme"), json!("system"));
+        assert_eq!(field(&defaults, "dockTab"), json!("queue"));
+        assert_eq!(field(&defaults, "downloadMode"), json!("compatible"));
+        assert_eq!(field(&defaults, "gpuType"), json!("auto"));
+        assert_eq!(field(&defaults, "updateChannel"), json!("auto"));
+    }
+
+    #[test]
+    fn every_allowed_value_round_trips() {
+        let cases: [(&str, &[&str]); 5] = [
+            ("theme", ALLOWED_THEMES),
+            ("dockTab", ALLOWED_DOCK_TABS),
+            ("downloadMode", ALLOWED_DOWNLOAD_PROFILES),
+            ("gpuType", ALLOWED_GPU_TYPES),
+            ("updateChannel", ALLOWED_UPDATE_CHANNELS),
+        ];
+        for (key, values) in cases {
+            for value in values {
+                let migrated = migrate_settings(&json!({ key: value }));
+                assert_eq!(field(&migrated, key), json!(value), "{key}={value}");
+            }
+        }
+        assert_eq!(ALLOWED_THEMES, ["system", "light", "dark", "purple"]);
+        assert_eq!(ALLOWED_DOCK_TABS, ["queue", "activity", "console"]);
+        assert_eq!(
+            ALLOWED_DOWNLOAD_PROFILES,
+            ["compatible", "best-video", "audio", "custom"]
+        );
+        assert_eq!(ALLOWED_GPU_TYPES, ["auto", "nvidia", "amd", "intel"]);
+        assert_eq!(ALLOWED_UPDATE_CHANNELS, ["auto", "stable", "beta"]);
+    }
+
+    #[test]
+    fn unknown_or_mistyped_values_fall_back_per_key() {
+        let migrated = migrate_settings(&json!({
+            "theme": "neon",
+            "dockTab": 3,
+            "downloadMode": "BestVideo",
+            "gpuType": null,
+            "updateChannel": "nightly",
+            "notifications": false
+        }));
+        assert_eq!(field(&migrated, "theme"), json!("system"));
+        assert_eq!(field(&migrated, "dockTab"), json!("queue"));
+        assert_eq!(field(&migrated, "downloadMode"), json!("compatible"));
+        assert_eq!(field(&migrated, "gpuType"), json!("auto"));
+        assert_eq!(field(&migrated, "updateChannel"), json!("auto"));
+        assert!(!migrated.notifications);
+    }
+
+    #[test]
+    fn download_mode_inference_and_flags_are_unchanged() {
+        let audio = migrate_settings(&json!({ "audioOnly": true }));
+        assert_eq!(field(&audio, "downloadMode"), json!("audio"));
+        assert!(audio.audio_only && !audio.advanced_options && !audio.best_quality);
+        let custom = migrate_settings(&json!({ "advancedOptions": true }));
+        assert_eq!(field(&custom, "downloadMode"), json!("custom"));
+        assert!(custom.advanced_options);
+        let gated = migrate_settings(&json!({
+            "downloadProfilesEnabled": false,
+            "downloadMode": "best-video"
+        }));
+        assert_eq!(field(&gated, "downloadMode"), json!("compatible"));
+        let best = migrate_settings(&json!({ "downloadMode": "best-video" }));
+        assert!(best.best_quality && !best.audio_only);
     }
 }

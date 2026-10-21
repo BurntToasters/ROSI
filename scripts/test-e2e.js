@@ -447,6 +447,62 @@ export function mayReuseE2eBinary({ onlySpec, reuseRequested, binaryFresh }) {
   return onlySpec === true && reuseRequested === true && binaryFresh === true;
 }
 
+/**
+ * `ROSI_E2E_BACKGROUND` for the app launches of this run. Local macOS runs
+ * default to "1" so ROSI never takes focus or covers other apps. CI and
+ * `ROSI_E2E_FOREGROUND=1` keep the foreground behavior; an explicit value wins.
+ * Failure modes: scripts/test-e2e-background.failure-modes.md.
+ */
+export function e2eBackgroundValue({ env, platform }) {
+  if (env.ROSI_E2E_BACKGROUND !== undefined) return env.ROSI_E2E_BACKGROUND;
+  if (platform !== "darwin") return null;
+  if (env.ROSI_E2E_FOREGROUND === "1") return null;
+  const ci = (env.CI ?? "").trim().toLowerCase();
+  if (ci !== "" && ci !== "false" && ci !== "0") return null;
+  return "1";
+}
+
+/** A blank ROSI_E2E_ONLY means the full gate, as if it were unset. */
+export function e2eOnlySpec(value) {
+  const spec = typeof value === "string" ? value.trim() : "";
+  return spec === "" ? null : spec;
+}
+
+/** True for specs under e2e/v5-fixes/, which report through their own files. */
+export function isV5FixesSpec(spec) {
+  return /^(\.\/)?v5-fixes\//.test((spec ?? "").replace(/\\/g, "/"));
+}
+
+/**
+ * The full gate keeps the complete inventory. An ad-hoc ROSI_E2E_ONLY run
+ * names no suites and is always partial, so its report cannot pass as proof.
+ */
+export function e2eRunPlan({ onlySpec, v5AreaNames = [] }) {
+  if (onlySpec === null) {
+    return {
+      fullSuite: true,
+      mainSpecs: "./specs/main.spec.js",
+      expectedScenarios: [
+        ...EXPECTED_SCENARIOS,
+        ...v5AreaNames.map((area) => `v5-fixes/${area}`),
+      ],
+    };
+  }
+  return { fullSuite: false, mainSpecs: onlySpec, expectedScenarios: [] };
+}
+
+/**
+ * Verdict for an ad-hoc run. A v5-fixes spec is judged by the WebdriverIO exit
+ * code the caller already checks. Any other spec must report at least one
+ * scenario, and each reported scenario must pass as it would in the full gate.
+ */
+export function onlyRunScenarioProblems({ onlySpec, scenarios, platform }) {
+  if (isV5FixesSpec(onlySpec)) return [];
+  if (scenarios.length === 0) return [`${onlySpec} reported no scenarios`];
+  const names = [...new Set(scenarios.map((scenario) => scenario?.name))];
+  return scenarioOutcomeProblems(scenarios, platform, names);
+}
+
 function snapshotGeneratedSchemas() {
   const schemaDir = path.join(REPO_ROOT, "src-tauri", "gen", "schemas");
   if (!fs.existsSync(schemaDir)) return [];
@@ -1489,13 +1545,20 @@ async function main() {
       "SKIP_E2E=1 is not allowed. Unset it and run the unpackaged WebdriverIO suite.",
     );
   }
+  const onlySpec = e2eOnlySpec(process.env.ROSI_E2E_ONLY);
+  // Set before any launch so every pass, runner and probe inherits it.
+  const background = e2eBackgroundValue({
+    env: process.env,
+    platform: process.platform,
+  });
+  if (background !== null) process.env.ROSI_E2E_BACKGROUND = background;
   reexecUnderXvfb();
   // The full suite is release evidence and must always run against a freshly
   // compiled binary. Reuse is limited to an explicitly selected ad-hoc spec.
   const reuseRequested = process.env.ROSI_E2E_REUSE === "1";
   if (
     !mayReuseE2eBinary({
-      onlySpec: Boolean(process.env.ROSI_E2E_ONLY),
+      onlySpec: Boolean(onlySpec),
       reuseRequested,
       binaryFresh: !reuseRequested || e2eBinaryIsFresh(),
     })
@@ -1640,7 +1703,7 @@ async function main() {
   // Fresh ROSI 5 profiles with ROSI 4 data beside them, each a separate app
   // launch because the import only runs before the first settings file.
   // ROSI_E2E_ONLY runs one ad-hoc spec, so it skips these passes.
-  const legacyPasses = process.env.ROSI_E2E_ONLY
+  const legacyPasses = onlySpec
     ? []
     : ["import", "corrupt-settings"].map((legacyCase) => {
         const legacyProfile = createE2eProfile({ seedSettings: false });
@@ -1667,7 +1730,7 @@ async function main() {
   // Security downloads intentionally populate stats/activity and can exercise
   // renderer state that the main UI suite expects to start fresh. Keep the
   // security proof in its own profile while aggregating both result files.
-  const securityPass = process.env.ROSI_E2E_ONLY
+  const securityPass = onlySpec
     ? null
     : (() => {
         const securityProfile = createE2eProfile({
@@ -1684,7 +1747,7 @@ async function main() {
   // State-repair close-failure scenarios deliberately leave native warning
   // dialogs open. Run them in their own profile before the security and main
   // specs, whose final close-flow scenario closes this app window.
-  const stateRepairPass = process.env.ROSI_E2E_ONLY
+  const stateRepairPass = onlySpec
     ? null
     : (() => {
         const stateProfile = createE2eProfile({
@@ -1698,7 +1761,7 @@ async function main() {
           ),
         };
       })();
-  const offlineQueuePass = process.env.ROSI_E2E_ONLY
+  const offlineQueuePass = onlySpec
     ? null
     : (() => {
         const offlineProfile = createE2eProfile({
@@ -1728,7 +1791,7 @@ async function main() {
           ),
         };
       })();
-  const round2RendererPass = process.env.ROSI_E2E_ONLY
+  const round2RendererPass = onlySpec
     ? null
     : (() => {
         const rendererProfile = createE2eProfile({
@@ -1747,7 +1810,11 @@ async function main() {
       })();
   // Each e2e/v5-fixes/<area>/ with *.spec.js and no run.mjs gets its own fresh
   // profile. Areas that skip or focus tests fail before WebdriverIO starts.
-  const v5Areas = process.env.ROSI_E2E_ONLY ? [] : discoverV5Fixes();
+  const v5Areas = onlySpec ? [] : discoverV5Fixes();
+  const runPlan = e2eRunPlan({
+    onlySpec,
+    v5AreaNames: v5Areas.map((area) => area.area),
+  });
   // Runner-owned areas (run.mjs) get no generic wdio pass; the runner drives
   // their specs.
   const v5Passes = v5Areas
@@ -1825,7 +1892,7 @@ async function main() {
     await runPass(mainPass, {
       // ROSI_E2E_ONLY runs a single ad-hoc spec while debugging; the full
       // gate always runs main.spec.js and requires every scenario.
-      ROSI_E2E_SPECS: process.env.ROSI_E2E_ONLY ?? "./specs/main.spec.js",
+      ROSI_E2E_SPECS: runPlan.mainSpecs,
       // Preserve this path for ROSI_E2E_ONLY debugging when the selected spec
       // is the state-repair suite. The full gate uses the isolated pass above.
       ROSI_STATE_REPAIR_RESULTS: mainPass.stateRepairResultsPath,
@@ -1840,7 +1907,7 @@ async function main() {
 
   // Both specs share one isolated wrapper, which is the only code that starts
   // WebdriverIO with the process-level probe fixtures.
-  const processRepairScenarios = process.env.ROSI_E2E_ONLY
+  const processRepairScenarios = onlySpec
     ? []
     : [
         runDownloadProcessRepairs({
@@ -1856,7 +1923,7 @@ async function main() {
           spec: "./audit3-native-targeted.spec.js",
         }),
       ];
-  const round2NativeScenarios = process.env.ROSI_E2E_ONLY
+  const round2NativeScenarios = onlySpec
     ? []
     : [
         runRound2NativeRepairs({
@@ -1868,11 +1935,11 @@ async function main() {
   const round2RendererScenarios = round2RendererPass
     ? [round2RendererScenario(round2RendererPass, round2RendererFailure)]
     : [];
-  const persistenceScenarios = process.env.ROSI_E2E_ONLY
+  const persistenceScenarios = onlySpec
     ? []
     : [runLongTermPersistenceRepairs()];
   const binary = e2eBinaryPath();
-  const auditScenarios = process.env.ROSI_E2E_ONLY
+  const auditScenarios = onlySpec
     ? []
     : [
         runAudit4Repairs({ ffmpeg, binary, suiteStartedAt: startedAt }),
@@ -1904,14 +1971,9 @@ async function main() {
       failure = failure ? `${failure}; ${detail}` : detail;
     }
   }
-  // Every suite declared in EXPECTED_SCENARIOS, plus each discovered v5-fixes
-  // area, must report exactly once with an acceptable status.
-  const expectedScenarios = process.env.ROSI_E2E_ONLY
-    ? [...EXPECTED_SCENARIOS]
-    : [
-        ...EXPECTED_SCENARIOS,
-        ...v5Areas.map((area) => `v5-fixes/${area.area}`),
-      ];
+  // Full gate: every suite in EXPECTED_SCENARIOS, plus each discovered v5-fixes
+  // area, must report exactly once. ROSI_E2E_ONLY expects none by name.
+  const { expectedScenarios, fullSuite } = runPlan;
 
   const readResults = (file) =>
     fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
@@ -1947,7 +2009,7 @@ async function main() {
       },
     ]),
   );
-  const uncovered = process.env.ROSI_E2E_ONLY
+  const uncovered = onlySpec
     ? []
     : Object.entries(legacyImportCoverage)
         .filter(([, mode]) => mode.coveredBy.length === 0)
@@ -1959,14 +2021,18 @@ async function main() {
   const packageJson = JSON.parse(
     fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
   );
-  const scenarioProblems = scenarioOutcomeProblems(
-    scenarios,
-    process.platform,
-    expectedScenarios,
-  );
+  const scenarioProblems = fullSuite
+    ? scenarioOutcomeProblems(scenarios, process.platform, expectedScenarios)
+    : onlyRunScenarioProblems({
+        onlySpec,
+        scenarios,
+        platform: process.platform,
+      });
   const evidence = writeEvidence({
     app: "ROSI",
-    fullSuite: !process.env.ROSI_E2E_ONLY,
+    fullSuite,
+    // Present only on partial runs, so full-gate evidence keeps its shape.
+    ...(onlySpec ? { onlySpec } : {}),
     expectedScenarios,
     version: packageJson.version,
     commit: gitCommit(),

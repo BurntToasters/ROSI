@@ -137,6 +137,24 @@
                 FFmpeg is bundled with ROSI. Only set this to use a different FFmpeg installation.
               </p>
             </div>
+
+            <div class="setting-row">
+              <label class="select-label">
+                <span class="setting-label">Upstream proxy</span>
+                <input
+                  id="upstreamProxyInput"
+                  class="field"
+                  type="text"
+                  placeholder="http://proxy.example:8080"
+                  spellcheck="false"
+                  autocomplete="off"
+                />
+              </label>
+              <p class="settings-hint">
+                Optional. Only for networks that require an HTTP proxy. HTTP proxies only, with no
+                authentication. Leave blank for direct connections.
+              </p>
+            </div>
           </div>
         </section>
 
@@ -1474,7 +1492,7 @@
         <!-- Step 5: YouTube helper -->
         <div class="wizard-step" data-step="4" data-wizard-step="deno">
           <h2 class="wizard-heading">YouTube Helper</h2>
-          <p class="wizard-description">
+          <p id="wizard-deno-description" class="wizard-description">
             yt-dlp uses Deno, a small JavaScript runtime, for full YouTube support.
           </p>
           <div class="wizard-options">

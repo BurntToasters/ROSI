@@ -6,13 +6,21 @@
 //! resolved and checked again here, then connected to the exact vetted
 //! address. The proxy uses a fixed worker pool and closes active sockets when
 //! its owning operation ends.
+//!
+//! When the user configures an upstream HTTP proxy, the vetted destination is
+//! reached through it instead: CONNECT for HTTPS, and absolute-form requests
+//! for plain HTTP. The destination is still resolved and vetted locally first,
+//! and the upstream itself is not vetted (it is the user's own proxy).
 
+use crate::constants::MAX_UPSTREAM_PROXY_BYTES;
 use crate::ip_policy::is_public_ip;
 use reqwest::redirect::Policy;
 use reqwest::Client;
 use std::collections::{HashMap, VecDeque};
 use std::io::{self, Read, Write};
-use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{
+    IpAddr, Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs,
+};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -22,6 +30,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 const MAX_PROXY_HEADER_BYTES: usize = 64 * 1024;
+/// Status line and headers of the upstream proxy's answer to CONNECT.
+const MAX_UPSTREAM_RESPONSE_HEADER_BYTES: usize = 16 * 1024;
 const MAX_HTTP_REQUEST_BODY_BYTES: u64 = 64 * 1024 * 1024;
 const THUMBNAIL_MAX_BYTES: usize = 2 * 1024 * 1024;
 /// Per-address connect attempt.
@@ -97,6 +107,92 @@ struct PendingDnsJob {
 }
 
 type ParsedHttpRequest = (String, String, String, Vec<(String, String)>);
+
+/// A validated upstream HTTP proxy. The host is kept without IPv6 brackets.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpstreamProxy {
+    host: String,
+    port: u16,
+}
+
+/// Parses the `upstreamProxy` setting. An empty value means direct
+/// connections. Otherwise the value must be `http://HOST:PORT` (IPv6 hosts in
+/// brackets), with at most one trailing `/`. Credentials, paths, queries,
+/// fragments, whitespace, other schemes, and values over the byte limit are
+/// refused, because the upstream connection carries no proxy authentication.
+pub fn parse_upstream_proxy(value: &str) -> Result<Option<UpstreamProxy>, String> {
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if value.len() > MAX_UPSTREAM_PROXY_BYTES {
+        return Err(format!(
+            "upstreamProxy exceeds maximum length of {MAX_UPSTREAM_PROXY_BYTES}."
+        ));
+    }
+    let invalid = || {
+        "upstreamProxy must be empty or http://HOST:PORT, with no credentials, path, query, or fragment."
+            .to_string()
+    };
+    if value
+        .bytes()
+        .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control())
+    {
+        return Err(invalid());
+    }
+    let rest = match value.get(..7) {
+        Some(scheme) if scheme.eq_ignore_ascii_case("http://") => &value[7..],
+        _ => return Err(invalid()),
+    };
+    if rest.contains(['@', '?', '#']) {
+        return Err(invalid());
+    }
+    let authority = rest.strip_suffix('/').unwrap_or(rest);
+    if authority.contains('/') {
+        return Err(invalid());
+    }
+    let (host, port_text) = if let Some(bracketed) = authority.strip_prefix('[') {
+        let (address, after) = bracketed.split_once(']').ok_or_else(invalid)?;
+        address.parse::<Ipv6Addr>().map_err(|_| invalid())?;
+        let port_text = after.strip_prefix(':').ok_or_else(invalid)?;
+        (address.to_string(), port_text)
+    } else {
+        let (host, port_text) = authority.rsplit_once(':').ok_or_else(invalid)?;
+        if !is_valid_proxy_host(host) {
+            return Err(invalid());
+        }
+        (host.to_string(), port_text)
+    };
+    let port = parse_proxy_port(port_text).ok_or_else(invalid)?;
+    Ok(Some(UpstreamProxy { host, port }))
+}
+
+fn is_valid_proxy_host(host: &str) -> bool {
+    if host.is_empty() || host.len() > 253 {
+        return false;
+    }
+    if host
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || byte == b'.')
+    {
+        return host.parse::<Ipv4Addr>().is_ok();
+    }
+    host.split('.').all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    })
+}
+
+fn parse_proxy_port(text: &str) -> Option<u16> {
+    if text.is_empty() || text.len() > 5 || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    text.parse::<u16>().ok().filter(|port| *port != 0)
+}
 
 #[cfg(feature = "e2e")]
 #[derive(Clone, Copy)]
@@ -355,6 +451,7 @@ fn resolve_dns_addresses(
 struct ProxyShared {
     stopped: AtomicBool,
     operation_cancelled: Option<Arc<AtomicBool>>,
+    upstream: Option<UpstreamProxy>,
     queued: Mutex<VecDeque<TcpStream>>,
     queue_ready: Condvar,
     active: Mutex<HashMap<u64, Vec<TcpStream>>>,
@@ -362,10 +459,11 @@ struct ProxyShared {
 }
 
 impl ProxyShared {
-    fn new(operation_cancelled: Option<Arc<AtomicBool>>) -> Self {
+    fn new(operation_cancelled: Option<Arc<AtomicBool>>, upstream: Option<UpstreamProxy>) -> Self {
         Self {
             stopped: AtomicBool::new(false),
             operation_cancelled,
+            upstream,
             queued: Mutex::new(VecDeque::new()),
             queue_ready: Condvar::new(),
             active: Mutex::new(HashMap::new()),
@@ -496,16 +594,25 @@ impl NetworkSecurityGuard {
     /// startup failure is returned; callers must not fall back to direct I/O.
     #[cfg(feature = "e2e")]
     pub fn start() -> Result<Self, String> {
-        Self::start_inner(None)
+        Self::start_inner(None, None)
     }
 
     /// Starts a proxy that shuts down its listener and active sockets when
-    /// the owning tracked operation is cancelled.
-    pub fn start_with_cancellation(operation_cancelled: Arc<AtomicBool>) -> Result<Self, String> {
-        Self::start_inner(Some(operation_cancelled))
+    /// the owning tracked operation is cancelled. `upstream_proxy` is the
+    /// `upstreamProxy` setting, read once here: an empty value connects
+    /// directly, and an invalid value fails the start instead of going direct.
+    pub fn start_with_cancellation(
+        operation_cancelled: Arc<AtomicBool>,
+        upstream_proxy: &str,
+    ) -> Result<Self, String> {
+        let upstream = parse_upstream_proxy(upstream_proxy)?;
+        Self::start_inner(Some(operation_cancelled), upstream)
     }
 
-    fn start_inner(operation_cancelled: Option<Arc<AtomicBool>>) -> Result<Self, String> {
+    fn start_inner(
+        operation_cancelled: Option<Arc<AtomicBool>>,
+        upstream: Option<UpstreamProxy>,
+    ) -> Result<Self, String> {
         if operation_cancelled
             .as_ref()
             .is_some_and(|cancelled| cancelled.load(Ordering::Acquire))
@@ -533,7 +640,7 @@ impl NetworkSecurityGuard {
             base64_encode(format!("rosi:{token}").as_bytes())
         ));
         let proxy_url = format!("http://rosi:{token}@{bind_addr}");
-        let shared = Arc::new(ProxyShared::new(operation_cancelled));
+        let shared = Arc::new(ProxyShared::new(operation_cancelled, upstream));
 
         for worker in 0..PROXY_WORKERS {
             let worker_shared = Arc::clone(&shared);
@@ -655,11 +762,25 @@ fn handle_proxy_client(client: &mut TcpStream, expected_auth: &str, active: &Act
             write_proxy_error(client, 400, "Bad CONNECT Target");
             return;
         };
-        let Some(mut upstream) =
-            connect_vetted_destination(&host, port, is_literal_loopback, active)
-        else {
+        let Some(addresses) = vet_destination(&host, port, is_literal_loopback, active) else {
             write_proxy_error(client, 403, "Destination Blocked");
             return;
+        };
+        let (mut upstream, tunnel_leftover) = match &active.shared.upstream {
+            None => match connect_addresses(addresses, active) {
+                Some(stream) => (stream, Vec::new()),
+                None => {
+                    write_proxy_error(client, 403, "Destination Blocked");
+                    return;
+                }
+            },
+            Some(proxy) => match connect_via_upstream(proxy, &host, port, active) {
+                Ok(tunnel) => tunnel,
+                Err(()) => {
+                    write_proxy_error(client, 502, "Upstream Proxy Failed");
+                    return;
+                }
+            },
         };
         if active.shared.stopped.load(Ordering::Acquire) {
             return;
@@ -668,6 +789,9 @@ fn handle_proxy_client(client: &mut TcpStream, expected_auth: &str, active: &Act
             .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             .is_err()
         {
+            return;
+        }
+        if !tunnel_leftover.is_empty() && client.write_all(&tunnel_leftover).is_err() {
             return;
         }
         let _ = relay_bidirectional(client, &mut upstream, &active.shared, &buffered);
@@ -692,14 +816,32 @@ fn handle_proxy_client(client: &mut TcpStream, expected_auth: &str, active: &Act
         return;
     };
     let literal_loopback = host_is_loopback(&url_host);
-    let Some(mut upstream) = connect_vetted_destination(&host, port, literal_loopback, active)
-    else {
+    let Some(addresses) = vet_destination(&host, port, literal_loopback, active) else {
         write_proxy_error(client, 403, "Destination Blocked");
         return;
     };
+    // Through an upstream proxy the request goes there in absolute form, so
+    // the upstream can route it; the vetted address is not used.
+    let mut upstream = match &active.shared.upstream {
+        None => match connect_addresses(addresses, active) {
+            Some(stream) => stream,
+            None => {
+                write_proxy_error(client, 403, "Destination Blocked");
+                return;
+            }
+        },
+        Some(proxy) => match connect_to_upstream_proxy(proxy, active) {
+            Some(stream) => stream,
+            None => {
+                write_proxy_error(client, 502, "Upstream Proxy Failed");
+                return;
+            }
+        },
+    };
+    let absolute_form = active.shared.upstream.is_some();
 
     let Some((forwarded, body_mode, expect_continue)) =
-        build_forwarded_request(&method, &version, &url, &headers)
+        build_forwarded_request(&method, &version, &url, &headers, absolute_form)
     else {
         write_proxy_error(client, 400, "Unsupported HTTP Request");
         return;
@@ -790,6 +932,7 @@ fn build_forwarded_request(
     version: &str,
     url: &url::Url,
     headers: &[(String, String)],
+    absolute_form: bool,
 ) -> Option<(Vec<u8>, HttpBodyMode, bool)> {
     let content_lengths: Vec<&str> = headers
         .iter()
@@ -857,6 +1000,9 @@ fn build_forwarded_request(
     if let Some(query) = url.query() {
         target.push('?');
         target.push_str(query);
+    }
+    if absolute_form {
+        target = format!("http://{authority}{target}");
     }
     let mut request = format!("{method} {target} {version}\r\n").into_bytes();
     for (name, value) in headers {
@@ -1113,12 +1259,15 @@ fn host_is_loopback(host: &url::Host<&str>) -> bool {
     }
 }
 
-fn connect_vetted_destination(
+/// Resolves a destination and applies the policy. Returns the vetted addresses
+/// only when every one is allowed; the caller must connect to those exact
+/// addresses (direct) or hand the hostname to the upstream proxy.
+fn vet_destination(
     host: &str,
     port: u16,
     allow_literal_loopback: bool,
     active: &ActiveSockets,
-) -> Option<TcpStream> {
+) -> Option<Vec<SocketAddr>> {
     let addresses = resolve_connection_destination(host, port, &active.shared.stopped)?;
     let allowed = !addresses.is_empty()
         && addresses.iter().all(|address| {
@@ -1130,7 +1279,11 @@ fn connect_vetted_destination(
     if !allowed || active.shared.stopped.load(Ordering::Acquire) {
         return None;
     }
+    Some(addresses)
+}
 
+/// Connects to the addresses in order, bounded by the total connect budget.
+fn connect_addresses(addresses: Vec<SocketAddr>, active: &ActiveSockets) -> Option<TcpStream> {
     // Each address gets its own attempt budget, with address families
     // interleaved, so an unreachable IPv6 route cannot consume the time an
     // IPv4 fallback needs (a simplified Happy Eyeballs, RFC 8305).
@@ -1154,6 +1307,97 @@ fn connect_vetted_destination(
         }
     }
     None
+}
+
+/// Opens a TCP connection to the upstream proxy itself. The upstream is
+/// trusted and not vetted, so a private or loopback address is allowed.
+fn connect_to_upstream_proxy(proxy: &UpstreamProxy, active: &ActiveSockets) -> Option<TcpStream> {
+    let addresses =
+        resolve_connection_destination(&proxy.host, proxy.port, &active.shared.stopped)?;
+    connect_addresses(addresses, active)
+}
+
+/// Opens a CONNECT tunnel through the upstream proxy to a destination that
+/// has already been vetted. The hostname is sent as given, so the upstream
+/// resolves it. Any failure is an error, which the caller reports as 502.
+/// Returns the tunnel and any bytes the upstream sent after its headers.
+fn connect_via_upstream(
+    proxy: &UpstreamProxy,
+    host: &str,
+    port: u16,
+    active: &ActiveSockets,
+) -> Result<(TcpStream, Vec<u8>), ()> {
+    let mut stream = connect_to_upstream_proxy(proxy, active).ok_or(())?;
+    let authority = authority_for(host, port);
+    let request = format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n\r\n");
+    stream.write_all(request.as_bytes()).map_err(|_| ())?;
+    let (status, leftover) = read_upstream_response_head(&mut stream, &active.shared.stopped)?;
+    if !(200..300).contains(&status) {
+        return Err(());
+    }
+    Ok((stream, leftover))
+}
+
+fn authority_for(host: &str, port: u16) -> String {
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
+/// Reads the upstream's status line and headers, bounded by
+/// `MAX_UPSTREAM_RESPONSE_HEADER_BYTES` and by one `IO_TIMEOUT` for the whole
+/// block, so a slow or endless header cannot hold a worker per read. Bytes
+/// after the blank line belong to the tunnel and are returned with the status.
+fn read_upstream_response_head(
+    stream: &mut TcpStream,
+    stopped: &AtomicBool,
+) -> Result<(u16, Vec<u8>), ()> {
+    let deadline = Instant::now() + IO_TIMEOUT;
+    let mut bytes = Vec::with_capacity(512);
+    let mut chunk = [0u8; 1024];
+    loop {
+        if let Some(end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+            if end + 4 > MAX_UPSTREAM_RESPONSE_HEADER_BYTES {
+                return Err(());
+            }
+            let status = parse_status_code(&bytes[..end]).ok_or(())?;
+            return Ok((status, bytes[end + 4..].to_vec()));
+        }
+        if bytes.len() >= MAX_UPSTREAM_RESPONSE_HEADER_BYTES || stopped.load(Ordering::Acquire) {
+            return Err(());
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(());
+        }
+        stream.set_read_timeout(Some(remaining)).map_err(|_| ())?;
+        let count = stream.read(&mut chunk).map_err(|_| ())?;
+        if count == 0 {
+            return Err(());
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+    }
+}
+
+/// The status code of an `HTTP/1.0` or `HTTP/1.1` status line.
+fn parse_status_code(head: &[u8]) -> Option<u16> {
+    let line_end = head
+        .windows(2)
+        .position(|window| window == b"\r\n")
+        .unwrap_or(head.len());
+    let line = std::str::from_utf8(&head[..line_end]).ok()?;
+    let mut parts = line.splitn(3, ' ');
+    let version = parts.next()?;
+    let code = parts.next()?;
+    if version != "HTTP/1.0" && version != "HTTP/1.1" {
+        return None;
+    }
+    if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    code.parse::<u16>().ok()
 }
 
 /// Alternate address families, keeping the resolver's order within each.

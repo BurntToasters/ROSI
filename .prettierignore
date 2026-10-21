@@ -1,3 +1,4 @@
 public/licenses-iframe.html
 src-tauri/gen/
 src-tauri/vendor/
+src/generated/

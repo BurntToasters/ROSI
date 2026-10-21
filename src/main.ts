@@ -10,7 +10,7 @@ import './modules/settings';
 import './modules/updates';
 import './modules/dock';
 import './rosiEngine';
-import { invoke } from '@tauri-apps/api/core';
+import { call } from './commands';
 import { installE2eHookIfEnabled } from './e2e-hook';
 
 function hideStoreManagedUpdateControls(): void {
@@ -32,7 +32,7 @@ window.addEventListener('load', () => {
     } catch (error) {
       console.error('[rosi] E2E hook failed', error);
     }
-    await invoke('mark_main_window_ready');
+    await call('mark_main_window_ready');
   })().catch((error: unknown) => {
     console.error('[rosi] main renderer readiness failed', error);
   });

@@ -29,7 +29,9 @@ webview, so installers and memory use are much smaller.
   channel). `auto` follows the installed version.
 - Linux ships an x64 AppImage and a sideloaded Flatpak. DEB and RPM packages
   are no longer built or published. Linux ARM64 is not supported in v5; the
-  build wiring remains available for future development.
+  build wiring remains available for future development. The Flatpak bundles
+  Node.js for yt-dlp's YouTube JavaScript runtime, so it does not need Deno on
+  the host.
 
 ## System requirements
 
@@ -60,7 +62,8 @@ layout. You can optionally set a custom FFmpeg path in Settings to override the
 bundled binary.
 
 The Microsoft Store build uses the same codebase: `npm run build:msstore`
-builds with the Store channel, which hides the in-app updater.
+builds an MSIX bundle with the Store channel, which hides the in-app updater.
+See the Microsoft Store section of [build-setup.md](build-setup.md).
 
 # Build ROSI from source
 

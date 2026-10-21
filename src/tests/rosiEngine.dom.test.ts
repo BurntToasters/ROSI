@@ -2,29 +2,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as ts from 'typescript';
 
 const REPO = path.resolve(__dirname, '..', '..');
 const RENDERER = path.join(REPO, 'src');
-const ENGINE_TS = path.join(RENDERER, 'rosiEngine.ts');
 const INDEX_HTML = path.join(RENDERER, 'index.html');
-const MODULE_FILES = ['ui', 'downloads', 'activity', 'queue', 'settings', 'updates', 'dock'];
-
-function transpile(tsSource: string): string {
-  return ts.transpileModule(tsSource, {
-    compilerOptions: {
-      target: ts.ScriptTarget.ES2020,
-      module: ts.ModuleKind.None,
-    },
-  }).outputText;
-}
-
-// Transpile the renderer modules (which attach to window.rosiModules) and the
-// engine once for the whole suite.
-const moduleSources = MODULE_FILES.map((name) =>
-  transpile(fs.readFileSync(path.join(RENDERER, 'modules', `${name}.ts`), 'utf-8'))
-);
-const engineSource = transpile(fs.readFileSync(ENGINE_TS, 'utf-8'));
+// Renderer modules attach to window.rosiModules when imported, in index.html order.
+const loadRendererModules = async () => {
+  await import('../modules/ui');
+  await import('../modules/downloads');
+  await import('../modules/activity');
+  await import('../modules/queue');
+  await import('../modules/settings');
+  await import('../modules/updates');
+  await import('../modules/dock');
+};
 
 // Extract the <body> markup from the real index.html (minus its <script> tags,
 // which we run ourselves) so the engine binds against the shipping DOM.
@@ -66,6 +57,7 @@ function defaultSettings() {
     gpuType: 'auto',
     bestQuality: false,
     ffmpegPath: '',
+    upstreamProxy: '',
     downloadFolder: '',
     hideSupportModal: true,
     checkUpdatesOnStartup: false,
@@ -182,11 +174,11 @@ async function loadEngine(api: MockApi) {
   });
   // Load the renderer modules first (they attach to window.rosiModules), then
   // the engine, mirroring index.html's script order.
-  for (const src of moduleSources) {
-    (0, eval)(src);
-  }
-
-  (0, eval)(engineSource);
+  // Fresh module instances per test, so engine state never leaks between tests.
+  vi.resetModules();
+  delete (window as unknown as { rosiModules?: unknown }).rosiModules;
+  await loadRendererModules();
+  await import('../rosiEngine');
   document.dispatchEvent(new Event('DOMContentLoaded'));
   await flush(50);
 }

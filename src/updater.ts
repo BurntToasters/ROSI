@@ -3,7 +3,7 @@
 // latest-{target}-{arch}.json endpoints; beta checks pass a custom
 // `{os}-beta-{arch}-{installer}` target so they read the beta manifests
 // published (and synced onto the latest stable release) by scripts/gpg-sign.js.
-import { invoke } from '@tauri-apps/api/core';
+import { call, type CommandArgs, type CommandName, type Commands } from './commands';
 import { getVersion } from '@tauri-apps/api/app';
 import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updater';
 
@@ -15,6 +15,8 @@ export type UpdaterStatusEvent =
       version: string;
       releaseNotes: string | null;
       isBeta: boolean;
+      // Flatpak: the feed is checked, but the update is taken from the release page.
+      manualInstall: boolean;
     }
   | { status: 'not-available'; version: string; isBeta: boolean }
   | { status: 'error'; message: string; kind: 'feed' | 'download' | 'install' }
@@ -32,6 +34,9 @@ const UPDATE_CHECK_TIMEOUT_MS = 30_000;
 // Bundles carry yt-dlp and FFmpeg, so allow slow connections to finish.
 const UPDATE_DOWNLOAD_TIMEOUT_MS = 30 * 60_000;
 const PROGRESS_EMIT_INTERVAL_MS = 100;
+
+const FLATPAK_MANUAL_INSTALL_MESSAGE =
+  'Flatpak builds cannot download or install updates in the app. Install the latest bundle from the release page.';
 
 const statusListeners = new Set<(event: UpdaterStatusEvent) => void>();
 const progressListeners = new Set<(event: UpdaterProgressEvent) => void>();
@@ -61,10 +66,18 @@ function e2eUpdaterAdapter(): E2eUpdaterAdapter | undefined {
     ?.updaterAdapter;
 }
 
-async function updaterInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+async function updaterInvoke<K extends CommandName>(
+  command: K,
+  ...args: CommandArgs<K>
+): Promise<Commands[K]['result']> {
   const testInvoke = e2eUpdaterAdapter()?.invoke;
-  if (testInvoke) return (await testInvoke(command, args)) as T;
-  return args === undefined ? invoke<T>(command) : invoke<T>(command, args);
+  if (testInvoke) {
+    return (await testInvoke(
+      command,
+      args[0] as Record<string, unknown> | undefined
+    )) as Commands[K]['result'];
+  }
+  return call(command, ...args);
 }
 
 let pendingUpdate: UpdateIdentity | null = null;
@@ -80,6 +93,8 @@ let updateChannelOverride: 'stable' | 'beta' | null = null;
 let pendingChannelSave: Promise<boolean> | null = null;
 let recheckAfterInstall = false;
 let installStarted = false;
+// Set by checkForUpdates. A Flatpak build reads the feed but never downloads or installs.
+let flatpakBuild = false;
 
 function emitStatus(event: UpdaterStatusEvent): void {
   for (const listener of statusListeners) listener(event);
@@ -119,15 +134,11 @@ async function updateCheckTarget(): Promise<string | undefined> {
     }
   }
   const channel =
-    updateChannelOverride ??
-    (await updaterInvoke<{ updateChannel?: string }>('get_settings')).updateChannel ??
-    'auto';
+    updateChannelOverride ?? (await updaterInvoke('get_settings')).updateChannel ?? 'auto';
   if (channel === 'stable') return undefined;
-  if (channel === 'beta') return updaterInvoke<string>('get_beta_updater_target');
+  if (channel === 'beta') return updaterInvoke('get_beta_updater_target');
   // auto: follow the installed version.
-  return isBetaVersion(await getVersion())
-    ? updaterInvoke<string>('get_beta_updater_target')
-    : undefined;
+  return isBetaVersion(await getVersion()) ? updaterInvoke('get_beta_updater_target') : undefined;
 }
 
 export function notifyUpdaterChannelChanged(
@@ -171,7 +182,7 @@ export function notifyUpdaterChannelChanged(
 }
 
 async function retiredLinuxPackageMessage(): Promise<string | null> {
-  const installedTarget = await updaterInvoke<string>('get_beta_updater_target');
+  const installedTarget = await updaterInvoke('get_beta_updater_target');
   if (!/^linux-beta-[a-z0-9_]+-(?:deb|rpm)$/i.test(installedTarget)) return null;
   return 'DEB and RPM packages are no longer published for ROSI 5. Install the AppImage or Flatpak manually from the latest release to continue receiving updates.';
 }
@@ -227,7 +238,7 @@ export async function checkForUpdates(): Promise<{ error: string; message?: stri
   let checkedTarget: string | undefined;
   let hasCheckedTarget = false;
   try {
-    const packaged = await updaterInvoke<boolean>('is_packaged');
+    const packaged = await updaterInvoke('is_packaged');
     if (!isCurrent()) return null;
     if (!packaged) {
       return {
@@ -235,13 +246,9 @@ export async function checkForUpdates(): Promise<{ error: string; message?: stri
         message: 'Update checking is not available in development mode.',
       };
     }
-    const flatpak = await updaterInvoke<boolean>('is_flatpak');
+    const flatpak = await updaterInvoke('is_flatpak');
     if (!isCurrent()) return null;
-    if (flatpak) {
-      return {
-        error: 'Flatpak builds update through a reinstalled bundle, not the in-app updater.',
-      };
-    }
+    flatpakBuild = flatpak;
     const retiredPackageMessage = await retiredLinuxPackageMessage();
     if (!isCurrent()) return null;
     if (retiredPackageMessage) return { error: retiredPackageMessage };
@@ -334,6 +341,7 @@ export async function checkForUpdates(): Promise<{ error: string; message?: stri
       version: identity.version,
       releaseNotes: update.body ?? null,
       isBeta: isBetaVersion(identity.version),
+      manualInstall: flatpakBuild,
     });
     return null;
   } catch (error) {
@@ -363,6 +371,7 @@ export async function downloadUpdate(candidateId?: number): Promise<{
   cancelled?: boolean;
   error?: string;
 }> {
+  if (flatpakBuild) return { error: FLATPAK_MANUAL_INSTALL_MESSAGE };
   const identity = pendingUpdate;
   if (candidateId !== undefined && (!identity || candidateId !== identity.sequence)) {
     return { cancelled: true };
@@ -469,6 +478,10 @@ export function cancelUpdateDownload(): void {
 }
 
 export async function installUpdate(candidateId?: number): Promise<void> {
+  if (flatpakBuild) {
+    emitStatus({ status: 'error', message: FLATPAK_MANUAL_INSTALL_MESSAGE, kind: 'install' });
+    return;
+  }
   const identity = pendingUpdate;
   if (candidateId !== undefined && (!identity || candidateId !== identity.sequence)) return;
   if (!identity || downloadedUpdate !== identity) {

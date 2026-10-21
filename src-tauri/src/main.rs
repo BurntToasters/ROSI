@@ -235,6 +235,11 @@ fn main() {
 
     let app = builder
         .setup(move |app| {
+            #[cfg(all(feature = "e2e", target_os = "macos"))]
+            if window::e2e_background() {
+                // No Dock icon and no activation, so E2E launches never steal focus.
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
             app_state::init(app.handle())
                 .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
             logging::info(&format!(
