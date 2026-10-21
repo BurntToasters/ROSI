@@ -3412,7 +3412,7 @@ dependencies = [
 
 [[package]]
 name = "rosi"
-version = "5.0.0"
+version = "5.0.1"
 dependencies = [
  "getrandom 0.3.4",
  "libc",
