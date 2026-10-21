@@ -19,17 +19,6 @@ const STABLE_CANONICAL_ENV = {
   GH_REPO_NAME: "ROSI",
 };
 
-// The accepted beta tag must be at least this old before stable preflight
-// passes. Enforced by release-preflight.js; the runbook states the same gate.
-const STABLE_MIN_BETA_SOAK_DAYS = 14;
-
-// Emergency-only waiver for the soak age check. The value is a written reason,
-// not a flag, and must be at least STABLE_SOAK_WAIVER_MIN_LENGTH characters.
-// Read by release-preflight.js. It is a soak exception, not a stable override,
-// so it is deliberately absent from STABLE_FORBIDDEN_ENV.
-const STABLE_SOAK_WAIVER_ENV = "ROSI_STABLE_SOAK_WAIVER";
-const STABLE_SOAK_WAIVER_MIN_LENGTH = 12;
-
 function isExplicitTruthy(value) {
   return /^(1|true|yes|on)$/i.test(String(value || "").trim());
 }
@@ -98,9 +87,6 @@ if (require.main === module) {
 
 module.exports = {
   STABLE_FORBIDDEN_ENV,
-  STABLE_MIN_BETA_SOAK_DAYS,
-  STABLE_SOAK_WAIVER_ENV,
-  STABLE_SOAK_WAIVER_MIN_LENGTH,
   isExplicitFalsy,
   isExplicitTruthy,
   isStableReleaseVersion,
