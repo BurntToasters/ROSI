@@ -6,7 +6,7 @@ use crate::constants::{
 };
 use serde::Serialize;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
@@ -128,36 +128,102 @@ pub struct InstallResult {
     error: Option<String>,
 }
 
-fn installer() -> Option<(&'static str, Vec<String>)> {
+// winget.exe in WindowsApps is an app execution alias (a zero-byte reparse
+// point) that can fail to resolve, so existence is checked without following it.
+fn accepts_installer(path: &Path) -> bool {
     if cfg!(windows) {
-        return Some((
-            "winget.exe",
-            [
-                "install",
-                "--exact",
-                "--id",
-                "DenoLand.Deno",
-                "--accept-package-agreements",
-                "--accept-source-agreements",
-                "--silent",
-            ]
-            .iter()
-            .map(|arg| arg.to_string())
-            .collect(),
-        ));
+        std::fs::symlink_metadata(path).is_ok()
+    } else {
+        // Homebrew's `brew` is a symlink into the Homebrew checkout.
+        std::fs::metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
+    }
+}
+
+fn installer_program(name: &str, fixed: Vec<PathBuf>) -> Option<PathBuf> {
+    #[cfg(feature = "e2e")]
+    if let Some(directory) = std::env::var_os("ROSI_E2E_DENO_INSTALLER_DIR") {
+        let path = PathBuf::from(directory).join(name);
+        return accepts_installer(&path).then_some(path);
+    }
+    let search_path = crate::process_util::enhanced_path();
+    let from_path = std::env::split_paths(&search_path).map(|directory| directory.join(name));
+    fixed
+        .into_iter()
+        .chain(from_path)
+        .find(|path| accepts_installer(path))
+}
+
+fn installer() -> Option<(PathBuf, Vec<String>, &'static str)> {
+    if cfg!(windows) {
+        let fixed = std::env::var_os("LOCALAPPDATA")
+            .map(|local| {
+                PathBuf::from(local)
+                    .join("Microsoft")
+                    .join("WindowsApps")
+                    .join("winget.exe")
+            })
+            .into_iter()
+            .collect();
+        let program = installer_program("winget.exe", fixed)?;
+        let args = [
+            "install",
+            "--exact",
+            "--id",
+            "DenoLand.Deno",
+            "--source",
+            "winget",
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+            "--silent",
+        ]
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect();
+        return Some((program, args, "winget"));
     }
     if cfg!(target_os = "macos") {
-        return Some(("brew", vec!["install".to_string(), "deno".to_string()]));
+        let fixed = vec![
+            PathBuf::from("/opt/homebrew/bin/brew"),
+            PathBuf::from("/usr/local/bin/brew"),
+        ];
+        let program = installer_program("brew", fixed)?;
+        return Some((
+            program,
+            vec!["install".to_string(), "deno".to_string()],
+            "Homebrew",
+        ));
     }
     None
 }
 
 fn install(app: tauri::AppHandle) -> InstallResult {
+    if !cfg!(any(windows, target_os = "macos")) {
+        return InstallResult {
+            success: Some(false),
+            error: Some("Automatic Deno installation is unavailable on this platform. Use the official installation instructions at https://docs.deno.com/runtime/getting_started/installation/.".to_string()),
+            ..InstallResult::default()
+        };
+    }
+    // Resolved before the confirm dialog so a missing package manager fails
+    // without prompting the user for something that cannot run.
+    let Some((program, args, manager)) = installer() else {
+        let message = if cfg!(windows) {
+            "winget was not found, so Deno cannot be installed automatically. Install Deno with the official instructions, then restart ROSI."
+        } else {
+            "Homebrew was not found, so Deno cannot be installed automatically. Install Deno with the official instructions, then restart ROSI."
+        };
+        crate::logging::warn(message);
+        return InstallResult {
+            success: Some(false),
+            error: Some(message.to_string()),
+            ..InstallResult::default()
+        };
+    };
     let mut dialog = app
         .dialog()
-        .message(
-            "This will install Deno through your system package manager. Do you want to continue?",
-        )
+        .message(format!(
+            "This will install Deno with {manager}. Do you want to continue?"
+        ))
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancelCustom(
             "Install".to_string(),
@@ -172,13 +238,6 @@ fn install(app: tauri::AppHandle) -> InstallResult {
             ..InstallResult::default()
         };
     }
-    let Some((program, args)) = installer() else {
-        return InstallResult {
-            success: Some(false),
-            error: Some("Automatic Deno installation is unavailable on this platform. Use the official installation instructions at https://docs.deno.com/runtime/getting_started/installation/.".to_string()),
-            ..InstallResult::default()
-        };
-    };
     // Homebrew's automatic `brew update` can take minutes on its own; skip it
     // so the install is not killed part way through.
     let mut command =

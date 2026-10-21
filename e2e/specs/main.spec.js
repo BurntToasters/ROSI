@@ -3150,17 +3150,19 @@ describe("ROSI main window", () => {
     seen.install = view.state;
     await leave();
 
-    // Install failure points to the Deno website.
+    // Install failure points to the official install instructions.
     await toDenoStep({ installs: ["fail"] });
     await waitDeno("missing");
     await clickById("wizard-deno-action");
     view = await waitDeno("error");
     assert.equal(view.icon, "circle-x");
     assert.match(view.text, /winget exploded/);
-    assert.equal(view.action, "Open Deno website");
+    assert.equal(view.action, "Open install instructions");
     await clickById("wizard-deno-action");
     await settle(200);
-    assert.deepEqual((await denoView()).calls.external, ["https://deno.land"]);
+    assert.deepEqual((await denoView()).calls.external, [
+      "https://docs.deno.com/runtime/getting_started/installation/",
+    ]);
     seen.installFailure = view.state;
     await leave();
 

@@ -271,8 +271,8 @@ export function launchSetupWizard(
         (error as { error?: string })?.error ||
         (error instanceof Error ? error.message : 'Unknown error');
       setDenoStatus('error', `Automatic install failed: ${message}`);
-      setDenoAction('Open Deno website', () => {
-        void window.api.openExternal('https://deno.land');
+      setDenoAction('Open install instructions', () => {
+        void window.api.openExternal(DENO_INSTALL_DOCS);
       });
     }
   }
