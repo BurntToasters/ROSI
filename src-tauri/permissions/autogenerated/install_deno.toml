@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-install-deno"
+description = "Enables the install_deno command without any pre-configured scope."
+commands.allow = ["install_deno"]
+
+[[permission]]
+identifier = "deny-install-deno"
+description = "Denies the install_deno command without any pre-configured scope."
+commands.deny = ["install_deno"]

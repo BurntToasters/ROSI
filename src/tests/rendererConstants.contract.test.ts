@@ -1,25 +1,43 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { describe, it, expect } from 'vitest';
-import { MAX_DOWNLOAD_PRESETS, MAX_PLAYLIST_ITEM_INDEX } from '../main/constants';
 
-// rosiEngine runs as a plain browser script and cannot import main-process
-// constants, so a few limits are duplicated as literals. These checks fail if
+// The renderer engine runs in the webview and cannot import the Rust
+// backend's limits, so a few are duplicated as literals. These checks fail if
 // the two copies ever drift apart.
-const ENGINE_SOURCE = fs.readFileSync(
-  path.join(__dirname, '..', 'renderer', 'rosiEngine.ts'),
+const ENGINE_DIR = path.join(__dirname, '..', 'engine');
+const ENGINE_SOURCE = [
+  fs.readFileSync(path.join(__dirname, '..', 'rosiEngine.ts'), 'utf-8'),
+  ...fs
+    .readdirSync(ENGINE_DIR, { recursive: true, encoding: 'utf8' })
+    .filter((name) => name.endsWith('.ts'))
+    .map((name) => fs.readFileSync(path.join(ENGINE_DIR, name), 'utf-8')),
+].join('\n');
+const BACKEND_CONSTANTS = fs.readFileSync(
+  path.join(__dirname, '..', '..', 'src-tauri', 'src', 'constants.rs'),
   'utf-8'
 );
 
-function readNumericLiteral(name: string): number {
-  const match = ENGINE_SOURCE.match(new RegExp(`const ${name} = ([0-9_]+)`));
+function readBackendConstant(name: string): number {
+  const match = BACKEND_CONSTANTS.match(new RegExp(`pub const ${name}: [a-z0-9]+ = ([0-9_]+);`));
   if (!match?.[1]) {
-    throw new Error(`Could not find "const ${name}" in rosiEngine.ts`);
+    throw new Error(`Could not find "pub const ${name}" in src-tauri/src/constants.rs`);
   }
   return Number(match[1].replace(/_/g, ''));
 }
 
-describe('renderer constants mirror the main-process limits', () => {
+const MAX_DOWNLOAD_PRESETS = readBackendConstant('MAX_DOWNLOAD_PRESETS');
+const MAX_PLAYLIST_ITEM_INDEX = readBackendConstant('MAX_PLAYLIST_ITEM_INDEX');
+
+function readNumericLiteral(name: string): number {
+  const match = ENGINE_SOURCE.match(new RegExp(`const ${name} = ([0-9_]+)`));
+  if (!match?.[1]) {
+    throw new Error(`Could not find "const ${name}" in the renderer engine sources`);
+  }
+  return Number(match[1].replace(/_/g, ''));
+}
+
+describe('renderer constants mirror the backend limits', () => {
   it('uses the same saved-preset cap as the settings validator', () => {
     expect(readNumericLiteral('MAX_PRESETS')).toBe(MAX_DOWNLOAD_PRESETS);
   });

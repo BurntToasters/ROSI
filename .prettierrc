@@ -7,5 +7,16 @@
   "printWidth": 100,
   "bracketSpacing": true,
   "arrowParens": "always",
-  "endOfLine": "lf"
+  "endOfLine": "lf",
+  "overrides": [
+    {
+      "files": ["scripts/**", "e2e/**", ".github/workflows/**"],
+      "options": {
+        "singleQuote": false,
+        "trailingComma": "all",
+        "printWidth": 80,
+        "endOfLine": "auto"
+      }
+    }
+  ]
 }

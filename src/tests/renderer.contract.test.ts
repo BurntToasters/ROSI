@@ -3,22 +3,33 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 function readRendererFile(relativePath: string) {
-  const filePath = path.join(process.cwd(), 'src', 'renderer', relativePath);
+  const filePath = path.join(process.cwd(), 'src', relativePath);
   return fs.readFileSync(filePath, 'utf8');
+}
+
+// The renderer controller is rosiEngine.ts plus its src/engine/ modules.
+function readEngineSources() {
+  const engineDir = path.join(process.cwd(), 'src', 'engine');
+  const parts = fs
+    .readdirSync(engineDir, { recursive: true, encoding: 'utf8' })
+    .filter((name) => name.endsWith('.ts'))
+    .sort()
+    .map((name) => fs.readFileSync(path.join(engineDir, name), 'utf8'));
+  return [readRendererFile('rosiEngine.ts'), ...parts].join('\n');
 }
 
 describe('renderer wiring and accessibility contracts', () => {
   it('keeps renderer module sources in TypeScript', () => {
     const moduleFiles = ['ui.ts', 'downloads.ts', 'queue.ts', 'settings.ts', 'updates.ts'];
     moduleFiles.forEach((fileName) => {
-      const filePath = path.join(process.cwd(), 'src', 'renderer', 'modules', fileName);
+      const filePath = path.join(process.cwd(), 'src', 'modules', fileName);
       expect(fs.existsSync(filePath)).toBe(true);
     });
   });
 
   it('keeps queue section id aligned between HTML and renderer logic', () => {
     const indexHtml = readRendererFile('index.html');
-    const engine = readRendererFile('rosiEngine.ts');
+    const engine = readEngineSources();
 
     expect(indexHtml).toMatch(/id="queueSection"/);
     expect(engine).toMatch(/'queueSection'/);
@@ -26,7 +37,7 @@ describe('renderer wiring and accessibility contracts', () => {
   });
 
   it('loads queue once on startup to avoid duplicate bootstrap fetches', () => {
-    const engine = readRendererFile('rosiEngine.ts');
+    const engine = readEngineSources();
     const getQueueCalls = engine.match(/\.getQueue\(\)/g) || [];
     expect(getQueueCalls).toHaveLength(1);
   });
@@ -77,18 +88,19 @@ describe('renderer wiring and accessibility contracts', () => {
     expect(indexHtml).toMatch(
       /id="settingsSectionHeaderApplication"[\s\S]*aria-controls="settingsSectionBodyApplication"/
     );
-    expect(indexHtml).toMatch(/id="historyToggle"[\s\S]*aria-controls="history-list"/);
-    expect(indexHtml).toMatch(/id="consoleToggleBtn"[\s\S]*aria-controls="output"/);
+    expect(indexHtml).toMatch(/id="dockTabQueue"[\s\S]*aria-controls="queueSection"/);
+    expect(indexHtml).toMatch(/id="dockTabActivity"[\s\S]*aria-controls="download-history"/);
+    expect(indexHtml).toMatch(/id="dockTabConsole"[\s\S]*aria-controls="console-section"/);
     expect(indexHtml).toMatch(/id="progress-bar-wrapper"[\s\S]*role="progressbar"/);
     expect(indexHtml).toMatch(/id="settingsBtn"[\s\S]*aria-expanded="false"/);
     expect(indexHtml).toMatch(/<title>ROSI<\/title>/);
     expect(indexHtml).toMatch(/aria-label="Learn more about SponsorBlock"/);
-    expect(readRendererFile('rosiEngine.ts')).toMatch(/onSettingsImported/);
+    expect(readEngineSources()).toMatch(/onSettingsImported/);
     expect(readRendererFile('modules/settings.ts')).toMatch(/stopPropagation/);
   });
 
   it('supports arrow-key ergonomics for collapsible header controls', () => {
-    const engine = readRendererFile('rosiEngine.ts');
+    const engine = readEngineSources();
 
     expect(engine).toContain("e.key === 'ArrowLeft'");
     expect(engine).toContain("e.key === 'ArrowRight'");
@@ -100,7 +112,7 @@ describe('renderer wiring and accessibility contracts', () => {
 
   it('keeps overlay, wizard, and progress accessibility contracts', () => {
     const indexHtml = readRendererFile('index.html');
-    const engine = readRendererFile('rosiEngine.ts');
+    const engine = readEngineSources();
     const uiModule = readRendererFile('modules/ui.ts');
 
     expect(indexHtml).toMatch(/id="licenses-overlay"[\s\S]*aria-hidden="true"/);
@@ -125,7 +137,9 @@ describe('renderer wiring and accessibility contracts', () => {
       /primary: true,\s*\n\s*action: \(\) => \{\s*\n\s*void window\.api\.openExternal\('https:\/\/rosie\.run\/support'\)/
     );
 
-    expect(readRendererFile('licenses-iframe.html')).toMatch(/<html lang="en">/);
+    expect(
+      fs.readFileSync(path.join(process.cwd(), 'public', 'licenses-iframe.html'), 'utf8')
+    ).toMatch(/<html lang="en">/);
     expect(uiModule).toMatch(/setAttribute\('aria-label', cancelLabel\)/);
     expect(engine).toMatch(/'Cancel format check'/);
     expect(engine).toMatch(/'Cancel preview'/);

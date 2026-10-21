@@ -1,0 +1,144 @@
+app-id: run.rosie.rosi
+runtime: org.gnome.Platform
+runtime-version: "50"
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.node22
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: rosi
+separate-locales: false
+
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  # Network access (yt-dlp downloads).
+  - --share=network
+  # GPU acceleration (hardware-accelerated encoding).
+  - --device=dri
+  # Least-privilege download locations; other folders go through the portal.
+  - --filesystem=xdg-download
+  - --filesystem=xdg-videos
+  - --filesystem=xdg-music
+  # Notifications.
+  - --talk-name=org.freedesktop.Notifications
+  # "Show in folder": ask the host file manager to select the download.
+  - --talk-name=org.freedesktop.FileManager1
+  # Flatpak builds update by reinstalling the bundle, not the in-app updater.
+
+environment:
+  GTK_USE_PORTAL: "1"
+
+modules:
+  - name: rosi
+    buildsystem: simple
+    build-options:
+      # npm and Cargo fetch only integrity-locked dependencies. Application
+      # sources (plus the verified Linux FFmpeg binaries) come from the clean
+      # commit export prepared by scripts/prepare-flatpak-source.js.
+      build-args:
+        - --share=network
+      append-path: /run/build/rosi/npm-global/bin:/usr/lib/sdk/node22/bin:/usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/rosi/cargo
+        npm_config_cache: /run/build/rosi/npm-cache
+        HUSKY: "0"
+    build-commands:
+      # The Flatpak rust-stable SDK extension installs rustc/cargo directly,
+      # not through rustup. Fail closed if that extension drifts from our pin.
+      - test "$(rustc --version | cut -d' ' -f2)" = 1.98.1
+      # node22 SDK ships npm 10.x, which does not support --min-release-age.
+      # npm@12 plus --before 3 days ago takes the newest 12.x that is old enough.
+      - npm install --global npm@12 --ignore-scripts --engine-strict=false --before="$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%SZ)" --prefix /run/build/rosi/npm-global
+      - npm ci --engine-strict=false
+      - npm run sync-version
+      - |
+        case "$FLATPAK_ARCH" in
+          aarch64)
+            node scripts/prepare-sidecars.js --target aarch64-unknown-linux-gnu
+            ;;
+          x86_64)
+            node scripts/prepare-sidecars.js --target x86_64-unknown-linux-gnu
+            ;;
+          *)
+            echo "Unsupported FLATPAK_ARCH=$FLATPAK_ARCH (expected x86_64 or aarch64)" >&2
+            exit 1
+            ;;
+        esac
+      # yt-dlp needs a JavaScript runtime for some YouTube formats, and the
+      # sandbox cannot reach a host Deno. Ship the node22 extension's Node.js.
+      # Each step fails the build instead of producing a Flatpak without it.
+      - |
+        node_bin=/usr/lib/sdk/node22/bin/node
+        if [ ! -f "$node_bin" ]; then
+          echo "Node.js runtime missing at $node_bin (node22 SDK extension layout changed?)" >&2
+          exit 1
+        fi
+        install -Dm755 "$node_bin" /app/lib/rosi/js-runtime/node
+        if ! /app/lib/rosi/js-runtime/node --version >/dev/null; then
+          echo "Bundled Node.js runtime failed to start in the build sandbox" >&2
+          exit 1
+        fi
+      - |
+        node_license=""
+        for candidate in /usr/lib/sdk/node22/share/doc/node/LICENSE /usr/lib/sdk/node22/share/licenses/node/LICENSE; do
+          if [ -f "$candidate" ]; then
+            node_license="$candidate"
+            break
+          fi
+        done
+        if [ -z "$node_license" ]; then
+          node_license="$(find /usr/lib/sdk/node22 -maxdepth 4 -type f -name 'LICENSE*' -not -path '*/node_modules/*' | head -n 1)"
+        fi
+        if [ -z "$node_license" ] || [ ! -f "$node_license" ]; then
+          echo "Node.js license file not found under /usr/lib/sdk/node22" >&2
+          exit 1
+        fi
+        install -Dm644 "$node_license" /app/share/rosi/licenses/node/LICENSE
+      # Only this build sets ROSI_FLATPAK_NODE_LICENSE, so only the Flatpak's
+      # in-app licenses list gains the Node.js notice.
+      - ROSI_FLATPAK_NODE_LICENSE=/app/share/rosi/licenses/node/LICENSE npm run licenses
+      - npm run build
+      # The SDK's CFLAGS carry -O2, which cc-rs appends after aws-lc-sys's -O0
+      # for jitterentropy, and that source refuses to compile optimized. cc-rs
+      # already sets -O from the Cargo profile, so drop only the -O flags and
+      # keep the SDK hardening flags.
+      - |
+        CFLAGS="$(printf '%s' "$CFLAGS" | sed -E 's/(^| )-O[0-9sgz]?( |$)/ /g')" \
+        CXXFLAGS="$(printf '%s' "$CXXFLAGS" | sed -E 's/(^| )-O[0-9sgz]?( |$)/ /g')" \
+          npx tauri build --no-bundle -- --locked
+      - install -Dm755 src-tauri/target/release/rosi /app/bin/rosi
+      - |
+        case "$FLATPAK_ARCH" in
+          aarch64) triple=aarch64-unknown-linux-gnu ;;
+          x86_64) triple=x86_64-unknown-linux-gnu ;;
+          *) echo "Unsupported FLATPAK_ARCH=$FLATPAK_ARCH" >&2; exit 1 ;;
+        esac
+        for sidecar in rosi-yt-dlp rosi-ffmpeg rosi-ffprobe; do
+          install -Dm755 "src-tauri/binaries/${sidecar}-${triple}" "/app/bin/${sidecar}"
+        done
+      - install -Dm644 assets/YT-DLP-NOTICES.txt /app/share/rosi/licenses/yt-dlp/YT-DLP-NOTICES.txt
+      - install -Dm644 resources/ffmpeg/NOTICE.txt /app/share/rosi/licenses/ffmpeg/NOTICE.txt
+      - install -Dm644 resources/ffmpeg/ffmpeg_license.txt /app/share/rosi/licenses/ffmpeg/LICENSE.txt
+      - install -Dm644 resources/ffmpeg/SOURCE_OFFER.txt /app/share/rosi/licenses/ffmpeg/SOURCE_OFFER.txt
+      - install -Dm644 run.rosie.rosi.desktop /app/share/applications/run.rosie.rosi.desktop
+      - install -Dm644 run.rosie.rosi.metainfo.xml /app/share/metainfo/run.rosie.rosi.metainfo.xml
+      - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/run.rosie.rosi.png
+      - install -Dm644 src-tauri/icons/32x32.png /app/share/icons/hicolor/32x32/apps/run.rosie.rosi.png
+      - install -Dm644 src-tauri/icons/icon.png /app/share/icons/hicolor/512x512/apps/run.rosie.rosi.png
+    sources:
+      - type: dir
+        path: .flatpak-source
+        skip:
+          - .git
+          - .github
+          - .agents
+          - .codex
+          - .env
+          - .env.*
+          - node_modules
+          - src-tauri/target
+          - dist
+          - release
+          - flatpak-build
+          - flatpak-repo

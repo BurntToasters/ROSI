@@ -1,0 +1,15 @@
+version: 4.3.2
+files:
+  - url: ROSI-Linux-x86_64.AppImage
+    sha512: LP+dU7Gq4uU0rhA0FCvxmJ0zaQ8JXYYG7xmY3CIL/RElKVP4ZRqG5ukL/o+Y8fDgtbHAxQoqqehY9FzUn7+eoA==
+    size: 283091127
+    blockMapSize: 295115
+  - url: ROSI-Linux-amd64.deb
+    sha512: dU1e44YYqW8SaXTtE/dOXkx1pQKZGreoV1tQWVu/CWIr5b67SoW7kNFEWP2ZhM0Sn9sAuUqCIZWA8lLH35Y8pQ==
+    size: 232618716
+  - url: ROSI-Linux-x86_64.rpm
+    sha512: gb5KtEHHBGSduzfDASkdi94YmGn55T712o1Y3WMy8GrsIt1W0siGjc6gTr3a8vs+NjWBjAPitYcSDqaqj87DJQ==
+    size: 208344233
+path: ROSI-Linux-x86_64.AppImage
+sha512: LP+dU7Gq4uU0rhA0FCvxmJ0zaQ8JXYYG7xmY3CIL/RElKVP4ZRqG5ukL/o+Y8fDgtbHAxQoqqehY9FzUn7+eoA==
+releaseDate: '2026-09-06T01:15:15.379Z'

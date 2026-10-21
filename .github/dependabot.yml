@@ -1,20 +1,33 @@
 version: 2
 updates:
   - package-ecosystem: npm
-    directory: /
+    directory: "/"
     schedule:
       interval: weekly
     groups:
-      minor-and-patch:
-        update-types:
-          - minor
-          - patch
+      dev-dependencies:
+        dependency-type: development
+      tauri:
+        # @tauri-apps/plugin-updater must move in lockstep with the vendored
+        # Rust crate in src-tauri/vendor/tauri-plugin-updater (see its PATCHES.md).
+        # Review its bumps by hand against that rebase procedure.
+        patterns:
+          - "@tauri-apps/*"
+
+  - package-ecosystem: cargo
+    directory: "/src-tauri"
+    schedule:
+      interval: weekly
+    # [patch.crates-io] points tauri-plugin-updater at vendor/, so a version
+    # bump here would change nothing. Rebase the vendored fork by hand instead.
+    ignore:
+      - dependency-name: "tauri-plugin-updater"
+    groups:
+      tauri:
+        patterns:
+          - "tauri*"
 
   - package-ecosystem: github-actions
-    directory: /
+    directory: "/"
     schedule:
       interval: weekly
-    groups:
-      actions:
-        patterns:
-          - '*'

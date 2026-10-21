@@ -1,0 +1,482 @@
+@keyframes wizardFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.wizard-overlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: var(--overlay-bg-heavy);
+  -webkit-backdrop-filter: blur(var(--blur-md));
+  backdrop-filter: blur(var(--blur-md));
+  z-index: var(--z-wizard);
+}
+
+.wizard-overlay.active {
+  display: flex;
+}
+
+.wizard-card {
+  width: 90%;
+  max-width: 520px;
+  background: color-mix(in srgb, var(--modal-bg-start) 80%, transparent);
+  -webkit-backdrop-filter: blur(var(--blur-lg));
+  backdrop-filter: blur(var(--blur-lg));
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-xl);
+  box-shadow:
+    var(--card-shadow),
+    0 16px 48px rgba(0, 0, 0, 0.3);
+  max-height: calc(100vh - 2rem);
+  padding: var(--spacing-xl) var(--spacing-xl) var(--spacing-xl);
+  display: flex;
+  flex-direction: column;
+  animation: cardEntrance 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Progress bar with the Skip button beside it. */
+.wizard-top {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-xl);
+}
+
+.wizard-progress {
+  flex: 1;
+  height: 3px;
+  background: var(--surface-3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.wizard-skip[hidden] {
+  display: none;
+}
+
+.wizard-progress-bar {
+  height: 100%;
+  width: 25%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width var(--transition-normal);
+}
+
+/* Steps scroll inside the card when the window is short. */
+.wizard-step {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  min-height: 280px;
+  overflow-y: auto;
+  overscroll-behavior: none;
+}
+
+.wizard-step.active {
+  display: flex;
+  animation: wizardFadeIn 0.3s ease both;
+}
+
+.wizard-icon {
+  margin-bottom: var(--spacing-lg);
+}
+
+.wizard-heading {
+  font-size: 1.5rem;
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
+  margin-bottom: var(--spacing-sm);
+}
+
+.wizard-description {
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: var(--spacing-lg);
+  max-width: 400px;
+}
+
+.wizard-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--spacing-sm);
+  width: 100%;
+  max-width: 420px;
+}
+
+.wizard-theme-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.wizard-theme-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm);
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.wizard-theme-option input:checked + .wizard-theme-card {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+/* Focus ring on the visible card when its hidden radio is keyboard-focused. */
+.wizard-theme-option input:focus-visible + .wizard-theme-card {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.wizard-theme-card:hover {
+  border-color: var(--border-default);
+}
+
+.wizard-theme-preview {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+}
+
+.wizard-preview-system {
+  background: linear-gradient(135deg, #1a1a2e 50%, #f0f0f5 50%);
+}
+
+.wizard-preview-dark {
+  background: #0d0f14;
+}
+
+.wizard-preview-light {
+  background: #eef3f8;
+}
+
+.wizard-preview-purple {
+  background: #18122a;
+}
+
+.wizard-theme-label {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  font-weight: var(--weight-medium);
+}
+
+.wizard-options {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  text-align: left;
+}
+
+.wizard-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: var(--transition-fast);
+  position: relative;
+}
+
+.wizard-toggle:hover {
+  background: var(--surface-3);
+  border-color: var(--border-default);
+}
+
+.wizard-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: var(--toggle-width);
+  height: var(--toggle-height);
+  margin: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.wizard-toggle input:focus-visible + .toggle-slider {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-subtle);
+}
+
+.wizard-toggle input:checked + .toggle-slider {
+  background: var(--button-primary-bg);
+  border-color: var(--accent-dark);
+}
+
+.wizard-toggle input:checked + .toggle-slider::after {
+  transform: translateX(20px);
+  background: #ffffff;
+}
+
+.wizard-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wizard-toggle-text strong {
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
+.wizard-toggle-text small {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+.wizard-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--spacing-xl);
+  padding-top: var(--spacing-lg);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.wizard-dots {
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
+.wizard-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface-3);
+  transition: var(--transition-fast);
+}
+
+.wizard-dot.active {
+  background: var(--accent);
+  width: 20px;
+  border-radius: 4px;
+}
+
+.wizard-btn {
+  --btn-h: 38px;
+  --btn-px: 1.2rem;
+  --btn-fs: var(--text-base);
+  --btn-radius: var(--radius-md);
+  min-width: 100px;
+}
+
+.wizard-btn-secondary[hidden] {
+  display: none;
+}
+
+@media (max-width: 480px) {
+  .wizard-theme-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .wizard-card {
+    padding: var(--spacing-xl) var(--spacing-md) var(--spacing-md);
+  }
+}
+
+/* ── Wizard download setup step (4.3) ── */
+.wizard-folder-choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.wizard-folder-choice span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wizard-folder-choice strong {
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
+.wizard-folder-choice small {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wizard-profile-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: var(--spacing-sm) var(--spacing-md) 0.65rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.wizard-profile-choice legend {
+  padding: 0 var(--spacing-xs);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
+.wizard-profile-choice small {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.wizard-profile-segmented {
+  display: flex;
+}
+
+.wizard-segment {
+  flex: 1;
+  display: flex;
+}
+
+.wizard-segment input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.wizard-segment .segmented__item {
+  flex: 1;
+}
+
+/* Radios drive the selected look with a sibling selector (no :has needed). */
+.wizard-segment input:checked + .segmented__item,
+.wizard-segment input:checked + .segmented__item:hover {
+  color: var(--text-primary);
+  background: var(--segmented-selected-bg);
+  border-color: var(--border-default);
+  box-shadow: var(--segmented-selected-shadow);
+}
+
+.wizard-segment input:checked + .segmented__item::after {
+  width: min(22px, 40%);
+}
+
+.wizard-segment input:focus-visible + .segmented__item {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ── Look and feel, extras, and YouTube helper steps ── */
+.wizard-options--below {
+  margin-top: var(--spacing-md);
+}
+
+.wizard-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.wizard-field[hidden] {
+  display: none;
+}
+
+.wizard-field label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
+.wizard-field small {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.wizard-field .wizard-field-error {
+  color: var(--danger);
+}
+
+.wizard-field-error:empty {
+  display: none;
+}
+
+.wizard-status {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.wizard-status-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.wizard-status[data-state='installed'] .wizard-status-icon {
+  color: var(--success);
+}
+
+.wizard-status[data-state='missing'] .wizard-status-icon {
+  color: var(--warning);
+}
+
+.wizard-status[data-state='error'] .wizard-status-icon {
+  color: var(--danger);
+}
+
+#wizard-deno-action {
+  align-self: flex-start;
+}
+
+#wizard-deno-action[hidden] {
+  display: none;
+}
+
+.wizard-note {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* Nothing left to do once Deno is installed. */
+.wizard-status[data-state='installed'] ~ .wizard-note {
+  display: none;
+}

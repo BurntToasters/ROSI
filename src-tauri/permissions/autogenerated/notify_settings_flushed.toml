@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-notify-settings-flushed"
+description = "Enables the notify_settings_flushed command without any pre-configured scope."
+commands.allow = ["notify_settings_flushed"]
+
+[[permission]]
+identifier = "deny-notify-settings-flushed"
+description = "Denies the notify_settings_flushed command without any pre-configured scope."
+commands.deny = ["notify_settings_flushed"]

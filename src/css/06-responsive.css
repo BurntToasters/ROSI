@@ -1,0 +1,128 @@
+/* Responsive adjustments only. Base component styles live in their own files. */
+
+/* Short windows: compact the chrome so the card and the dock tabs both fit.
+   900x560 (the minimum window) leaves ~530px of viewport. */
+@media (max-height: 700px) {
+  :root {
+    --top-bar-height: 54px;
+    --control-height: 46px;
+    --icon-btn-size: 36px;
+    --icon-btn-size-sm: 32px;
+    --footer-height: 32px;
+    --main-stage-gap: 10px;
+    --dock-tab-height: 30px;
+  }
+
+  .main-stage {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .download-card {
+    padding: 0.9rem 1.1rem 1rem;
+    border-radius: var(--radius-lg);
+  }
+
+  .download-card-head {
+    margin-bottom: 0.65rem;
+  }
+
+  .download-title {
+    font-size: 1.35rem;
+  }
+
+  .download-subtitle {
+    display: none;
+  }
+
+  .download-profiles-composer,
+  .download-destination,
+  .preview-card,
+  .playlist-scope,
+  .progress-container {
+    margin-top: 0.6rem;
+  }
+
+  .download-destination {
+    padding-top: 0.35rem;
+    padding-bottom: 0.35rem;
+  }
+
+  .dock-header {
+    padding: 0.35rem 0.4rem 0.35rem 0.5rem;
+  }
+
+  .dock-toolbar {
+    padding: 0.4rem 0.6rem;
+  }
+
+  .history-item,
+  .queue-item {
+    padding-top: 0.4rem;
+    padding-bottom: 0.4rem;
+  }
+}
+
+@media (max-width: 960px) {
+  .main-stage {
+    padding-left: var(--spacing-sm);
+    padding-right: var(--spacing-sm);
+  }
+}
+
+@media (max-width: 780px) {
+  .url-input-wrapper {
+    grid-template-columns: 1fr;
+  }
+
+  .download-btn {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .download-destination {
+    flex-wrap: wrap;
+  }
+
+  .download-destination-copy {
+    flex-basis: calc(100% - 2rem);
+  }
+
+  .queue-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .main-footer {
+    flex-wrap: wrap;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-xs) var(--spacing-sm);
+  }
+}
+
+@media (max-width: 560px) {
+  .format-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .download-title {
+    font-size: var(--text-lg);
+  }
+
+  .preview-thumb-wrap {
+    width: 110px;
+  }
+
+  .flat-ui-toggle-label {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

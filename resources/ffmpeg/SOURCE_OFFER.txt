@@ -20,8 +20,8 @@ Source repository and build scripts:
 https://github.com/BurntToasters/ffmpeg-static-builds
 
 Source release for current binaries:
-  - FFmpeg 8.1.2 (Windows x64/arm64, Linux x64/arm64, macOS x64/arm64):
-    https://github.com/BurntToasters/ffmpeg-static-builds/releases/tag/ffmpeg-v8.1.2
+  - FFmpeg 9.0.2 (Windows x64/arm64, Linux x64/arm64, macOS x64/arm64):
+    https://github.com/BurntToasters/ffmpeg-static-builds/releases/tag/ffmpeg-v9.0.2
 
 This repository contains the complete corresponding source code, build scripts,
 and configuration used to produce the FFmpeg binaries distributed with ROSI

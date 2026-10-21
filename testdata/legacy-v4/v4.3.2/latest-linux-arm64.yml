@@ -1,0 +1,15 @@
+version: 4.3.2
+files:
+  - url: ROSI-Linux-arm64.AppImage
+    sha512: +PQFRuCIRh06ikCWpDn/4bWYtTOyjqlZfKCOnrdbENW35wQiOqf3hK2CAw79Jc/dA3BH8l0lRQ35BhhAke4+fg==
+    size: 274386985
+    blockMapSize: 285557
+  - url: ROSI-Linux-arm64.deb
+    sha512: m1wPltex21VwWjOMpSojHC38bcB1vTia7eZYPQo6Glsm6oYNAFkw4Mh68UzA0YLaLOtoiTQFfiVARF/Po1LZrQ==
+    size: 213791660
+  - url: ROSI-Linux-aarch64.rpm
+    sha512: BhNCyZ38Z78s6DPY/PbTCGtPob3yaZ9c7hHynQXaU4SwNcTBzJoCinA19MA2nrc42xoG1QM+dVoYQPj4ypp7cA==
+    size: 192642749
+path: ROSI-Linux-arm64.AppImage
+sha512: +PQFRuCIRh06ikCWpDn/4bWYtTOyjqlZfKCOnrdbENW35wQiOqf3hK2CAw79Jc/dA3BH8l0lRQ35BhhAke4+fg==
+releaseDate: '2026-09-06T01:18:20.115Z'

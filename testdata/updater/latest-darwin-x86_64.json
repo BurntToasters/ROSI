@@ -1,0 +1,11 @@
+{
+  "version": "0.0.0-fixture",
+  "pub_date": "2026-07-18T00:00:00Z",
+  "notes": "Fixture for CI updater schema validation (not a release pin).",
+  "platforms": {
+    "darwin-x86_64": {
+      "url": "https://github.com/BurntToasters/ROSI/releases/download/v0.0.0-fixture/ROSI_x64.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIG1pbmlzaWduIHNlY3JldCBrZXkKUldRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDowCkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPT0="
+    }
+  }
+}

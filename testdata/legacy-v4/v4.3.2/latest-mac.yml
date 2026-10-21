@@ -1,0 +1,11 @@
+version: 4.3.2
+files:
+  - url: ROSI-MacOS-universal.zip
+    sha512: Yn4VX1VOvV0yhPYYHSOq9AJVn+2Tw4zMjFjJgnTYtJ7HsDKxS+zgTPQvkldzOoQg/awkj5sQhStOHFwggbdA4A==
+    size: 353264383
+  - url: ROSI-MacOS-universal.dmg
+    sha512: JKDWzWmrkZc8wgpU/ci36u2/j8mGQpfggN/HLGZag2Tr3zOlKV8yPlDByedgX0PVgQ0UnzC5N6f3LnOegNwx9w==
+    size: 354308416
+path: ROSI-MacOS-universal.zip
+sha512: Yn4VX1VOvV0yhPYYHSOq9AJVn+2Tw4zMjFjJgnTYtJ7HsDKxS+zgTPQvkldzOoQg/awkj5sQhStOHFwggbdA4A==
+releaseDate: '2026-09-06T01:19:04.710Z'

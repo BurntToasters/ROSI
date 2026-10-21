@@ -1,0 +1,14 @@
+version: 4.3.2
+files:
+  - url: ROSI-Windows.exe
+    sha512: XAiYl9fqG9xGu9XYtnjlu5dljy4iFieib+5THAbhwQQuitb09fy3EfGz/RLr74oEJfXQX4nFFoyDVwDsb7w1bQ==
+    size: 409410664
+  - url: ROSI-Windows-x64.exe
+    sha512: EoypzewNL4PRIcSYLWQkGxlbU+pOc0dqJgxg+UcyBFz9pJYh5j+GgtTPTvdv55VoD/NHKHxyuGzTO2c9bePx+w==
+    size: 222664240
+  - url: ROSI-Windows-arm64.exe
+    sha512: 5uJsgr9JToQLHHYpd/zKPd564Mk6boBJDJqASA1va8x4DAautQZ8ylSfiNPl47MrxLvJTS3AOe5MdTFhGENFOQ==
+    size: 187785808
+path: ROSI-Windows.exe
+sha512: XAiYl9fqG9xGu9XYtnjlu5dljy4iFieib+5THAbhwQQuitb09fy3EfGz/RLr74oEJfXQX4nFFoyDVwDsb7w1bQ==
+releaseDate: '2026-09-06T01:15:21.724Z'

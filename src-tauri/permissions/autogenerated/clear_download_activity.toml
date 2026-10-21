@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-clear-download-activity"
+description = "Enables the clear_download_activity command without any pre-configured scope."
+commands.allow = ["clear_download_activity"]
+
+[[permission]]
+identifier = "deny-clear-download-activity"
+description = "Denies the clear_download_activity command without any pre-configured scope."
+commands.deny = ["clear_download_activity"]

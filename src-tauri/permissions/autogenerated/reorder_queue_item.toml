@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reorder-queue-item"
+description = "Enables the reorder_queue_item command without any pre-configured scope."
+commands.allow = ["reorder_queue_item"]
+
+[[permission]]
+identifier = "deny-reorder-queue-item"
+description = "Denies the reorder_queue_item command without any pre-configured scope."
+commands.deny = ["reorder_queue_item"]

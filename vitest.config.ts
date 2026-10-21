@@ -2,19 +2,17 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    globals: true,
-    environment: 'node',
-    env: {
-      VITEST: 'true',
-    },
-    include: ['src/**/*.test.ts'],
+    environment: 'jsdom',
+    include: ['src/tests/**/*.test.ts'],
+    restoreMocks: true,
     testTimeout: 10_000,
     hookTimeout: 10_000,
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'html', 'json-summary'],
+      reporter: ['text', 'json-summary', 'html'],
+      reportsDirectory: 'coverage',
       include: ['src/**/*.ts'],
-      exclude: ['src/**/*.test.ts', 'src/tests/**'],
+      exclude: ['src/tests/**', 'src/vite-env.d.ts', 'src/e2e-hook.ts', 'src/**/*.d.ts'],
     },
   },
 });
