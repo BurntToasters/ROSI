@@ -219,10 +219,8 @@ been cryptographically matched to its artifact with the public key in
 
 The `b`, `r`, and `release:*` scripts intentionally reset and clean their Git
 worktrees. Run them only on disposable, isolated build VMs. `b` and `r` run
-directly without confirmation or a release-VM opt-in. `release:finalize`
-starts with `scripts/require-release-vm.cjs`, which refuses to
-run unless the host is a release VM: set `ROSI_RELEASE_VM=1`, or create an empty
-`~/.rosi-release-vm` marker file on the VM. Before publishing,
+directly without confirmation. `release:finalize` also runs without a guard, so
+run it only from a checkout with nothing uncommitted. Before publishing,
 verify that the draft contains the Windows x64/ARM64 NSIS installers, the
 universal macOS DMG/ZIP, Linux x64 AppImage/Flatpak, updater
 manifests/signatures, SHA-256 lists, and GPG detached signatures
