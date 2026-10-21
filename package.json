@@ -162,7 +162,7 @@
     "git:reset:dry": "node scripts/git-reset.js --dry-run"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.12.0",
+    "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-updater": "2.14.0",
     "lucide-static": "1.49.0"
   },
