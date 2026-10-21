@@ -105,12 +105,54 @@ function metadataChanges({ base, head } = metadataFiles()) {
   }));
 }
 
+/**
+ * Mirror the CHANGELOG.md shape a beta release leaves behind: Beta callout,
+ * download table, intro anchor, real beta notes, and older release history.
+ * It is built inline so the fixture never depends on the live release state.
+ */
+function betaChangelogFixture(betaVersion) {
+  const download = (asset) =>
+    `https://github.com/BurntToasters/ROSI/releases/download/v${betaVersion}/${asset}`;
+  return [
+    "> [!NOTE]",
+    "> 🅱️ This is a Beta build.",
+    "",
+    "# ⬇️ Downloads",
+    "",
+    "| Windows | macOS | Linux |",
+    "| :-- | :-- | :-- |",
+    `| **[x64](${download("ROSI-Windows-x64.exe")})** | **[Universal DMG](${download("ROSI-MacOS-universal.dmg")})** | **[x64](${download("ROSI-Linux-x64.AppImage")})** |`,
+    "",
+    "> macOS downloads require macOS 15 or later.",
+    "",
+    "ROSI! A cross platform yt-dlp GUI built on Tauri V2!",
+    "",
+    `## Changes in \`v${betaVersion}:\``,
+    "",
+    "- **Fix:** Beta promotion fixture notes.",
+    "",
+    "## Changes in `v1.2.2:`",
+    "",
+    "- **NEW - Tauri V2:** ROSI moved from Electron to Tauri V2 with a Rust backend.",
+    "",
+  ].join("\n");
+}
+
+/**
+ * The live package.json version only chooses the version numbers. A stable
+ * tree gets a synthetic `X.Y.Z-beta.4` starting point, so no assertion reads
+ * the live CHANGELOG.md or metainfo and the test passes on beta and stable.
+ */
 function realStablePromotionFixture() {
-  const betaVersion = JSON.parse(
+  const liveVersion = JSON.parse(
     fs.readFileSync(path.join(root, "package.json"), "utf8"),
   ).version;
-  const stableVersion = betaVersion.replace(/-beta\.\d+$/u, "");
-  assert.notEqual(stableVersion, betaVersion, "fixture must start on a beta");
+  const stableVersion = liveVersion.replace(/-beta\.\d+$/u, "");
+  const betaVersion = /-beta\.\d+$/u.test(liveVersion)
+    ? liveVersion
+    : `${stableVersion}-beta.4`;
+  assert.match(stableVersion, /^\d+\.\d+\.\d+$/u);
+  assert.match(betaVersion, /^\d+\.\d+\.\d+-beta\.\d+$/u);
 
   const { base, head } = metadataFiles();
   for (const files of [base, head]) {
@@ -121,10 +163,9 @@ function realStablePromotionFixture() {
     }
   }
 
-  const changelogPath = path.join(root, "CHANGELOG.md");
-  const betaChangelog = fs.readFileSync(changelogPath, "utf8");
   const betaCallout =
     /^> \[!NOTE\]\r?\n> 🅱️ This is a Beta build\.\r?\n(?:\r?\n)?/mu;
+  const betaChangelog = betaChangelogFixture(betaVersion);
   assert.match(betaChangelog, betaCallout);
   const calloutRemoved = betaChangelog.replace(betaCallout, "");
   const synced = syncChangelogForVersion(calloutRemoved, stableVersion);

@@ -43,6 +43,19 @@ the candidate is frozen:
   highest-numbered local beta tag for `X.Y.Z` and fails if that tag is younger
   than 14 days. The constant is `STABLE_MIN_BETA_SOAK_DAYS` in
   `scripts/release-policy.cjs`.
+- Emergency waiver, security emergencies only. If a security emergency requires
+  shipping a stable before the 14-day soak ends, the maintainer may waive only
+  the age check by setting `ROSI_STABLE_SOAK_WAIVER` to a written reason of at
+  least 12 characters. The value is not a flag: `1`, `true`, `yes`, and `on`
+  are rejected. Set it on the command only, never in `.env` or a shell profile:
+
+  ```sh
+  ROSI_STABLE_SOAK_WAIVER="<reason>" npm run release:<platform>
+  ```
+
+  Preflight still runs every other check. When the waiver is used, preflight
+  prints a `WARNING: stable beta soak WAIVED` line naming the tag, its age, and
+  the reason. The reason must be written in the stable promotion record.
 - No runtime change has landed since that tag. The production-tree comparison
   in the candidate proof below shows it.
 - No open regression is known for that beta. Every report filed against it is
