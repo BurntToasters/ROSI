@@ -55,6 +55,6 @@ lto = "thin"
 strip = true
 
 [dev-dependencies]
-minisign-verify = "0.2.5"
+minisign-verify = "0.3.0"
 # Test-only: generates src/generated/ipc-types.ts from the IPC types.
 ts-rs = "12.0.1"
