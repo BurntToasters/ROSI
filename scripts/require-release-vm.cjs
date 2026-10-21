@@ -2,7 +2,7 @@
 
 /**
  * Guard for npm scripts that run `git reset --hard` and `git clean -fd`
- * (`b`, `r`, `release:finalize`). Those commands delete uncommitted work, so
+ * (`release:finalize`). Those commands delete uncommitted work, so
  * they run only on release VMs. A VM opts in with ROSI_RELEASE_VM=1 or with
  * the marker file ~/.rosi-release-vm. Failure modes:
  * scripts/require-release-vm.failure-modes.md.

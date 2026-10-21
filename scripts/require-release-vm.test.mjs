@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const GUARD = path.join(here, "require-release-vm.cjs");
 const PACKAGE_JSON = path.join(here, "..", "package.json");
-const GUARDED_SCRIPTS = ["b", "r", "release:finalize"];
+const GUARDED_SCRIPTS = ["release:finalize"];
 
 function runGuard({ home, releaseVm, lifecycle } = {}) {
   const env = { ...process.env, HOME: home, USERPROFILE: home };
@@ -114,8 +114,16 @@ test("F10: a refusal exits nonzero so && stops the chain", () => {
   });
 });
 
-test("F8: b, r and release:finalize start with the guard in package.json", () => {
+test("F8: b and r run directly while release:finalize keeps its guard", () => {
   const scripts = JSON.parse(fs.readFileSync(PACKAGE_JSON, "utf8")).scripts;
+  assert.equal(
+    scripts.b,
+    "git fetch origin && git reset --hard && git clean -fd && git switch -C beta origin/beta && git reset --hard origin/beta && git clean -fd && npm run vi",
+  );
+  assert.equal(
+    scripts.r,
+    "git fetch origin && git reset --hard && git clean -fd && git switch -C main origin/main && git reset --hard origin/main && git clean -fd && npm run vi && npm run gitprune:force",
+  );
   for (const name of GUARDED_SCRIPTS) {
     assert.match(
       scripts[name],

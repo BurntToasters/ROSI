@@ -1,12 +1,13 @@
 # Release VM guard failure modes
 
 Written before the guard (AGENTS.md). `scripts/require-release-vm.cjs` runs
-first in `b`, `r` and `release:finalize`, which run `git reset --hard` and
+first in `release:finalize`, which runs `git reset --hard` and
 `git clean -fd`. On a developer machine that deletes uncommitted work.
+`b` and `r` intentionally run without the guard or confirmation.
 Checked by `scripts/require-release-vm.test.mjs`, which runs the real script
 as a child process with a temporary HOME.
 
-1. A developer runs `npm run b`, `npm run r` or `npm run release:finalize`
+1. A developer runs `npm run release:finalize`
    with no marker. Expected: exit 1 before any git command runs, with a
    message that names the script and both ways to opt in.
 2. `ROSI_RELEASE_VM=1` is set. Expected: exit 0.
@@ -23,8 +24,10 @@ as a child process with a temporary HOME.
    The guard only tests existence; a directory marker is a deliberate
    misconfiguration, not a bypass of anything else.
 8. The guard is chained with `&&` so a refusal stops the rest of the script.
-   Expected: the guard is the first command of each script in package.json,
+   Expected: the guard is the first command of `release:finalize` in package.json,
    so the git commands never start. The test reads package.json to confirm.
+   `b` and `r` must retain their exact fetch/reset/clean/switch/install chains
+   without a guard, prompt, environment opt-in, or marker requirement.
 9. The message is missing or unclear. Expected: stderr names the npm script
    (from `npm_lifecycle_event`, when set), says what it deletes, and gives the
    opt-in steps.
