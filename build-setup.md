@@ -218,8 +218,9 @@ been cryptographically matched to its artifact with the public key in
 `tauri.conf.json`. The generated manifests are schema-validated before upload.
 
 The `b`, `r`, and `release:*` scripts intentionally reset and clean their Git
-worktrees. Run them only on disposable, isolated build VMs. `b`, `r` and
-`release:finalize` start with `scripts/require-release-vm.cjs`, which refuses to
+worktrees. Run them only on disposable, isolated build VMs. `b` and `r` run
+directly without confirmation or a release-VM opt-in. `release:finalize`
+starts with `scripts/require-release-vm.cjs`, which refuses to
 run unless the host is a release VM: set `ROSI_RELEASE_VM=1`, or create an empty
 `~/.rosi-release-vm` marker file on the VM. Before publishing,
 verify that the draft contains the Windows x64/ARM64 NSIS installers, the
