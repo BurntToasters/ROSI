@@ -1845,14 +1845,44 @@ fn e2e_dns_cancellation_probe() -> Result<serde_json::Value, String> {
     const CALLERS_PER_BATCH: usize = 24;
 
     let resolver = shared_dns_resolver().ok_or("bounded DNS resolver did not start")?;
-    let before = resolver.snapshot();
     let mut max_caller_return = Duration::ZERO;
+    let mut max_time_to_capacity = Duration::ZERO;
     let mut callers_returned_without_answer = 0usize;
     let probe_started = Instant::now();
 
+    // Lookups from earlier specs or batches can still hold workers. Wait
+    // for a quiet pool, within one shared budget, so baselines start clean.
+    let wait_for_idle = |budget: Duration| {
+        let started = Instant::now();
+        let idle = loop {
+            let snapshot = resolver.snapshot();
+            if snapshot.active_workers == 0 && snapshot.queue_len == 0 {
+                break true;
+            }
+            if started.elapsed() >= budget {
+                break false;
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        (idle, started.elapsed())
+    };
+    let mut idle_budget_left = Duration::from_secs(20);
+    let mut idle_wait = Duration::ZERO;
+    let mut idle_reached = true;
+    let (idle, waited) = wait_for_idle(idle_budget_left);
+    idle_wait += waited;
+    idle_budget_left = idle_budget_left.saturating_sub(waited);
+    idle_reached &= idle;
+    let before = resolver.snapshot();
+
     for batch in 0..BATCHES {
+        let (idle, waited) = wait_for_idle(idle_budget_left);
+        idle_wait += waited;
+        idle_budget_left = idle_budget_left.saturating_sub(waited);
+        idle_reached &= idle;
+        // Per-batch baseline: the probe-wide one goes stale after batch 0.
+        let batch_before = resolver.snapshot();
         let batch_start = Instant::now();
-        let before_attempts = resolver.snapshot().request_attempts;
         let cancellations = (0..CALLERS_PER_BATCH)
             .map(|_| Arc::new(AtomicBool::new(false)))
             .collect::<Vec<_>>();
@@ -1880,21 +1910,40 @@ fn e2e_dns_cancellation_probe() -> Result<serde_json::Value, String> {
         }
         drop(result_sender);
 
-        let submit_deadline = batch_start + Duration::from_secs(1);
+        // Latched per batch: a loaded runner may only show full capacity in a
+        // sample that is later drained by a finishing worker.
+        let submit_deadline = batch_start + Duration::from_secs(5);
         let mut all_attempted = false;
         let mut reached_capacity = false;
+        let mut time_to_capacity = None;
+        let mut last_queue_len = 0;
+        let mut last_active = 0;
+        let mut max_queue_len = 0;
+        let mut max_active = 0;
         while Instant::now() < submit_deadline {
             let snapshot = resolver.snapshot();
-            let attempts = snapshot.request_attempts.saturating_sub(before_attempts);
-            all_attempted = attempts >= CALLERS_PER_BATCH as u64;
-            reached_capacity = snapshot.queue_len == MAX_PENDING_DNS_QUERIES
+            last_queue_len = snapshot.queue_len;
+            last_active = snapshot.active_workers;
+            max_queue_len = max_queue_len.max(snapshot.queue_len);
+            max_active = max_active.max(snapshot.active_workers);
+            let attempts = snapshot
+                .request_attempts
+                .saturating_sub(batch_before.request_attempts);
+            all_attempted |= attempts >= CALLERS_PER_BATCH as u64;
+            if !reached_capacity
+                && snapshot.queue_len == MAX_PENDING_DNS_QUERIES
                 && snapshot.active_workers == DNS_RESOLVER_WORKERS
-                && snapshot.synthetic_lookups_started > before.synthetic_lookups_started;
+                && snapshot.synthetic_lookups_started > batch_before.synthetic_lookups_started
+            {
+                reached_capacity = true;
+                time_to_capacity = Some(batch_start.elapsed());
+            }
             if all_attempted && reached_capacity {
                 break;
             }
             thread::sleep(Duration::from_millis(5));
         }
+        max_time_to_capacity = max_time_to_capacity.max(time_to_capacity.unwrap_or(Duration::ZERO));
 
         for cancellation in &cancellations {
             cancellation.store(true, Ordering::Release);
@@ -1911,7 +1960,16 @@ fn e2e_dns_cancellation_probe() -> Result<serde_json::Value, String> {
             return Err(format!("could not start bounded DNS E2E caller: {error}"));
         }
         if !all_attempted || !reached_capacity {
-            return Err("bounded DNS E2E callers did not reach the resolver queue limit".into());
+            let end = resolver.snapshot();
+            return Err(format!(
+                "bounded DNS E2E callers did not reach the resolver queue limit (batch={batch} elapsedMs={} lastQueueLen={last_queue_len} lastActiveWorkers={last_active} maxQueueLen={max_queue_len} maxActiveWorkers={max_active} attemptsDelta={} syntheticLookupsDelta={} rejectedDelta={} workersStarted={} idleReached={idle} idleWaitMs={} allAttempted={all_attempted} reachedCapacity={reached_capacity})",
+                batch_start.elapsed().as_millis(),
+                end.request_attempts.saturating_sub(batch_before.request_attempts),
+                end.synthetic_lookups_started.saturating_sub(batch_before.synthetic_lookups_started),
+                end.rejected_requests.saturating_sub(batch_before.rejected_requests),
+                end.workers_started,
+                idle_wait.as_millis(),
+            ));
         }
     }
 
@@ -1941,6 +1999,9 @@ fn e2e_dns_cancellation_probe() -> Result<serde_json::Value, String> {
         "syntheticLookupsStarted": after.synthetic_lookups_started.saturating_sub(before.synthetic_lookups_started),
         "syntheticDelayMs": E2E_DNS_DELAY.as_millis(),
         "maxCallerReturnMs": max_caller_return.as_millis(),
+        "maxTimeToCapacityMs": max_time_to_capacity.as_millis(),
+        "idleReached": idle_reached,
+        "idleWaitMs": idle_wait.as_millis(),
         "callersReturnedWithoutAnswer": callers_returned_without_answer,
         "pendingAfterDrain": after.queue_len,
         "activeAfterDrain": after.active_workers,

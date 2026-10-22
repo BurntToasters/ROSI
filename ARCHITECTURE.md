@@ -168,7 +168,7 @@ setup wizard step in `rosiEngine.ts`. Keep new runtime work generic until
 yt-dlp decides, and replace these pieces when it does.
 
 The Flatpak sandbox cannot use a host Deno, so the Flatpak installs the
-node22 SDK extension's Node.js at `/app/lib/rosi/js-runtime/node`.
+node24 SDK extension's Node.js at `/app/lib/rosi/js-runtime/node`.
 `build_ytdlp_runtime_args()` in `command_builders.rs` adds
 `--js-runtimes node:<path>` only in Flatpak when that file is a runnable
 regular file. yt-dlp's other runtimes stay enabled, so this works the same

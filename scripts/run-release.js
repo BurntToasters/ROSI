@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { usesWindowsCmdShell } from "./npm-safe-update.mjs";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -63,7 +64,7 @@ export function main(argv = process.argv.slice(2), runner = runNpm) {
 
 function isDirectExecution() {
   if (!process.argv[1]) return false;
-  return fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+  return isDirectExecutionOf(import.meta.url);
 }
 
 if (isDirectExecution()) {

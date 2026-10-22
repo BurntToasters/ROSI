@@ -45,7 +45,7 @@ twice. Only `build_ytdlp_runtime_args` adds it; the other sites must not.
 
 ## Manifest (run.rosie.rosi.yml)
 
-M1. The node22 SDK extension binary is missing at `/usr/lib/sdk/node22/bin/node`:
+M1. The node24 SDK extension binary is missing at `/usr/lib/sdk/node24/bin/node`:
 the `test -f` fails the build with a clear message. It must not skip silently.
 M2. The Node license is missing from the SDK extension: the bounded `find`
 finds nothing and the build fails with a clear message.

@@ -5,7 +5,7 @@ import path from "path";
 import crypto from "crypto";
 import { execSync, spawnSync } from "child_process";
 import os from "os";
-import { fileURLToPath, pathToFileURL } from "url";
+import { fileURLToPath } from "url";
 import {
   normalizeUpdaterSignature,
   verifyUpdaterSignatures,
@@ -14,6 +14,7 @@ import { verifyReleaseSession } from "./release-session.js";
 import githubCli from "./github-cli.cjs";
 import { assertStableReleaseOverridesAllowed } from "./release-policy.cjs";
 import draftMetadata from "./release-draft-metadata.cjs";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const { assertGitHubCliAuthenticated, githubApi, uploadReleaseAsset } =
   githubCli;
@@ -1685,10 +1686,7 @@ async function syncBetaManifestsAfterPublish() {
 }
 
 function isDirectExecution() {
-  return Boolean(
-    process.argv[1] &&
-    pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url,
-  );
+  return Boolean(process.argv[1] && isDirectExecutionOf(import.meta.url));
 }
 
 if (isDirectExecution()) {

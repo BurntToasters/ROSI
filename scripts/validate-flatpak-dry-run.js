@@ -64,7 +64,7 @@ if (fs.existsSync(manifest)) {
     !yaml.includes("3 days ago")
   ) {
     fail(
-      "node22 SDK npm 10.x must be upgraded to newest npm 12 with a 3-day --before age gate before npm ci",
+      "node24 SDK npm 11 must be upgraded to newest npm 12 with a 3-day --before age gate before npm ci",
     );
   }
   if (!yaml.includes("tauri build --no-bundle -- --locked")) {

@@ -3,7 +3,7 @@ import { RosiSettings, logError } from './core';
 import { showModal } from './overlays';
 import { showRestartFailure } from './updater-ui';
 
-// Automatic Deno install uses winget (Windows) or Homebrew (macOS) only.
+// Automatic Deno install uses winget (Windows) or Homebrew (macOS) only when found.
 export function isLinuxPlatform() {
   return /linux/i.test(navigator.userAgent) && !/android/i.test(navigator.userAgent);
 }
@@ -106,14 +106,17 @@ export async function checkDenoInstallation(
                 const errMsg =
                   (error as { error?: string })?.error ||
                   (error instanceof Error ? error.message : 'Unknown error');
+                const instructionsInError = errMsg.includes('official instructions');
                 showModal({
                   title: 'Installation Failed',
-                  message: `Failed to install Deno automatically.\n\nUse the official Deno installation instructions.\n\nError: ${errMsg}`,
+                  message: instructionsInError
+                    ? `Deno could not be installed automatically.\n\n${errMsg}`
+                    : `Deno could not be installed automatically.\n\n${errMsg}\n\nInstall Deno with the official instructions, then restart ROSI.`,
                   buttons: [
                     {
-                      label: 'Open Deno Website',
+                      label: 'Open Install Instructions',
                       primary: true,
-                      action: () => window.api.openExternal('https://deno.land'),
+                      action: () => window.api.openExternal(DENO_INSTALL_DOCS),
                     },
                     { label: 'OK' },
                   ],
