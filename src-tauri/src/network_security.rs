@@ -1847,6 +1847,7 @@ fn e2e_dns_cancellation_probe() -> Result<serde_json::Value, String> {
     let resolver = shared_dns_resolver().ok_or("bounded DNS resolver did not start")?;
     let before = resolver.snapshot();
     let mut max_caller_return = Duration::ZERO;
+    let mut max_time_to_capacity = Duration::ZERO;
     let mut callers_returned_without_answer = 0usize;
     let probe_started = Instant::now();
 
@@ -1880,21 +1881,30 @@ fn e2e_dns_cancellation_probe() -> Result<serde_json::Value, String> {
         }
         drop(result_sender);
 
-        let submit_deadline = batch_start + Duration::from_secs(1);
+        // Latched per batch: a loaded runner may only show full capacity in a
+        // sample that is later drained by a finishing worker.
+        let submit_deadline = batch_start + Duration::from_secs(5);
         let mut all_attempted = false;
         let mut reached_capacity = false;
+        let mut time_to_capacity = None;
         while Instant::now() < submit_deadline {
             let snapshot = resolver.snapshot();
             let attempts = snapshot.request_attempts.saturating_sub(before_attempts);
-            all_attempted = attempts >= CALLERS_PER_BATCH as u64;
-            reached_capacity = snapshot.queue_len == MAX_PENDING_DNS_QUERIES
+            all_attempted |= attempts >= CALLERS_PER_BATCH as u64;
+            if !reached_capacity
+                && snapshot.queue_len == MAX_PENDING_DNS_QUERIES
                 && snapshot.active_workers == DNS_RESOLVER_WORKERS
-                && snapshot.synthetic_lookups_started > before.synthetic_lookups_started;
+                && snapshot.synthetic_lookups_started > before.synthetic_lookups_started
+            {
+                reached_capacity = true;
+                time_to_capacity = Some(batch_start.elapsed());
+            }
             if all_attempted && reached_capacity {
                 break;
             }
             thread::sleep(Duration::from_millis(5));
         }
+        max_time_to_capacity = max_time_to_capacity.max(time_to_capacity.unwrap_or(Duration::ZERO));
 
         for cancellation in &cancellations {
             cancellation.store(true, Ordering::Release);
@@ -1941,6 +1951,7 @@ fn e2e_dns_cancellation_probe() -> Result<serde_json::Value, String> {
         "syntheticLookupsStarted": after.synthetic_lookups_started.saturating_sub(before.synthetic_lookups_started),
         "syntheticDelayMs": E2E_DNS_DELAY.as_millis(),
         "maxCallerReturnMs": max_caller_return.as_millis(),
+        "maxTimeToCapacityMs": max_time_to_capacity.as_millis(),
         "callersReturnedWithoutAnswer": callers_returned_without_answer,
         "pendingAfterDrain": after.queue_len,
         "activeAfterDrain": after.active_workers,
