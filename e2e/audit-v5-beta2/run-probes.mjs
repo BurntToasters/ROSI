@@ -98,7 +98,40 @@ else:
     { mode: 0o700 },
   );
 }
+// Homebrew builds of ffmpeg can lack libvorbis, so pick the WebM audio encoder
+// from what this binary offers. The built-in encoders are experimental.
+function webmAudioEncoder(ffmpegPath) {
+  const listing = spawnSync(ffmpegPath, ["-hide_banner", "-encoders"], {
+    encoding: "utf8",
+  });
+  if (listing.status !== 0)
+    throw new Error(
+      `Could not list encoders for ffmpeg at ${ffmpegPath}: ${listing.stderr}`,
+    );
+  const available = new Set(
+    listing.stdout
+      .split("\n")
+      .map((line) => line.match(/^\s[\w.]{6}\s+(\w\S*)/)?.[1])
+      .filter(Boolean),
+  );
+  const candidates = [
+    { encoder: "libvorbis", options: [] },
+    { encoder: "libopus", options: ["-ar", "48000"] },
+    { encoder: "vorbis", options: ["-strict", "-2", "-ac", "2"] },
+    { encoder: "opus", options: ["-strict", "-2", "-ar", "48000"] },
+  ];
+  const chosen = candidates.find(({ encoder }) => available.has(encoder));
+  if (!chosen)
+    throw new Error(
+      `No WebM audio encoder in ffmpeg at ${ffmpegPath}; tried ${candidates.map(({ encoder }) => encoder).join(", ")}`,
+    );
+  return chosen;
+}
+const webmAudio = webmAudioEncoder(ffmpeg);
+
 function encode(file, codec) {
+  const audio =
+    codec === "libvpx" ? webmAudio : { encoder: "aac", options: [] };
   const args = [
     "-hide_banner",
     "-loglevel",
@@ -115,7 +148,8 @@ function encode(file, codec) {
     "-c:v",
     codec,
     "-c:a",
-    codec === "libvpx" ? "libvorbis" : "aac",
+    audio.encoder,
+    ...audio.options,
     "-y",
     file,
   ];
