@@ -496,10 +496,27 @@ describe('rosiEngine DOM wiring', () => {
     await loadEngine(api);
 
     const presetSelect = document.getElementById('downloadPresetSelect') as HTMLSelectElement;
+    await vi.waitFor(
+      () => {
+        expect(presetSelect.querySelector('option[value="p-range"]')).not.toBeNull();
+      },
+      { timeout: 2000 }
+    );
     presetSelect.value = 'p-range';
     presetSelect.dispatchEvent(new Event('change', { bubbles: true }));
     (document.getElementById('applyPresetBtn') as HTMLButtonElement).click();
-    await flush();
+    await vi.waitFor(
+      () => {
+        expect(
+          (
+            document.querySelector(
+              'input[name="playlist-scope"][value="range"]'
+            ) as HTMLInputElement | null
+          )?.checked
+        ).toBe(true);
+      },
+      { timeout: 2000 }
+    );
 
     expect(
       (

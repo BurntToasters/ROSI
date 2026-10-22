@@ -362,28 +362,45 @@ function run(command, args, options = {}) {
   }
 }
 
+const OUTPUT_TAIL_LINES = 120;
+
 /**
  * Asynchronous variant for WebdriverIO: the in-process media server must keep
  * serving while the app downloads, so the event loop cannot be blocked.
+ * Failures carry the last output lines in `error.outputTail`.
  */
 function runAsync(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd ?? REPO_ROOT,
       env: e2eChildEnv(options.env),
-      stdio: "inherit",
+      stdio: ["inherit", "pipe", "pipe"],
       windowsHide: true,
       shell: usesWindowsCmdShell(command),
     });
+    let outputTail = "";
+    const forward = (stream, output) => {
+      stream.setEncoding("utf8");
+      stream.on("data", (chunk) => {
+        output.write(chunk);
+        outputTail = `${outputTail}${chunk}`
+          .split(/\r?\n/)
+          .slice(-OUTPUT_TAIL_LINES)
+          .join("\n");
+      });
+    };
+    forward(child.stdout, process.stdout);
+    forward(child.stderr, process.stderr);
     child.on("error", reject);
-    child.on("exit", (code, signal) => {
+    child.on("close", (code, signal) => {
       if (code === 0) resolve();
-      else
-        reject(
-          new Error(
-            `${command} ${args.join(" ")} exited with ${code ?? signal}`,
-          ),
+      else {
+        const error = new Error(
+          `${command} ${args.join(" ")} exited with ${code ?? signal}${outputTail ? `\n${outputTail}` : ""}`,
         );
+        error.outputTail = outputTail;
+        reject(error);
+      }
     });
   });
 }
@@ -1831,6 +1848,12 @@ async function main() {
         reason: null,
       };
     });
+  const readLogTail = (pass, lines) => {
+    const file = path.join(pass.profile.dataDir, "logs", "rosi.log");
+    return fs.existsSync(file)
+      ? fs.readFileSync(file, "utf8").split(/\r?\n/).slice(-lines)
+      : [];
+  };
   let round2RendererFailure = null;
   let failure = null;
   try {
@@ -1869,9 +1892,12 @@ async function main() {
           ROSI_ROUND2_RENDERER_RESULTS: round2RendererPass.resultsPath,
         });
       } catch (error) {
-        round2RendererFailure =
-          error instanceof Error ? error.message : String(error);
-        throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        const logTail = readLogTail(round2RendererPass, 80);
+        round2RendererFailure = logTail.length
+          ? `${message}\nrenderer app log tail:\n${logTail.join("\n")}`
+          : message;
+        throw new Error(round2RendererFailure);
       }
     }
     for (const pass of v5Passes) {
@@ -1977,12 +2003,6 @@ async function main() {
 
   const readResults = (file) =>
     fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
-  const readLogTail = (pass, lines) => {
-    const file = path.join(pass.profile.dataDir, "logs", "rosi.log");
-    return fs.existsSync(file)
-      ? fs.readFileSync(file, "utf8").split(/\r?\n/).slice(-lines)
-      : [];
-  };
   const scenarios = [
     ...legacyPasses,
     ...(offlineQueuePass ? [offlineQueuePass] : []),
@@ -2073,6 +2093,9 @@ async function main() {
       legacyPasses.map((pass) => [pass.legacyCase, readLogTail(pass, 15)]),
     ),
     appLogTail: readLogTail(mainPass, 40),
+    rendererLogTail: round2RendererPass
+      ? readLogTail(round2RendererPass, 80)
+      : [],
   });
   for (const pass of [
     ...legacyPasses,

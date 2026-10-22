@@ -1911,7 +1911,10 @@ fn e2e_dns_cancellation_probe() -> Result<serde_json::Value, String> {
         drop(result_sender);
 
         // Latched per batch: a loaded runner may only show full capacity in a
-        // sample that is later drained by a finishing worker.
+        // sample that is later drained by a finishing worker. A rejection is
+        // also proof of a full queue: enqueue only rejects once the queue holds
+        // MAX_PENDING_DNS_QUERIES entries, and a worker may dequeue before the
+        // sampler sees that exact queue_len and active_workers pair.
         let submit_deadline = batch_start + Duration::from_secs(5);
         let mut all_attempted = false;
         let mut reached_capacity = false;
@@ -1930,9 +1933,11 @@ fn e2e_dns_cancellation_probe() -> Result<serde_json::Value, String> {
                 .request_attempts
                 .saturating_sub(batch_before.request_attempts);
             all_attempted |= attempts >= CALLERS_PER_BATCH as u64;
+            let exact_capacity = snapshot.queue_len == MAX_PENDING_DNS_QUERIES
+                && snapshot.active_workers == DNS_RESOLVER_WORKERS;
+            let rejected = snapshot.rejected_requests > batch_before.rejected_requests;
             if !reached_capacity
-                && snapshot.queue_len == MAX_PENDING_DNS_QUERIES
-                && snapshot.active_workers == DNS_RESOLVER_WORKERS
+                && (exact_capacity || rejected)
                 && snapshot.synthetic_lookups_started > batch_before.synthetic_lookups_started
             {
                 reached_capacity = true;
