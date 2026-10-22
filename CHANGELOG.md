@@ -18,7 +18,9 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 
 ## Changes in `v5.0.1:`
 
-- **Fix:** (add release notes)
+- **Fix:** The automatic Deno install now checks for Homebrew (macOS) or winget (Windows) before it offers to run, and the confirm dialog names the tool it will use. On Windows it uses only the winget source, which avoids failures on locked-down networks. When automatic install is not possible, ROSI explains why and links to the official Deno installation guide.
+- **Tests:** New end-to-end tests cover the Deno installer paths, including a missing package manager.
+- **Docs:** The README explains how to upgrade from v4 to v5, and when ROSI 5 must be installed manually.
 
 ## Changes in `v5.0.0:`
 
