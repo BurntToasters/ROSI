@@ -3,7 +3,7 @@ runtime: org.gnome.Platform
 runtime-version: "50"
 sdk: org.gnome.Sdk
 sdk-extensions:
-  - org.freedesktop.Sdk.Extension.node22
+  - org.freedesktop.Sdk.Extension.node24
   - org.freedesktop.Sdk.Extension.rust-stable
 command: rosi
 separate-locales: false
@@ -38,7 +38,7 @@ modules:
       # commit export prepared by scripts/prepare-flatpak-source.js.
       build-args:
         - --share=network
-      append-path: /run/build/rosi/npm-global/bin:/usr/lib/sdk/node22/bin:/usr/lib/sdk/rust-stable/bin
+      append-path: /run/build/rosi/npm-global/bin:/usr/lib/sdk/node24/bin:/usr/lib/sdk/rust-stable/bin
       env:
         CARGO_HOME: /run/build/rosi/cargo
         npm_config_cache: /run/build/rosi/npm-cache
@@ -47,7 +47,7 @@ modules:
       # The Flatpak rust-stable SDK extension installs rustc/cargo directly,
       # not through rustup. Fail closed if that extension drifts from our pin.
       - test "$(rustc --version | cut -d' ' -f2)" = 1.98.1
-      # node22 SDK ships npm 10.x, which does not support --min-release-age.
+      # The node24 SDK ships npm 11, older than the npm 12 that engines requires.
       # npm@12 plus --before 3 days ago takes the newest 12.x that is old enough.
       - npm install --global npm@12 --ignore-scripts --engine-strict=false --before="$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%SZ)" --prefix /run/build/rosi/npm-global
       - npm ci --engine-strict=false
@@ -66,12 +66,12 @@ modules:
             ;;
         esac
       # yt-dlp needs a JavaScript runtime for some YouTube formats, and the
-      # sandbox cannot reach a host Deno. Ship the node22 extension's Node.js.
+      # sandbox cannot reach a host Deno. Ship the node24 extension's Node.js.
       # Each step fails the build instead of producing a Flatpak without it.
       - |
-        node_bin=/usr/lib/sdk/node22/bin/node
+        node_bin=/usr/lib/sdk/node24/bin/node
         if [ ! -f "$node_bin" ]; then
-          echo "Node.js runtime missing at $node_bin (node22 SDK extension layout changed?)" >&2
+          echo "Node.js runtime missing at $node_bin (node24 SDK extension layout changed?)" >&2
           exit 1
         fi
         install -Dm755 "$node_bin" /app/lib/rosi/js-runtime/node
@@ -81,17 +81,17 @@ modules:
         fi
       - |
         node_license=""
-        for candidate in /usr/lib/sdk/node22/share/doc/node/LICENSE /usr/lib/sdk/node22/share/licenses/node/LICENSE; do
+        for candidate in /usr/lib/sdk/node24/share/doc/node/LICENSE /usr/lib/sdk/node24/share/licenses/node/LICENSE; do
           if [ -f "$candidate" ]; then
             node_license="$candidate"
             break
           fi
         done
         if [ -z "$node_license" ]; then
-          node_license="$(find /usr/lib/sdk/node22 -maxdepth 4 -type f -name 'LICENSE*' -not -path '*/node_modules/*' | head -n 1)"
+          node_license="$(find /usr/lib/sdk/node24 -maxdepth 4 -type f -name 'LICENSE*' -not -path '*/node_modules/*' | head -n 1)"
         fi
         if [ -z "$node_license" ] || [ ! -f "$node_license" ]; then
-          echo "Node.js license file not found under /usr/lib/sdk/node22" >&2
+          echo "Node.js license file not found under /usr/lib/sdk/node24" >&2
           exit 1
         fi
         install -Dm644 "$node_license" /app/share/rosi/licenses/node/LICENSE

@@ -13,7 +13,7 @@
     "cross-platform"
   ],
   "engines": {
-    "node": "^22.22.2 || ^24.15.0 || >=26.0.0",
+    "node": "^24.15.0 || >=26.0.0",
     "npm": ">=12.0.2"
   },
   "repository": {
@@ -154,7 +154,7 @@
     "release:linux:arm64": "node scripts/run-release.js linux:arm64",
     "release:sign:gpg": "dotenv -e .env -- node scripts/gpg-sign.js",
     "release:sync-beta-manifests": "dotenv -e .env -- node scripts/gpg-sign.js --sync-beta-manifests",
-    "setup:deb": "sudo apt update && sudo apt install -y build-essential curl wget file libgtk-3-dev libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libglib2.0-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils xvfb 7zip flatpak flatpak-builder && sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo && sudo flatpak install -y flathub org.gnome.Platform//50 org.gnome.Sdk//50 org.freedesktop.Sdk.Extension.node22//25.08 org.freedesktop.Sdk.Extension.rust-stable//25.08",
+    "setup:deb": "sudo apt update && sudo apt install -y build-essential curl wget file libgtk-3-dev libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libglib2.0-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils xvfb 7zip flatpak flatpak-builder && sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo && sudo flatpak install -y flathub org.gnome.Platform//50 org.gnome.Sdk//50 org.freedesktop.Sdk.Extension.node24//25.08 org.freedesktop.Sdk.Extension.rust-stable//25.08",
     "gitprune": "node scripts/git-prune-local-branches.js",
     "gitprune:dry": "node scripts/git-prune-local-branches.js --dry-run",
     "gitprune:force": "node scripts/git-prune-local-branches.js --force",
