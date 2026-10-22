@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import {
@@ -80,6 +80,37 @@ function printTail(output, label) {
   const tail = lines.slice(-120).join("\n");
   console.log(`${colors.red}${label}:${colors.reset}`);
   console.log(`${colors.red}${tail}${colors.reset}`);
+}
+
+/**
+ * Keep the complete output of a failed check under e2e/artifacts, which CI
+ * uploads. The printed tail alone loses earlier passes.
+ */
+function writeFailureLog(name, command, args, reason, output) {
+  try {
+    const directory = resolve(
+      __dirname,
+      "..",
+      "e2e",
+      "artifacts",
+      "quality-gate-logs",
+    );
+    mkdirSync(directory, { recursive: true });
+    const safeName = name.replace(/[^A-Za-z0-9._-]+/g, "-");
+    const file = resolve(directory, `${Date.now()}-${safeName}.log`);
+    writeFileSync(
+      file,
+      `command: ${command} ${args.join(" ")}\nreason: ${reason}\n\n${output}`,
+    );
+    return file;
+  } catch (error) {
+    console.log(
+      `${colors.red}could not write failure log: ${
+        error instanceof Error ? error.message : String(error)
+      }${colors.reset}`,
+    );
+    return null;
+  }
 }
 
 function parseTest(output, results) {
@@ -221,6 +252,11 @@ function runCommand(name, command, args, parser, results, options = {}) {
       ? `signal ${run.signal || "unknown"}`
       : `exit code ${run.status}`;
   console.log(`${colors.red}✗ ${name} failed (${reason})${colors.reset}`);
+  // CI keeps only the last lines of this process, which hides earlier e2e
+  // passes. Persist the whole output under e2e/artifacts so the evidence
+  // upload keeps the failing pass, not just the summary.
+  const logPath = writeFailureLog(name, command, args, reason, output);
+  if (logPath) console.log(`${colors.red}full log: ${logPath}${colors.reset}`);
   printTail(stdout, "stdout tail");
   printTail(stderr, "stderr tail");
   console.log("");
