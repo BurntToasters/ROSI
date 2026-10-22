@@ -4161,7 +4161,21 @@ describe("ROSI main window", () => {
       { timeout: 30_000, timeoutMsg: "Stop did not cancel the running item" },
     );
 
-    // Clear asks first, then empties the queue.
+    // Clear asks first, then empties the queue. The Cancel modal and the busy
+    // lock can linger briefly after the backend reports the cancel, and a click
+    // on a disabled button does nothing, so wait for both to clear.
+    await waitForModal(false, "Cancel modal did not close");
+    await browser.waitUntil(
+      () =>
+        browser.execute(() => {
+          const button = document.getElementById("clearQueueBtn");
+          return Boolean(button) && !button.disabled;
+        }),
+      {
+        timeout: 10_000,
+        timeoutMsg: "Clear Queue button stayed disabled after cancel",
+      },
+    );
     await clickById("clearQueueBtn");
     const clear = await waitForModal(true, "Clear asked nothing");
     assert.equal(clear.title, "Clear Queue");

@@ -97,7 +97,7 @@ if (toneResult.status !== 0) throw new Error(toneResult.stderr);
 
 const replacementReady = path.join(fixtureDirectory, "replacement-ready.json");
 const replacementRelease = path.join(fixtureDirectory, "replacement-release");
-const realFfmpegPath = fs.realpathSync(realFfmpeg);
+const realFfmpegPath = fs.realpathSync(resolveChocolateyTarget(realFfmpeg));
 const wrapper = path.join(
   fixtureDirectory,
   process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg",
@@ -133,10 +133,22 @@ os.execv(REAL, [REAL] + args)
   fs.writeFileSync(wrapper, script, { mode: 0o700 });
   fs.chmodSync(wrapper, 0o700);
 } else {
-  // The standard Windows helper is an executable, and this probe deliberately
-  // avoids compiling a test wrapper. Conversion still exercises the native
-  // application path; the report marks source-replacement coverage unavailable.
+  // The wrapper is a copy of the real ffmpeg.exe, never of a Chocolatey shim:
+  // a shim finds its target relative to its own install directory, so a copy
+  // elsewhere exits -1. This probe deliberately avoids compiling a test wrapper.
+  // Conversion still exercises the native application path; the report marks
+  // source-replacement coverage unavailable.
   fs.copyFileSync(realFfmpegPath, wrapper);
+  const versionCheck = spawnSync(wrapper, ["-hide_banner", "-version"], {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 60_000,
+  });
+  if (versionCheck.status !== 0) {
+    throw new Error(
+      `The copied FFmpeg wrapper ${wrapper} (source ${realFfmpegPath}) exited ${versionCheck.status ?? versionCheck.error?.message ?? "without a code"} for -version.`,
+    );
+  }
 }
 
 const denoPath = path.join(
@@ -277,6 +289,76 @@ if (!report.passed) process.exitCode = 1;
 
 function sha256(bytes) {
   return crypto.createHash("sha256").update(bytes).digest("hex");
+}
+
+/**
+ * Returns the executable path a Chocolatey shim launches. Non-shims and
+ * non-Windows paths are returned unchanged.
+ */
+function resolveChocolateyTarget(found) {
+  if (process.platform !== "win32") return found;
+  const chocolateyRoot =
+    process.env.ChocolateyInstall || "C:\\ProgramData\\chocolatey";
+  const shimDirectory = path.win32.join(chocolateyRoot, "bin");
+  if (path.win32.dirname(found).toLowerCase() !== shimDirectory.toLowerCase()) {
+    return found;
+  }
+  const shimgen = spawnSync(found, ["--shimgen-noop"], {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 30_000,
+  });
+  const reported = parseShimTarget(
+    `${shimgen.stdout ?? ""}\n${shimgen.stderr ?? ""}`,
+  );
+  if (reported && fs.existsSync(reported)) return reported;
+
+  const libRoot = path.win32.join(chocolateyRoot, "lib");
+  const packages = fs.existsSync(libRoot)
+    ? fs
+        .readdirSync(libRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && /^ffmpeg/i.test(entry.name))
+    : [];
+  for (const entry of packages) {
+    const match = findFileBounded(
+      path.win32.join(libRoot, entry.name, "tools"),
+      "ffmpeg.exe",
+      4,
+    );
+    if (match) return match;
+  }
+  throw new Error(
+    `Could not resolve the real ffmpeg.exe behind the Chocolatey shim ${found}.`,
+  );
+}
+
+function parseShimTarget(output) {
+  const match = /^\s*path to executable:\s*(.+?)\s*$/im.exec(output);
+  return match ? match[1] : null;
+}
+
+function findFileBounded(directory, fileName, depthRemaining) {
+  if (depthRemaining < 0) return null;
+  let entries;
+  try {
+    entries = fs.readdirSync(directory, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const file = entries.find(
+    (entry) => entry.isFile() && entry.name.toLowerCase() === fileName,
+  );
+  if (file) return path.win32.join(directory, file.name);
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const nested = findFileBounded(
+      path.win32.join(directory, entry.name),
+      fileName,
+      depthRemaining - 1,
+    );
+    if (nested) return nested;
+  }
+  return null;
 }
 
 function createActivitySeed(profile) {

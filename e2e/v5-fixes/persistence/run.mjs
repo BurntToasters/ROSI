@@ -37,6 +37,23 @@ if (
 }
 fs.mkdirSync(artifactRoot, { recursive: true });
 
+// Windows keeps app handles open briefly after exit, so a profile removal can
+// hit EPERM. The profile is a temp directory; a leftover is logged, not fatal.
+const removeTemporaryDirectory = (directory) => {
+  try {
+    fs.rmSync(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 200,
+    });
+  } catch (error) {
+    console.warn(
+      `Could not remove temporary profile ${directory}: ${error.message}`,
+    );
+  }
+};
+
 const sha256 = (file) => {
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) return null;
   return crypto
@@ -180,7 +197,7 @@ for (const mode of Object.keys(seeds)) {
     dataBefore: before,
     dataAfter: hashProfile(profile.dataDir),
   });
-  fs.rmSync(profile.profileDir, { recursive: true, force: true });
+  removeTemporaryDirectory(profile.profileDir);
   console.log(
     JSON.stringify({
       mode,
