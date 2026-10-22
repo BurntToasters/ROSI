@@ -97,6 +97,9 @@ if (toneResult.status !== 0) throw new Error(toneResult.stderr);
 
 const replacementReady = path.join(fixtureDirectory, "replacement-ready.json");
 const replacementRelease = path.join(fixtureDirectory, "replacement-release");
+const givenFfmpegPath = fs.realpathSync(realFfmpeg);
+// The executable actually copied or wrapped. Differs from givenFfmpegPath only
+// when the given path is a Chocolatey shim on Windows.
 const realFfmpegPath = fs.realpathSync(resolveChocolateyTarget(realFfmpeg));
 const wrapper = path.join(
   fixtureDirectory,
@@ -230,7 +233,9 @@ const reportBody = {
   finishedAt: new Date().toISOString(),
   binary: path.relative(REPO_ROOT, binary).split(path.sep).join("/"),
   binarySha256: sha256(fs.readFileSync(binary)),
-  ffmpegSha256: sha256(fs.readFileSync(realFfmpegPath)),
+  ffmpegSha256: sha256(fs.readFileSync(givenFfmpegPath)),
+  ffmpegExecutablePath: realFfmpegPath,
+  ffmpegExecutableSha256: sha256(fs.readFileSync(realFfmpegPath)),
   probeSources: Object.fromEntries(
     ["e2e/round2-native.spec.js", "e2e/round2-native-failure-modes.md"].map(
       (relativePath) => [
