@@ -41,6 +41,7 @@ describe("V5 network destination policy", () => {
     const addresses = matrix?.addresses ?? [];
     const mismatches = addresses.filter((row) => row.expected !== row.actual);
     record("address-policy-matrix", {
+      probeError: outcome.ok ? null : outcome.error,
       rows: addresses.length,
       mismatches,
       invariantPassed:
@@ -61,13 +62,16 @@ describe("V5 network destination policy", () => {
     const publicRows = rows.filter((row) => row.expected === true);
     const blockedRows = rows.filter((row) => row.expected === false);
     record("nat64-policy", {
+      probeError: outcome.ok ? null : outcome.error,
       publicRows: publicRows.map((row) => row.address),
       blockedRows: blockedRows.map((row) => row.address),
       invariantPassed:
+        outcome.ok === true &&
         publicRows.length >= 2 &&
         blockedRows.length >= 7 &&
         rows.every((row) => row.actual === row.expected),
     });
+    assert.ok(outcome.ok, JSON.stringify(outcome));
     assert.ok(publicRows.length >= 2, "no public NAT64 rows were checked");
     assert.ok(blockedRows.length >= 7, "no blocked NAT64 rows were checked");
     assert.ok(rows.every((row) => row.actual === row.expected));
@@ -78,11 +82,15 @@ describe("V5 network destination policy", () => {
     const urls = outcome.value?.policyMatrix?.urls ?? [];
     const mismatches = urls.filter((row) => row.expected !== row.actual);
     record("url-policy-matrix", {
+      probeError: outcome.ok ? null : outcome.error,
       rows: urls.length,
       mismatches,
       invariantPassed:
-        urls.length === EXPECTED_URL_ROWS && mismatches.length === 0,
+        outcome.ok === true &&
+        urls.length === EXPECTED_URL_ROWS &&
+        mismatches.length === 0,
     });
+    assert.ok(outcome.ok, JSON.stringify(outcome));
     assert.equal(urls.length, EXPECTED_URL_ROWS);
     assert.deepEqual(mismatches, []);
   });
