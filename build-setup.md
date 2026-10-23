@@ -276,3 +276,25 @@ Submission:
    and the redirected `%APPDATA%\rosi`; see `src-tauri/src/legacy.rs`).
 3. The Store release is a low-priority follow-up after the GitHub stable
    release. It does not block the stable release. See `docs/RELEASE-STABLE.md`.
+
+## App icons
+
+There are two icon masters:
+
+- `src-tauri/app-icon.png`: macOS. The artwork fills the middle 824x824 of a
+  1024x1024 canvas, as Apple's icon grid requires. `icon.icns` and the Linux
+  PNGs come from it.
+- `src-tauri/app-icon-windows.png`: Windows. The same artwork with no margin.
+  `icon.ico` comes from it. Windows shows an icon at the full size of the .ico,
+  so the macOS margin makes ROSI look small in Start, the taskbar and Explorer.
+
+`npx tauri icon` rewrites every file in `src-tauri/icons/`. To regenerate the
+.ico, run it into a temporary folder and copy only `icon.ico` back:
+
+```sh
+npx tauri icon src-tauri/app-icon-windows.png -o tmp-icons
+cp tmp-icons/icon.ico src-tauri/icons/icon.ico
+```
+
+The Microsoft Store tiles in `src-tauri/msstore-assets/` are separate files and
+already have no margin.
