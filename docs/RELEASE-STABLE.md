@@ -136,7 +136,6 @@ updates:
 
 ```sh
 npm run sync-version
-node scripts/update-metainfo.js
 ```
 
 Edit `CHANGELOG.md` so the current section is the final stable `X.Y.Z` entry and

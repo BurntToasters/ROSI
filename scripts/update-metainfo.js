@@ -101,24 +101,31 @@ function run({
 
   let updatedSection = releasesSectionMatch[0];
   if (existingReleaseMatch) {
-    // A release date is historical metadata, not the build date. Once a
-    // version exists, preserve its date so repeated release preparation stays
-    // deterministic and does not dirty a clean source export.
-    const currentDateMatch = existingReleaseMatch[0].match(/date="([^"]+)"/);
+    // The current version's date follows the day the script last ran, so it
+    // ends up as the release day. Older entries are never re-dated.
+    // See update-metainfo.failure-modes.md.
+    const currentDateMatch = existingReleaseMatch[0].match(/\bdate="([^"]+)"/);
     if (currentDateMatch) {
       const pruned = stripSupersededPrereleases(updatedSection, version);
-      if (pruned === updatedSection) {
+      if (check) {
+        if (pruned !== updatedSection) {
+          throw new Error(
+            `AppStream still lists superseded prereleases of ${version}; remove them before release preparation`,
+          );
+        }
         return { updated: false, version, date: currentDateMatch[1] };
       }
-      if (check) {
-        throw new Error(
-          `AppStream still lists superseded prereleases of ${version}; remove them before release preparation`,
-        );
+      const redated = existingReleaseMatch[0].replace(
+        /\bdate="[^"]+"/,
+        `date="${dateStr}"`,
+      );
+      updatedSection = pruned.replace(existingReleaseMatch[0], redated);
+      if (updatedSection === releasesSectionMatch[0]) {
+        return { updated: false, version, date: dateStr };
       }
-      updatedSection = pruned;
       const updatedXml = xml.replace(releasesSectionRegex, updatedSection);
       fs.writeFileSync(metadataPath, updatedXml, "utf8");
-      return { updated: true, version, date: currentDateMatch[1] };
+      return { updated: true, version, date: dateStr };
     }
     if (check) {
       throw new Error(
