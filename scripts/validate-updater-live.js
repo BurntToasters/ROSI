@@ -64,6 +64,8 @@ const TARGETS = [
   "windows-aarch64",
   "darwin-aarch64",
   "darwin-x86_64",
+  "darwin-aarch64-app-zst",
+  "darwin-x86_64-app-zst",
   "linux-x86_64",
   "linux-aarch64",
   "windows-beta-x86_64",
@@ -74,6 +76,8 @@ const TARGETS = [
   "darwin-beta-aarch64-app",
   "darwin-beta-x86_64",
   "darwin-beta-x86_64-app",
+  "darwin-beta-aarch64-app-zst",
+  "darwin-beta-x86_64-app-zst",
   "linux-beta-x86_64",
   "linux-beta-x86_64-appimage",
   "linux-beta-aarch64",
@@ -85,6 +89,8 @@ const STANDARD_STABLE_TARGETS = [
   "windows-aarch64",
   "darwin-aarch64",
   "darwin-x86_64",
+  "darwin-aarch64-app-zst",
+  "darwin-x86_64-app-zst",
   "linux-x86_64",
 ];
 
@@ -97,6 +103,8 @@ const STANDARD_BETA_TARGETS = [
   "darwin-beta-aarch64-app",
   "darwin-beta-x86_64",
   "darwin-beta-x86_64-app",
+  "darwin-beta-aarch64-app-zst",
+  "darwin-beta-x86_64-app-zst",
   "linux-beta-x86_64",
   "linux-beta-x86_64-appimage",
 ];

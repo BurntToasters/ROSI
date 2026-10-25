@@ -125,12 +125,13 @@ const ARTIFACT_RULES = [
 
   rx(/\.nsis\.zip$/i),
   rx(/\.app\.tar\.gz$/i),
+  rx(/\.app\.tar\.zst$/i),
   rx(/\.appimage\.tar\.gz$/i),
 
   rx(/\.(?:exe|msi|dmg|flatpak|appimage)\.sig$/i),
   rx(/^ROSI(?:-MacOS-universal)?\.zip\.sig$/i),
   rx(/\.nsis\.zip\.sig$/i),
-  rx(/\.tar\.gz\.sig$/i),
+  rx(/\.tar\.(?:gz|zst)\.sig$/i),
 
   exact("latest.json"),
   isPerTargetManifest,
@@ -145,6 +146,7 @@ const SIGN_RULES = [
   rx(/^ROSI(?:-MacOS-universal)?\.zip$/i),
   rx(/\.nsis\.zip$/i),
   rx(/\.app\.tar\.gz$/i),
+  rx(/\.app\.tar\.zst$/i),
   rx(/\.appimage\.tar\.gz$/i),
 ];
 
@@ -289,6 +291,19 @@ function pickNewestByBasename(paths) {
   return Array.from(latest.values()).map((entry) => entry.filePath);
 }
 
+// `tauri build --target {aarch64,x86_64}-apple-darwin` (the per-arch updater
+// builds) also writes an arch-less ROSI.app.tar.gz. Only the universal build's
+// archive may serve the arch-less `darwin-*-app` targets.
+function isPerArchTauriAppArchive(filePath) {
+  const name = path.basename(filePath);
+  if (!/\.app\.tar\.gz(?:\.sig)?$/i.test(name) || inferArchFromName(name)) {
+    return false;
+  }
+  return filePath
+    .split(/[\\/]+/)
+    .some((part) => /^(?:aarch64|x86_64)-apple-darwin$/i.test(part));
+}
+
 function walk(dir, results = []) {
   if (!fs.existsSync(dir)) return results;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -303,7 +318,7 @@ function walk(dir, results = []) {
 }
 
 function cleanArtifactBaseName(name) {
-  if (/\.tar\.gz$/i.test(name)) return name;
+  if (/\.tar\.(?:gz|zst)$/i.test(name)) return name;
   if (/\.nsis\.zip$/i.test(name)) return name;
 
   if (/\.dmg$/i.test(name)) return "ROSI-MacOS-universal.dmg";
@@ -330,6 +345,10 @@ function cleanArtifactName(name) {
   }
   return cleanArtifactBaseName(name);
 }
+
+// Installers that only custom-target clients request, on every channel. They
+// never become the generic `{os}-{arch}` fallback that older clients read.
+const CUSTOM_TARGET_INSTALLERS = new Set(["app-zst"]);
 
 const FALLBACK_INSTALLER_PRIORITY = {
   windows: { nsis: 3, msi: 2 },
@@ -399,6 +418,14 @@ function canPopulateFallbackTarget(_target) {
 
 function resolveUpdaterTargets(name) {
   const targets = [];
+  if (/\.app\.tar\.zst$/i.test(name)) {
+    // Per-arch only (scripts/pack-macos-updater-zst.js). Packaged macOS apps
+    // request these through the custom `darwin[-beta]-{arch}-app-zst` target.
+    const arch = inferArchFromName(name);
+    if (arch) targets.push({ os: "darwin", arch, installer: "app-zst" });
+    return targets;
+  }
+
   if (/\.app\.tar\.gz$/i.test(name)) {
     const arch = inferArchFromName(name);
     const arches = arch ? [arch] : ["x86_64", "aarch64"];
@@ -449,7 +476,10 @@ function updaterChannelVariants(
   ];
 }
 
-function generateUpdaterManifests(files) {
+function generateUpdaterManifests(
+  files,
+  { outputDir = releaseDir, publicKey } = {},
+) {
   const byName = new Map();
   for (const filePath of files) {
     byName.set(path.basename(filePath), filePath);
@@ -463,10 +493,11 @@ function generateUpdaterManifests(files) {
   }
   verifyUpdaterSignatures({
     root,
-    releaseDir,
+    releaseDir: outputDir,
     byName,
     signatureByBaseName,
     resolveUpdaterTargets,
+    publicKey,
   });
 
   const manifests = new Map();
@@ -517,10 +548,13 @@ function generateUpdaterManifests(files) {
         const installerKey = `${targetName}-${target.arch}-${target.installer}`;
         const fallbackKey = `${targetName}-${target.arch}`;
         manifest.platforms[installerKey] = { url, signature };
-        if (channel.targetSuffix) {
-          // A beta check uses the full installer-aware key as its custom Tauri
-          // target. Give that key its own endpoint manifest so installers do
-          // not fall through to the generic fallback.
+        if (
+          channel.targetSuffix ||
+          CUSTOM_TARGET_INSTALLERS.has(target.installer)
+        ) {
+          // A beta or compact check uses the full installer-aware key as its
+          // custom Tauri target. Give that key its own endpoint manifest so
+          // installers do not fall through to the generic fallback.
           const installerManifestName = `latest-${installerKey}.json`;
           manifests.set(installerManifestName, {
             version: VERSION,
@@ -582,7 +616,7 @@ function generateUpdaterManifests(files) {
     if (manifest.notes) {
       output.notes = manifest.notes;
     }
-    const dest = path.join(releaseDir, manifestName);
+    const dest = path.join(outputDir, manifestName);
     fs.writeFileSync(dest, JSON.stringify(output, null, 2) + "\n");
     console.log(
       `  + ${manifestName} (${Object.keys(output.platforms).length} platform entries)`,
@@ -693,7 +727,9 @@ function collectArtifacts() {
   fs.mkdirSync(releaseDir, { recursive: true });
   const buildSession = readBuildSession();
 
-  const discovered = SEARCH_DIRS.flatMap((d) => walk(d));
+  const discovered = SEARCH_DIRS.flatMap((d) => walk(d)).filter(
+    (filePath) => !isPerArchTauriAppArchive(filePath),
+  );
   const found = discovered.filter(
     (filePath) =>
       artifactMatchesVersion(path.basename(filePath)) &&
@@ -1332,6 +1368,8 @@ function requiredPublishedBetaManifestNames() {
     "darwin-beta-x86_64-app",
     "darwin-beta-aarch64",
     "darwin-beta-aarch64-app",
+    "darwin-beta-x86_64-app-zst",
+    "darwin-beta-aarch64-app-zst",
     "linux-beta-x86_64",
     "linux-beta-x86_64-appimage",
   ]);
@@ -1704,6 +1742,7 @@ export {
   cleanArtifactName,
   generateUpdaterManifests,
   isArtifact,
+  isPerArchTauriAppArchive,
   assertReleaseTargetsCommit,
   buildUploadList,
   checksumTargetKeysForArtifactName,

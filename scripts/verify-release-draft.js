@@ -95,6 +95,8 @@ export function requiredDraftStableManifestNames({
     "windows-aarch64",
     "darwin-x86_64",
     "darwin-aarch64",
+    "darwin-x86_64-app-zst",
+    "darwin-aarch64-app-zst",
     "linux-x86_64",
   ];
   if (requireLinuxAarch64) {
@@ -115,6 +117,8 @@ export function requiredDraftBetaManifestNames({
     "darwin-beta-x86_64-app",
     "darwin-beta-aarch64",
     "darwin-beta-aarch64-app",
+    "darwin-beta-x86_64-app-zst",
+    "darwin-beta-aarch64-app-zst",
     "linux-beta-x86_64",
     "linux-beta-x86_64-appimage",
   ];

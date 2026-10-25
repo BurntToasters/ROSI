@@ -2021,15 +2021,50 @@ fn recover_macos_live_bundle(
 
 #[cfg(target_os = "macos")]
 fn extract_macos_app_archive(bytes: &[u8], dest_root: &Path) -> Result<()> {
+    extract_macos_app_archive_with_limit(bytes, dest_root, MACOS_MAX_DECOMPRESSED_BYTES)
+}
+
+/// Upper bound for an extracted `.app` (a universal ROSI bundle is ~300 MB).
+#[cfg(target_os = "macos")]
+const MACOS_MAX_DECOMPRESSED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Per-arch `.app.tar.zst` archives are packed with `zstd --long=27`. Refuse
+/// frames that ask for a larger window instead of allocating it.
+#[cfg(target_os = "macos")]
+const MACOS_ZSTD_WINDOW_LOG_MAX: u32 = 27;
+
+/// `.app.tar.gz` (Tauri) or `.app.tar.zst` (ROSI per-arch), chosen by magic bytes.
+#[cfg(target_os = "macos")]
+fn macos_archive_decoder<'a>(bytes: &'a [u8]) -> Result<Box<dyn std::io::Read + 'a>> {
+    const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
+    const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
+    let reader = std::io::Cursor::new(bytes);
+    if bytes.starts_with(&ZSTD_MAGIC) {
+        let mut decoder = zstd::stream::read::Decoder::new(reader)?;
+        decoder.window_log_max(MACOS_ZSTD_WINDOW_LOG_MAX)?;
+        return Ok(Box::new(decoder));
+    }
+    if bytes.starts_with(&GZIP_MAGIC) {
+        return Ok(Box::new(flate2::read::GzDecoder::new(reader)));
+    }
+    Err(Error::InvalidUpdaterFormat)
+}
+
+#[cfg(target_os = "macos")]
+fn extract_macos_app_archive_with_limit(
+    bytes: &[u8],
+    dest_root: &Path,
+    max_decompressed_bytes: u64,
+) -> Result<()> {
+    use self::appimage_archive::BoundedArchiveReader;
     use crate::install_safety::{
         confined_symlink_target, confined_tar_member_relative, create_confined_parent_dirs,
         path_is_inside,
     };
-    use flate2::read::GzDecoder;
     use tar::EntryType;
 
-    let decoder = GzDecoder::new(std::io::Cursor::new(bytes));
-    let mut archive = tar::Archive::new(decoder);
+    let mut decompressed =
+        BoundedArchiveReader::new(macos_archive_decoder(bytes)?, max_decompressed_bytes);
+    let mut archive = tar::Archive::new(&mut decompressed);
     for entry in archive.entries()? {
         let mut entry = entry?;
         let entry_path = entry.path()?.into_owned();
@@ -2101,7 +2136,9 @@ fn extract_macos_app_archive(bytes: &[u8], dest_root: &Path) -> Result<()> {
             format!("unsupported updater archive member type {kind:?}"),
         )));
     }
-    Ok(())
+    // A truncated stream can end on a member boundary, which `tar::Archive`
+    // accepts. Require the full stream, both end blocks and nothing after them.
+    decompressed.drain_and_check_trailer()
 }
 
 /// Gets the base target string used by the updater. If bundle type is available it
@@ -3082,5 +3119,153 @@ mod tests {
             !MACOS_PRIVILEGED_INSTALL_SCRIPT.contains(malicious),
             "malicious path must stay outside the constant script body"
         );
+    }
+}
+
+// e2e/updater-zst.failure-modes.md, Z01.
+#[cfg(all(test, target_os = "macos"))]
+mod macos_archive_tests {
+    use super::{extract_macos_app_archive, extract_macos_app_archive_with_limit};
+    use crate::error::Error;
+    use std::io::Write;
+    use tar::{EntryType, Header};
+
+    const EXECUTABLE: &str = "ROSI.app/Contents/MacOS/ROSI";
+
+    fn app_tar(payload: &[u8]) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        for dir in ["ROSI.app/", "ROSI.app/Contents/", "ROSI.app/Contents/MacOS/"] {
+            let mut header = Header::new_gnu();
+            header.set_entry_type(EntryType::Directory);
+            header.set_mode(0o755);
+            header.set_size(0);
+            header.set_cksum();
+            builder.append_data(&mut header, dir, &[][..]).unwrap();
+        }
+        let mut header = Header::new_gnu();
+        header.set_entry_type(EntryType::Regular);
+        header.set_mode(0o755);
+        header.set_size(payload.len() as u64);
+        header.set_cksum();
+        builder.append_data(&mut header, EXECUTABLE, payload).unwrap();
+        builder.into_inner().unwrap()
+    }
+
+    fn gzip(raw: &[u8]) -> Vec<u8> {
+        let mut encoder =
+            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(raw).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    fn zstd_with_window_log(raw: &[u8], window_log: u32) -> Vec<u8> {
+        let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), 3).unwrap();
+        encoder.long_distance_matching(true).unwrap();
+        encoder.window_log(window_log).unwrap();
+        encoder.write_all(raw).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    fn zstd(raw: &[u8]) -> Vec<u8> {
+        zstd_with_window_log(raw, 27)
+    }
+
+    fn extracted_executable(archive: &[u8]) -> crate::Result<Vec<u8>> {
+        let dir = tempfile::tempdir().unwrap();
+        extract_macos_app_archive(archive, dir.path())?;
+        Ok(std::fs::read(dir.path().join("Contents/MacOS/ROSI")).unwrap())
+    }
+
+    #[test]
+    fn gzip_and_zstd_archives_extract_the_same_bundle() {
+        let payload = b"\xcf\xfa\xed\xfe rosi executable".repeat(64);
+        let raw = app_tar(&payload);
+        assert_eq!(extracted_executable(&gzip(&raw)).unwrap(), payload);
+        assert_eq!(extracted_executable(&zstd(&raw)).unwrap(), payload);
+    }
+
+    #[test]
+    fn rejects_a_truncated_zstd_archive() {
+        let archive = zstd(&app_tar(&[7_u8; 64 * 1024]));
+        let truncated = &archive[..archive.len() / 2];
+        assert!(extracted_executable(truncated).is_err());
+    }
+
+    #[test]
+    fn rejects_a_zstd_window_larger_than_the_cap() {
+        // The frame header asks for a 256 MiB window; the content stays small.
+        let archive = zstd_with_window_log(&app_tar(b"payload"), 28);
+        assert!(extracted_executable(&archive).is_err());
+    }
+
+    #[test]
+    fn stops_a_decompression_bomb_at_the_cap() {
+        let archive = zstd(&app_tar(&vec![0_u8; 4 * 1024 * 1024]));
+        assert!(archive.len() < 64 * 1024, "fixture must compress well");
+        let dir = tempfile::tempdir().unwrap();
+        assert!(extract_macos_app_archive_with_limit(&archive, dir.path(), 1024 * 1024).is_err());
+    }
+
+    #[test]
+    fn rejects_trailing_data_after_the_zstd_frame() {
+        let mut archive = zstd(&app_tar(b"payload"));
+        archive.extend_from_slice(b"not a zstd frame");
+        assert!(extracted_executable(&archive).is_err());
+    }
+
+    #[test]
+    fn rejects_a_tar_stream_without_end_blocks() {
+        let mut raw = app_tar(b"payload");
+        raw.truncate(raw.len() - 1024);
+        assert!(extracted_executable(&zstd(&raw)).is_err());
+        assert!(extracted_executable(&gzip(&raw)).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_archive_magic() {
+        let raw = app_tar(b"payload");
+        assert!(matches!(
+            extracted_executable(&raw),
+            Err(Error::InvalidUpdaterFormat)
+        ));
+    }
+
+    #[test]
+    fn keeps_member_confinement_for_zstd_archives() {
+        let mut raw = Vec::new();
+        let mut header = Header::new_gnu();
+        header.set_entry_type(EntryType::Regular);
+        header.set_mode(0o644);
+        header.set_size(1);
+        // `set_path` refuses `..`; write the name bytes directly.
+        header.as_gnu_mut().unwrap().name[..17].copy_from_slice(b"ROSI.app/../../x\0");
+        header.set_cksum();
+        raw.extend_from_slice(header.as_bytes());
+        raw.extend_from_slice(&[b'x'; 512]);
+        raw.extend_from_slice(&[0_u8; 1024]);
+        assert!(extracted_executable(&zstd(&raw)).is_err());
+    }
+
+    /// Run by scripts/e2e-updater-zst.mjs against real release archives.
+    #[test]
+    #[ignore = "needs ROSI_UPDATER_ZST_E2E_ARCHIVES"]
+    fn extracts_real_release_archives() {
+        let paths = std::env::var("ROSI_UPDATER_ZST_E2E_ARCHIVES")
+            .expect("ROSI_UPDATER_ZST_E2E_ARCHIVES lists archives separated by ':'");
+        for path in paths.split(':').filter(|p| !p.is_empty()) {
+            let bytes = std::fs::read(path).unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let started = std::time::Instant::now();
+            extract_macos_app_archive(&bytes, dir.path())
+                .unwrap_or_else(|err| panic!("{path}: {err}"));
+            assert!(
+                crate::install_safety::macos_app_bundle_complete(dir.path()),
+                "{path}: extracted bundle is incomplete"
+            );
+            println!(
+                "ROSI_UPDATER_ZST_E2E {path} extract_ms={}",
+                started.elapsed().as_millis()
+            );
+        }
     }
 }

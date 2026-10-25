@@ -59,6 +59,7 @@ export interface Commands {
   get_app_platform: { args: void; result: NodeJS.Platform };
   get_distribution_channel: { args: void; result: string };
   get_beta_updater_target: { args: void; result: string };
+  get_compact_updater_target: { args: { beta: boolean }; result: string | null };
   restart_app: { args: void; result: void };
   log_error: { args: { message: string }; result: void };
   notify_settings_flushed: { args: { generation: number }; result: void };

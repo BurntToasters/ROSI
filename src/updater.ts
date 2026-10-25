@@ -3,6 +3,8 @@
 // latest-{target}-{arch}.json endpoints; beta checks pass a custom
 // `{os}-beta-{arch}-{installer}` target so they read the beta manifests
 // published (and synced onto the latest stable release) by scripts/gpg-sign.js.
+// Packaged macOS apps instead pass `darwin[-beta]-{arch}-app-zst`, which
+// points at per-arch zstd archives, and fall back to the targets above.
 import { call, type CommandArgs, type CommandName, type Commands } from './commands';
 import { getVersion } from '@tauri-apps/api/app';
 import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updater';
@@ -135,10 +137,19 @@ async function updateCheckTarget(): Promise<string | undefined> {
   }
   const channel =
     updateChannelOverride ?? (await updaterInvoke('get_settings')).updateChannel ?? 'auto';
-  if (channel === 'stable') return undefined;
-  if (channel === 'beta') return updaterInvoke('get_beta_updater_target');
   // auto: follow the installed version.
-  return isBetaVersion(await getVersion()) ? updaterInvoke('get_beta_updater_target') : undefined;
+  const beta = channel === 'beta' || (channel === 'auto' && isBetaVersion(await getVersion()));
+  const compact = await updaterInvoke('get_compact_updater_target', { beta });
+  if (compact) return compact;
+  return beta ? updaterInvoke('get_beta_updater_target') : undefined;
+}
+
+const COMPACT_TARGET_SUFFIX = '-app-zst';
+
+// The target a packaged macOS app used before per-arch zstd feeds existed.
+function legacyTarget(compactTarget: string): string | undefined {
+  // darwin-beta-aarch64-app-zst -> darwin-beta-aarch64-app; stable uses the default target.
+  return compactTarget.includes('-beta-') ? compactTarget.slice(0, -'-zst'.length) : undefined;
 }
 
 export function notifyUpdaterChannelChanged(
@@ -188,6 +199,21 @@ async function retiredLinuxPackageMessage(): Promise<string | null> {
 }
 
 async function checkFeed(
+  target: string | undefined,
+  isCurrent: () => boolean
+): Promise<Update | null> {
+  if (!target?.endsWith(COMPACT_TARGET_SUFFIX)) return checkTargetFeed(target, isCurrent);
+  try {
+    return await checkTargetFeed(target, isCurrent);
+  } catch {
+    if (!isCurrent()) return null;
+    // A release published without per-arch zstd archives still updates
+    // through the universal .app.tar.gz feed.
+    return checkTargetFeed(legacyTarget(target), isCurrent);
+  }
+}
+
+async function checkTargetFeed(
   target: string | undefined,
   isCurrent: () => boolean
 ): Promise<Update | null> {

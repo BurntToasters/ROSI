@@ -78,19 +78,12 @@ fn extract_appimage_from_archive_with_limits(
     // `tar::Archive` accepts EOF without an end marker. Drain the complete gzip
     // stream, then require both tar zero blocks and validate CRC/trailer errors,
     // hidden trailing entries, and decompression caps.
-    decompressed.begin_trailer_check();
-    io::copy(&mut decompressed, &mut io::sink()).map_err(|_| Error::InvalidUpdaterFormat)?;
-    if !decompressed.reached_eof
-        || decompressed.consecutive_zero_blocks < 2
-        || decompressed.trailing_nonzero
-    {
-        return Err(Error::InvalidUpdaterFormat);
-    }
+    decompressed.drain_and_check_trailer()?;
 
     appimage.ok_or(Error::BinaryNotFoundInArchive)
 }
 
-struct BoundedArchiveReader<R> {
+pub(crate) struct BoundedArchiveReader<R> {
     inner: R,
     max_bytes: u64,
     bytes_read: u64,
@@ -103,7 +96,7 @@ struct BoundedArchiveReader<R> {
 }
 
 impl<R> BoundedArchiveReader<R> {
-    fn new(inner: R, max_bytes: u64) -> Self {
+    pub(crate) fn new(inner: R, max_bytes: u64) -> Self {
         Self {
             inner,
             max_bytes,
@@ -122,6 +115,19 @@ impl<R> BoundedArchiveReader<R> {
     }
 }
 
+impl<R: Read> BoundedArchiveReader<R> {
+    /// Call after `tar::Archive` stops reading. Drains the rest of the stream,
+    /// then requires both tar end blocks and no nonzero trailing data.
+    pub(crate) fn drain_and_check_trailer(&mut self) -> Result<()> {
+        self.begin_trailer_check();
+        io::copy(self, &mut io::sink()).map_err(|_| Error::InvalidUpdaterFormat)?;
+        if !self.reached_eof || self.consecutive_zero_blocks < 2 || self.trailing_nonzero {
+            return Err(Error::InvalidUpdaterFormat);
+        }
+        Ok(())
+    }
+}
+
 impl<R: Read> Read for BoundedArchiveReader<R> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         if buffer.is_empty() {
@@ -136,7 +142,7 @@ impl<R: Read> Read for BoundedArchiveReader<R> {
                 }
                 _ => Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "AppImage archive exceeds the decompressed size limit",
+                    "updater archive exceeds the decompressed size limit",
                 )),
             };
         }

@@ -48,6 +48,7 @@
     "allow-get-app-platform",
     "allow-get-distribution-channel",
     "allow-get-beta-updater-target",
+    "allow-get-compact-updater-target",
     "allow-restart-app",
     "allow-log-error",
     "allow-notify-settings-flushed",

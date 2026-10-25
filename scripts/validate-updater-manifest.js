@@ -105,7 +105,7 @@ export function validateManifestData(data, filePath) {
     ? expectedTarget.replace(/-(?:aarch64|x86_64)$/i, "")
     : null;
   const target = expectedTarget.match(
-    /^(darwin|windows|linux)(-beta)?-(x86_64|aarch64)(?:-(app|nsis|msi|appimage))?$/,
+    /^(darwin|windows|linux)(-beta)?-(x86_64|aarch64)(?:-(app-zst|app|nsis|msi|appimage))?$/,
   );
   if (!target) {
     fail(`${filePath}: unsupported manifest target ${expectedTarget}`);
@@ -121,7 +121,8 @@ export function validateManifestData(data, filePath) {
   if (
     installer &&
     installer !== defaultInstaller &&
-    !(os === "windows" && installer === "msi")
+    !(os === "windows" && installer === "msi") &&
+    !(os === "darwin" && installer === "app-zst")
   ) {
     fail(`${filePath}: unsupported installer ${installer}`);
   }

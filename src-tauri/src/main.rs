@@ -160,6 +160,7 @@ macro_rules! generate_app_handler {
             platform::get_app_platform,
             platform::get_distribution_channel,
             platform::get_beta_updater_target,
+            platform::get_compact_updater_target,
             window::restart_app,
             logging::log_error,
             window::notify_settings_flushed,

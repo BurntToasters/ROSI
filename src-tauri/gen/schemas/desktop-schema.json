@@ -453,6 +453,12 @@
           "markdownDescription": "Enables the get_beta_updater_target command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_compact_updater_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-compact-updater-target",
+          "markdownDescription": "Enables the get_compact_updater_target command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_default_settings command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-default-settings",
@@ -721,6 +727,12 @@
           "type": "string",
           "const": "deny-get-beta-updater-target",
           "markdownDescription": "Denies the get_beta_updater_target command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_compact_updater_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-compact-updater-target",
+          "markdownDescription": "Denies the get_compact_updater_target command without any pre-configured scope."
         },
         {
           "description": "Denies the get_default_settings command without any pre-configured scope.",

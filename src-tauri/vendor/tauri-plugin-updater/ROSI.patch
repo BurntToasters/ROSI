@@ -1,7 +1,21 @@
+diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -187,6 +187,10 @@
+ [target.'cfg(target_os = "macos")'.dependencies.tar]
+ version = "0.4"
+ 
++[target.'cfg(target_os = "macos")'.dependencies.zstd]
++version = "0.13.3"
++default-features = false
++
+ [target.'cfg(target_os = "windows")'.dependencies.windows-sys]
+ version = "0.61.0"
+ features = [
 diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/appimage_archive.rs b/src/appimage_archive.rs
 --- a/src/appimage_archive.rs
 +++ b/src/appimage_archive.rs
-@@ -0,0 +1,391 @@
+@@ -0,0 +1,397 @@
 +// The AppImage helpers are compiled for macOS only because the shared module
 +// list includes it; their callers are Linux and BSD only. Keep dead_code quiet there.
 +#![cfg_attr(target_os = "macos", allow(dead_code))]
@@ -82,19 +96,12 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/app
 +    // `tar::Archive` accepts EOF without an end marker. Drain the complete gzip
 +    // stream, then require both tar zero blocks and validate CRC/trailer errors,
 +    // hidden trailing entries, and decompression caps.
-+    decompressed.begin_trailer_check();
-+    io::copy(&mut decompressed, &mut io::sink()).map_err(|_| Error::InvalidUpdaterFormat)?;
-+    if !decompressed.reached_eof
-+        || decompressed.consecutive_zero_blocks < 2
-+        || decompressed.trailing_nonzero
-+    {
-+        return Err(Error::InvalidUpdaterFormat);
-+    }
++    decompressed.drain_and_check_trailer()?;
 +
 +    appimage.ok_or(Error::BinaryNotFoundInArchive)
 +}
 +
-+struct BoundedArchiveReader<R> {
++pub(crate) struct BoundedArchiveReader<R> {
 +    inner: R,
 +    max_bytes: u64,
 +    bytes_read: u64,
@@ -107,7 +114,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/app
 +}
 +
 +impl<R> BoundedArchiveReader<R> {
-+    fn new(inner: R, max_bytes: u64) -> Self {
++    pub(crate) fn new(inner: R, max_bytes: u64) -> Self {
 +        Self {
 +            inner,
 +            max_bytes,
@@ -126,6 +133,19 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/app
 +    }
 +}
 +
++impl<R: Read> BoundedArchiveReader<R> {
++    /// Call after `tar::Archive` stops reading. Drains the rest of the stream,
++    /// then requires both tar end blocks and no nonzero trailing data.
++    pub(crate) fn drain_and_check_trailer(&mut self) -> Result<()> {
++        self.begin_trailer_check();
++        io::copy(self, &mut io::sink()).map_err(|_| Error::InvalidUpdaterFormat)?;
++        if !self.reached_eof || self.consecutive_zero_blocks < 2 || self.trailing_nonzero {
++            return Err(Error::InvalidUpdaterFormat);
++        }
++        Ok(())
++    }
++}
++
 +impl<R: Read> Read for BoundedArchiveReader<R> {
 +    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
 +        if buffer.is_empty() {
@@ -140,7 +160,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/app
 +                }
 +                _ => Err(io::Error::new(
 +                    io::ErrorKind::InvalidData,
-+                    "AppImage archive exceeds the decompressed size limit",
++                    "updater archive exceeds the decompressed size limit",
 +                )),
 +            };
 +        }
@@ -2630,7 +2650,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
  const UPDATER_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
  
  /// The kind of bundle the running application was installed from.
-@@ -143,9 +168,10 @@
+@@ -143,9 +168,11 @@
      }
  }
  
@@ -2640,11 +2660,12 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +/// Function executed right before the updater is launched. Returning an error aborts the installation,
 +/// keeping the downloaded update retryable. See [`UpdaterBuilder::on_before_exit`].
 +pub type OnBeforeExit = Arc<dyn Fn() -> std::result::Result<(), String> + Send + Sync + 'static>;
++#[cfg(windows)]
 +type OnWindowsInstallerLaunched = Arc<dyn Fn() + Send + Sync + 'static>;
  /// Function that customizes the `reqwest` client builder used for the updater requests.
  /// See [`UpdaterBuilder::configure_client`].
  pub type OnBeforeRequest = Arc<dyn Fn(ClientBuilder) -> ClientBuilder + Send + Sync + 'static>;
-@@ -154,6 +180,75 @@
+@@ -154,6 +181,75 @@
  /// It receives the current application version and the remote release,
  /// and returns `true` when the release should be treated as an update.
  pub type VersionComparator = Arc<dyn Fn(Version, RemoteRelease) -> bool + Send + Sync>;
@@ -2720,7 +2741,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
  #[cfg(target_os = "macos")]
  type MainThreadClosure = Box<dyn FnOnce() + Send + Sync + 'static>;
  #[cfg(target_os = "macos")]
-@@ -170,13 +265,16 @@
+@@ -170,13 +266,16 @@
      /// App name, used for creating named tempfiles
      #[cfg(windows)]
      app_name: String,
@@ -2738,7 +2759,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
      restart_after_install: bool,
  }
  
-@@ -218,11 +316,13 @@
+@@ -218,11 +317,13 @@
                  run_on_main_thread,
                  #[cfg(windows)]
                  app_name: app.package_info().name.clone(),
@@ -2753,7 +2774,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
                  restart_after_install: true,
              },
              current_version: app.package_info().version.clone(),
-@@ -400,22 +500,34 @@
+@@ -400,22 +501,34 @@
          self
      }
  
@@ -2794,7 +2815,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
          }
          self
      }
-@@ -453,6 +565,10 @@
+@@ -453,6 +566,10 @@
          let arch = updater_arch().ok_or(Error::UnsupportedArch)?;
  
          let executable_path = self.executable_path.clone().unwrap_or(current_exe()?);
@@ -2805,7 +2826,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
  
          // Get the extract_path from the provided executable_path
          let extract_path = if cfg!(target_os = "linux") {
-@@ -462,6 +578,7 @@
+@@ -462,6 +579,7 @@
          };
  
          Ok(Updater {
@@ -2813,7 +2834,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
              current_version: self.current_version,
              version_comparator: self.version_comparator,
              timeout: self.timeout,
-@@ -495,6 +612,7 @@
+@@ -495,6 +613,7 @@
  ///
  /// Get one from [`crate::UpdaterExt::updater`] or by calling [`UpdaterBuilder::build`].
  pub struct Updater {
@@ -2821,7 +2842,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
      current_version: Version,
      version_comparator: Option<VersionComparator>,
      timeout: Option<Duration>,
-@@ -537,6 +655,27 @@
+@@ -537,6 +656,27 @@
              headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
          }
  
@@ -2849,7 +2870,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
          let target = self.current_target()?;
  
          let mut remote_release: Option<RemoteRelease> = None;
-@@ -726,6 +865,7 @@
+@@ -726,6 +866,7 @@
              current_version: self.current_version.to_string(),
              target: target.to_owned(),
              extract_path: self.extract_path.clone(),
@@ -2857,7 +2878,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
              version: release.version.to_string(),
              date: release.pub_date,
              download_url: download_url.clone(),
-@@ -807,6 +947,8 @@
+@@ -807,6 +948,8 @@
      /// Extract path
      #[allow(unused)]
      extract_path: PathBuf,
@@ -2866,7 +2887,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
      context: UpdaterContext,
  }
  
-@@ -877,14 +1019,20 @@
+@@ -877,14 +1020,20 @@
              .get("Content-Length")
              .and_then(|value| value.to_str().ok())
              .and_then(|value| value.parse().ok());
@@ -2888,7 +2909,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
          }
          on_download_finish();
  
-@@ -921,7 +1069,7 @@
+@@ -921,7 +1070,7 @@
      pub fn install(&self, bytes: impl AsRef<[u8]>) -> Result<()> {
          let bytes = bytes.as_ref();
          self.verify(bytes)?;
@@ -2897,7 +2918,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
      }
  
      /// Downloads and installs the updater package
-@@ -935,9 +1083,8 @@
+@@ -935,9 +1084,8 @@
          on_chunk: C,
          on_download_finish: D,
      ) -> Result<()> {
@@ -2908,7 +2929,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
      }
  
      /// Updates are not supported on mobile, where apps are updated through the app stores.
-@@ -1014,10 +1161,6 @@
+@@ -1014,10 +1162,6 @@
  
          let updater_type = self.extract(bytes)?;
  
@@ -2919,7 +2940,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
  
          let file = match &updater_type {
              WindowsUpdaterType::Nsis { path, .. } => path.as_os_str().to_os_string(),
-@@ -1033,7 +1176,7 @@
+@@ -1033,7 +1177,7 @@
          let file = encode_wide(file);
          let parameters = encode_wide(parameters);
  
@@ -2928,7 +2949,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
              ShellExecuteW(
                  std::ptr::null_mut(),
                  w!("open"),
-@@ -1042,12 +1185,16 @@
+@@ -1042,12 +1186,16 @@
                  std::ptr::null(),
                  SW_SHOW,
              )
@@ -2951,7 +2972,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
      }
  
      fn updater_parameters(&self, updater_type: &WindowsUpdaterType) -> OsString {
-@@ -1219,111 +1366,34 @@
+@@ -1219,113 +1367,36 @@
      }
  
      fn install_appimage(&self, bytes: &[u8]) -> Result<()> {
@@ -2979,7 +3000,8 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -            log::error!("the update is neither an AppImage nor a compressed AppImage");
 -            return Err(Error::InvalidUpdaterFormat);
 -        }
--
++        let payload = bytes.to_vec();
+ 
 -        for tmp_dir_location in self.tmp_dir_locations() {
 -            let Some(tmp_dir_location) = tmp_dir_location() else {
 -                continue;
@@ -3054,27 +3076,15 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -                    Ok(_) => Ok(()),
 -                };
 -            }
--        }
--
--        Err(Error::TempDirNotOnSameMountPoint)
--    }
-+        let payload = bytes.to_vec();
- 
--    /// Directories to try, in order, for the temporary files of an install: the system temporary
--    /// directory, the user cache directory and the directory holding the app.
--    fn tmp_dir_locations(&self) -> Vec<Box<dyn FnOnce() -> Option<PathBuf> + '_>> {
--        vec![
--            Box::new(|| Some(std::env::temp_dir())),
--            Box::new(dirs::cache_dir),
--            Box::new(|| self.extract_path.parent().map(Path::to_path_buf)),
--        ]
 +        // Keep the recovery copy beside the installed image when possible so
 +        // it survives ordinary `/tmp` cleanup and remains on the install
 +        // filesystem for an atomic replacement.
 +        let mut temporary_roots = Vec::new();
 +        if let Some(parent) = self.extract_path.parent() {
 +            temporary_roots.push(parent.to_path_buf());
-+        }
+         }
+-
+-        Err(Error::TempDirNotOnSameMountPoint)
 +        if let Some(cache_directory) = dirs::cache_dir() {
 +            temporary_roots.push(cache_directory);
 +        }
@@ -3088,8 +3098,20 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +        Ok(())
      }
  
+-    /// Directories to try, in order, for the temporary files of an install: the system temporary
+-    /// directory, the user cache directory and the directory holding the app.
+-    fn tmp_dir_locations(&self) -> Vec<Box<dyn FnOnce() -> Option<PathBuf> + '_>> {
+-        vec![
+-            Box::new(|| Some(std::env::temp_dir())),
+-            Box::new(dirs::cache_dir),
+-            Box::new(|| self.extract_path.parent().map(Path::to_path_buf)),
+-        ]
+-    }
+-
      fn install_deb(&self, bytes: &[u8]) -> Result<()> {
-@@ -1333,7 +1403,7 @@
+         // First verify the bytes are actually a .deb package
+         if !infer::archive::is_deb(bytes) {
+@@ -1333,7 +1404,7 @@
              return Err(Error::InvalidUpdaterFormat);
          }
  
@@ -3098,7 +3120,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
      }
  
      fn install_rpm(&self, bytes: &[u8]) -> Result<()> {
-@@ -1341,29 +1411,43 @@
+@@ -1341,29 +1412,43 @@
          if !infer::archive::is_rpm(bytes) {
              return Err(Error::InvalidUpdaterFormat);
          }
@@ -3132,17 +3154,16 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -            let prefix = format!("tauri_{package_extension}_update");
 -            if let Ok(tmp_dir) = tempfile::Builder::new().prefix(&prefix).tempdir_in(path) {
 -                let pkg_path = tmp_dir.path().join(format!("package.{package_extension}"));
--
--                // Try writing the .deb / .rpm file
--                if std::fs::write(&pkg_path, bytes).is_ok() {
--                    // If write succeeds, proceed with installation
--                    return self.try_install_with_privileges(&pkg_path, install_cmd, install_arg);
 +        for tmp_dir_location in tmp_dir_locations {
 +            if let Some(path) = tmp_dir_location() {
 +                let prefix = format!("tauri_{package_extension}_update");
 +                if let Ok(tmp_dir) = tempfile::Builder::new().prefix(&prefix).tempdir_in(path) {
 +                    let pkg_path = tmp_dir.path().join(format!("package.{package_extension}"));
-+
+ 
+-                // Try writing the .deb / .rpm file
+-                if std::fs::write(&pkg_path, bytes).is_ok() {
+-                    // If write succeeds, proceed with installation
+-                    return self.try_install_with_privileges(&pkg_path, install_cmd, install_arg);
 +                    // Try writing the .deb / .rpm file
 +                    if std::fs::write(&pkg_path, bytes).is_ok() {
 +                        // If write succeeds, proceed with installation
@@ -3156,7 +3177,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
                  }
                  // If write fails, continue to next temp location
              }
-@@ -1377,68 +1461,78 @@
+@@ -1377,68 +1462,78 @@
          &self,
          pkg_path: &Path,
          install_cmd: &str,
@@ -3198,13 +3219,6 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -            log::debug!("installed {pkg_path:?} with GUI sudo");
 -            return Ok(());
 -        }
--
--        // 3. Final fallback: terminal sudo
--        let status = std::process::Command::new("sudo")
--            .arg(install_cmd)
--            .arg(install_arg)
--            .arg(pkg_path)
--            .status()?;
 +        if let Some(sudo) = sudo.as_ref() {
 +            if let Ok(password) = self.get_password_graphically() {
 +                if self.install_with_sudo(sudo, &installer, pkg_path, &password, install_args)? {
@@ -3213,17 +3227,23 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +                }
 +            }
  
--        if status.success() {
--            log::debug!("installed {pkg_path:?} with sudo");
--            Ok(())
--        } else {
--            Err(Error::PackageInstallFailed)
+-        // 3. Final fallback: terminal sudo
+-        let status = std::process::Command::new("sudo")
+-            .arg(install_cmd)
+-            .arg(install_arg)
+-            .arg(pkg_path)
+-            .status()?;
 +            // 3. Final fallback: terminal sudo
 +            let mut command = linux_privileged_command(sudo);
 +            command.arg(&installer).args(install_args).arg(pkg_path);
 +            let status =
 +                linux_privileged_wait_status(command, std::time::Duration::from_secs(600))?;
-+
+ 
+-        if status.success() {
+-            log::debug!("installed {pkg_path:?} with sudo");
+-            Ok(())
+-        } else {
+-            Err(Error::PackageInstallFailed)
 +            if status.success() {
 +                log::debug!("installed {pkg_path:?} with sudo");
 +                return Ok(());
@@ -3242,11 +3262,6 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -                "--text=Enter your password to install the update:",
 -            ])
 -            .output();
--
--        if let Ok(output) = zenity_result
--            && output.status.success()
--        {
--            return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
 +        if let Ok(zenity) = crate::install_safety::resolve_trusted_system_helper("zenity") {
 +            let zenity_result = linux_privileged_command(&zenity)
 +                .args([
@@ -3255,7 +3270,11 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +                    "--text=Enter your password to install the update:",
 +                ])
 +                .output();
-+
+ 
+-        if let Ok(output) = zenity_result
+-            && output.status.success()
+-        {
+-            return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
 +            if let Ok(output) = zenity_result {
 +                if output.status.success() {
 +                    return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
@@ -3267,16 +3286,15 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -        let kdialog_result = std::process::Command::new("kdialog")
 -            .args(["--password", "Enter your password to install the update:"])
 -            .output();
--
--        if let Ok(output) = kdialog_result
--            && output.status.success()
--        {
--            return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
 +        if let Ok(kdialog) = crate::install_safety::resolve_trusted_system_helper("kdialog") {
 +            let kdialog_result = linux_privileged_command(&kdialog)
 +                .args(["--password", "Enter your password to install the update:"])
 +                .output();
-+
+ 
+-        if let Ok(output) = kdialog_result
+-            && output.status.success()
+-        {
+-            return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
 +            if let Ok(output) = kdialog_result {
 +                if output.status.success() {
 +                    return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
@@ -3285,7 +3303,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
          }
  
          Err(Error::AuthenticationFailed)
-@@ -1446,34 +1540,105 @@
+@@ -1446,34 +1541,105 @@
  
      fn install_with_sudo(
          &self,
@@ -3319,10 +3337,10 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +            .stderr(Stdio::piped());
 +        // Isolate the sudo/dpkg group so a timeout can kill the whole tree.
 +        command.process_group(0);
-+
+ 
 +        let mut child = command.spawn()?;
 +        let pid = child.id();
- 
++
          if let Some(mut stdin) = child.stdin.take() {
 -            // Write password to stdin
              writeln!(stdin, "{password}")?;
@@ -3402,7 +3420,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
  /// MacOS
  #[cfg(target_os = "macos")]
  impl Update {
-@@ -1484,143 +1649,192 @@
+@@ -1484,143 +1650,192 @@
      /// │          └── ...
      /// └── ...
      fn install_inner(&self, bytes: &[u8]) -> Result<()> {
@@ -3434,51 +3452,16 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -        .flatten()
 -        .find(|dir| dir.metadata().is_ok_and(|m| m.dev() == app_dev))
 -        .ok_or(Error::TempDirNotOnSameMountPoint)?;
--
--        let tmp_backup_dir = tempfile::Builder::new()
--            .prefix("tauri_current_app")
--            .tempdir_in(&tmp_root)?;
--
--        let tmp_extract_dir = tempfile::Builder::new()
--            .prefix("tauri_updated_app")
--            .tempdir_in(&tmp_root)?;
--
--        let decoder = GzDecoder::new(cursor);
--        let mut archive = tar::Archive::new(decoder);
--
--        // Extract files to temporary directory
--        for entry in archive.entries()? {
--            let mut entry = entry?;
--            let collected_path: PathBuf = entry.path()?.iter().skip(1).collect();
--            let extraction_path = tmp_extract_dir.path().join(&collected_path);
--
--            // Ensure parent directories exist
--            if let Some(parent) = extraction_path.parent() {
--                std::fs::create_dir_all(parent)?;
--            }
--
--            if let Err(err) = entry.unpack(&extraction_path) {
--                // Cleanup on error
--                std::fs::remove_dir_all(tmp_extract_dir.path()).ok();
--                return Err(err.into());
--            }
--            extracted_files.push(extraction_path);
--        }
--
--        // The temp dir becomes the installed bundle's root, and tempfile creates it
--        // with mode 0700, which stops every other user of the machine from launching
--        // the updated app.
--        std::fs::set_permissions(
--            tmp_extract_dir.path(),
--            std::fs::Permissions::from_mode(0o755),
--        )?;
 +        let app_parent = self
 +            .extract_path
 +            .parent()
 +            .ok_or(Error::FailedToDetermineExtractPath)?;
 +        let backup_path = macos_update_backup_path(&self.extract_path)
 +            .ok_or(Error::FailedToDetermineExtractPath)?;
-+
+ 
+-        let tmp_backup_dir = tempfile::Builder::new()
+-            .prefix("tauri_current_app")
+-            .tempdir_in(&tmp_root)?;
 +        let expected_identity = MacosBundleIdentity {
 +            bundle_identifier: self.context.bundle_identifier.clone(),
 +            executable: self.executable_name.clone().ok_or_else(|| {
@@ -3497,18 +3480,22 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +            )));
 +        }
  
--        // Exchange the current app and the new one in a single step where the file
--        // system supports it, so the install path is never empty; the previous app
--        // then sits in the extraction temp dir, which is removed on drop. Where the
--        // swap is not supported, fall back to two renames with a restore on failure.
--        // File systems report that with different errors (`ENOTSUP` on HFS+,
--        // `EOPNOTSUPP`, `ENOSYS` or `EINVAL` elsewhere), so anything but a permission
--        // error, which needs the privileged install instead, gets the fallback.
--        let backup = tmp_backup_dir.path().join("current_app");
--        let moved = match swap_bundle(&self.extract_path, tmp_extract_dir.path()) {
--            Err(err) if err.kind() != std::io::ErrorKind::PermissionDenied => {
--                log::debug!("cannot swap the app bundles ({err}), moving them instead");
--                replace_bundle(&self.extract_path, tmp_extract_dir.path(), &backup)
+-        let tmp_extract_dir = tempfile::Builder::new()
+-            .prefix("tauri_updated_app")
+-            .tempdir_in(&tmp_root)?;
+-
+-        let decoder = GzDecoder::new(cursor);
+-        let mut archive = tar::Archive::new(decoder);
+-
+-        // Extract files to temporary directory
+-        for entry in archive.entries()? {
+-            let mut entry = entry?;
+-            let collected_path: PathBuf = entry.path()?.iter().skip(1).collect();
+-            let extraction_path = tmp_extract_dir.path().join(&collected_path);
+-
+-            // Ensure parent directories exist
+-            if let Some(parent) = extraction_path.parent() {
+-                std::fs::create_dir_all(parent)?;
 +        let tmp_extract_dir = match tempfile::Builder::new()
 +            .prefix(".rosi-updated-app-")
 +            .tempdir_in(app_parent)
@@ -3522,9 +3509,54 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +                    .prefix("tauri_updated_app")
 +                    .tempdir()?
              }
--            other => other,
 +            Err(err) => return Err(err.into()),
-         };
++        };
+ 
+-            if let Err(err) = entry.unpack(&extraction_path) {
+-                // Cleanup on error
+-                std::fs::remove_dir_all(tmp_extract_dir.path()).ok();
+-                return Err(err.into());
+-            }
+-            extracted_files.push(extraction_path);
++        extract_macos_app_archive(bytes, tmp_extract_dir.path())?;
++        let staged_identity = macos_app_bundle_identity(tmp_extract_dir.path());
++        if !macos_app_bundle_complete(tmp_extract_dir.path())
++            || staged_identity.as_ref() != Some(&expected_identity)
++        {
++            return Err(Error::Io(std::io::Error::new(
++                std::io::ErrorKind::InvalidData,
++                "staged updater bundle is incomplete or has a different app identity",
++            )));
+         }
+ 
+-        // The temp dir becomes the installed bundle's root, and tempfile creates it
+-        // with mode 0700, which stops every other user of the machine from launching
+-        // the updated app.
+-        std::fs::set_permissions(
+-            tmp_extract_dir.path(),
+-            std::fs::Permissions::from_mode(0o755),
+-        )?;
++        // Recovery can mutate a protected install tree. Delay it until the
++        // downloaded bundle has passed identity and completeness validation,
++        // then route only permission failures through the existing admin path.
++        let recovery =
++            recover_macos_live_bundle(&self.extract_path, &backup_path, &expected_identity)?;
+ 
+-        // Exchange the current app and the new one in a single step where the file
+-        // system supports it, so the install path is never empty; the previous app
+-        // then sits in the extraction temp dir, which is removed on drop. Where the
+-        // swap is not supported, fall back to two renames with a restore on failure.
+-        // File systems report that with different errors (`ENOTSUP` on HFS+,
+-        // `EOPNOTSUPP`, `ENOSYS` or `EINVAL` elsewhere), so anything but a permission
+-        // error, which needs the privileged install instead, gets the fallback.
+-        let backup = tmp_backup_dir.path().join("current_app");
+-        let moved = match swap_bundle(&self.extract_path, tmp_extract_dir.path()) {
+-            Err(err) if err.kind() != std::io::ErrorKind::PermissionDenied => {
+-                log::debug!("cannot swap the app bundles ({err}), moving them instead");
+-                replace_bundle(&self.extract_path, tmp_extract_dir.path(), &backup)
+-            }
+-            other => other,
+-        };
 -        let need_authorization = match moved {
 -            Ok(()) => false,
 -            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => true,
@@ -3537,24 +3569,6 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -                ) {
 -                    log::error!("failed to install the update: {err}");
 -                    return Err(Error::PreviousAppNotRestored(kept));
-+
-+        extract_macos_app_archive(bytes, tmp_extract_dir.path())?;
-+        let staged_identity = macos_app_bundle_identity(tmp_extract_dir.path());
-+        if !macos_app_bundle_complete(tmp_extract_dir.path())
-+            || staged_identity.as_ref() != Some(&expected_identity)
-+        {
-+            return Err(Error::Io(std::io::Error::new(
-+                std::io::ErrorKind::InvalidData,
-+                "staged updater bundle is incomplete or has a different app identity",
-+            )));
-+        }
-+
-+        // Recovery can mutate a protected install tree. Delay it until the
-+        // downloaded bundle has passed identity and completeness validation,
-+        // then route only permission failures through the existing admin path.
-+        let recovery =
-+            recover_macos_live_bundle(&self.extract_path, &backup_path, &expected_identity)?;
-+
 +        let unprivileged = if matches!(recovery, MacosRecoveryDisposition::RequiresPrivilegedSwap) {
 +            // A validated recovery entry can live in a protected install
 +            // directory. Keep it untouched until the staged bundle is fully
@@ -3721,7 +3735,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
          }
  
          let _ = std::process::Command::new("touch")
-@@ -1631,115 +1845,262 @@
+@@ -1631,115 +1846,299 @@
      }
  }
  
@@ -3732,14 +3746,6 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -fn swap_bundle(target: &Path, staged: &Path) -> std::io::Result<()> {
 -    use std::ffi::CString;
 -    use std::os::unix::ffi::OsStrExt;
--
--    let from = CString::new(staged.as_os_str().as_bytes())?;
--    let to = CString::new(target.as_os_str().as_bytes())?;
--    // SAFETY: both pointers are valid NUL-terminated strings that outlive the call,
--    // and `renamex_np` only reads them.
--    let result = unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_SWAP) };
--    if result == 0 {
--        Ok(())
 +fn macos_bundle_matches(
 +    path: &Path,
 +    expected: &crate::install_safety::MacosBundleIdentity,
@@ -3747,7 +3753,14 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +    crate::install_safety::macos_app_bundle_complete(path)
 +        && crate::install_safety::macos_app_bundle_identity(path).as_ref() == Some(expected)
 +}
-+
+ 
+-    let from = CString::new(staged.as_os_str().as_bytes())?;
+-    let to = CString::new(target.as_os_str().as_bytes())?;
+-    // SAFETY: both pointers are valid NUL-terminated strings that outlive the call,
+-    // and `renamex_np` only reads them.
+-    let result = unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_SWAP) };
+-    if result == 0 {
+-        Ok(())
 +#[cfg(target_os = "macos")]
 +fn remove_macos_bundle_entry(path: &Path) -> std::io::Result<()> {
 +    let metadata = match std::fs::symlink_metadata(path) {
@@ -3783,7 +3796,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +            std::io::ErrorKind::InvalidData,
 +            "refusing to retire an incomplete or identity-mismatched updater backup",
 +        ));
-+    }
+     }
 +    let parent = backup.parent().ok_or_else(|| {
 +        std::io::Error::new(
 +            std::io::ErrorKind::InvalidInput,
@@ -3842,7 +3855,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +            return Ok(());
 +        }
 +        return Err(error);
-     }
++    }
 +
      Ok(())
  }
@@ -3852,25 +3865,11 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -/// Automation can call `renamex_np` (`2` is `RENAME_SWAP`), and ships with every macOS.
 -/// It prints `swapped` or `failed`, so the caller can tell a swap that did not happen
 -/// from an `osascript` failure that leaves unknown whether it did.
--#[cfg(target_os = "macos")]
+ #[cfg(target_os = "macos")]
 -const SWAP_BUNDLE_JXA: &str = r#"function run(argv) {
 -  ObjC.import("stdio");
 -  return $.renamex_np(argv[0], argv[1], 2) === 0 ? "swapped" : "failed";
 -}"#;
--
--/// The shell command the privileged install runs: the same swap as [`swap_bundle`], and
--/// where the file system cannot swap, the same moves as [`replace_bundle`], deleting the
--/// previous app only once the new one is in place. The moves only run once the swap is
--/// known not to have happened, since after a swap they would put the previous app back.
- #[cfg(target_os = "macos")]
--fn privileged_install_command(target: &Path, staged: &Path, backup: &Path) -> String {
--    let swap = sh_quote(Path::new(SWAP_BUNDLE_JXA));
--    let target = sh_quote(target);
--    let staged = sh_quote(staged);
--    let backup = sh_quote(backup);
--    format!(
--        "case \"$(/usr/bin/osascript -l JavaScript -e {swap} {staged} {target} 2>/dev/null)\" in swapped) rm -rf {staged};; failed) mv -f {target} {backup} && {{ mv -f {staged} {target} || {{ mv -f {backup} {target}; exit 1; }}; }} && rm -rf {backup};; *) exit 1;; esac"
--    )
 +fn restore_macos_live_bundle(
 +    live: &Path,
 +    backup: &Path,
@@ -3891,22 +3890,31 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +        ));
 +    }
 +    Ok(())
- }
++}
  
--/// Quotes `path` as a single `sh` word, whatever characters it holds.
+-/// The shell command the privileged install runs: the same swap as [`swap_bundle`], and
+-/// where the file system cannot swap, the same moves as [`replace_bundle`], deleting the
+-/// previous app only once the new one is in place. The moves only run once the swap is
+-/// known not to have happened, since after a swap they would put the previous app back.
  #[cfg(target_os = "macos")]
--fn sh_quote(path: &Path) -> String {
--    format!("'{}'", path.to_string_lossy().replace('\'', r"'\''"))
+-fn privileged_install_command(target: &Path, staged: &Path, backup: &Path) -> String {
+-    let swap = sh_quote(Path::new(SWAP_BUNDLE_JXA));
+-    let target = sh_quote(target);
+-    let staged = sh_quote(staged);
+-    let backup = sh_quote(backup);
+-    format!(
+-        "case \"$(/usr/bin/osascript -l JavaScript -e {swap} {staged} {target} 2>/dev/null)\" in swapped) rm -rf {staged};; failed) mv -f {target} {backup} && {{ mv -f {staged} {target} || {{ mv -f {backup} {target}; exit 1; }}; }} && rm -rf {backup};; *) exit 1;; esac"
+-    )
 +#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 +enum MacosRecoveryDisposition {
 +    ReadyForUnprivilegedSwap,
 +    RequiresPrivilegedSwap,
  }
  
--/// Quotes `s` as an AppleScript string literal.
+-/// Quotes `path` as a single `sh` word, whatever characters it holds.
  #[cfg(target_os = "macos")]
--fn applescript_string(s: &str) -> String {
--    format!("\"{}\"", s.replace('\\', r"\\").replace('"', "\\\""))
+-fn sh_quote(path: &Path) -> String {
+-    format!("'{}'", path.to_string_lossy().replace('\'', r"'\''"))
 +fn recover_macos_live_bundle(
 +    live: &Path,
 +    backup: &Path,
@@ -3952,6 +3960,14 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +    )))
  }
  
+-/// Quotes `s` as an AppleScript string literal.
+ #[cfg(target_os = "macos")]
+-fn applescript_string(s: &str) -> String {
+-    format!("\"{}\"", s.replace('\\', r"\\").replace('"', "\\\""))
++fn extract_macos_app_archive(bytes: &[u8], dest_root: &Path) -> Result<()> {
++    extract_macos_app_archive_with_limit(bytes, dest_root, MACOS_MAX_DECOMPRESSED_BYTES)
+ }
+ 
 -/// After a failed install, returns where the previous app is if it never made it back to
 -/// `target`. `backup` is then the only copy left, and usually sits in the system temp dir,
 -/// which macOS empties on its own, so it is moved next to `target`, or to `fallback_dir`
@@ -3967,13 +3983,30 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -    if std::fs::symlink_metadata(target).is_ok() || std::fs::symlink_metadata(backup).is_err() {
 -        return None;
 -    }
--
++/// Upper bound for an extracted `.app` (a universal ROSI bundle is ~300 MB).
++#[cfg(target_os = "macos")]
++const MACOS_MAX_DECOMPRESSED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
++/// Per-arch `.app.tar.zst` archives are packed with `zstd --long=27`. Refuse
++/// frames that ask for a larger window instead of allocating it.
++#[cfg(target_os = "macos")]
++const MACOS_ZSTD_WINDOW_LOG_MAX: u32 = 27;
+ 
 -    let mut name = target.file_stem().unwrap_or_default().to_os_string();
 -    name.push(" (previous version)");
 -    if let Some(extension) = target.extension() {
 -        name.push(".");
 -        name.push(extension);
--    }
++/// `.app.tar.gz` (Tauri) or `.app.tar.zst` (ROSI per-arch), chosen by magic bytes.
++#[cfg(target_os = "macos")]
++fn macos_archive_decoder<'a>(bytes: &'a [u8]) -> Result<Box<dyn std::io::Read + 'a>> {
++    const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
++    const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
++    let reader = std::io::Cursor::new(bytes);
++    if bytes.starts_with(&ZSTD_MAGIC) {
++        let mut decoder = zstd::stream::read::Decoder::new(reader)?;
++        decoder.window_log_max(MACOS_ZSTD_WINDOW_LOG_MAX)?;
++        return Ok(Box::new(decoder));
+     }
 -    let kept = [target.parent(), fallback_dir]
 -        .into_iter()
 -        .flatten()
@@ -3981,23 +4014,33 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -        // `rename` replaces an empty directory, so never move onto anything already there
 -        .filter(|kept| std::fs::symlink_metadata(kept).is_err())
 -        .find(|kept| std::fs::rename(backup, kept).is_ok());
--
++    if bytes.starts_with(&GZIP_MAGIC) {
++        return Ok(Box::new(flate2::read::GzDecoder::new(reader)));
++    }
++    Err(Error::InvalidUpdaterFormat)
++}
+ 
 -    match kept {
 -        Some(kept) => Some(kept),
 -        None => {
 -            let _ = backup_dir.keep();
 -            Some(backup.to_path_buf())
 +#[cfg(target_os = "macos")]
-+fn extract_macos_app_archive(bytes: &[u8], dest_root: &Path) -> Result<()> {
++fn extract_macos_app_archive_with_limit(
++    bytes: &[u8],
++    dest_root: &Path,
++    max_decompressed_bytes: u64,
++) -> Result<()> {
++    use self::appimage_archive::BoundedArchiveReader;
 +    use crate::install_safety::{
 +        confined_symlink_target, confined_tar_member_relative, create_confined_parent_dirs,
 +        path_is_inside,
 +    };
-+    use flate2::read::GzDecoder;
 +    use tar::EntryType;
 +
-+    let decoder = GzDecoder::new(Cursor::new(bytes));
-+    let mut archive = tar::Archive::new(decoder);
++    let mut decompressed =
++        BoundedArchiveReader::new(macos_archive_decoder(bytes)?, max_decompressed_bytes);
++    let mut archive = tar::Archive::new(&mut decompressed);
 +    for entry in archive.entries()? {
 +        let mut entry = entry?;
 +        let entry_path = entry.path()?.into_owned();
@@ -4009,7 +4052,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +        })?;
 +        if relative.as_os_str().is_empty() {
 +            continue;
-+        }
+         }
 +        let dest = dest_root.join(&relative);
 +        if !path_is_inside(dest_root, &dest) {
 +            return Err(Error::Io(std::io::Error::new(
@@ -4058,7 +4101,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +                Err(err) => return Err(err.into()),
 +            }
 +            continue;
-         }
++        }
 +        if kind.is_file() || matches!(kind, EntryType::GNUSparse) {
 +            create_confined_parent_dirs(dest_root, &dest)?;
 +            entry.unpack(&dest)?;
@@ -4069,11 +4112,13 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +            format!("unsupported updater archive member type {kind:?}"),
 +        )));
      }
-+    Ok(())
++    // A truncated stream can end on a member boundary, which `tar::Archive`
++    // accepts. Require the full stream, both end blocks and nothing after them.
++    decompressed.drain_and_check_trailer()
  }
  
  /// Gets the base target string used by the updater. If bundle type is available it
-@@ -1985,48 +2346,6 @@
+@@ -1985,49 +2384,7 @@
          .collect()
  }
  
@@ -4081,7 +4126,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -///
 -/// `ShellExecuteW` reports failures through its return value, not reliably through
 -/// `GetLastError`.
--#[cfg(windows)]
+ #[cfg(windows)]
 -fn shell_execute_error(code: isize) -> std::io::Error {
 -    use std::io::{Error, ErrorKind};
 -    use windows_sys::Win32::{
@@ -4119,10 +4164,11 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -    }
 -}
 -
- #[cfg(windows)]
+-#[cfg(windows)]
  trait PathExt {
      fn wrap_in_quotes(&self) -> Self;
-@@ -2116,13 +2435,13 @@
+ }
+@@ -2116,13 +2473,13 @@
  
      // A throwaway key pair generated with `tauri signer generate`, and the signature of the
      // payload `test` made with `tauri signer sign --app-version 2.0.0`.
@@ -4139,7 +4185,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
          base64::engine::general_purpose::STANDARD.encode(value)
      }
  
-@@ -2344,15 +2663,22 @@
+@@ -2344,15 +2701,22 @@
          assert!(restored.context.config.require_signed_version);
      }
  
@@ -4165,7 +4211,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
          let update = builder()
              .executable_path(&appimage)
              .build()
-@@ -2363,12 +2689,9 @@
+@@ -2363,12 +2727,9 @@
          (dir, appimage, update)
      }
  
@@ -4179,7 +4225,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
      }
  
      #[cfg(all(target_os = "linux", feature = "zip"))]
-@@ -2389,11 +2712,12 @@
+@@ -2389,11 +2750,12 @@
      #[cfg(target_os = "linux")]
      fn appimage_install_rejects_a_payload_that_is_not_an_appimage() {
          let (_dir, appimage, update) = appimage_update();
@@ -4194,7 +4240,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
      }
  
      #[test]
-@@ -2402,7 +2726,6 @@
+@@ -2402,7 +2764,6 @@
          use std::os::unix::fs::PermissionsExt;
  
          let (_dir, appimage, update) = appimage_update();
@@ -4202,7 +4248,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
          update.install_appimage(&new_appimage()).unwrap();
          assert_eq!(std::fs::read(&appimage).unwrap(), new_appimage());
          assert_eq!(
-@@ -2429,7 +2752,7 @@
+@@ -2429,7 +2790,7 @@
              update.install_appimage(&compressed_appimage("readme.txt", b"hello")),
              Err(Error::BinaryNotFoundInArchive)
          ));
@@ -4211,7 +4257,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
      }
  
      #[test]
-@@ -2441,7 +2764,7 @@
+@@ -2441,7 +2802,7 @@
              update.install_appimage(b"\x1f\x8b\x08\x00 compressed AppImage"),
              Err(Error::InvalidUpdaterFormat)
          ));
@@ -4220,7 +4266,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
      }
  }
  
-@@ -2501,277 +2824,119 @@
+@@ -2501,280 +2862,122 @@
          assert!(verify_signed_version(comment, "2024-01-02", true).is_err());
      }
  
@@ -4234,7 +4280,13 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -        std::fs::write(target.join("version"), "old").unwrap();
 -        std::fs::create_dir(&staged).unwrap();
 -        std::fs::write(staged.join("version"), "new").unwrap();
--
++    use super::{finish_windows_installer_launch, OnBeforeExit, Update, UpdaterContext};
++    use crate::Config;
++    use std::sync::{
++        atomic::{AtomicUsize, Ordering},
++        Arc,
++    };
+ 
 -        super::replace_bundle(&target, &staged, &backup).unwrap();
 -
 -        assert_eq!(
@@ -4260,13 +4312,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -        let name = unsafe { std::ffi::CStr::from_ptr(stat.f_fstypename.as_ptr()) };
 -        name.to_bytes() == b"apfs"
 -    }
-+    use super::{finish_windows_installer_launch, OnBeforeExit, Update, UpdaterContext};
-+    use crate::Config;
-+    use std::sync::{
-+        atomic::{AtomicUsize, Ordering},
-+        Arc,
-+    };
- 
+-
 -    #[test]
 -    #[cfg(target_os = "macos")]
 -    fn swap_bundle_exchanges_the_two_bundles_in_place() {
@@ -4362,7 +4408,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
          );
 -        assert!(!backup.exists());
 -    }
--
+ 
 -    /// A directory whose name `sh` and AppleScript would both misread unquoted.
 -    #[cfg(target_os = "macos")]
 -    fn hostile_dir() -> tempfile::TempDir {
@@ -4370,7 +4416,16 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -            .prefix("it's \"a\" \\ $(touch pwned) `dir`\n")
 -            .tempdir()
 -            .unwrap()
--    }
++        let error = update
++            .install(b"test")
++            .expect_err("a failed pre-install hook must reject the actual install call");
++        assert!(matches!(
++            error,
++            Error::BeforeExit(message) if message == "round2 forced durable-state flush failure"
++        ));
++        assert_eq!(hook_calls.load(Ordering::SeqCst), 1);
++        assert_eq!(cleanup_calls.load(Ordering::SeqCst), 0);
+     }
  
 -    #[cfg(target_os = "macos")]
 -    fn assert_privileged_install_command_moved(dir: &std::path::Path) {
@@ -4395,7 +4450,7 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -        super::privileged_install_command(&target, &staged, &dir.join("backup"))
 -    }
 -
--    #[test]
+     #[test]
 -    #[cfg(target_os = "macos")]
 -    fn privileged_install_command_quotes_every_path() {
 -        let dir = hostile_dir();
@@ -4430,26 +4485,27 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -            .output()
 -            .unwrap();
 -
--        assert!(
++    fn round2_windows_cleanup_runs_only_after_a_successful_installer_launch() {
++        let events = std::cell::RefCell::new(Vec::new());
++        let failure = finish_windows_installer_launch(
++            32,
++            || events.borrow_mut().push("cleanup"),
++            || events.borrow_mut().push("exit"),
++        );
++        assert!(failure.is_err());
+         assert!(
 -            output.status.success(),
 -            "{}",
 -            String::from_utf8_lossy(&output.stderr)
--        );
++            events.borrow().is_empty(),
++            "failed launch must preserve Tauri resources"
+         );
 -        assert_privileged_install_command_moved(dir.path());
-+        let error = update
-+            .install(b"test")
-+            .expect_err("a failed pre-install hook must reject the actual install call");
-+        assert!(matches!(
-+            error,
-+            Error::BeforeExit(message) if message == "round2 forced durable-state flush failure"
-+        ));
-+        assert_eq!(hook_calls.load(Ordering::SeqCst), 1);
-+        assert_eq!(cleanup_calls.load(Ordering::SeqCst), 0);
-     }
+-    }
  
 -    /// The privileged install swaps the bundles where the file system can, so on APFS it
 -    /// never touches the backup: one in a directory that does not exist must not matter.
-     #[test]
+-    #[test]
 -    #[cfg(target_os = "macos")]
 -    fn privileged_install_command_swaps_the_bundles() {
 -        let dir = tempfile::tempdir().unwrap();
@@ -4474,17 +4530,18 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -        assert_eq!(
 -            std::fs::read_to_string(target.join("version")).unwrap(),
 -            "new"
-+    fn round2_windows_cleanup_runs_only_after_a_successful_installer_launch() {
-+        let events = std::cell::RefCell::new(Vec::new());
-+        let failure = finish_windows_installer_launch(
-+            32,
+-        );
+-        assert!(!staged.exists());
++        finish_windows_installer_launch(
++            33,
 +            || events.borrow_mut().push("cleanup"),
 +            || events.borrow_mut().push("exit"),
-         );
--        assert!(!staged.exists());
--    }
--
--    #[test]
++        )
++        .expect("successful launch must finish cleanup and exit sequence");
++        assert_eq!(&*events.borrow(), &["cleanup", "exit"]);
+     }
+ 
+     #[test]
 -    fn keeps_the_backup_when_the_previous_app_was_not_restored() {
 -        let dir = tempfile::tempdir().unwrap();
 -        let target = dir.path().join("App.app");
@@ -4501,15 +4558,19 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -        assert_eq!(
 -            std::fs::read_to_string(expected.join("version")).unwrap(),
 -            "old"
-+        assert!(failure.is_err());
-+        assert!(
-+            events.borrow().is_empty(),
-+            "failed launch must preserve Tauri resources"
-         );
+-        );
 -        assert!(!backup_dir_path.exists());
--    }
++    fn round2_download_cap_rejects_oversize_chunks_without_content_length() {
++        let mut received = Vec::new();
++        super::append_download_chunk(&mut received, b"123", None, 4)
++            .expect("under-limit chunk should be accepted without a length header");
++        let error = super::append_download_chunk(&mut received, b"45", None, 4)
++            .expect_err("actual streamed size must be capped without Content-Length");
++        assert!(error.to_string().contains("package exceeds"));
++        assert_eq!(received, b"123", "over-limit bytes must not be buffered");
+     }
  
--    #[test]
+     #[test]
 -    fn moves_the_backup_to_the_fallback_dir_when_it_cannot_go_next_to_the_app() {
 -        let dir = tempfile::tempdir().unwrap();
 -        let target = dir.path().join("App.app");
@@ -4529,13 +4590,11 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -            std::fs::read_to_string(expected.join("version")).unwrap(),
 -            "old"
 -        );
-+        finish_windows_installer_launch(
-+            33,
-+            || events.borrow_mut().push("cleanup"),
-+            || events.borrow_mut().push("exit"),
-+        )
-+        .expect("successful launch must finish cleanup and exit sequence");
-+        assert_eq!(&*events.borrow(), &["cleanup", "exit"]);
++    fn round2_download_cap_rejects_declared_oversize_and_actual_oversize() {
++        let mut received = Vec::new();
++        assert!(super::validate_download_content_length(Some(5), 4).is_err());
++        assert!(super::append_download_chunk(&mut received, b"12345", Some(1), 4).is_err());
++        assert!(received.is_empty(), "rejected bytes must not be buffered");
      }
  
      #[test]
@@ -4562,17 +4621,9 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -            std::fs::read_to_string(dir.path().join("App (previous version).app")).unwrap(),
 -            "other"
 -        );
-+    fn round2_download_cap_rejects_oversize_chunks_without_content_length() {
-+        let mut received = Vec::new();
-+        super::append_download_chunk(&mut received, b"123", None, 4)
-+            .expect("under-limit chunk should be accepted without a length header");
-+        let error = super::append_download_chunk(&mut received, b"45", None, 4)
-+            .expect_err("actual streamed size must be capped without Content-Length");
-+        assert!(error.to_string().contains("package exceeds"));
-+        assert_eq!(received, b"123", "over-limit bytes must not be buffered");
-     }
- 
-     #[test]
+-    }
+-
+-    #[test]
 -    fn drops_the_backup_when_the_previous_app_is_in_place() {
 -        let dir = tempfile::tempdir().unwrap();
 -        let target = dir.path().join("App.app");
@@ -4584,18 +4635,18 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 -
 -        assert!(super::keep_backup_if_not_restored(&target, backup_dir, &backup, None).is_none());
 -        assert!(!backup_dir_path.exists());
-+    fn round2_download_cap_rejects_declared_oversize_and_actual_oversize() {
-+        let mut received = Vec::new();
-+        assert!(super::validate_download_content_length(Some(5), 4).is_err());
-+        assert!(super::append_download_chunk(&mut received, b"12345", Some(1), 4).is_err());
-+        assert!(received.is_empty(), "rejected bytes must not be buffered");
-     }
+-    }
+-
+-    #[test]
+     #[cfg(windows)]
+     fn it_wraps_correctly() {
+         use super::PathExt;
+@@ -2874,6 +3077,195 @@
  
-     #[test]
-@@ -2876,4 +3041,45 @@
+         for (orig, escaped) in cases.iter().zip(cases_escaped) {
              assert_eq!(escape_nsis_current_exe_arg(OsStr::new(orig)), escaped);
-         }
-     }
++        }
++    }
 +
 +    #[test]
 +    fn macos_admin_install_script_quotes_paths_via_handler_args() {
@@ -4637,4 +4688,152 @@ diff -ruN -x target -x Cargo.lock -x .cargo-ok -x .cargo_vcs_info.json a/src/upd
 +            "malicious path must stay outside the constant script body"
 +        );
 +    }
++}
++
++// e2e/updater-zst.failure-modes.md, Z01.
++#[cfg(all(test, target_os = "macos"))]
++mod macos_archive_tests {
++    use super::{extract_macos_app_archive, extract_macos_app_archive_with_limit};
++    use crate::error::Error;
++    use std::io::Write;
++    use tar::{EntryType, Header};
++
++    const EXECUTABLE: &str = "ROSI.app/Contents/MacOS/ROSI";
++
++    fn app_tar(payload: &[u8]) -> Vec<u8> {
++        let mut builder = tar::Builder::new(Vec::new());
++        for dir in ["ROSI.app/", "ROSI.app/Contents/", "ROSI.app/Contents/MacOS/"] {
++            let mut header = Header::new_gnu();
++            header.set_entry_type(EntryType::Directory);
++            header.set_mode(0o755);
++            header.set_size(0);
++            header.set_cksum();
++            builder.append_data(&mut header, dir, &[][..]).unwrap();
++        }
++        let mut header = Header::new_gnu();
++        header.set_entry_type(EntryType::Regular);
++        header.set_mode(0o755);
++        header.set_size(payload.len() as u64);
++        header.set_cksum();
++        builder.append_data(&mut header, EXECUTABLE, payload).unwrap();
++        builder.into_inner().unwrap()
++    }
++
++    fn gzip(raw: &[u8]) -> Vec<u8> {
++        let mut encoder =
++            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
++        encoder.write_all(raw).unwrap();
++        encoder.finish().unwrap()
++    }
++
++    fn zstd_with_window_log(raw: &[u8], window_log: u32) -> Vec<u8> {
++        let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), 3).unwrap();
++        encoder.long_distance_matching(true).unwrap();
++        encoder.window_log(window_log).unwrap();
++        encoder.write_all(raw).unwrap();
++        encoder.finish().unwrap()
++    }
++
++    fn zstd(raw: &[u8]) -> Vec<u8> {
++        zstd_with_window_log(raw, 27)
++    }
++
++    fn extracted_executable(archive: &[u8]) -> crate::Result<Vec<u8>> {
++        let dir = tempfile::tempdir().unwrap();
++        extract_macos_app_archive(archive, dir.path())?;
++        Ok(std::fs::read(dir.path().join("Contents/MacOS/ROSI")).unwrap())
++    }
++
++    #[test]
++    fn gzip_and_zstd_archives_extract_the_same_bundle() {
++        let payload = b"\xcf\xfa\xed\xfe rosi executable".repeat(64);
++        let raw = app_tar(&payload);
++        assert_eq!(extracted_executable(&gzip(&raw)).unwrap(), payload);
++        assert_eq!(extracted_executable(&zstd(&raw)).unwrap(), payload);
++    }
++
++    #[test]
++    fn rejects_a_truncated_zstd_archive() {
++        let archive = zstd(&app_tar(&[7_u8; 64 * 1024]));
++        let truncated = &archive[..archive.len() / 2];
++        assert!(extracted_executable(truncated).is_err());
++    }
++
++    #[test]
++    fn rejects_a_zstd_window_larger_than_the_cap() {
++        // The frame header asks for a 256 MiB window; the content stays small.
++        let archive = zstd_with_window_log(&app_tar(b"payload"), 28);
++        assert!(extracted_executable(&archive).is_err());
++    }
++
++    #[test]
++    fn stops_a_decompression_bomb_at_the_cap() {
++        let archive = zstd(&app_tar(&vec![0_u8; 4 * 1024 * 1024]));
++        assert!(archive.len() < 64 * 1024, "fixture must compress well");
++        let dir = tempfile::tempdir().unwrap();
++        assert!(extract_macos_app_archive_with_limit(&archive, dir.path(), 1024 * 1024).is_err());
++    }
++
++    #[test]
++    fn rejects_trailing_data_after_the_zstd_frame() {
++        let mut archive = zstd(&app_tar(b"payload"));
++        archive.extend_from_slice(b"not a zstd frame");
++        assert!(extracted_executable(&archive).is_err());
++    }
++
++    #[test]
++    fn rejects_a_tar_stream_without_end_blocks() {
++        let mut raw = app_tar(b"payload");
++        raw.truncate(raw.len() - 1024);
++        assert!(extracted_executable(&zstd(&raw)).is_err());
++        assert!(extracted_executable(&gzip(&raw)).is_err());
++    }
++
++    #[test]
++    fn rejects_unknown_archive_magic() {
++        let raw = app_tar(b"payload");
++        assert!(matches!(
++            extracted_executable(&raw),
++            Err(Error::InvalidUpdaterFormat)
++        ));
++    }
++
++    #[test]
++    fn keeps_member_confinement_for_zstd_archives() {
++        let mut raw = Vec::new();
++        let mut header = Header::new_gnu();
++        header.set_entry_type(EntryType::Regular);
++        header.set_mode(0o644);
++        header.set_size(1);
++        // `set_path` refuses `..`; write the name bytes directly.
++        header.as_gnu_mut().unwrap().name[..17].copy_from_slice(b"ROSI.app/../../x\0");
++        header.set_cksum();
++        raw.extend_from_slice(header.as_bytes());
++        raw.extend_from_slice(&[b'x'; 512]);
++        raw.extend_from_slice(&[0_u8; 1024]);
++        assert!(extracted_executable(&zstd(&raw)).is_err());
++    }
++
++    /// Run by scripts/e2e-updater-zst.mjs against real release archives.
++    #[test]
++    #[ignore = "needs ROSI_UPDATER_ZST_E2E_ARCHIVES"]
++    fn extracts_real_release_archives() {
++        let paths = std::env::var("ROSI_UPDATER_ZST_E2E_ARCHIVES")
++            .expect("ROSI_UPDATER_ZST_E2E_ARCHIVES lists archives separated by ':'");
++        for path in paths.split(':').filter(|p| !p.is_empty()) {
++            let bytes = std::fs::read(path).unwrap();
++            let dir = tempfile::tempdir().unwrap();
++            let started = std::time::Instant::now();
++            extract_macos_app_archive(&bytes, dir.path())
++                .unwrap_or_else(|err| panic!("{path}: {err}"));
++            assert!(
++                crate::install_safety::macos_app_bundle_complete(dir.path()),
++                "{path}: extracted bundle is incomplete"
++            );
++            println!(
++                "ROSI_UPDATER_ZST_E2E {path} extract_ms={}",
++                started.elapsed().as_millis()
++            );
+         }
+     }
  }

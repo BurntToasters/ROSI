@@ -111,6 +111,28 @@ builds. The release pipeline (`scripts/run-release.js`, `release-session.js`,
 The vendored `src-tauri/vendor/tauri-plugin-updater` carries install-safety
 patches, documented in `src-tauri/vendor/tauri-plugin-updater/PATCHES.md`.
 
+### Compact macOS updates
+
+Fresh installs use the universal DMG/ZIP. In-app updates on macOS download a
+per-arch `ROSI-{aarch64,x86_64}.app.tar.zst` instead of the universal
+`ROSI.app.tar.gz` (141.5 MB to about 60 MB):
+
+- `release:mac:continue` also runs `tauri build --target {aarch64,x86_64}-apple-darwin --bundles app`.
+  `scripts/pack-macos-updater-zst.js` then repacks each per-arch `.app.tar.gz` with
+  `zstd --long=27` and signs the result (`tauri signer sign --app-version`). The long
+  window dedupes `rosi-ffmpeg` against `rosi-ffprobe`. The tar bytes are unchanged, so
+  the bundle signature and staple survive.
+- `scripts/gpg-sign.js` publishes them under `latest-darwin[-beta]-{arch}-app-zst.json`
+  and never collects the per-arch builds' arch-less `.app.tar.gz`.
+- Packaged macOS apps ask for that target (`get_compact_updater_target`). If the
+  compact feed is missing they fall back to the universal feed, which stays published
+  for clients older than 5.1.0.
+- `rosi-yt-dlp` is upstream's universal2 binary and already compressed, so about
+  36 MB of every update is yt-dlp.
+
+Failure modes: `e2e/updater-zst.failure-modes.md`. Check: `npm run test:e2e:updater-zst`
+(report in `e2e/artifacts/updater-zst-report.json`).
+
 ### macOS entitlements for sidecars (planned, not implemented)
 
 Today `src-tauri/entitlements.plist` grants `disable-library-validation` and
@@ -150,6 +172,7 @@ Ordered plan (confirm each Tauri step with a dry run before changing the pipelin
    insert steps 2 to 5 into `scripts/release-session.js` or `run-release.js`
    between `tauri build` and checksum/GPG signing in `scripts/gpg-sign.js`.
 7. Regenerated artifacts to re-check before publish: the `.app`, `.app.tar.gz`,
+   the per-arch bundles and their `.app.tar.zst` (repack after re-signing),
    `.sig`, the `latest-*.json` manifests, the DMG, the ZIP, checksums, and
    GPG signatures. `verify-release-draft.js` must pass on the final set.
 

@@ -61,6 +61,30 @@ pub fn get_beta_updater_target() -> String {
     }
 }
 
+/// Packaged macOS apps update from per-arch `.app.tar.zst` archives
+/// (`scripts/pack-macos-updater-zst.js`). `None` everywhere else, so those
+/// builds keep the default or beta target.
+#[tauri::command]
+pub fn get_compact_updater_target(beta: bool) -> Option<String> {
+    use tauri::utils::config::BundleType;
+
+    if !cfg!(target_os = "macos")
+        || !matches!(
+            tauri::utils::platform::bundle_type(),
+            Some(BundleType::App | BundleType::Dmg)
+        )
+    {
+        return None;
+    }
+    // Compile-time arch: a Rosetta process asks for the x86_64 bundle.
+    let arch = match std::env::consts::ARCH {
+        arch @ ("aarch64" | "x86_64") => arch,
+        _ => return None,
+    };
+    let channel = if beta { "-beta" } else { "" };
+    Some(format!("darwin{channel}-{arch}-app-zst"))
+}
+
 /// The AppImage GTK hook (linuxdeploy-plugin-gtk, Tauri CLI < 2.12) exports
 /// `GDK_BACKEND=x11` unconditionally. On a Wayland session without XWayland
 /// there is no X display, so GTK init panics before any window appears. Fall

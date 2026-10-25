@@ -20,6 +20,8 @@ export function verifyUpdaterSignatures({
   byName,
   signatureByBaseName,
   resolveUpdaterTargets,
+  // Base64 minisign public key; defaults to tauri.conf.json's updater pubkey.
+  publicKey,
 }) {
   const pairs = [];
   const eligibleArtifacts = [];
@@ -52,10 +54,11 @@ export function verifyUpdaterSignatures({
     );
   }
 
-  const tauriConfig = JSON.parse(
-    fs.readFileSync(path.join(root, "src-tauri", "tauri.conf.json"), "utf8"),
-  );
-  const encodedPublicKey = tauriConfig.plugins?.updater?.pubkey;
+  const encodedPublicKey =
+    publicKey ??
+    JSON.parse(
+      fs.readFileSync(path.join(root, "src-tauri", "tauri.conf.json"), "utf8"),
+    ).plugins?.updater?.pubkey;
   if (!encodedPublicKey) {
     throw new Error("tauri.conf.json is missing plugins.updater.pubkey.");
   }
