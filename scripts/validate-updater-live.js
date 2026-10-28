@@ -26,6 +26,7 @@ import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { spawnSync } from "child_process";
 import { verifyUpdaterSignatures } from "./updater-signature-verifier.js";
+import { resolveUpdaterTargets } from "./gpg-sign.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -264,7 +265,12 @@ export function resolveLiveUpdaterTargets(name) {
   ) {
     return [];
   }
-  if (/\.(exe|msi|dmg|flatpak|appimage|zip)$/i.test(name)) {
+  // Manifests also reference macOS .app.tar.gz / .app.tar.zst archives, which
+  // only gpg-sign's resolver knows about.
+  if (
+    /\.(exe|msi|dmg|flatpak|appimage|zip)$/i.test(name) ||
+    resolveUpdaterTargets(name).length > 0
+  ) {
     return [{ os: "live", arch: "artifact" }];
   }
   return [];

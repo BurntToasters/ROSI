@@ -15,6 +15,7 @@ import { spawn, spawnSync } from "child_process";
 import { Transform, Writable } from "stream";
 import { pipeline } from "stream/promises";
 import { fileURLToPath } from "url";
+import { isDeepStrictEqual } from "util";
 import zlib from "zlib";
 import { isDirectExecutionOf } from "./direct-execution.mjs";
 import { verifyReleaseSession } from "./release-session.js";
@@ -76,8 +77,104 @@ function compactArchiveName(arch) {
   return `ROSI-${arch}.app.tar.zst`;
 }
 
-/** Z04.2: one top-level ROSI.app, and executables built for `arch`. */
-function assertPerArchBundle(input, arch) {
+function compareVersions(left, right) {
+  const leftParts = left.split(".").map(Number);
+  const rightParts = right.split(".").map(Number);
+  const length = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const delta = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (delta !== 0) return Math.sign(delta);
+  }
+  return 0;
+}
+
+function parseMachOMinimumVersion(otoolOutput) {
+  const buildVersion = otoolOutput.match(
+    /cmd LC_BUILD_VERSION[\s\S]*?\bminos\s+(\d+(?:\.\d+)*)/,
+  );
+  if (buildVersion?.[1]) return buildVersion[1];
+  const legacy = otoolOutput.match(
+    /cmd LC_VERSION_MIN_MACOSX[\s\S]*?\bversion\s+(\d+(?:\.\d+)*)/,
+  );
+  return legacy?.[1] ?? null;
+}
+
+function readMachOMinimumVersion(binary, arch) {
+  const output = run("otool", ["-arch", arch, "-l", binary]);
+  const minimum = parseMachOMinimumVersion(output);
+  if (!minimum) {
+    throw new Error(
+      `Could not read the minimum macOS version for ${binary} (${arch})`,
+    );
+  }
+  return minimum;
+}
+
+function readEntitlementsTemplate(templatePath) {
+  return JSON.parse(
+    run("plutil", ["-convert", "json", "-o", "-", templatePath]),
+  );
+}
+
+function verifySignedEntitlements(targetPath, expected) {
+  const temporaryDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "rosi-entitlements-"),
+  );
+  const plistPath = path.join(temporaryDirectory, "entitlements.plist");
+  try {
+    const inspection = spawnSync(
+      "codesign",
+      ["--display", "--entitlements", plistPath, "--xml", targetPath],
+      { encoding: "utf8" },
+    );
+    if (inspection.error || inspection.status !== 0) {
+      throw (
+        inspection.error ??
+        new Error(
+          `Could not inspect entitlements for ${targetPath}: ${inspection.stderr}`,
+        )
+      );
+    }
+    const actual = fs.existsSync(plistPath)
+      ? JSON.parse(run("plutil", ["-convert", "json", "-o", "-", plistPath]))
+      : {};
+    if (!isDeepStrictEqual(actual, expected)) {
+      throw new Error(
+        `Unexpected signed entitlements for ${targetPath}: ${JSON.stringify(actual)}`,
+      );
+    }
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+function verifyDeveloperIdSignature(targetPath, label) {
+  const inspection = spawnSync(
+    "codesign",
+    ["--display", "--verbose=4", targetPath],
+    { encoding: "utf8" },
+  );
+  if (inspection.error || inspection.status !== 0) {
+    throw inspection.error ?? new Error(inspection.stderr);
+  }
+  const details = `${inspection.stdout}${inspection.stderr}`;
+  if (
+    /Signature=adhoc/i.test(details) ||
+    !/Authority=Developer ID Application:/i.test(details)
+  ) {
+    throw new Error(
+      `${label} is not signed with a Developer ID Application certificate.`,
+    );
+  }
+  const teamIdentifier = details.match(/^TeamIdentifier=(.+)$/m)?.[1]?.trim();
+  if (!teamIdentifier || teamIdentifier === "not set") {
+    throw new Error(`${label} signature has no TeamIdentifier.`);
+  }
+  return teamIdentifier;
+}
+
+/** Z04.2: one top-level ROSI.app, and executables built for `arch`. Z04.7: code sign & staple. */
+function assertPerArchBundle(input, arch, { verifySignature = false } = {}) {
   const members = run("tar", ["-tzf", input], { maxBuffer: 64 * 1024 * 1024 })
     .split("\n")
     .filter(Boolean);
@@ -89,14 +186,7 @@ function assertPerArchBundle(input, arch) {
   }
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "rosi-updater-zst-"));
   try {
-    run("tar", [
-      "-xzf",
-      input,
-      "-C",
-      scratch,
-      ...THIN_MEMBERS,
-      ...MULTI_ARCH_MEMBERS,
-    ]);
+    run("tar", ["-xzf", input, "-C", scratch]);
     const expected = ARCHES[arch].lipoArch;
     for (const member of [...THIN_MEMBERS, ...MULTI_ARCH_MEMBERS]) {
       const archs = run("lipo", ["-archs", path.join(scratch, member)]).trim();
@@ -106,6 +196,98 @@ function assertPerArchBundle(input, arch) {
           `${input}: ${member} has architectures "${archs}", expected ${thin ? "" : "to include "}"${expected}"`,
         );
       }
+    }
+    if (verifySignature) {
+      const appPath = path.join(scratch, "ROSI.app");
+      const tauriConfig = JSON.parse(
+        fs.readFileSync(
+          path.join(root, "src-tauri", "tauri.conf.json"),
+          "utf8",
+        ),
+      );
+      const requiredMacOS = tauriConfig.bundle?.macOS?.minimumSystemVersion;
+      const expectedBundleVersion = tauriConfig.bundle?.macOS?.bundleVersion;
+      const marketingMatch = tauriConfig.version?.match(
+        /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-beta\.(?:0|[1-9]\d*))?$/,
+      );
+      const expectedMarketingVersion = marketingMatch
+        ? `${marketingMatch[1]}.${marketingMatch[2]}.${marketingMatch[3]}`
+        : undefined;
+      if (
+        !requiredMacOS ||
+        !expectedBundleVersion ||
+        !expectedMarketingVersion
+      ) {
+        throw new Error(
+          "tauri.conf.json must define a supported version, bundle.macOS.minimumSystemVersion, and bundleVersion",
+        );
+      }
+
+      const infoPlist = path.join(appPath, "Contents", "Info.plist");
+      const bundleVersion = run("/usr/libexec/PlistBuddy", [
+        "-c",
+        "Print:CFBundleVersion",
+        infoPlist,
+      ]).trim();
+      if (!/^\d+(?:\.\d+){0,2}$/.test(bundleVersion)) {
+        throw new Error(`CFBundleVersion must be numeric: ${bundleVersion}`);
+      }
+      if (bundleVersion !== expectedBundleVersion) {
+        throw new Error(
+          `CFBundleVersion ${bundleVersion} does not match configured ${expectedBundleVersion}`,
+        );
+      }
+      const marketingVersion = run("/usr/libexec/PlistBuddy", [
+        "-c",
+        "Print:CFBundleShortVersionString",
+        infoPlist,
+      ]).trim();
+      if (marketingVersion !== expectedMarketingVersion) {
+        throw new Error(
+          `CFBundleShortVersionString ${marketingVersion} does not match expected ${expectedMarketingVersion}`,
+        );
+      }
+
+      for (const member of [...THIN_MEMBERS, ...MULTI_ARCH_MEMBERS]) {
+        const fullMember = path.join(scratch, member);
+        const minos = readMachOMinimumVersion(fullMember, expected);
+        if (compareVersions(minos, requiredMacOS) > 0) {
+          throw new Error(
+            `${member} (${expected}) requires macOS ${minos}, above ROSI's declared ${requiredMacOS} floor`,
+          );
+        }
+      }
+
+      run("codesign", [
+        "--verify",
+        "--deep",
+        "--strict",
+        "--verbose=2",
+        appPath,
+      ]);
+      const hostTeam = verifyDeveloperIdSignature(appPath, "macOS app");
+      const hostEntitlements = readEntitlementsTemplate(
+        path.join(root, "src-tauri", "entitlements.plist"),
+      );
+      verifySignedEntitlements(appPath, hostEntitlements);
+      for (const member of [...THIN_MEMBERS, ...MULTI_ARCH_MEMBERS].filter(
+        (m) => !m.endsWith("/rosi"),
+      )) {
+        const fullMember = path.join(scratch, member);
+        verifySignedEntitlements(fullMember, hostEntitlements);
+        const sidecarTeam = verifyDeveloperIdSignature(
+          fullMember,
+          `${path.basename(member)} sidecar`,
+        );
+        if (sidecarTeam !== hostTeam) {
+          throw new Error(
+            `${member} TeamIdentifier ${sidecarTeam} does not match host ${hostTeam}`,
+          );
+        }
+      }
+
+      run("xcrun", ["stapler", "validate", appPath]);
+      run("spctl", ["--assess", "--type", "execute", "--verbose=2", appPath]);
     }
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
@@ -212,11 +394,12 @@ async function packMacosUpdaterArchive({
   version,
   outputDir,
   sign = true,
+  verifySignature = sign,
 }) {
   if (!ARCHES[arch]) throw new Error(`unsupported macOS arch: ${arch}`);
   if (!fs.existsSync(input))
     throw new Error(`missing per-arch updater archive: ${input}`);
-  assertPerArchBundle(input, arch);
+  assertPerArchBundle(input, arch, { verifySignature });
 
   const output = path.join(
     outputDir ?? path.dirname(input),

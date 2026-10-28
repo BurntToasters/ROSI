@@ -141,7 +141,7 @@
     "release:win:continue": "npm run release:session:verify && npm run release:licenses && npm run release:draft && npm run release:legacy-v4-feed && npm run rust:targets:win && npm run build:win:prepared && npm run prepare:sidecars && npm run release:sign:gpg && npm run release:finalize",
     "release:win:resume": "npm run prerelease:prepare && npm run release:win:continue",
     "release:win": "node scripts/run-release.js win",
-    "release:mac:continue": "npm run release:session:verify && npm run release:licenses && npm run release:wait-draft && npm run rust:targets:mac && npm run build:mac:universal:prepared && npm run build:mac:zip && npm run build:mac:updater-arches:prepared && npm run build:mac:updater-zst && npm run release:sign:gpg && npm run release:finalize",
+    "release:mac:continue": "npm run release:session:verify && npm run release:licenses && npm run release:wait-draft && npm run rust:targets:mac && npm run build:mac:universal:prepared && npm run build:mac:zip && npm run build:mac:updater-arches:prepared && npm run build:mac:updater-zst && node scripts/e2e-updater-zst.mjs --require-real-builds && npm run release:sign:gpg && npm run release:finalize",
     "release:mac:resume": "npm run prerelease:prepare && npm run release:mac:continue",
     "release:mac": "node scripts/run-release.js mac",
     "release:mac:ssh": "npm run mac:ssh:keychain && node scripts/run-release.js mac",

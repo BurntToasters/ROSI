@@ -32,6 +32,28 @@ pub fn get_distribution_channel() -> &'static str {
     distribution_channel()
 }
 
+#[cfg(target_os = "macos")]
+fn is_rosetta_translated() -> bool {
+    let mut ret: libc::c_int = 0;
+    let mut size: libc::size_t = std::mem::size_of_val(&ret);
+    let name = c"sysctl.proc_translated";
+    let res = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            &mut ret as *mut _ as *mut libc::c_void,
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    res == 0 && ret == 1
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_rosetta_translated() -> bool {
+    false
+}
+
 #[tauri::command]
 pub fn get_beta_updater_target() -> String {
     use tauri::utils::config::BundleType;
@@ -41,10 +63,14 @@ pub fn get_beta_updater_target() -> String {
         "macos" => "darwin",
         other => other,
     };
-    let arch = match std::env::consts::ARCH {
-        "x86" => "i686",
-        "arm64" => "aarch64",
-        other => other,
+    let arch = if is_rosetta_translated() {
+        "aarch64"
+    } else {
+        match std::env::consts::ARCH {
+            "x86" => "i686",
+            "arm64" => "aarch64",
+            other => other,
+        }
     };
     let installer = match tauri::utils::platform::bundle_type() {
         Some(BundleType::Deb) => Some("deb"),
@@ -76,10 +102,15 @@ pub fn get_compact_updater_target(beta: bool) -> Option<String> {
     {
         return None;
     }
-    // Compile-time arch: a Rosetta process asks for the x86_64 bundle.
-    let arch = match std::env::consts::ARCH {
-        arch @ ("aarch64" | "x86_64") => arch,
-        _ => return None,
+    // Target arch: an x86_64 process running under Rosetta translation requests
+    // the native aarch64 bundle so the update migrates to native execution.
+    let arch = if is_rosetta_translated() {
+        "aarch64"
+    } else {
+        match std::env::consts::ARCH {
+            arch @ ("aarch64" | "x86_64") => arch,
+            _ => return None,
+        }
     };
     let channel = if beta { "-beta" } else { "" };
     Some(format!("darwin{channel}-{arch}-app-zst"))

@@ -26,23 +26,35 @@ Enumerated before implementation. Each case names the layer that must catch it.
 1. A zstd archive whose app lacks a sidecar, or whose identity differs, must
    be refused by the existing completeness and identity checks.
 2. A per-arch bundle for the wrong architecture must never be offered: the
-   feed key carries the arch, and the client asks for its own compile-time
-   arch (Rosetta processes ask for x86_64).
+   feed key carries the arch, and the client asks for its host target.
 3. An arm64-only app later moved to an Intel Mac will not launch. This is
    accepted and documented; recovery is the universal DMG.
+4. A bundle whose executable or sidecars do not support the host architecture
+   (for example, an arm64-only bundle on an Intel Mac, or an x86_64-only bundle
+   on native Apple Silicon) must be rejected before live app replacement or
+   backup retirement, while a translated x86_64 process under Rosetta 2 accepts
+   both `aarch64` and `x86_64` bundles.
 
 ## Z03: client target selection and fallback
 
 1. A packaged macOS app asks for `darwin-{arch}-app-zst` (stable) or
    `darwin-beta-{arch}-app-zst` (beta).
-2. If the compact feed is missing or lacks the key (a release published
+2. A translated process on Apple Silicon (Rosetta) requests the native `aarch64`
+   target so that updates automatically migrate to native arm64 execution.
+3. If the compact feed is missing or lacks the key (a release published
    without zst artifacts), the check must fall back to the legacy target and
-   still find the update.
-3. A compact feed that exists and reports no newer version must not trigger
+   still find the update. The endpoint configuration must not mask a missing
+   compact feed with an installed-version manifest.
+4. A compact feed that exists and reports no newer version must not trigger
    the fallback.
-4. Clients on 5.0.x never request the compact key and keep receiving the
+5. Clients on 5.0.x never request the compact key and keep receiving the
    universal `.app.tar.gz`.
-5. Windows, Linux, and Flatpak targets must not change.
+6. Windows, Linux, and Flatpak targets must not change.
+
+Scope: Z03.1 through Z03.6 mock `get_compact_updater_target`, so they test renderer
+routing given the command's answer. The Rust target selection itself (bundle-type
+gate, Rosetta sysctl, arch) is covered only by Z03.2's `sysctl.proc_translated`
+probe and must be confirmed on real macOS hardware.
 
 ## Z04: release pipeline
 
@@ -57,5 +69,10 @@ Enumerated before implementation. Each case names the layer that must catch it.
 4. A missing or mismatched `.sig` must stop manifest generation.
 5. Stable and beta compact manifests must be generated, validated, listed in
    the required beta-manifest set, and pass the live validator.
-6. Compact entries must never become the generic `darwin-{arch}` fallback for
-   old clients.
+6. Compact entries must never become the generic `darwin-{arch}` or
+   `darwin-beta-{arch}[-app]` fallback for old clients.
+7. Per-arch input bundles in release builds must have valid Developer ID code
+   signatures, stapled notarization tickets, and pass Gatekeeper assessment
+   (`spctl`) before being repacked.
+8. The E2E test harness supports a strict `--require-real-builds` mode to prevent
+   synthetic bundles from being accepted as final release proof.

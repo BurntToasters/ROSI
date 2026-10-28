@@ -1,0 +1,11 @@
+{
+  "version": "0.0.0-fixture",
+  "pub_date": "2026-07-18T00:00:00Z",
+  "notes": "Fixture for per-arch macOS app-zst updater manifest keys (not a release pin).",
+  "platforms": {
+    "darwin-aarch64-app-zst": {
+      "url": "https://github.com/BurntToasters/ROSI/releases/download/v0.0.0-fixture/ROSI-aarch64.app.tar.zst",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIG1pbmlzaWduIHNlY3JldCBrZXkKUldRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDowCXZlcnNpb246MC4wLjAtZml4dHVyZQpBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT09"
+    }
+  }
+}

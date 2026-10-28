@@ -22,7 +22,7 @@ reason (`.github/dependabot.yml`).
 | Source | `https://crates.io/api/v1/crates/tauri-plugin-updater/2.14.0/download` |
 | crates.io sha256 | `7259989d4fe11b2bf51f7d671642249b1837c4ae2da1430dc713ae38f98ceeec` |
 | Upstream git sha1 | `44293a5722efcaf27060504e63b17aeba721b40f` (`.cargo_vcs_info.json`, path `plugins/updater`) |
-| Newest stable 2.x seen | `2.14.0` (checked 2026-10-17 via crates.io; `2.13.3` and `2.13.2` are older) |
+| Newest stable 2.x seen | `2.14.1` (seen 2026-10-28 in the local crates.io cache). Dependency-only: `base64` 0.22 to 0.23 and `zip` 4 to 9 in `Cargo.toml`, `src/` byte-identical to 2.14.0. Not adopted; the base stays `2.14.0`. Before that, `2.14.0` was the newest (checked 2026-10-17; `2.13.3` and `2.13.2` are older) |
 
 `Cargo.toml.orig`, `README.md`, `build.rs`, `permissions/`,
 `CHANGELOG.md`, `SECURITY.md`, `api-iife.js`, the `LICENSE*` files and
@@ -44,9 +44,9 @@ patch -p1 -d <pristine-2.14.0-dir> -i ROSI.patch
 
 | File | Status | Why the patch exists |
 | --- | --- | --- |
-| `src/install_safety.rs` | new | Shared install checks. macOS: bundle identity and completeness, a sibling backup path, a process-wide install lock, and a privileged replacement script whose arguments are shell-quoted. Windows: `ShellExecuteW` result check (values `<= 32` are failures). Archives: confined tar member, parent-directory and symlink-target checks, so an update cannot write outside the extract root. Linux: helper binaries (`pkexec`, `sudo`, `zenity`, `kdialog`, `sh`) are resolved only from fixed root-owned system directories and never through `PATH`; the privileged environment is an allowlist (session display, D-Bus, locale vars) and sets `PATH` to fixed system directories. Also cross-device move and copy fallback. Its `#[cfg(test)]` module runs with `cargo test`. |
+| `src/install_safety.rs` | new | Shared install checks. macOS: bundle identity and completeness, Mach-O architecture validation (`macos_bundle_executable_supports_host_arch`, checking both native execution and Rosetta 2 translation), a sibling backup path, a process-wide install lock, and a privileged replacement script whose arguments are shell-quoted. Windows: `ShellExecuteW` result check (values `<= 32` are failures). Archives: confined tar member, parent-directory and symlink-target checks, so an update cannot write outside the extract root. Linux: helper binaries (`pkexec`, `sudo`, `zenity`, `kdialog`, `sh`) are resolved only from fixed root-owned system directories and never through `PATH`; the privileged environment is an allowlist (session display, D-Bus, locale vars) and sets `PATH` to fixed system directories. Also cross-device move and copy fallback. Its `#[cfg(test)]` module runs with `cargo test`. |
 | `src/appimage_install.rs` | new | Validates an AppImage before it replaces the live file: ELF class, machine and entrypoint checks, squashfs and ISO9660 structure for Type 2 images. Stages in a private work directory, moves the old image aside, then renames the stage into place, restoring the old image if that fails. Used on Linux and BSD only. |
-| `src/appimage_archive.rs` | new | Bounded `.tar.gz` extraction for AppImage updates: entry-count limit, total decompressed-byte limit, exactly one regular `.AppImage` member, no links, truncation detection. Used on Linux and BSD. Its `BoundedArchiveReader` (decompressed-byte cap, tar end-block and trailing-data check) also bounds macOS app extraction. |
+| `src/appimage_archive.rs` | new | Bounded `.tar.gz` extraction for AppImage updates: entry-count limit, total decompressed-byte limit, exactly one regular `.AppImage` member, no links, truncation detection. Used on Linux and BSD. Its `BoundedArchiveReader` (decompressed-byte cap, tar end-block and trailing-data check) also bounds macOS app extraction. The module is compiled on macOS without the `zip` feature, because its `flate2` and `tar` dependencies are unconditional there. On Linux and BSD it still needs `zip`. |
 | `src/updater.rs` | modified | See details below. |
 | `src/lib.rs` | modified | Adds `mod install_safety;`. Plumbs the fallible `on_before_exit` hook and a new `on_windows_installer_launched` hook into the updater state. Windows cleanup now runs from the launched hook, not before launch. |
 | `src/error.rs` | modified | Adds `Error::BeforeExit(String)` so a failed app-state flush aborts installation and keeps the update retryable. |
@@ -65,7 +65,9 @@ patch -p1 -d <pristine-2.14.0-dir> -i ROSI.patch
   the running byte count (`append_download_chunk`). A body longer than its declared length
   is an error.
 - macOS: installs go through `install_inner_locked` inside the install lock. The new bundle
-  is extracted with the confined extractor (`extract_macos_app_archive`), the live bundle is
+  is extracted with the confined extractor (`extract_macos_app_archive`), verified to support
+  the host CPU architecture (`macos_bundle_executable_supports_host_arch` for the main executable
+  and bundled sidecars, including Rosetta 2 migration to native Apple Silicon), the live bundle is
   moved to the sibling backup, the new bundle is moved live, and the backup is removed only
   after the identity check passes. `restore_macos_live_bundle` and
   `recover_macos_live_bundle` roll back a partial swap. When the user-owned path is not
@@ -112,8 +114,14 @@ functions are not dead: their only caller is the Linux/BSD `install_appimage` pa
 installs on Linux.
 
 Fix: a `#![cfg_attr(target_os = "macos", allow(dead_code))]` at the top of both files.
-Linux and BSD still warn about real dead code. macOS stays clean. The modules still
-compile on macOS so their tests keep running.
+Linux and BSD still warn about real dead code. macOS has no dead-code warnings. The modules
+still compile on macOS so their tests keep running.
+
+Other default clippy lints still fire on pre-existing code. On 2026-10-28, a cross check
+(`cargo clippy --lib --tests --target aarch64-apple-darwin`, Rust 1.98.1, from Windows)
+reported 5 lib lints (`map_or`, `div_ceil`, range `contains`) in `appimage_install.rs`, and 10
+more in test code (`appimage_install.rs`, `appimage_archive.rs`, `install_safety.rs`,
+`updater.rs`). None is in the Mach-O, zstd or macOS archive extraction code.
 
 
 ## Known gaps
@@ -136,8 +144,11 @@ compile on macOS so their tests keep running.
   `src-tauri` as the seed. It is a standalone root package, so its unit tests run with
   `cargo test --locked --manifest-path src-tauri/vendor/tauri-plugin-updater/Cargo.toml --lib`
   (CI gate `vendorUpdater` in `scripts/test-all.js`). The root `cargo test --all-targets`
-  gate does not run them. Last run (macOS, 2026-10-24): 50 pass, 1 ignored (the real-archive
-  test that `scripts/e2e-updater-zst.mjs` runs).
+  gate does not run them. Last run on Windows (2026-10-28, after the Mach-O and zstd changes):
+  34 pass, 0 fail, 0 ignored. The macOS run is pending for this state. Its count and its one
+  ignored test (the real-archive test that `scripts/e2e-updater-zst.mjs` runs with
+  `ROSI_UPDATER_ZST_E2E_ARCHIVES`) must be confirmed on a Mac, through the macOS CI job or
+  `npm run test:e2e:updater-zst`.
 
 ## Rebase procedure (new upstream version X)
 

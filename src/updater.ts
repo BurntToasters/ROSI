@@ -204,18 +204,33 @@ async function checkFeed(
 ): Promise<Update | null> {
   if (!target?.endsWith(COMPACT_TARGET_SUFFIX)) return checkTargetFeed(target, isCurrent);
   try {
-    return await checkTargetFeed(target, isCurrent);
-  } catch {
+    // No in-place retry: the legacy target below is the retry.
+    return await checkTargetFeed(target, isCurrent, false);
+  } catch (error) {
     if (!isCurrent()) return null;
     // A release published without per-arch zstd archives still updates
     // through the universal .app.tar.gz feed.
-    return checkTargetFeed(legacyTarget(target), isCurrent);
+    const fallback = legacyTarget(target);
+    reportCompactFallback(target, fallback, error);
+    return checkTargetFeed(fallback, isCurrent);
+  }
+}
+
+// Logs why a compact check fell back. Logging must never change the check.
+function reportCompactFallback(target: string, fallback: string | undefined, error: unknown): void {
+  try {
+    console.warn(
+      `[rosi] updater: ${target} check failed, falling back to ${fallback ?? 'the default'} target: ${errorMessage(error)}`
+    );
+  } catch {
+    // Ignore logging failures.
   }
 }
 
 async function checkTargetFeed(
   target: string | undefined,
-  isCurrent: () => boolean
+  isCurrent: () => boolean,
+  retryOnError = true
 ): Promise<Update | null> {
   const testCheck = e2eUpdaterAdapter()?.check;
   if (testCheck) {
@@ -232,7 +247,7 @@ async function checkTargetFeed(
     update = await check(options);
   } catch (error) {
     if (!isCurrent()) return null;
-    if (!target) throw error;
+    if (!target || !retryOnError) throw error;
     return check(options);
   }
   if (!isCurrent()) {

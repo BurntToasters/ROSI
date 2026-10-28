@@ -3,7 +3,10 @@ import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { stripSupersededPrereleases } from "./update-metainfo.js";
-import { syncChangelogForVersion } from "./sync-version-helpers.js";
+import {
+  macBundleVersionFromSemver,
+  syncChangelogForVersion,
+} from "./sync-version-helpers.js";
 import { validateChangelogForVersion } from "./validate-changelog-version.js";
 
 const STABLE_METADATA_PATHS = new Set([
@@ -42,17 +45,18 @@ function parseJson(file, text) {
   }
 }
 
-function assertJsonVersionOnly(
-  file,
-  baseText,
-  headText,
-  allowedFields,
-  expectedBaseVersion,
-  expectedHeadVersion,
-) {
+/**
+ * Each allowed field is [fieldPath, expectedBaseValue, expectedHeadValue], so
+ * derived values such as macOS bundleVersion get their own expectations.
+ */
+function assertJsonVersionOnly(file, baseText, headText, allowedFields) {
   const base = parseJson(file, baseText);
   const head = parseJson(file, headText);
-  for (const fieldPath of allowedFields) {
+  for (const [
+    fieldPath,
+    expectedBaseValue,
+    expectedHeadValue,
+  ] of allowedFields) {
     let baseParent = base;
     let headParent = head;
     for (const key of fieldPath.slice(0, -1)) {
@@ -67,10 +71,7 @@ function assertJsonVersionOnly(
         `${file} is missing the allowed version field ${fieldPath.join(".")}.`,
       );
     }
-    if (
-      baseValue !== expectedBaseVersion ||
-      headValue !== expectedHeadVersion
-    ) {
+    if (baseValue !== expectedBaseValue || headValue !== expectedHeadValue) {
       throw new Error(
         `${file} has an unexpected value in ${fieldPath.join(".")}.`,
       );
@@ -416,25 +417,25 @@ export function validateStableMetadataChange({
     }
     switch (file) {
       case "package.json":
+        assertJsonVersionOnly(file, change.baseText, change.headText, [
+          [["version"], baseVersion, headVersion],
+        ]);
+        break;
       case "src-tauri/tauri.conf.json":
-        assertJsonVersionOnly(
-          file,
-          change.baseText,
-          change.headText,
-          [["version"]],
-          baseVersion,
-          headVersion,
-        );
+        assertJsonVersionOnly(file, change.baseText, change.headText, [
+          [["version"], baseVersion, headVersion],
+          [
+            ["bundle", "macOS", "bundleVersion"],
+            macBundleVersionFromSemver(baseVersion),
+            macBundleVersionFromSemver(headVersion),
+          ],
+        ]);
         break;
       case "package-lock.json":
-        assertJsonVersionOnly(
-          file,
-          change.baseText,
-          change.headText,
-          [["version"], ["packages", "", "version"]],
-          baseVersion,
-          headVersion,
-        );
+        assertJsonVersionOnly(file, change.baseText, change.headText, [
+          [["version"], baseVersion, headVersion],
+          [["packages", "", "version"], baseVersion, headVersion],
+        ]);
         break;
       case "src-tauri/Cargo.toml":
       case "src-tauri/Cargo.lock":

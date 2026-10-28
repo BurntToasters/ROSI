@@ -69,7 +69,11 @@ normal loaders validate everything, and the result is recorded in
   DOM tests and the E2E specs drive.
 - `updater.ts` wraps `@tauri-apps/plugin-updater`. Stable checks use the default
   `latest-{target}-{arch}.json` endpoints; beta checks pass the
-  `{os}-beta-{arch}-{installer}` target from `get_beta_updater_target`.
+  `{os}-beta-{arch}-{installer}` target from `get_beta_updater_target`. Packaged
+  macOS apps call `get_compact_updater_target` to check per-arch zstd updates
+  (`darwin[-beta]-{arch}-app-zst`) and fall back to the universal target if unavailable.
+  Under Rosetta 2, `get_compact_updater_target` selects the native `aarch64` target to
+  migrate the app to native Apple Silicon execution.
 - `main.ts` is the entry point. It imports the bridge first, then the renderer
   modules, then `rosiEngine.ts`. After the renderer reports startup readiness it
   calls `mark_main_window_ready`, which lets the backend close the splash.
@@ -126,7 +130,11 @@ per-arch `ROSI-{aarch64,x86_64}.app.tar.zst` instead of the universal
   and never collects the per-arch builds' arch-less `.app.tar.gz`.
 - Packaged macOS apps ask for that target (`get_compact_updater_target`). If the
   compact feed is missing they fall back to the universal feed, which stays published
-  for clients older than 5.1.0.
+  for clients older than 5.1.0. An x86_64 process running under Rosetta 2 requests
+  `darwin[-beta]-aarch64-app-zst` so it updates directly to native Apple Silicon execution.
+- Staged updates are verified prior to installation: the vendored updater validates that
+  the extracted executable and sidecars match the host architecture before live bundle
+  replacement or backup retirement.
 - `rosi-yt-dlp` is upstream's universal2 binary and already compressed, so about
   36 MB of every update is yt-dlp.
 

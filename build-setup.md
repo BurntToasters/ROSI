@@ -22,6 +22,7 @@
   15.0 because the bundled FFmpeg is built for macOS 15; `build:mac:zip` rejects
   any bundled Mach-O whose minimum OS is above that floor.
 - Xcode Command Line Tools (`lipo`, `codesign`, `notarytool`)
+- zstd CLI (`brew install zstd`) for the updater archives; checked by `npm run prerelease:prepare`
 - Node.js `^24.15.0 || >=26`
 - Rust (rustup)
 

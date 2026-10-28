@@ -50,15 +50,19 @@ use crate::{
 #[path = "appimage_install.rs"]
 mod appimage_install;
 
-#[cfg(all(
-    feature = "zip",
-    any(
-        target_os = "linux",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd",
-        target_os = "macos"
+// macOS app extraction uses `BoundedArchiveReader` from this module. Its flate2
+// and tar dependencies are unconditional on macOS, so macOS does not need `zip`.
+#[cfg(any(
+    target_os = "macos",
+    all(
+        feature = "zip",
+        any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        )
     )
 ))]
 #[path = "appimage_archive.rs"]
@@ -1712,6 +1716,28 @@ impl Update {
             )));
         }
 
+        let staged_executable = tmp_extract_dir
+            .path()
+            .join("Contents/MacOS")
+            .join(&expected_identity.executable);
+        if !crate::install_safety::macos_bundle_executable_supports_host_arch(&staged_executable) {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "staged updater executable does not support the host architecture",
+            )));
+        }
+        for sidecar in ["rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"] {
+            let sidecar_path = tmp_extract_dir.path().join("Contents/MacOS").join(sidecar);
+            if !crate::install_safety::macos_bundle_executable_supports_host_arch(&sidecar_path) {
+                return Err(Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "staged updater sidecar {sidecar} does not support the host architecture"
+                    ),
+                )));
+            }
+        }
+
         // Recovery can mutate a protected install tree. Delay it until the
         // downloaded bundle has passed identity and completeness validation,
         // then route only permission failures through the existing admin path.
@@ -3134,7 +3160,11 @@ mod macos_archive_tests {
 
     fn app_tar(payload: &[u8]) -> Vec<u8> {
         let mut builder = tar::Builder::new(Vec::new());
-        for dir in ["ROSI.app/", "ROSI.app/Contents/", "ROSI.app/Contents/MacOS/"] {
+        for dir in [
+            "ROSI.app/",
+            "ROSI.app/Contents/",
+            "ROSI.app/Contents/MacOS/",
+        ] {
             let mut header = Header::new_gnu();
             header.set_entry_type(EntryType::Directory);
             header.set_mode(0o755);
@@ -3147,13 +3177,14 @@ mod macos_archive_tests {
         header.set_mode(0o755);
         header.set_size(payload.len() as u64);
         header.set_cksum();
-        builder.append_data(&mut header, EXECUTABLE, payload).unwrap();
+        builder
+            .append_data(&mut header, EXECUTABLE, payload)
+            .unwrap();
         builder.into_inner().unwrap()
     }
 
     fn gzip(raw: &[u8]) -> Vec<u8> {
-        let mut encoder =
-            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(raw).unwrap();
         encoder.finish().unwrap()
     }
@@ -3262,8 +3293,23 @@ mod macos_archive_tests {
                 crate::install_safety::macos_app_bundle_complete(dir.path()),
                 "{path}: extracted bundle is incomplete"
             );
+            let aarch64_ok = crate::install_safety::macos_bundle_supports_runtime_host(
+                dir.path(),
+                "aarch64",
+                false,
+            );
+            let x86_64_ok = crate::install_safety::macos_bundle_supports_runtime_host(
+                dir.path(),
+                "x86_64",
+                false,
+            );
+            let rosetta_ok = crate::install_safety::macos_bundle_supports_runtime_host(
+                dir.path(),
+                "x86_64",
+                true,
+            );
             println!(
-                "ROSI_UPDATER_ZST_E2E {path} extract_ms={}",
+                "ROSI_UPDATER_ZST_E2E {path} extract_ms={} aarch64={aarch64_ok} x86_64={x86_64_ok} rosetta={rosetta_ok}",
                 started.elapsed().as_millis()
             );
         }

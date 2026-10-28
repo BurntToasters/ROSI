@@ -1,5 +1,6 @@
-// The AppImage helpers are compiled for macOS only because the shared module
-// list includes it; their callers are Linux and BSD only. Keep dead_code quiet there.
+// Bounded tar.gz helpers. `extract_appimage_from_archive` is called by the Linux and BSD
+// AppImage install path. On macOS, `BoundedArchiveReader` bounds app extraction, and the
+// AppImage-only functions have no caller, so dead_code is allowed there.
 #![cfg_attr(target_os = "macos", allow(dead_code))]
 
 use super::{appimage_install, Error, Result};

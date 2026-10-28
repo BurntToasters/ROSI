@@ -18,7 +18,11 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 
 ## Changes in `v5.1.0-beta.1:`
 
-- **Fix:** (add release notes)
+- **Updater:** macOS in-app updates now download compact per-architecture archives (`.app.tar.zst`), reducing update sizes from ~141 MB to ~60 MB using zstd compression.
+- **Updater:** Added seamless fallback to universal updates if per-architecture manifests are missing.
+- **Updater:** Architecture verification ensures downloaded macOS updates match the host machine before installation.
+- **Updater:** Rosetta-translated processes on Apple Silicon automatically request the native arm64 target to migrate away from emulation.
+- **Packaging:** Per-architecture updater archives are verified for codesigning and notarization stapling prior to packaging.
 
 ## Changes in `v5.0.2:`
 
