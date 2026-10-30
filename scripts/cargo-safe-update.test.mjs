@@ -1568,18 +1568,19 @@ test("44. deceptive registry baseline cannot preserve a too-young release", () =
 });
 
 test("45. update environment versions fail closed at exact boundaries", () => {
-  assert.deepEqual(parseVersion("12.0.1"), [12, 0, 1]);
-  assert.equal(isVersionAtLeast("12.0.1", MINIMUM_NPM_VERSION), true);
-  assert.equal(isVersionAtLeast("12.1.0", MINIMUM_NPM_VERSION), true);
-  assert.equal(isVersionAtLeast("12.0.0", MINIMUM_NPM_VERSION), false);
+  assert.deepEqual(parseVersion("12.2.1"), [12, 2, 1]);
+  assert.equal(isVersionAtLeast("12.2.1", MINIMUM_NPM_VERSION), true);
+  assert.equal(isVersionAtLeast("12.3.0", MINIMUM_NPM_VERSION), true);
+  assert.equal(isVersionAtLeast("12.2.0", MINIMUM_NPM_VERSION), false);
   assert.equal(isVersionAtLeast("11.99.99", MINIMUM_NPM_VERSION), false);
   assert.equal(isSupportedNodeVersion("22.22.2"), false);
-  assert.equal(isSupportedNodeVersion("22.99.99"), false);
   assert.equal(isSupportedNodeVersion("23.99.99"), false);
-  assert.equal(isSupportedNodeVersion("24.15.0"), true);
-  assert.equal(isSupportedNodeVersion("24.14.9"), false);
+  assert.equal(isSupportedNodeVersion("24.22.0"), false);
+  assert.equal(isSupportedNodeVersion("24.22.1"), true);
   assert.equal(isSupportedNodeVersion("25.99.99"), false);
-  assert.equal(isSupportedNodeVersion("26.0.0"), true);
+  assert.equal(isSupportedNodeVersion("26.12.9"), false);
+  assert.equal(isSupportedNodeVersion("26.13.0"), true);
+  assert.equal(isSupportedNodeVersion("27.0.0"), true);
   assert.throws(() => parseVersion("latest"), /Invalid semantic version/);
 });
 

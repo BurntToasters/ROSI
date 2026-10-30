@@ -11,7 +11,7 @@
   Build from a VS developer shell (`npm run win-compiler:arm64` or
   `win-compiler:x64`), which puts that clang on `PATH`; a plain PowerShell
   window does not.
-- Node.js `^24.15.0 || >=26` (`engines.node` in package.json)
+- Node.js `^24.22.1 || >=26.13.0` (`engines.node` in package.json)
 - Rust (rustup)
 - Azure Artifact Signing: once per release VM, as Administrator, run
   `npm run setup:win:artifact-signing`
@@ -23,7 +23,7 @@
   any bundled Mach-O whose minimum OS is above that floor.
 - Xcode Command Line Tools (`lipo`, `codesign`, `notarytool`)
 - zstd CLI (`brew install zstd`) for the updater archives; checked by `npm run prerelease:prepare`
-- Node.js `^24.15.0 || >=26`
+- Node.js `^24.22.1 || >=26.13.0`
 - Rust (rustup)
 
 ## Linux
@@ -32,7 +32,7 @@
   baseline.
 - `npm run setup:deb` installs the Ubuntu build, E2E (xvfb), 7-Zip (for
   `get:ffmpeg`), and Flatpak prerequisites.
-- Node.js `^24.15.0 || >=26`
+- Node.js `^24.22.1 || >=26.13.0`
 - Rust (rustup)
 - Linux v5 releases ship x64 only (`npm run release:linux:x64`). ARM64 wiring
   (`release:linux:arm64`, `build:linux:arm64`) remains for future development

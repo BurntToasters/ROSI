@@ -23,7 +23,8 @@ permissions:
   contents: read
 
 env:
-  NODE_VERSION: "24.16.0"
+  NODE_VERSION: "26.13.0"
+  NPM_VERSION: "12.2.1"
 
 jobs:
   watch:
