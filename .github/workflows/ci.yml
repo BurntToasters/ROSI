@@ -31,7 +31,7 @@ permissions:
 env:
   NODE_VERSION: "26.13.0"
   NPM_VERSION: "12.2.1"
-  RUST_VERSION: "1.98.1"
+  RUST_VERSION: "1.99.1"
   CARGO_AUDIT_VERSION: "0.22.2"
 
 jobs:

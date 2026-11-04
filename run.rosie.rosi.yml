@@ -46,7 +46,7 @@ modules:
     build-commands:
       # The Flatpak rust-stable SDK extension installs rustc/cargo directly,
       # not through rustup. Fail closed if that extension drifts from our pin.
-      - test "$(rustc --version | cut -d' ' -f2)" = 1.98.1
+      - test "$(rustc --version | cut -d' ' -f2)" = 1.99.1
       # The node24 SDK ships npm 11, older than the npm 12 that engines requires.
       # npm@12 plus --before 3 days ago takes the newest 12.x that is old enough.
       - npm install --global npm@12 --ignore-scripts --engine-strict=false --before="$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%SZ)" --prefix /run/build/rosi/npm-global

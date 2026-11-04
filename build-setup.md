@@ -40,7 +40,7 @@
 
 ## Rust toolchain policy
 
-ROSI builds with Rust `1.98.1`, pinned in `rust-toolchain.toml` and used by CI,
+ROSI builds with Rust `1.99.1`, pinned in `rust-toolchain.toml` and used by CI,
 Flatpak, and release builds. Install that exact toolchain before building:
 
 ```sh
