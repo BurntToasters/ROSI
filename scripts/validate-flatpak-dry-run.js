@@ -18,7 +18,7 @@ const required = [
   "scripts/prepare-flatpak-source.js",
   "scripts/prepare-sidecars.js",
 ];
-const expectedRuntime = 'runtime-version: "50"';
+const expectedRuntime = "runtime-version: '50'";
 const rustToolchain = fs
   .readFileSync(path.join(root, "rust-toolchain.toml"), "utf8")
   .match(/^channel = "(\d+\.\d+\.\d+)"$/m)?.[1];
@@ -70,16 +70,22 @@ if (fs.existsSync(manifest)) {
   if (!yaml.includes("tauri build --no-bundle -- --locked")) {
     fail("Cargo build must enforce Cargo.lock");
   }
+  const cargoBin = "/run/build/rosi/cargo/bin";
+  const prependPath = yaml.match(/^\s*prepend-path: (.+)$/m)?.[1]?.split(":");
   if (
     !rustToolchain ||
     !yaml.includes(
       `test "$(rustc --version | cut -d' ' -f2)" = ${rustToolchain}`,
     ) ||
-    yaml.includes("rustup toolchain install") ||
+    !yaml.includes(
+      "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs",
+    ) ||
+    !yaml.includes("RUSTUP_HOME: /run/build/rosi/rustup") ||
+    !prependPath?.includes(cargoBin) ||
     yaml.includes("RUSTUP_TOOLCHAIN:")
   ) {
     fail(
-      "Rust SDK extension must fail closed on the exact pinned compiler without invoking unavailable rustup",
+      "Flatpak must install the exact pinned compiler with rustup inside the sandbox and fail closed on the exact pin",
     );
   }
   if (!yaml.includes("Unsupported FLATPAK_ARCH")) {
