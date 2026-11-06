@@ -8,6 +8,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { spawnSync } from "child_process";
 import { hasExactReleaseVersion } from "./update-metainfo.js";
+import { readPinnedRustToolchain } from "./rust-toolchain.mjs";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const required = [
@@ -19,14 +20,18 @@ const required = [
   "scripts/prepare-sidecars.js",
 ];
 const expectedRuntime = "runtime-version: '50'";
-const rustToolchain = fs
-  .readFileSync(path.join(root, "rust-toolchain.toml"), "utf8")
-  .match(/^channel = "(\d+\.\d+\.\d+)"$/m)?.[1];
 
 let failed = false;
 function fail(message) {
   console.error(`flatpak-dry-run: ${message}`);
   failed = true;
+}
+
+let rustToolchain;
+try {
+  rustToolchain = readPinnedRustToolchain(root);
+} catch (error) {
+  fail(error.message);
 }
 
 for (const rel of required) {
@@ -72,11 +77,22 @@ if (fs.existsSync(manifest)) {
   }
   const cargoBin = "/run/build/rosi/cargo/bin";
   const prependPath = yaml.match(/^\s*prepend-path: (.+)$/m)?.[1]?.split(":");
+  const manifestLines = yaml.split(/\r?\n/u);
+  const extractsPin = manifestLines.some(
+    (line) =>
+      line.includes("PINNED=") &&
+      line.includes("sed") &&
+      line.includes("channel") &&
+      line.includes("rust-toolchain.toml"),
+  );
+  const assertsPin = manifestLines.some(
+    (line) => line.includes("rustc --version") && line.includes('= "$PINNED"'),
+  );
   if (
     !rustToolchain ||
-    !yaml.includes(
-      `test "$(rustc --version | cut -d' ' -f2)" = ${rustToolchain}`,
-    ) ||
+    !extractsPin ||
+    !assertsPin ||
+    yaml.includes(rustToolchain) ||
     !yaml.includes(
       "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs",
     ) ||
@@ -85,7 +101,7 @@ if (fs.existsSync(manifest)) {
     yaml.includes("RUSTUP_TOOLCHAIN:")
   ) {
     fail(
-      "Flatpak must install the exact pinned compiler with rustup inside the sandbox and fail closed on the exact pin",
+      "Flatpak must derive the compiler pin from rust-toolchain.toml with sed, install it via rustup, and fail closed on the exact pin",
     );
   }
   if (!yaml.includes("Unsupported FLATPAK_ARCH")) {

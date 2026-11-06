@@ -46,9 +46,13 @@ modules:
         HUSKY: '0'
     build-commands:
       # The Flathub rust-stable SDK extension lags the pinned toolchain, so
-      # install rustup and the exact pinned compiler inside the sandbox.
-      - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.99.1 --profile minimal
-      - test "$(rustc --version | cut -d' ' -f2)" = 1.99.1
+      # install rustup and the exact compiler pinned in rust-toolchain.toml.
+      - |
+        set -eu
+        PINNED="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"[[:space:]]*$/\1/p' rust-toolchain.toml)"
+        test -n "$PINNED"
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$PINNED" --profile minimal
+        test "$(rustc --version | cut -d' ' -f2)" = "$PINNED"
       # The node24 SDK ships npm 11, older than the npm 12 that engines requires.
       # npm@12 plus --before 3 days ago takes the newest 12.x that is old enough.
       - npm install --global npm@12 --ignore-scripts --engine-strict=false --before="$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%SZ)" --prefix /run/build/rosi/npm-global

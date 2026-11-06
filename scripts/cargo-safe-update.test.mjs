@@ -1585,15 +1585,18 @@ test("45. update environment versions fail closed at exact boundaries", () => {
 });
 
 // Failure modes covered: a floating `stable` toolchain passes without the
-// repository pin; a prefix match accepts 1.99.10 for 1.99.1; rustup's
-// host-qualified exact version is rejected; or a malformed pin passes.
+// repository pin; a prefix match accepts a later patch release for the exact
+// pin; rustup's host-qualified exact version is rejected; or a malformed pin
+// passes.
 test("45a. npm updater requires exact repository-pinned Rust toolchain", () => {
   const root = process.cwd();
   const pinned = readPinnedRustToolchain(root);
-  assert.equal(pinned, "1.99.1");
-  assert.equal(hasRustToolchain("1.99.1\n", pinned), true);
+  const [major, minor, patch] = pinned.split(".").map(Number);
+  const nextPatch = `${major}.${minor}.${patch + 1}`;
+  assert.match(pinned, /^\d+\.\d+\.\d+$/u);
+  assert.equal(hasRustToolchain(`${pinned}\n`, pinned), true);
   assert.equal(
-    hasRustToolchain("1.99.1-aarch64-apple-darwin (default)\n", pinned),
+    hasRustToolchain(`${pinned}-aarch64-apple-darwin (default)\n`, pinned),
     true,
   );
   assert.equal(hasRustToolchain("stable\n", pinned), false);
@@ -1602,7 +1605,7 @@ test("45a. npm updater requires exact repository-pinned Rust toolchain", () => {
     false,
   );
   assert.equal(
-    hasRustToolchain("1.99.10-aarch64-apple-darwin\n", pinned),
+    hasRustToolchain(`${nextPatch}-aarch64-apple-darwin\n`, pinned),
     false,
   );
 
