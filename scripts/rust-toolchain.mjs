@@ -148,6 +148,9 @@ export function readPinnedRustToolchain(root) {
 }
 
 function parseArguments(argv) {
+  if (argv.includes("--print") && argv.length > 1) {
+    throw new Error("--print cannot be combined with an action");
+  }
   const options = { action: "print", targets: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];

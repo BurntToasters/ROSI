@@ -1929,3 +1929,33 @@ test("51. npm rollback refuses to overwrite a concurrent package-lock edit", () 
     rmSync(tempRoot, { recursive: true, force: true });
   }
 });
+
+test("rust toolchain CLI --print matches the bare pin and never combines with an action", () => {
+  const script = fileURLToPath(
+    new URL("./rust-toolchain.mjs", import.meta.url),
+  );
+  const run = (args) =>
+    spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
+  const bare = run([]);
+  assert.equal(bare.status, 0, bare.stderr);
+  assert.match(bare.stdout, /^\d+\.\d+\.\d+\n$/u);
+  const printed = run(["--print"]);
+  assert.equal(printed.status, 0, printed.stderr);
+  assert.equal(printed.stdout, bare.stdout);
+  for (const args of [
+    ["--print", "--install"],
+    ["--install", "--print"],
+    ["--print", "--target", "x86_64-pc-windows-msvc"],
+    ["--target", "x86_64-pc-windows-msvc", "--print"],
+  ]) {
+    const result = run(args);
+    const label = args.join(" ");
+    assert.notEqual(result.status, 0, `${label} must fail`);
+    assert.match(
+      result.stderr,
+      /--print cannot be combined/u,
+      `${label} must name --print`,
+    );
+    assert.equal(result.stdout, "", `${label} must not print or act`);
+  }
+});
