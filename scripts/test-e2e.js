@@ -1863,6 +1863,17 @@ async function main() {
         ...env,
       },
     });
+  // Records the pass outcome on the pass object and never throws, so the gate
+  // runs every later pass and fails once at the end with all results.
+  const runRecordedPass = async (pass, env) => {
+    try {
+      await runPass(pass, env);
+      pass.status = "passed";
+    } catch (error) {
+      pass.status = "failed";
+      pass.reason = error instanceof Error ? error.message : String(error);
+    }
+  };
 
   // Fresh ROSI 5 profiles with ROSI 4 data beside them, each a separate app
   // launch because the import only runs before the first settings file.
@@ -1873,8 +1884,11 @@ async function main() {
       : ["import", "corrupt-settings"].map((legacyCase) => {
           const legacyProfile = createE2eProfile({ seedSettings: false });
           return {
+            name: `legacy-import/${legacyCase}`,
             legacyCase,
             profile: legacyProfile,
+            status: "pending",
+            reason: null,
             seed: seedLegacyV4Data(legacyProfile, {
               corruptSettings: legacyCase === "corrupt-settings",
             }),
@@ -1882,6 +1896,7 @@ async function main() {
           };
         });
   const mainPass = {
+    name: "main",
     profile,
     // The main profile already has ROSI 5 settings, so this ROSI 4 folder
     // must be ignored.
@@ -1891,6 +1906,8 @@ async function main() {
       profile.profileDir,
       "state-repairs-results.json",
     ),
+    status: "pending",
+    reason: null,
   };
   // Security downloads intentionally populate stats/activity and can exercise
   // renderer state that the main UI suite expects to start fresh. Keep the
@@ -1903,11 +1920,14 @@ async function main() {
             ffmpegPath: ffmpeg?.customPath ?? "",
           });
           return {
+            name: "security",
             profile: securityProfile,
             resultsPath: path.join(
               securityProfile.profileDir,
               "security-repairs-results.json",
             ),
+            status: "pending",
+            reason: null,
           };
         })();
   // State-repair close-failure scenarios deliberately leave native warning
@@ -1921,11 +1941,14 @@ async function main() {
             ffmpegPath: ffmpeg?.customPath ?? "",
           });
           return {
+            name: "state-repairs",
             profile: stateProfile,
             resultsPath: path.join(
               stateProfile.profileDir,
               "state-repairs-results.json",
             ),
+            status: "pending",
+            reason: null,
           };
         })();
   const offlineQueuePass =
@@ -1952,11 +1975,14 @@ async function main() {
             )}\n`,
           );
           return {
+            name: "offline-queue",
             profile: offlineProfile,
             resultsPath: path.join(
               offlineProfile.profileDir,
               "offline-queue-results.json",
             ),
+            status: "pending",
+            reason: null,
           };
         })();
   const round2RendererPass =
@@ -1975,7 +2001,13 @@ async function main() {
           const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`;
           const resultsPath = path.join(resultsDirectory, `${runId}.json`);
           fs.rmSync(resultsPath, { force: true });
-          return { profile: rendererProfile, resultsPath };
+          return {
+            name: "round2-renderer",
+            profile: rendererProfile,
+            resultsPath,
+            status: "pending",
+            reason: null,
+          };
         })();
   // Each e2e/v5-fixes/<area>/ with *.spec.js and no run.mjs gets its own fresh
   // profile. Areas that skip or focus tests fail before WebdriverIO starts.
@@ -1988,6 +2020,7 @@ async function main() {
         ffmpegPath: ffmpeg?.customPath ?? "",
       });
       return {
+        name: `v5-fixes/${area.area}`,
         area,
         profile,
         resultsPath: path.join(profile.profileDir, "results.json"),
@@ -1999,14 +2032,14 @@ async function main() {
   let failure = null;
   try {
     for (const pass of legacyPasses) {
-      await runPass(pass, {
+      await runRecordedPass(pass, {
         ROSI_E2E_SPECS: "./specs/legacy-import.spec.js",
         ROSI_E2E_LEGACY_CASE: pass.legacyCase,
         ROSI_E2E_LEGACY_V4: JSON.stringify(pass.seed),
       });
     }
     if (offlineQueuePass) {
-      await runPass(offlineQueuePass, {
+      await runRecordedPass(offlineQueuePass, {
         ROSI_E2E_SPECS: "./specs/security-release-offline-queue.spec.js",
         ROSI_OFFLINE_QUEUE_RESULTS: path.join(
           offlineQueuePass.profile.profileDir,
@@ -2015,46 +2048,38 @@ async function main() {
       });
     }
     if (stateRepairPass) {
-      await runPass(stateRepairPass, {
+      await runRecordedPass(stateRepairPass, {
         ROSI_E2E_SPECS: "./state-updater-repairs.spec.js",
         ROSI_STATE_REPAIR_RESULTS: stateRepairPass.resultsPath,
       });
     }
     if (securityPass) {
-      await runPass(securityPass, {
+      await runRecordedPass(securityPass, {
         ROSI_E2E_SPECS: "./specs/security-release-repairs.spec.js",
         ROSI_SECURITY_REPAIR_RESULTS: securityPass.resultsPath,
       });
     }
     if (round2RendererPass) {
-      try {
-        await runPass(round2RendererPass, {
-          ROSI_E2E_SPECS: "./round2-renderer-repairs.spec.js",
-          ROSI_ROUND2_RENDERER_RESULTS: round2RendererPass.resultsPath,
-        });
-      } catch (error) {
-        round2RendererFailure =
-          error instanceof Error ? error.message : String(error);
-        throw error;
+      await runRecordedPass(round2RendererPass, {
+        ROSI_E2E_SPECS: "./round2-renderer-repairs.spec.js",
+        ROSI_ROUND2_RENDERER_RESULTS: round2RendererPass.resultsPath,
+      });
+      // round2-renderer reports this failure through its scenario below.
+      if (round2RendererPass.status === "failed") {
+        round2RendererFailure = round2RendererPass.reason;
       }
     }
     for (const pass of v5Passes) {
       // Skip-marker areas are reported as failed by v5AreaScenario.
       if (pass.area.skipFiles.length > 0) continue;
-      try {
-        await runPass(pass, {
-          ROSI_E2E_SPECS: pass.area.specs
-            .map((spec) => `./v5-fixes/${pass.area.area}/${spec}`)
-            .join(","),
-        });
-        pass.status = "passed";
-      } catch (error) {
-        pass.reason = error instanceof Error ? error.message : String(error);
-        pass.status = "failed";
-      }
+      await runRecordedPass(pass, {
+        ROSI_E2E_SPECS: pass.area.specs
+          .map((spec) => `./v5-fixes/${pass.area.area}/${spec}`)
+          .join(","),
+      });
     }
     if (onlySpec || ownerEnabled("main")) {
-      await runPass(mainPass, {
+      await runRecordedPass(mainPass, {
         // ROSI_E2E_ONLY runs a single ad-hoc spec while debugging; the full
         // gate always runs main.spec.js and requires every scenario.
         ROSI_E2E_SPECS: runPlan.mainSpecs,
@@ -2066,9 +2091,33 @@ async function main() {
       });
     }
   } catch (error) {
+    // Only an error outside the pass runs reaches here.
     failure = error instanceof Error ? error.message : String(error);
   } finally {
     await server.close();
+  }
+  // Every WebdriverIO pass that failed is part of the gate failure. Round2 and
+  // v5-fixes passes are not listed here: their failed scenarios below carry
+  // the same reason, so listing them twice would only repeat the message.
+  const wdioPasses = [
+    ...legacyPasses,
+    offlineQueuePass,
+    stateRepairPass,
+    securityPass,
+    round2RendererPass,
+    ...v5Passes,
+    mainPass,
+  ].filter(Boolean);
+  for (const pass of [
+    ...legacyPasses,
+    offlineQueuePass,
+    stateRepairPass,
+    securityPass,
+    mainPass,
+  ].filter(Boolean)) {
+    if (pass.status !== "failed") continue;
+    const detail = `${pass.name}: ${pass.reason}`;
+    failure = failure ? `${failure}; ${detail}` : detail;
   }
 
   // Both specs share one isolated wrapper, which is the only code that starts
@@ -2237,6 +2286,12 @@ async function main() {
     appTmpdir: process.env.ROSI_E2E_APP_TMPDIR || null,
     fixtures,
     scenarios,
+    // Each WebdriverIO pass that ran, with its own outcome. Scenario results
+    // above come from the pass results files, so a failed pass still reports
+    // whatever scenarios it wrote.
+    wdioPasses: wdioPasses
+      .filter((pass) => pass.status !== "pending")
+      .map(({ name, status, reason }) => ({ name, status, reason })),
     scenarioGroups: groupedScenarioResults(scenarios, expectedScenarios),
     missingScenarios: missing,
     scenarioProblems,
@@ -2257,15 +2312,7 @@ async function main() {
     ),
     appLogTail: readLogTail(mainPass, 40),
   });
-  for (const pass of [
-    ...legacyPasses,
-    ...(offlineQueuePass ? [offlineQueuePass] : []),
-    ...(stateRepairPass ? [stateRepairPass] : []),
-    ...(securityPass ? [securityPass] : []),
-    ...(round2RendererPass ? [round2RendererPass] : []),
-    ...v5Passes,
-    mainPass,
-  ]) {
+  for (const pass of wdioPasses) {
     cleanupProfile(pass.profile.profileDir);
   }
   if (failure) throw new Error(`${failure} (evidence: ${evidence})`);
