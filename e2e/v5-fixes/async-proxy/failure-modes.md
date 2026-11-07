@@ -53,6 +53,31 @@ run on Tauri's Tokio runtime, with admission and DNS work bounded independently.
     constants.** The existing `e2e_network_pipelining_probe` must exercise real
     loopback traffic and report observed 256-tunnel service, overload rejection,
     cancellation cleanup, and unchanged pipeline blocking in repeatable JSON.
+17. **A rejected client still has unread input when the server closes.** Writing
+    the 503, calling `shutdown()`, and dropping the socket makes the BSD stack
+    send RST, which can discard the response before the client reads it (the
+    overload probe saw `os error 54`). After the write, read and discard client
+    bytes until EOF, 64 KiB, or 250 ms, whichever comes first, then drop. The
+    probe keeps its strict `read_to_end`.
+18. **A slow or never-closing client holds the drain open.** The 250 ms deadline
+    is fixed when the drain starts and is not extended by arriving bytes. Loop
+    drains (`Proxy Busy`, `Proxy Admission Timeout`) run as tracked tasks, so a
+    stalled client never blocks accept or admission, and cancellation or guard
+    drop aborts them with the other handlers.
+19. **A client sends more than the drain cap.** Reading stops at 64 KiB through a
+    fixed 4 KiB scratch buffer, so no buffer grows past the cap. Bytes beyond the
+    cap may still reset the connection; that is accepted because the 503 is
+    already written and the peer is misbehaving.
+20. **Drains multiply under a flood of rejected clients.** Loop drains take a
+    permit from a fixed `MAX_DRAINING_REJECTS` semaphore without waiting. When no
+    permit is free the socket is dropped immediately, as before this change.
+    Handler drains run inside an existing active-connection permit and are
+    bounded by the same deadline.
+21. **The "Proxy Admission Timeout" 503 keeps its pending admission during the
+    drain.** The expired entry's `PendingMetricGuard` is released before the 503
+    is written, so `pending_admissions` never counts a client that is only being
+    drained. The 128-entry pending cap is unaffected because expired entries have
+    already left the queue.
 
 The native E2E probe is the acceptance mechanism for concurrency and cleanup.
 Rust unit tests must not be added after implementation; existing network and

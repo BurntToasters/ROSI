@@ -34,6 +34,9 @@ const MAX_PENDING_PROXY_CLIENTS: usize = 128;
 const PENDING_ADMISSION_TIMEOUT: Duration = Duration::from_secs(5);
 const PROXY_START_TIMEOUT: Duration = Duration::from_secs(2);
 const OVERLOAD_WRITE_TIMEOUT: Duration = Duration::from_millis(100);
+const CLIENT_DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
+const CLIENT_DRAIN_MAX_BYTES: usize = 64 * 1024;
+const MAX_DRAINING_REJECTS: usize = 32;
 const EXTERNAL_CANCELLATION_POLL: Duration = Duration::from_millis(25);
 const MAX_CHUNK_METADATA_LINE_BYTES: usize = 8192;
 
@@ -323,6 +326,7 @@ impl Drop for NetworkSecurityGuard {
 
 async fn run_proxy(listener: TcpListener, shared: Arc<ProxyShared>, expected_auth: Arc<str>) {
     let semaphore = Arc::new(Semaphore::new(MAX_ACTIVE_PROXY_CLIENTS));
+    let drain_slots = Arc::new(Semaphore::new(MAX_DRAINING_REJECTS));
     let mut handlers = JoinSet::new();
     let mut pending = VecDeque::<PendingClient>::new();
 
@@ -337,8 +341,16 @@ async fn run_proxy(listener: TcpListener, shared: Arc<ProxyShared>, expected_aut
                 let Some(expired) = pending.pop_front() else {
                     break;
                 };
-                let mut stream = expired.stream;
-                reject_client(&mut stream, 503, "Proxy Admission Timeout").await;
+                let stream = expired.stream;
+                drop(expired._metrics);
+                reject_from_loop(
+                    stream,
+                    503,
+                    "Proxy Admission Timeout",
+                    &drain_slots,
+                    &mut handlers,
+                )
+                .await;
                 continue;
             }
             let Ok(permit) = Arc::clone(&semaphore).try_acquire_owned() else {
@@ -392,8 +404,14 @@ async fn run_proxy(listener: TcpListener, shared: Arc<ProxyShared>, expected_aut
                         });
                     } else {
                         shared.metrics.overload_rejections.fetch_add(1, Ordering::AcqRel);
-                        let mut client = client;
-                        reject_client(&mut client, 503, "Proxy Busy").await;
+                        reject_from_loop(
+                            client,
+                            503,
+                            "Proxy Busy",
+                            &drain_slots,
+                            &mut handlers,
+                        )
+                        .await;
                     }
                 } else if pending.len() < MAX_PENDING_PROXY_CLIENTS {
                     pending.push_back(PendingClient {
@@ -403,8 +421,14 @@ async fn run_proxy(listener: TcpListener, shared: Arc<ProxyShared>, expected_aut
                     });
                 } else {
                     shared.metrics.overload_rejections.fetch_add(1, Ordering::AcqRel);
-                    let mut client = client;
-                    reject_client(&mut client, 503, "Proxy Busy").await;
+                    reject_from_loop(
+                        client,
+                        503,
+                        "Proxy Busy",
+                        &drain_slots,
+                        &mut handlers,
+                    )
+                    .await;
                 }
             }
             _ = wait_for_admission_expiry(admission_deadline), if admission_deadline.is_some() => {}
@@ -634,6 +658,11 @@ async fn read_request_header(stream: &mut TcpStream) -> io::Result<(Vec<u8>, Vec
 }
 
 async fn reject_client(stream: &mut TcpStream, code: u16, reason: &str) {
+    write_rejection(stream, code, reason).await;
+    drain_rejected_client(stream).await;
+}
+
+async fn write_rejection(stream: &mut TcpStream, code: u16, reason: &str) {
     let body = format!("{code} {reason}\n");
     let response = format!(
         "HTTP/1.1 {code} {reason}\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{body}",
@@ -645,6 +674,43 @@ async fn reject_client(stream: &mut TcpStream, code: u16, reason: &str) {
     )
     .await;
     let _ = stream.shutdown().await;
+}
+
+/// Reads and discards what a rejected client already sent. Closing a socket
+/// with unread input makes BSD stacks send RST, which can discard the response
+/// before the client reads it. Bounded by bytes read and by one deadline.
+async fn drain_rejected_client(stream: &mut TcpStream) {
+    let deadline = Instant::now() + CLIENT_DRAIN_TIMEOUT;
+    let mut scratch = [0u8; 4096];
+    let mut drained = 0usize;
+    while drained < CLIENT_DRAIN_MAX_BYTES {
+        let limit = scratch.len().min(CLIENT_DRAIN_MAX_BYTES - drained);
+        match time::timeout_at(deadline, stream.read(&mut scratch[..limit])).await {
+            Ok(Ok(count)) if count > 0 => drained += count,
+            _ => break,
+        }
+    }
+}
+
+/// Accept-loop rejection. The 503 is written inline, as before, and the drain
+/// runs on a tracked task so a stalled client cannot block accept or admission.
+/// When every drain permit is busy the socket is dropped at once.
+async fn reject_from_loop(
+    mut stream: TcpStream,
+    code: u16,
+    reason: &str,
+    drain_slots: &Arc<Semaphore>,
+    drains: &mut JoinSet<()>,
+) {
+    write_rejection(&mut stream, code, reason).await;
+    let Ok(permit) = Arc::clone(drain_slots).try_acquire_owned() else {
+        return;
+    };
+    drains.spawn(async move {
+        let _permit = permit;
+        let mut stream = stream;
+        drain_rejected_client(&mut stream).await;
+    });
 }
 
 async fn vet_destination(
