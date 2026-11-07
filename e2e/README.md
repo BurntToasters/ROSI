@@ -21,7 +21,12 @@ selection cannot be combined with `ROSI_E2E_ONLY`.
 
 On a local Mac the gate runs ROSI in background mode (`ROSI_E2E_BACKGROUND=1`):
 the E2E app has no Dock icon, never takes focus, and its window stays below
-other apps. Native alert dialogs that specs open on purpose still appear. CI
+other apps. Native alert dialogs that specs open on purpose still appear. The
+page keeps rendering in background mode: WebKit would otherwise report a window
+behind other apps as occluded and mark the page hidden, which stops animation
+frames and CSS transitions. The E2E build turns WebKit's occlusion detection
+off for the main webview (`src-tauri/src/window.rs`, `e2e_occlusion`), and the
+window's level, focus, and activation policy stay as described above. CI
 runs in the foreground; set `ROSI_E2E_FOREGROUND=1` to do the same locally.
 The gate report does not record the window mode. Release evidence from a Mac
 uses the default background mode unless `ROSI_E2E_FOREGROUND=1` is set, and
