@@ -15,7 +15,8 @@ import {
 // Each scenario runs the Rust engine against a local signed update server. The
 // engine probe counts installs and restarts; scenarios read deltas because the
 // probe belongs to the app process.
-const EXPECTED_CHECKS = 11;
+const EXPECTED_CHECKS = 26;
+const BETA = "darwin-beta-aarch64-app";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const runDirectory = path.join(
   here,
@@ -43,6 +44,53 @@ function writeReport() {
 }
 
 const DATA_DIR = process.env.ROSI_E2E_DATA_DIR;
+
+function settingsFile() {
+  assert.ok(DATA_DIR, "ROSI_E2E_DATA_DIR is not set");
+  return path.join(DATA_DIR, "settings.json");
+}
+
+/** Edits the channel on disk only, so the engine gets no channel event. */
+function writeChannelOnDisk(channel) {
+  const value = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
+  value.updateChannel = channel;
+  fs.writeFileSync(settingsFile(), JSON.stringify(value));
+}
+
+/** Makes the next channel save fail: the file claims a newer schema. */
+function makeSettingsUnsavable() {
+  const value = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
+  value.settingsVersion = 9_999;
+  fs.writeFileSync(settingsFile(), JSON.stringify(value));
+}
+
+function artifactRequestCount() {
+  return fixture.server.requests.filter((request) =>
+    request.path.startsWith("/artifacts/"),
+  ).length;
+}
+
+/** Holds a response until the returned release function runs. */
+function holdResponse() {
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  return { gate, release };
+}
+
+async function dismissModal() {
+  const modal = await readModal();
+  if (modal.active) {
+    await clickModal(modal.buttons.includes("Later") ? "Later" : "OK");
+  }
+}
+
+async function latestCandidate() {
+  return (await statuses("engineStatuses"))
+    .filter((event) => event.status === "available")
+    .at(-1);
+}
 
 function feedTargets(index) {
   return fixture.server.requests
@@ -133,9 +181,9 @@ async function clickModal(label) {
   }, label);
 }
 
-async function waitForStatus(store, predicate, message) {
+async function waitForStatus(store, predicate, message, timeout = 20_000) {
   await browser.waitUntil(async () => (await statuses(store)).some(predicate), {
-    timeout: 20_000,
+    timeout,
     interval: 100,
     timeoutMsg: message,
   });
@@ -651,5 +699,797 @@ describe("Updater engine failure modes", () => {
       await setUpdateChannel("stable");
       await browser.pause(500);
     }
+  });
+
+  it("retries a feed that answers no update once for an explicit target", async () => {
+    await startScenario({ channel: "beta" });
+    await browser.pause(1_000);
+    fixture.server.queueFeed(BETA, [{ status: 204 }]);
+    fixture.server.publish({
+      target: BETA,
+      version: "9.4.0-beta.1",
+      payload: Buffer.from("empty feed retry payload"),
+      fileName: "ROSI-9.4.0-beta.1.bin",
+    });
+    const requestIndex = fixture.server.requests.length;
+    const statusIndex = (await statuses("engineStatuses")).length;
+    await clickManualCheck();
+    await waitForModal("Beta Update Available!");
+    await clickModal("Later");
+    const seen = (await statuses("engineStatuses"))
+      .slice(statusIndex)
+      .map((event) => event.status);
+    const feeds = feedTargets(requestIndex);
+    assert.deepEqual(feeds, [BETA, BETA], JSON.stringify(seen));
+    assert.ok(seen.includes("available"), JSON.stringify(seen));
+    record("updater-engine-feed-empty-retry", { feeds, sequence: seen });
+  });
+
+  it("retries a feed error once in place for an explicit target", async () => {
+    await startScenario({ channel: "beta" });
+    await browser.pause(1_000);
+    fixture.server.queueFeed(BETA, [
+      { status: 500, body: "controlled retry failure" },
+    ]);
+    fixture.server.publish({
+      target: BETA,
+      version: "9.4.1-beta.1",
+      payload: Buffer.from("feed error retry payload"),
+      fileName: "ROSI-9.4.1-beta.1.bin",
+    });
+    const requestIndex = fixture.server.requests.length;
+    const statusIndex = (await statuses("engineStatuses")).length;
+    await clickManualCheck();
+    await waitForModal("Beta Update Available!");
+    await clickModal("Later");
+    const seen = (await statuses("engineStatuses"))
+      .slice(statusIndex)
+      .map((event) => event.status);
+    const feeds = feedTargets(requestIndex);
+    assert.deepEqual(feeds, [BETA, BETA], JSON.stringify(seen));
+    assert.ok(!seen.includes("error"), JSON.stringify(seen));
+    record("updater-engine-feed-error-retry", { feeds, sequence: seen });
+  });
+
+  it("discards a check whose target changed during the feed request", async () => {
+    await startScenario({});
+    await browser.pause(1_000);
+    const original = fs.readFileSync(settingsFile());
+    const held = holdResponse();
+    fixture.server.publish({
+      target: stableTarget(),
+      route: osName(),
+      version: "9.5.0",
+      payload: Buffer.from("stale stable payload"),
+      fileName: "ROSI-9.5.0.bin",
+      manifestGate: held.gate,
+    });
+    fixture.server.publish({
+      target: BETA,
+      version: "9.5.1-beta.1",
+      payload: Buffer.from("beta target payload"),
+      fileName: "ROSI-9.5.1-beta.1.bin",
+    });
+    const requestIndex = fixture.server.requests.length;
+    const statusIndex = (await statuses("engineStatuses")).length;
+    try {
+      // Not awaited: the command returns only when the held check settles.
+      await browser.execute(() => {
+        window.__TAURI__.core.invoke("check_for_updates").catch(() => {});
+      });
+      await browser.waitUntil(
+        () => feedTargets(requestIndex).includes(osName()),
+        {
+          timeout: 20_000,
+          interval: 100,
+          timeoutMsg: "the stable feed was not requested",
+        },
+      );
+      // Only the file changes, so the check gets no channel event and stays current.
+      writeChannelOnDisk("beta");
+      held.release();
+      await waitForStatus(
+        "engineStatuses",
+        (event) =>
+          event.status === "available" && event.version === "9.5.1-beta.1",
+        "the beta target was not offered after the target changed",
+      );
+      await dismissModal();
+      const seen = (await statuses("engineStatuses")).slice(statusIndex);
+      assert.ok(
+        !seen.some((event) => event.version === "9.5.0"),
+        JSON.stringify(seen),
+      );
+      const feeds = feedTargets(requestIndex);
+      assert.deepEqual(feeds, [osName(), BETA]);
+      record("updater-engine-target-changed-during-feed", {
+        feeds,
+        offered: seen
+          .filter((event) => event.status === "available")
+          .map((event) => event.version),
+      });
+    } finally {
+      held.release();
+      fs.writeFileSync(settingsFile(), original);
+      await dismissModal();
+    }
+  });
+
+  it("re-resolves the target after a feed error and restarts when it changed", async () => {
+    await startScenario({ channel: "beta" });
+    await browser.pause(1_000);
+    const original = fs.readFileSync(settingsFile());
+    const held = holdResponse();
+    fixture.server.respond(BETA, 500, "held feed failure", { gate: held.gate });
+    fixture.server.publish({
+      target: stableTarget(),
+      route: osName(),
+      version: "9.6.0",
+      payload: Buffer.from("recheck stable payload"),
+      fileName: "ROSI-9.6.0.bin",
+    });
+    const requestIndex = fixture.server.requests.length;
+    const statusIndex = (await statuses("engineStatuses")).length;
+    try {
+      await browser.execute(() => {
+        window.__TAURI__.core.invoke("check_for_updates").catch(() => {});
+      });
+      await browser.waitUntil(() => feedTargets(requestIndex).includes(BETA), {
+        timeout: 20_000,
+        interval: 100,
+        timeoutMsg: "the beta feed was not requested",
+      });
+      writeChannelOnDisk("stable");
+      held.release();
+      await waitForStatus(
+        "engineStatuses",
+        (event) => event.status === "available" && event.version === "9.6.0",
+        "the stable target was not offered after the failed check",
+      );
+      await dismissModal();
+      const seen = (await statuses("engineStatuses")).slice(statusIndex);
+      assert.ok(
+        !seen.some((event) => event.status === "error"),
+        JSON.stringify(seen),
+      );
+      const feeds = feedTargets(requestIndex);
+      assert.deepEqual(feeds, [BETA, BETA, osName()]);
+      record("updater-engine-feed-error-recheck", {
+        feeds,
+        sequence: seen.map((event) => event.status),
+      });
+    } finally {
+      held.release();
+      fs.writeFileSync(settingsFile(), original);
+      await dismissModal();
+    }
+  });
+
+  it("ends a feed error silently when the target cannot be resolved", async () => {
+    await startScenario({ channel: "beta" });
+    await browser.pause(1_000);
+    const original = fs.readFileSync(settingsFile());
+    const held = holdResponse();
+    fixture.server.respond(BETA, 500, "held feed failure", { gate: held.gate });
+    const requestIndex = fixture.server.requests.length;
+    const statusIndex = (await statuses("engineStatuses")).length;
+    try {
+      await browser.execute(() => {
+        window.__TAURI__.core.invoke("check_for_updates").catch(() => {});
+      });
+      await browser.waitUntil(() => feedTargets(requestIndex).includes(BETA), {
+        timeout: 20_000,
+        interval: 100,
+        timeoutMsg: "the beta feed was not requested",
+      });
+      // The refused save leaves the channel unsaved; no recheck starts.
+      makeSettingsUnsavable();
+      await setUpdateChannel("beta");
+      held.release();
+      await browser.waitUntil(() => feedTargets(requestIndex).length >= 2, {
+        timeout: 20_000,
+        interval: 100,
+        timeoutMsg: "the feed error was not retried in place",
+      });
+      await browser.pause(1_000);
+      const seen = (await statuses("engineStatuses")).slice(statusIndex);
+      const feeds = feedTargets(requestIndex);
+      assert.deepEqual(feeds, [BETA, BETA]);
+      assert.ok(
+        !seen.some((event) => event.status === "error"),
+        JSON.stringify(seen),
+      );
+      assert.equal(
+        (await readModal()).active,
+        false,
+        "a silent failure opened a prompt",
+      );
+      record("updater-engine-feed-error-unresolved", {
+        feeds,
+        sequence: seen.map((event) => event.status),
+      });
+    } finally {
+      held.release();
+      fs.writeFileSync(settingsFile(), original);
+      // A successful save clears the unsaved channel and rechecks.
+      await setUpdateChannel("beta");
+      await browser.pause(1_000);
+      await dismissModal();
+    }
+  });
+
+  it("reports an installed identity as downloaded without asking the feed", async () => {
+    await startScenario({ restartRefusals: 1 });
+    fixture.server.publish({
+      target: stableTarget(),
+      route: osName(),
+      version: "9.7.0",
+      payload: Buffer.from("installed identity payload"),
+      fileName: "ROSI-9.7.0.bin",
+    });
+    const before = await engineProbe();
+    await clickManualCheck();
+    await waitForModal("Update Available!");
+    await clickModal("Download & Install");
+    await waitForModal("Update Ready!");
+    await clickModal("Later");
+    const candidateId = (await statuses("engineStatuses")).find(
+      (event) => event.status === "downloaded",
+    )?.candidateId;
+    assert.ok(candidateId !== undefined, "the download did not finish");
+    await invoke("install_update", { candidateId });
+    const refused = await waitForModal("Update Error");
+    assert.ok(refused.message.includes("refused"), refused.message);
+    await clickModal("OK");
+    const afterRefusal = await engineProbe();
+    assert.equal(afterRefusal.installs - before.installs, 1);
+    assert.equal(afterRefusal.restarts - before.restarts, 0);
+
+    const requestIndex = fixture.server.requests.length;
+    const statusIndex = (await statuses("engineStatuses")).length;
+    await clickManualCheck();
+    await browser.waitUntil(
+      async () =>
+        (await statuses("engineStatuses"))
+          .slice(statusIndex)
+          .some(
+            (event) =>
+              event.status === "downloaded" &&
+              event.candidateId === candidateId,
+          ),
+      {
+        timeout: 20_000,
+        interval: 100,
+        timeoutMsg: "the installed identity was not reported",
+      },
+    );
+    await waitForModal("Update Ready!");
+    await clickModal("Later");
+    const seen = (await statuses("engineStatuses"))
+      .slice(statusIndex)
+      .map((event) => event.status);
+    const feeds = feedTargets(requestIndex);
+    assert.deepEqual(feeds, []);
+    assert.ok(!seen.includes("available"), JSON.stringify(seen));
+    assert.deepEqual(await engineProbe(), afterRefusal);
+
+    // The retry finishes the pending restart and releases the candidate.
+    const retry = await invoke("install_update", { candidateId });
+    assert.ok(retry.ok, JSON.stringify(retry));
+    await browser.pause(800);
+    const done = await engineProbe();
+    assert.equal(done.installs - before.installs, 1);
+    assert.equal(done.restarts - before.restarts, 1);
+    record("updater-engine-installed-identity-reported", {
+      candidateId,
+      feeds,
+      sequence: seen,
+    });
+  });
+
+  it("keeps a downloaded candidate when the same version is offered again", async () => {
+    await startScenario({});
+    fixture.server.publish({
+      target: stableTarget(),
+      route: osName(),
+      version: "9.8.0",
+      payload: Buffer.from("same candidate payload"),
+      fileName: "ROSI-9.8.0.bin",
+    });
+    await clickManualCheck();
+    await waitForModal("Update Available!");
+    await clickModal("Download & Install");
+    await waitForModal("Update Ready!");
+    await clickModal("Later");
+    const { candidateId } = await latestCandidate();
+    const requestIndex = fixture.server.requests.length;
+    const statusIndex = (await statuses("engineStatuses")).length;
+    const artifactsBefore = artifactRequestCount();
+    await clickManualCheck();
+    await browser.waitUntil(
+      async () =>
+        (await statuses("engineStatuses"))
+          .slice(statusIndex)
+          .some(
+            (event) =>
+              event.status === "downloaded" &&
+              event.candidateId === candidateId,
+          ),
+      {
+        timeout: 20_000,
+        interval: 100,
+        timeoutMsg: "the downloaded candidate was not reported again",
+      },
+    );
+    await waitForModal("Update Ready!");
+    await clickModal("Later");
+    const seen = (await statuses("engineStatuses"))
+      .slice(statusIndex)
+      .map((event) => event.status);
+    assert.deepEqual(feedTargets(requestIndex), [osName()]);
+    assert.ok(!seen.includes("available"), JSON.stringify(seen));
+    assert.equal(artifactRequestCount() - artifactsBefore, 0);
+    record("updater-engine-same-candidate-redownload-skipped", {
+      candidateId,
+      sequence: seen,
+    });
+    await invoke("install_update", { candidateId });
+    await browser.pause(800);
+  });
+
+  it("keeps a downloaded candidate on no update and releases an undownloaded one", async () => {
+    await startScenario({});
+    fixture.server.publish({
+      target: stableTarget(),
+      route: osName(),
+      version: "9.10.0",
+      payload: Buffer.from("kept candidate payload"),
+      fileName: "ROSI-9.10.0.bin",
+    });
+    await clickManualCheck();
+    await waitForModal("Update Available!");
+    await clickModal("Download & Install");
+    await waitForModal("Update Ready!");
+    await clickModal("Later");
+    const keptId = (await latestCandidate()).candidateId;
+
+    // Downloaded: a no-update answer reports the download, not "not available".
+    fixture.server.respond(osName(), 204);
+    let statusIndex = (await statuses("engineStatuses")).length;
+    await clickManualCheck();
+    await browser.waitUntil(
+      async () =>
+        (await statuses("engineStatuses"))
+          .slice(statusIndex)
+          .some(
+            (event) =>
+              event.status === "downloaded" && event.candidateId === keptId,
+          ),
+      {
+        timeout: 20_000,
+        interval: 100,
+        timeoutMsg: "the downloaded candidate was not kept",
+      },
+    );
+    await waitForModal("Update Ready!");
+    await clickModal("Later");
+    const keptEvents = (await statuses("engineStatuses"))
+      .slice(statusIndex)
+      .map((event) => event.status);
+    assert.ok(
+      !keptEvents.includes("not-available"),
+      JSON.stringify(keptEvents),
+    );
+    await invoke("install_update", { candidateId: keptId });
+    await browser.pause(800);
+
+    // Offered but not downloaded: a no-update answer releases it.
+    fixture.server.publish({
+      target: stableTarget(),
+      route: osName(),
+      version: "9.10.1",
+      payload: Buffer.from("offered candidate payload"),
+      fileName: "ROSI-9.10.1.bin",
+    });
+    await clickManualCheck();
+    await waitForModal("Update Available!");
+    await clickModal("Later");
+    const offeredId = (await latestCandidate()).candidateId;
+    fixture.server.respond(osName(), 204);
+    statusIndex = (await statuses("engineStatuses")).length;
+    await clickManualCheck();
+    await waitForModal("ROSI is up to date!");
+    await clickModal("OK");
+    const released = await invoke("download_update", {
+      candidateId: offeredId,
+    });
+    assert.equal(released.data?.cancelled, true, JSON.stringify(released));
+    const notAvailable = (await statuses("engineStatuses"))
+      .slice(statusIndex)
+      .find((event) => event.status === "not-available");
+    assert.ok(notAvailable, "no not-available event followed the release");
+    record("updater-engine-not-available-releases-candidate", {
+      keptId,
+      keptEvents,
+      offeredId,
+      releasedCancelled: released.data.cancelled,
+    });
+  });
+
+  it("computes isBeta from the version string on available and not-available events", async () => {
+    await startScenario({});
+    const statusIndex = (await statuses("engineStatuses")).length;
+    const checkAndDismiss = async (version, title, button) => {
+      fixture.server.publish({
+        target: stableTarget(),
+        route: osName(),
+        version,
+        payload: Buffer.from(`variant ${version}`),
+        fileName: `ROSI-${version}.bin`,
+      });
+      await clickManualCheck();
+      await waitForModal(title);
+      await clickModal(button);
+    };
+    await checkAndDismiss("9.9.0-beta.1", "Beta Update Available!", "Later");
+    await checkAndDismiss("9.9.1-RC.2", "Beta Update Available!", "Later");
+    await checkAndDismiss("9.9.2", "Update Available!", "Later");
+    fixture.server.respond(osName(), 204);
+    await clickManualCheck();
+    await waitForModal("ROSI is up to date!");
+    await clickModal("OK");
+    const events = (await statuses("engineStatuses"))
+      .slice(statusIndex)
+      .filter((event) => ["available", "not-available"].includes(event.status))
+      .map((event) => ({
+        status: event.status,
+        version: event.version,
+        isBeta: event.isBeta,
+      }));
+    assert.deepEqual(
+      events.map((event) => event.isBeta),
+      [true, true, false, true],
+      JSON.stringify(events),
+    );
+    for (const event of events) {
+      assert.equal(
+        event.isBeta,
+        /-(beta|alpha|rc)/i.test(event.version),
+        JSON.stringify(event),
+      );
+    }
+    record("updater-engine-event-variants", { events });
+  });
+
+  it("throttles download progress to 100 ms and never reports above 100 percent", async () => {
+    await startScenario({});
+    fixture.server.publish({
+      target: stableTarget(),
+      route: osName(),
+      version: "9.14.0",
+      payload: Buffer.alloc(3 * 1024 * 1024, 7),
+      fileName: "ROSI-9.14.0.bin",
+      drip: { chunkBytes: 32 * 1024, intervalMs: 10 },
+    });
+    await browser.execute(() => {
+      window.__progress = [];
+      window.__TAURI__.event.listen("updater-progress", (event) => {
+        window.__progress.push({ ...event.payload, at: performance.now() });
+      });
+    });
+    await clickManualCheck();
+    await waitForModal("Update Available!");
+    const { candidateId } = await latestCandidate();
+    await clickModal("Download & Install");
+    await waitForModal("Update Ready!");
+    await clickModal("Later");
+    const progress = await browser.execute(() => window.__progress.slice());
+    assert.ok(progress.length >= 2, JSON.stringify(progress));
+    const gaps = progress
+      .slice(1)
+      .map((event, index) => event.at - progress[index].at);
+    // Gaps are measured at page arrival, which IPC jitter can shorten; the
+    // count bound below is the primary proof, so the median only guards gross bursts.
+    const sortedGaps = [...gaps].sort((a, b) => a - b);
+    const medianGap = sortedGaps[Math.floor(sortedGaps.length / 2)];
+    assert.ok(medianGap >= 90, `progress gaps: ${JSON.stringify(gaps)}`);
+    assert.ok(
+      progress.every((event) => event.percent >= 0 && event.percent <= 100),
+      JSON.stringify(progress.map((event) => event.percent)),
+    );
+    const spanMs = progress.at(-1).at - progress[0].at;
+    assert.ok(
+      progress.length <= Math.ceil(spanMs / 100) + 1,
+      `${progress.length} events in ${spanMs} ms`,
+    );
+
+    // A cancelled download emits no more progress.
+    await browser.execute((id) => {
+      window.__TAURI__.core
+        .invoke("download_update", { candidateId: id })
+        .catch(() => {});
+    }, candidateId);
+    await browser.waitUntil(
+      async () =>
+        (await browser.execute(() => window.__progress.length)) >=
+        progress.length + 2,
+      {
+        timeout: 20_000,
+        interval: 50,
+        timeoutMsg: "the second download made no progress",
+      },
+    );
+    await invoke("cancel_update_download");
+    await waitForModal("Download Cancelled");
+    await clickModal("OK");
+    const atCancel = await browser.execute(() => window.__progress.length);
+    await browser.pause(1_500);
+    const afterCancel = await browser.execute(() => window.__progress.length);
+    assert.equal(afterCancel, atCancel, "progress arrived after the cancel");
+    record("updater-engine-download-progress-throttle", {
+      events: progress.length,
+      minGapMs: Math.min(...gaps),
+      spanMs,
+      progressAfterCancel: afterCancel - atCancel,
+    });
+  });
+
+  it("times out a check at 30 seconds without an override", async () => {
+    await startScenario({});
+    const held = holdResponse();
+    fixture.server.respond(osName(), 200, "", { gate: held.gate });
+    const statusIndex = (await statuses("engineStatuses")).length;
+    try {
+      const started = Date.now();
+      // Not awaited: the command returns only when the held check settles.
+      await browser.execute(() => {
+        window.__TAURI__.core.invoke("check_for_updates").catch(() => {});
+      });
+      await waitForStatus(
+        "engineStatuses",
+        (event) => event.status === "error",
+        "the held check never timed out",
+        60_000,
+      );
+      const elapsedMs = Date.now() - started;
+      const error = (await statuses("engineStatuses"))
+        .slice(statusIndex)
+        .find((event) => event.status === "error");
+      assert.equal(error.kind, "feed", JSON.stringify(error));
+      assert.ok(
+        elapsedMs >= 29_000 && elapsedMs < 45_000,
+        `check timed out after ${elapsedMs} ms`,
+      );
+      record("updater-engine-check-timeout", {
+        elapsedMs,
+        kind: error.kind,
+        message: error.message,
+      });
+    } finally {
+      held.release();
+    }
+  });
+
+  it("times out a download at its configured limit and keeps the candidate", async () => {
+    await startScenario({ downloadTimeoutMs: 1_500 });
+    fixture.server.publish({
+      target: stableTarget(),
+      route: osName(),
+      version: "9.15.0",
+      payload: Buffer.alloc(4 * 1024 * 1024, 9),
+      fileName: "ROSI-9.15.0.bin",
+      drip: { chunkBytes: 64 * 1024, intervalMs: 100 },
+    });
+    await clickManualCheck();
+    await waitForModal("Update Available!");
+    const { candidateId } = await latestCandidate();
+    await clickModal("Later");
+    const started = Date.now();
+    const first = await invoke("download_update", { candidateId });
+    const elapsedMs = Date.now() - started;
+    assert.ok(first.data?.error, JSON.stringify(first));
+    // The full body takes about 6 s, so the limit is what ended the transfer.
+    assert.ok(elapsedMs >= 1_400 && elapsedMs < 5_000, `${elapsedMs} ms`);
+    await waitForModal("Update Error");
+    await clickModal("OK");
+    const errors = (await statuses("engineStatuses")).filter(
+      (event) => event.status === "error",
+    );
+    assert.equal(errors.length, 1, JSON.stringify(errors));
+    assert.equal(errors[0].kind, "download");
+
+    // A failed transfer keeps the candidate, so a retry times out, not cancels.
+    const second = await invoke("download_update", { candidateId });
+    assert.ok(second.data?.error, JSON.stringify(second));
+    await waitForModal("Update Error");
+    await clickModal("OK");
+    record("updater-engine-download-timeout", {
+      candidateId,
+      elapsedMs,
+      message: first.data.error,
+      retainedCandidate: second.data.cancelled !== true,
+    });
+  });
+
+  it("releases a candidate whose download fails after the bytes arrived", async () => {
+    await startScenario({});
+    const original = fs.readFileSync(settingsFile());
+    const held = holdResponse();
+    fixture.server.publish({
+      target: stableTarget(),
+      route: osName(),
+      version: "9.16.0",
+      payload: Buffer.from("post completion failure payload"),
+      fileName: "ROSI-9.16.0.bin",
+      gate: held.gate,
+    });
+    await clickManualCheck();
+    await waitForModal("Update Available!");
+    const { candidateId } = await latestCandidate();
+    const statusIndex = (await statuses("engineStatuses")).length;
+    try {
+      const artifactsBefore = artifactRequestCount();
+      await clickModal("Download & Install");
+      await browser.waitUntil(() => artifactRequestCount() > artifactsBefore, {
+        timeout: 20_000,
+        interval: 100,
+        timeoutMsg: "the download never started",
+      });
+      // The channel cannot be saved while the bytes are in flight.
+      makeSettingsUnsavable();
+      await setUpdateChannel("stable");
+      held.release();
+      const modal = await waitForModal("Update Error");
+      assert.match(modal.message, /could not be saved before revalidation/);
+      await clickModal("OK");
+      const seen = (await statuses("engineStatuses")).slice(statusIndex);
+      const errors = seen.filter((event) => event.status === "error");
+      assert.equal(errors.length, 1, JSON.stringify(seen));
+      assert.equal(errors[0].kind, "download");
+      assert.ok(!seen.some((event) => event.status === "downloaded"));
+      const released = await invoke("download_update", { candidateId });
+      assert.equal(released.data?.cancelled, true, JSON.stringify(released));
+      record("updater-engine-download-failure-releases-candidate", {
+        candidateId,
+        errorKind: errors[0].kind,
+        releasedCancelled: released.data.cancelled,
+      });
+    } finally {
+      held.release();
+      fs.writeFileSync(settingsFile(), original);
+      await setUpdateChannel("stable");
+      await browser.pause(1_000);
+      await dismissModal();
+    }
+  });
+
+  it("waits for an install that already started before honoring a channel change", async () => {
+    await startScenario({ installWriteHoldMs: 1_500 });
+    await browser.pause(1_000);
+    fixture.server.publish({
+      target: stableTarget(),
+      route: osName(),
+      version: "9.12.0",
+      payload: Buffer.from("install hold payload"),
+      fileName: "ROSI-9.12.0.bin",
+    });
+    fixture.server.publish({
+      target: BETA,
+      version: "9.12.1-beta.1",
+      payload: Buffer.from("beta after install payload"),
+      fileName: "ROSI-9.12.1-beta.1.bin",
+    });
+    await clickManualCheck();
+    await waitForModal("Update Available!");
+    const { candidateId } = await latestCandidate();
+    await clickModal("Download & Install");
+    await waitForModal("Update Ready!");
+    await clickModal("Later");
+
+    const before = await engineProbe();
+    const requestIndex = fixture.server.requests.length;
+    // Not awaited: the command returns once the install has finished.
+    await browser.execute((id) => {
+      window.__TAURI__.core
+        .invoke("install_update", { candidateId: id })
+        .catch(() => {});
+    }, candidateId);
+    // The install holds 1.5 s after it confirms its target; change the channel inside that window.
+    await browser.pause(400);
+    await setUpdateChannel("beta");
+    const midInstall = await engineProbe();
+    assert.equal(midInstall.installs - before.installs, 0);
+    assert.equal(midInstall.restarts - before.restarts, 0);
+    assert.deepEqual(feedTargets(requestIndex), []);
+
+    await browser.waitUntil(
+      async () => (await engineProbe()).restarts - before.restarts === 1,
+      {
+        timeout: 20_000,
+        interval: 100,
+        timeoutMsg: "the install did not restart",
+      },
+    );
+    const done = await engineProbe();
+    assert.equal(done.installs - before.installs, 1);
+    assert.equal(done.refusedRestarts - before.refusedRestarts, 0);
+
+    // The held channel change rechecks the beta target once the install ends.
+    await waitForModal("Beta Update Available!");
+    await clickModal("Later");
+    const feeds = feedTargets(requestIndex);
+    assert.deepEqual(feeds, [BETA]);
+    record("updater-engine-channel-change-during-install", {
+      midInstall: {
+        installs: midInstall.installs - before.installs,
+        restarts: midInstall.restarts - before.restarts,
+      },
+      feeds,
+    });
+  });
+
+  it("exits an install whose candidate a channel change released before it confirmed", async () => {
+    await startScenario({ installConfirmHoldMs: 1_500 });
+    await browser.pause(1_000);
+    fixture.server.publish({
+      target: stableTarget(),
+      route: osName(),
+      version: "9.13.0",
+      payload: Buffer.from("stale install payload"),
+      fileName: "ROSI-9.13.0.bin",
+    });
+    fixture.server.publish({
+      target: BETA,
+      version: "9.13.1-beta.1",
+      payload: Buffer.from("beta after stale install"),
+      fileName: "ROSI-9.13.1-beta.1.bin",
+    });
+    await clickManualCheck();
+    await waitForModal("Update Available!");
+    const { candidateId } = await latestCandidate();
+    await clickModal("Download & Install");
+    await waitForModal("Update Ready!");
+    await clickModal("Later");
+
+    const before = await engineProbe();
+    const requestIndex = fixture.server.requests.length;
+    const statusIndex = (await statuses("engineStatuses")).length;
+    // Not awaited: the install waits 1.5 s before it confirms its target.
+    await browser.execute((id) => {
+      window.__TAURI__.core
+        .invoke("install_update", { candidateId: id })
+        .catch(() => {});
+    }, candidateId);
+    await browser.pause(400);
+    // Releases the candidate while the install waits for its target check.
+    await setUpdateChannel("beta");
+    const midInstall = await engineProbe();
+    assert.equal(midInstall.installs - before.installs, 0);
+
+    await browser.waitUntil(() => feedTargets(requestIndex).includes(BETA), {
+      timeout: 20_000,
+      interval: 100,
+      timeoutMsg: "the channel change did not recheck the beta target",
+    });
+    await waitForModal("Beta Update Available!");
+    await clickModal("Later");
+    const after = await engineProbe();
+    assert.equal(after.installs - before.installs, 0);
+    assert.equal(after.restarts - before.restarts, 0);
+    assert.equal(after.refusedRestarts - before.refusedRestarts, 0);
+    const seen = (await statuses("engineStatuses"))
+      .slice(statusIndex)
+      .map((event) => event.status);
+    assert.ok(!seen.includes("error"), JSON.stringify(seen));
+    const feeds = feedTargets(requestIndex);
+    assert.deepEqual(feeds, [BETA]);
+
+    const released = await invoke("download_update", { candidateId });
+    assert.equal(released.data?.cancelled, true, JSON.stringify(released));
+    record("updater-engine-install-identity-stale", {
+      feeds,
+      installs: after.installs - before.installs,
+      sequence: seen,
+    });
   });
 });

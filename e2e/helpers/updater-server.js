@@ -5,23 +5,53 @@
 import http from "node:http";
 import { manifestSignature, signUpdateArtifact } from "./updater-signing.js";
 
+/** Writes the body in slices with a pause between them, for progress tests. */
+function dripBody(response, route) {
+  const { chunkBytes, intervalMs } = route.drip;
+  response.writeHead(route.status ?? 200, {
+    "Content-Type": route.contentType,
+    "Content-Length": Buffer.byteLength(route.body),
+  });
+  let offset = 0;
+  let timer = null;
+  response.on("close", () => clearTimeout(timer));
+  const next = () => {
+    if (response.destroyed) return;
+    if (offset >= route.body.length) {
+      response.end();
+      return;
+    }
+    response.write(route.body.subarray(offset, offset + chunkBytes));
+    offset += chunkBytes;
+    timer = setTimeout(next, intervalMs);
+  };
+  next();
+}
+
 /**
  * Starts the server on 127.0.0.1 with an ephemeral port.
  * `key` comes from generateUpdaterSigningKey().
  */
 export async function startUpdaterServer({ key }) {
   const routes = new Map();
+  const queues = new Map();
   const requests = [];
   const server = http.createServer((request, response) => {
     const pathname = new URL(request.url, "http://127.0.0.1").pathname;
     requests.push({ path: pathname, at: Date.now() });
-    const route = routes.get(pathname);
+    const queued = queues.get(pathname);
+    const route = queued?.length ? queued.shift() : routes.get(pathname);
     if (!route) {
       response.writeHead(404, { "Content-Type": "text/plain" });
       response.end("not found");
       return;
     }
     const send = () => {
+      if (response.destroyed || response.writableEnded) return;
+      if (route.drip) {
+        dripBody(response, route);
+        return;
+      }
       if (route.truncate) {
         // Promise the whole body, deliver half, then drop the connection.
         response.writeHead(200, {
@@ -66,12 +96,14 @@ export async function startUpdaterServer({ key }) {
     fileName,
     gate = null,
     manifestGate = null,
+    drip = null,
   }) {
     const artifactPath = `/artifacts/${fileName}`;
     routes.set(artifactPath, {
       contentType: "application/octet-stream",
       body: payload,
       gate,
+      drip,
     });
     const signature = manifestSignature(
       signUpdateArtifact(key, payload, { fileName, version }),
@@ -92,13 +124,32 @@ export async function startUpdaterServer({ key }) {
     return manifest;
   }
 
-  /** Answers the target's manifest with a status code (404 for a missing feed). */
-  function respond(target, status, body = "") {
+  /**
+   * Answers the target's manifest with a status code (404 for a missing feed).
+   * `gate` holds the response until the scenario resolves it.
+   */
+  function respond(target, status, body = "", { gate = null } = {}) {
     routes.set(`/latest-${target}.json`, {
       status,
       contentType: "text/plain",
       body,
+      gate,
     });
+  }
+
+  /**
+   * Answers the next requests for the target from `steps` (each a status and
+   * optional body), then falls back to the published route.
+   */
+  function queueFeed(target, steps) {
+    queues.set(
+      `/latest-${target}.json`,
+      steps.map((step) => ({
+        contentType: "text/plain",
+        body: "",
+        ...step,
+      })),
+    );
   }
 
   /** Serves `bytes` for an artifact that was signed as something else. */
@@ -125,6 +176,7 @@ export async function startUpdaterServer({ key }) {
     requests,
     publish,
     respond,
+    queueFeed,
     unpublish,
     tamper,
     truncate,

@@ -818,7 +818,7 @@ fn resolve_target(app: &AppHandle) -> Result<Option<String>, String> {
 }
 
 fn build_updater(app: &AppHandle, target: Option<String>) -> Result<Updater, String> {
-    let mut builder = app.updater_builder().timeout(CHECK_TIMEOUT);
+    let mut builder = app.updater_builder().timeout(check_timeout());
     if let Some(target) = target {
         builder = builder.target(target);
     }
@@ -1017,7 +1017,7 @@ fn download_flow(candidate_id: u64) -> DownloadOutcome {
         Some(DownloadStart::Refused(outcome)) => return outcome,
         Some(DownloadStart::Start { generation, update }) => (generation, update),
     };
-    update.timeout = Some(DOWNLOAD_TIMEOUT);
+    update.timeout = Some(download_timeout());
     let mut transferred: u64 = 0;
     let mut total: u64 = 0;
     let result = tauri::async_runtime::block_on(update.download(
@@ -1062,6 +1062,7 @@ fn install_flow(candidate_id: u64) {
     };
     let finish = |outcome: InstallOutcome| submit(Command::FinishInstall { sequence, outcome });
     if !already_installed {
+        e2e_hold(|config| config.install_confirm_hold_ms);
         let confirmed = resolve_target(&app);
         let gate = request(|reply| Command::ConfirmInstall {
             sequence,
@@ -1074,6 +1075,7 @@ fn install_flow(candidate_id: u64) {
             InstallGate::Fail(message) => return finish(InstallOutcome::Failed(message)),
             InstallGate::Proceed => {}
         }
+        e2e_hold(|config| config.install_write_hold_ms);
         if let Err(message) = install_bytes(&update, bytes.as_slice()) {
             return finish(InstallOutcome::Failed(message));
         }
@@ -1201,6 +1203,14 @@ pub struct E2eUpdaterConfig {
     /// Restart attempts the probe refuses before it accepts one.
     #[serde(default)]
     pub restart_refusals: u32,
+    /// Replaces the 30 s check timeout.
+    pub check_timeout_ms: Option<u64>,
+    /// Replaces the 30 min download timeout.
+    pub download_timeout_ms: Option<u64>,
+    /// Pauses an install before it confirms its target.
+    pub install_confirm_hold_ms: Option<u64>,
+    /// Pauses an install after its target is confirmed, before the bytes are written.
+    pub install_write_hold_ms: Option<u64>,
 }
 
 #[cfg(feature = "e2e")]
@@ -1265,6 +1275,23 @@ fn e2e_override<T>(pick: impl FnOnce(&E2eUpdaterConfig) -> Option<T>) -> Option<
     {
         let _ = pick;
         None
+    }
+}
+
+fn check_timeout() -> Duration {
+    e2e_override(|config| config.check_timeout_ms.map(Duration::from_millis))
+        .unwrap_or(CHECK_TIMEOUT)
+}
+
+fn download_timeout() -> Duration {
+    e2e_override(|config| config.download_timeout_ms.map(Duration::from_millis))
+        .unwrap_or(DOWNLOAD_TIMEOUT)
+}
+
+/// Pauses an install at one named point. Production never holds.
+fn e2e_hold(pick: impl FnOnce(&E2eUpdaterConfig) -> Option<u64>) {
+    if let Some(ms) = e2e_override(pick) {
+        std::thread::sleep(Duration::from_millis(ms));
     }
 }
 

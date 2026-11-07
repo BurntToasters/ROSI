@@ -19,6 +19,10 @@ export async function startUpdaterFixture({
   compactTarget = null,
   disableCompact = true,
   restartRefusals = 0,
+  checkTimeoutMs,
+  downloadTimeoutMs,
+  installConfirmHoldMs,
+  installWriteHoldMs,
 } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rosi-updater-e2e-"));
   const key = generateUpdaterSigningKey(dir);
@@ -33,6 +37,10 @@ export async function startUpdaterFixture({
     disableCompact,
     installProbe: true,
     restartRefusals,
+    checkTimeoutMs,
+    downloadTimeoutMs,
+    installConfirmHoldMs,
+    installWriteHoldMs,
   };
   const outcome = await browser.executeAsync((payload, done) => {
     window.__TAURI__.core
