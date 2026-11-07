@@ -994,6 +994,8 @@ describe("state and updater repair E2E", () => {
           }
           if (command === "is_packaged") return true;
           if (command === "is_flatpak") return false;
+          // Keep the beta-target fence on its own target; the compact path has its own scenario.
+          if (command === "get_compact_updater_target") return null;
           if (command === "get_beta_updater_target") {
             return "darwin-beta-e2e-app";
           }
@@ -1343,6 +1345,123 @@ describe("state and updater repair E2E", () => {
           timeoutMsg: "updater retry test queue did not clean up",
         },
       );
+    }
+  });
+
+  it("falls back from the 5.1 compact macOS target to the legacy feed", async () => {
+    // A fresh renderer drops updater module state left by the previous scenario.
+    await reloadRenderer();
+    await browser.execute(() => {
+      window.auditOriginalE2eUpdaterAdapter =
+        window.__ROSI_E2E__?.updaterAdapter;
+      window.auditCompactFeedRecords = [];
+      window.auditCompactFailuresLeft = 1;
+      window.auditCompactInvokes = [];
+      window.auditCompactStatuses = [];
+      window.auditCompactWarnings = [];
+      const originalWarn = console.warn;
+      console.warn = (...args) => {
+        window.auditCompactWarnings.push(args.map(String).join(" "));
+        originalWarn.apply(console, args);
+      };
+      window.auditCompactStatusCleanup = window.api.onUpdaterStatus((event) =>
+        window.auditCompactStatuses.push(event),
+      );
+      window.__ROSI_E2E__.updaterAdapter = {
+        invoke: async (command, args = {}) => {
+          window.auditCompactInvokes.push(command);
+          if (command === "get_settings") return { updateChannel: "beta" };
+          if (command === "is_packaged") return true;
+          if (command === "is_flatpak") return false;
+          if (command === "get_compact_updater_target") {
+            return "darwin-beta-aarch64-app-zst";
+          }
+          if (command === "get_beta_updater_target") {
+            return "darwin-beta-aarch64-app";
+          }
+          return window.__TAURI__.core.invoke(command, args);
+        },
+        check: async (target) => {
+          const threw =
+            target === "darwin-beta-aarch64-app-zst" &&
+            window.auditCompactFailuresLeft > 0;
+          if (threw) window.auditCompactFailuresLeft -= 1;
+          window.auditCompactFeedRecords.push({
+            target: target ?? null,
+            threw,
+          });
+          if (threw) throw new Error("controlled compact feed failure");
+          return {
+            version: "5.1.0-beta.9",
+            body: "Controlled compact fallback",
+            async download() {},
+            async install() {},
+            async close() {},
+          };
+        },
+      };
+    });
+
+    try {
+      await api("checkForUpdates");
+      await browser.waitUntil(
+        () =>
+          browser.execute(() =>
+            window.auditCompactStatuses.some((event) =>
+              ["available", "not-available", "error"].includes(event.status),
+            ),
+          ),
+        {
+          timeout: 10_000,
+          timeoutMsg: "compact fallback check did not settle",
+        },
+      );
+      const outcome = await browser.execute(() => ({
+        feeds: window.auditCompactFeedRecords.slice(),
+        statuses: window.auditCompactStatuses.slice(),
+        invokes: window.auditCompactInvokes.slice(),
+        warnings: window.auditCompactWarnings.slice(),
+      }));
+      assert.deepEqual(
+        outcome.feeds.map((item) => [item.target, item.threw]),
+        [
+          ["darwin-beta-aarch64-app-zst", true],
+          ["darwin-beta-aarch64-app", false],
+        ],
+        `compact fallback feed requests were ${JSON.stringify(outcome)}`,
+      );
+      assert.ok(
+        outcome.invokes.includes("get_compact_updater_target"),
+        "compact target was not requested before the feed",
+      );
+      const available = outcome.statuses.find(
+        (event) => event.status === "available",
+      );
+      assert.ok(
+        available,
+        `compact fallback did not emit available: ${JSON.stringify(outcome)}`,
+      );
+      assert.equal(available.version, "5.1.0-beta.9");
+      assert.equal(available.isBeta, true);
+      assert.ok(
+        outcome.warnings.some((line) =>
+          line.includes(
+            "[rosi] updater: darwin-beta-aarch64-app-zst check failed, falling back to darwin-beta-aarch64-app target: controlled compact feed failure",
+          ),
+        ),
+        `compact fallback was not logged: ${JSON.stringify(outcome.warnings)}`,
+      );
+      await dismissModal("Update Available", "Later");
+      record("updater-compact-target-fallback", {
+        feedTargets: outcome.feeds.map((item) => item.target),
+        compactAttemptThrew: outcome.feeds[0].threw,
+        legacyAttemptReturned: !outcome.feeds[1].threw,
+        availableVersion: available.version,
+        controlledBoundary: "VITE_ROSI_E2E adapter",
+        nativeCompactFeedExercised: false,
+      });
+    } finally {
+      await reloadRenderer();
     }
   });
 

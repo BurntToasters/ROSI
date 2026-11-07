@@ -149,6 +149,45 @@ replacement rules that cannot be exercised safely against an installed app.
    attached to the same update identity. After removing the disk fault, retry
    must reach the installer path and retire the resource.
 
+## F15: compact updater target (5.1 packaged macOS feed)
+
+Enumerated before the spec changes. A packaged build asks
+`get_compact_updater_target` before `get_beta_updater_target`. The compact
+target is `darwin[-beta]-{arch}-app-zst` whenever Tauri reports bundle type
+`App`, which includes an unbundled macOS E2E binary. The legacy target is the
+compact target without `-zst` (`darwin-beta-aarch64-app`). A stable compact
+target has no legacy target and falls back to the default target.
+
+1. A compact feed check throws (no per-arch zstd archive, network error, or
+   manifest miss). The renderer makes exactly one more feed request, for the
+   legacy target, with no in-place retry of the compact target, and emits
+   `available` from that feed. Covered by `updater-compact-target-fallback`.
+2. Both feed records are audited in order: the compact target marked as
+   thrown, then the legacy target marked as returned. A skipped compact request
+   or an extra retry must fail the scenario. Covered by
+   `updater-compact-target-fallback`.
+3. The fallback warning names the compact target, the legacy target, and the
+   error. Logging must never change the check result. Covered by
+   `updater-compact-target-fallback`.
+4. A compact check that throws after the check generation has moved on (channel
+   change or newer check) returns `null` with no legacy feed request and no feed
+   error. Not covered by a scenario yet; the guard is `isCurrent()` in
+   `checkFeed`.
+5. The legacy target also throws: the error surfaces once as a `feed` error and
+   there is no third request. Not covered by a scenario yet.
+6. A stable compact target (`darwin-aarch64-app-zst`) has no legacy target, so
+   the fallback requests the default target (`undefined`). Not covered by a
+   scenario yet.
+7. The compact target must not replace the beta target in the beta-generation
+   fencing scenario (`updater-generation-retry`) or in Flatpak feed-only mode
+   (`flatpak-update-notice`). Both adapters return `null` for
+   `get_compact_updater_target`, so their targets stay
+   `darwin-beta-e2e-app`, `darwin-beta-round2-app` and `linux-beta-x86_64`, and
+   their existing target assertions still prove what they were written for.
+8. The compact path is never requested on a Flatpak build by these specs, so
+   Flatpak refusals (no download, no install) stay proven only with the compact
+   target stubbed to `null`. Compact-on-Flatpak is not covered.
+
 ## E2E-only native command access
 
 1. A native E2E command present in the invoke handler but absent from the

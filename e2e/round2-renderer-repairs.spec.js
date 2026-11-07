@@ -218,6 +218,7 @@ describe("renderer round-two repairs", () => {
             return { updateChannel: state.channel };
           if (command === "is_packaged") return true;
           if (command === "is_flatpak") return false;
+          if (command === "get_compact_updater_target") return null;
           if (command === "get_beta_updater_target") {
             return "darwin-beta-round2-app";
           }

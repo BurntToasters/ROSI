@@ -73,6 +73,7 @@ async function installScenario(config) {
         if (command === "is_flatpak") return scenario.flatpak;
         if (command === "get_settings")
           return { updateChannel: scenario.channel };
+        if (command === "get_compact_updater_target") return null;
         if (command === "get_beta_updater_target") return "linux-beta-x86_64";
         if (command === "restart_app") {
           probe.restarts += 1;

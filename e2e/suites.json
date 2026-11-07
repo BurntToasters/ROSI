@@ -611,6 +611,12 @@
       "allowedSkips": []
     },
     {
+      "name": "updater-compact-target-fallback",
+      "feature": "updater",
+      "owner": "state-repairs",
+      "allowedSkips": []
+    },
+    {
       "name": "queue-flush-backup-failure",
       "feature": "queue",
       "owner": "state-repairs",
