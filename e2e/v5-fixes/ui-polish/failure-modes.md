@@ -179,6 +179,39 @@ of every screenshot scenario, so a missing ui-polish shot fails the same
 count and name checks that cover `ui-screenshots`. Scenario: the existing
 `scripts/security-release-repairs.test.mjs` release fixture.
 
+## Multi-spec area pass attaches to the wrong window (harness, H1 to H3)
+
+Written before the harness change. The `v5-fixes/ui-polish` area pass runs
+`ui-polish-focus`, `ui-polish-readiness`, and `ui-polish.spec.js` as three
+workers. The tauri-service launcher logs "Embedded WebDriver on port 4445 ...
+is unreachable, restarting..." at each worker start, because the previous
+worker's `after` hook has exited the app, so each spec file starts a fresh app.
+A splash window (`create_splash`) and a hidden main window (`visible: false`)
+exist at startup, but the splash theory was measured and refuted (see H1).
+
+H1. **Page reloads in the readiness spec stall or lose the main UI in a pass.**
+Measured in `d1-area-diag-1.log` and `d1-area-diag-2.log`: at each scenario
+start the session was on its only window (`handles=1`, `tauri://localhost`,
+main UI present). The failures were 30 s WebDriver script timeouts and missing
+`#url` or `window.api` right after `browser.refresh()`, and each failure
+followed a reload. No app process was alive 1 s after a worker's teardown, and
+E2E builds disable the single-instance plugin, so neither is the cause. The
+readiness spec was reduced to one reload, in `before()`; later scenarios drive
+settings through the real controls, and the scenarios are ordered so each starts
+from the state the previous one leaves. An in-place alternative (`saveSettings`
+then a `settings-imported` event) was rejected: the renderer stays
+`settings-unsaved` after an imported snapshot (`d1-area-5.log`). The root cause
+of the reload stalls is not confirmed. Evidence that the fix holds: area passes
+`d1-area-run-b.log`, `d1-area-run-c.log`, and `d1-area-run-d.log` each pass all
+three spec files, 100% completed.
+H2. **`bail: 1` ends the area pass after the first failing spec.** The later
+spec files never run, so their evidence is missing. Expected: the gate fails
+and names the first failing spec. Decision: keep `bail` (it is the release
+gate's setting and changing it is out of scope); the fix is H1, not a retry.
+H3. **Retried WebDriver errors look like test failures.** `WebDriverError` WARN
+lines from polling predicates are not failures by themselves. Expected: a
+scenario fails only on its own assertion, not on a retried poll error.
+
 ## E2E evidence requirements
 
 - Keep existing suite ownership and platform skip allowances. Add a

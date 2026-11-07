@@ -103,28 +103,8 @@ function writeReport() {
   );
 }
 
-const hasMainUi = () =>
-  browser.execute(() => Boolean(document.getElementById("url")));
-
-/**
- * Make sure the main app window is the current document. The app can present
- * more than one window, so switch to the handle whose page has the main UI.
- */
-async function ensureMainWindow() {
-  if (await hasMainUi()) return;
-  const handles = await browser.getWindowHandles();
-  for (const handle of handles) {
-    await browser.switchToWindow(handle);
-    if (await hasMainUi()) return;
-  }
-  throw new Error(
-    `main window not found among ${handles.length} window handles`,
-  );
-}
-
 async function scenario(name, body) {
   try {
-    await ensureMainWindow();
     const details = await body();
     report.checks.push({ name, status: "passed", ...details });
     writeReport();
@@ -182,7 +162,7 @@ async function waitFor(
   });
 }
 
-/** Reload the page and wait until its bridge is installed (settings load at startup). */
+/** Reload the page and wait until its controls and bridge are installed. */
 async function reloadApp() {
   await browser.refresh();
   await browser.waitUntil(
@@ -233,13 +213,32 @@ async function readHint() {
 }
 
 async function waitForSummaryState(state, timeout = 10_000) {
-  await waitFor(
-    (want) =>
-      document.getElementById("downloadOutputSummary")?.dataset.state === want,
-    `effective options never reached ${state}`,
-    timeout,
-    state,
-  );
+  try {
+    await waitFor(
+      (want) =>
+        document.getElementById("downloadOutputSummary")?.dataset.state ===
+        want,
+      `effective options never reached ${state}`,
+      timeout,
+      state,
+    );
+  } catch (error) {
+    const seen = await browser.execute(() => ({
+      summary:
+        document.getElementById("downloadOutputSummary")?.dataset.state ?? null,
+      text:
+        document.getElementById("downloadOutputSummary")?.textContent.trim() ??
+        "",
+      save:
+        document.getElementById("settingsSaveFeedback")?.dataset.state ?? null,
+      ask:
+        document.getElementById("askDownloadLocationToggle")?.checked ?? null,
+      folder:
+        document.getElementById("downloadFolderSummary")?.textContent.trim() ??
+        "",
+    }));
+    throw new Error(`${error.message}; saw ${JSON.stringify(seen)}`);
+  }
 }
 
 /** Record calls to the download bridge and refuse to start a real download. */
@@ -415,6 +414,9 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
     assert.ok(DOWNLOADS, "ROSI_E2E_DOWNLOADS is required for folder fixtures");
     fs.mkdirSync(FOLDERS, { recursive: true });
     await waitForAppReady();
+    // The only page reload in this spec: later scenarios drive settings through
+    // the controls, because reloads stalled WebDriver scripts in the area pass.
+    await setFolderSettings({ askDownloadLocation: false, downloadFolder: "" });
     report.source = sourceIdentity();
     const binaryPath = e2eBinaryPath();
     report.binary = {
@@ -451,10 +453,6 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
 
   it("uses the Downloads folder without a picker when the folder is empty and ask-each-time is off", async () =>
     scenario("missing-folder-ask-off-uses-default", async () => {
-      await setFolderSettings({
-        askDownloadLocation: false,
-        downloadFolder: "",
-      });
       await setUrl(`${CLIP_BASE}/readiness-default-folder.mp4`);
       await waitForSummaryState("resolved");
       const before = await readHint();
@@ -488,10 +486,7 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
 
   it("explains that a folder is asked for each download and keeps the blocker-free flow", async () =>
     scenario("ask-each-time-hint", async () => {
-      await setFolderSettings({
-        askDownloadLocation: true,
-        downloadFolder: "",
-      });
+      await setControl("askDownloadLocationToggle", true);
       await setUrl(`${CLIP_BASE}/readiness-ask-each-time.mp4`);
       await waitForSummaryState("destination");
       const hint = await readHint();
@@ -530,10 +525,11 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
 
   it("names a blocking format choice next to Download and does not start", async () =>
     scenario("formats-blocker-next-to-download", async () => {
-      await setFolderSettings({
-        askDownloadLocation: false,
-        downloadFolder: "",
-      });
+      // Formats only block with "Ask every time" off. Switching it off with no
+      // folder opens the picker, so cancel it.
+      await setPicker("cancel");
+      await setControl("askDownloadLocationToggle", false);
+      await restorePicker();
       await clickById("profileCustomBtn");
       await waitFor(
         () =>
@@ -574,10 +570,6 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
 
   it("keeps the failed effective-options reason and next action next to Download", async () =>
     scenario("resolve-failure-hint-next-to-download", async () => {
-      await setFolderSettings({
-        askDownloadLocation: false,
-        downloadFolder: "",
-      });
       await browser.execute(() => {
         window.__uiReadinessResolveOriginal = window.api.resolveDownloadOptions;
         window.api.resolveDownloadOptions = async () => ({
@@ -613,12 +605,61 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
       return { recoveredTone: recovered.tone };
     }));
 
+  it("explains turning ask-each-time off with no folder, including a cancelled pick", async () =>
+    scenario("ask-off-cancelled-folder-feedback", async () => {
+      await setControl("askDownloadLocationToggle", true);
+      const fixture = path.join(FOLDERS, "switched-folder");
+      fs.mkdirSync(fixture, { recursive: true });
+      await setPicker("cancel");
+      try {
+        await setControl("askDownloadLocationToggle", false);
+        await waitFor(
+          () =>
+            document.getElementById("downloadFolderFeedback")?.hidden === false,
+          "turning ask-each-time off with no folder showed no feedback",
+          10_000,
+        );
+        const cancelled = await folderFeedback();
+        assert.equal(
+          cancelled.text,
+          "No folder was chosen. Choose a folder or ask ROSI before each download.",
+        );
+        const toggled = await browser.execute(
+          () => document.getElementById("askDownloadLocationToggle").checked,
+        );
+        assert.equal(
+          toggled,
+          false,
+          "a cancelled pick turned ask-each-time back on",
+        );
+
+        await setControl("askDownloadLocationToggle", true);
+        await setPicker("path", fixture);
+        await setControl("askDownloadLocationToggle", false);
+        await waitFor(
+          (expected) =>
+            document
+              .getElementById("downloadFolderSummary")
+              ?.textContent.includes(expected),
+          "folder chosen after switching ask-each-time off was not saved",
+          10_000,
+          path.basename(fixture),
+        );
+        assert.equal((await folderFeedback()).hidden, true);
+        await browser.waitUntil(
+          async () =>
+            path.basename(await persistedFolder()) === path.basename(fixture),
+          { timeout: 10_000, timeoutMsg: "chosen folder was not saved" },
+        );
+        return { cancelledText: cancelled.text };
+      } finally {
+        await restorePicker();
+      }
+    }));
+
   it("explains a cancelled or failed Change folder pick and keeps the stale path out", async () =>
     scenario("change-folder-cancelled-and-failed", async () => {
-      await setFolderSettings({
-        askDownloadLocation: false,
-        downloadFolder: "",
-      });
+      await setControl("askDownloadLocationToggle", false);
       const fixture = path.join(FOLDERS, "picked-folder");
       fs.mkdirSync(fixture, { recursive: true });
       await setPicker("cancel");
@@ -711,61 +752,6 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
       }
     }));
 
-  it("explains turning ask-each-time off with no folder, including a cancelled pick", async () =>
-    scenario("ask-off-cancelled-folder-feedback", async () => {
-      await setFolderSettings({
-        askDownloadLocation: true,
-        downloadFolder: "",
-      });
-      const fixture = path.join(FOLDERS, "switched-folder");
-      fs.mkdirSync(fixture, { recursive: true });
-      await setPicker("cancel");
-      try {
-        await setControl("askDownloadLocationToggle", false);
-        await waitFor(
-          () =>
-            document.getElementById("downloadFolderFeedback")?.hidden === false,
-          "turning ask-each-time off with no folder showed no feedback",
-          10_000,
-        );
-        const cancelled = await folderFeedback();
-        assert.equal(
-          cancelled.text,
-          "No folder was chosen. Choose a folder or ask ROSI before each download.",
-        );
-        const toggled = await browser.execute(
-          () => document.getElementById("askDownloadLocationToggle").checked,
-        );
-        assert.equal(
-          toggled,
-          false,
-          "a cancelled pick turned ask-each-time back on",
-        );
-
-        await setControl("askDownloadLocationToggle", true);
-        await setPicker("path", fixture);
-        await setControl("askDownloadLocationToggle", false);
-        await waitFor(
-          (expected) =>
-            document
-              .getElementById("downloadFolderSummary")
-              ?.textContent.includes(expected),
-          "folder chosen after switching ask-each-time off was not saved",
-          10_000,
-          path.basename(fixture),
-        );
-        assert.equal((await folderFeedback()).hidden, true);
-        await browser.waitUntil(
-          async () =>
-            path.basename(await persistedFolder()) === path.basename(fixture),
-          { timeout: 10_000, timeoutMsg: "chosen folder was not saved" },
-        );
-        return { cancelledText: cancelled.text };
-      } finally {
-        await restorePicker();
-      }
-    }));
-
   it("keeps long URLs, paths, titles, and errors inside their regions at 900x560", async () =>
     scenario("long-content-no-horizontal-overflow", async () => {
       originalWindowSize = await browser.getWindowSize();
@@ -780,10 +766,22 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
       assert.ok(longUrl.length >= 400, `URL is ${longUrl.length} characters`);
 
       await browser.setWindowSize(900, 560);
-      await setFolderSettings({
-        askDownloadLocation: false,
-        downloadFolder: longFolder,
-      });
+      await setPicker("path", longFolder);
+      try {
+        await setControl("askDownloadLocationToggle", false);
+        await clickById("changeDownloadFolderBtn");
+        await waitFor(
+          (expected) =>
+            document.getElementById("downloadFolderSummary")?.title ===
+            expected,
+          "long folder was not chosen",
+          10_000,
+          longFolder,
+        );
+      } finally {
+        await restorePicker();
+      }
+      await setControl("consoleToggle", true);
       await browser.pause(250);
 
       await clickById("dockTabQueue");
