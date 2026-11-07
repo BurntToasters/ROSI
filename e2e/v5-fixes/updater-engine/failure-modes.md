@@ -11,10 +11,10 @@ Line numbers refer to `src/updater.ts` at the start of this change.
 
 ## Status
 
-Rows marked "(passes)" have a scenario that ran against the real engine on macOS: nine in
+Rows marked "(passes)" have a scenario that ran against the real engine on macOS: eleven in
 `e2e/v5-fixes/updater-engine/updater-engine.spec.js` (dev-mode refusal, retired package,
 candidate mismatch, restart refusal with retry, download cancel, checking order, feed error,
-download error, compact routing), `updater-compact-target-fallback` and
+download error, compact routing, stale check after a channel change, channel save failure), `updater-compact-target-fallback` and
 `updater-generation-retry` in `e2e/state-updater.spec.js`, `updater-channel-and-singleflight`
 in `e2e/renderer-updates.spec.js`, and the four flatpak scenarios in
 `e2e/v5-fixes/flatpak-updates`. Rows marked "not yet" name a planned scenario that does not
@@ -27,8 +27,8 @@ exist; those guards are not covered by E2E yet, and G33 is not covered at all.
 | G01 | Dev-mode refusal: an unpackaged build returns `dev-mode` before any feed request | L282-289 | `check_flow`, `platform::is_packaged` | `updater-engine-dev-mode-refusal` (passes) |
 | G02 | Retired Linux deb/rpm target refuses the check with a fixed message, before any feed request | L195-199, L293-295 | `retired_package_message` | `updater-engine-retired-linux-package` (passes) |
 | G03 | Flatpak builds read the feed but never download or install; the candidate carries `manualInstall: true` | L290-292, L385, L415, L522-525 | `check_flow`, `download_update`, `install_update` | `flatpak-newer-release-prompt` (passes) |
-| G04 | A check result from before a channel change is discarded; the check restarts for the new channel | L169, L274-275, L314-317, L327-333 | `CheckGen` fence in `Command::TargetKnown` and `Command::Decide` | not yet: `updater-engine-stale-check-after-channel-change` (planned) |
-| G05 | Channel save must succeed before revalidation; a failed save refuses the target and reports a feed error, not a silent result | L129-137, L166 | `set_update_channel` saves first; `resolve_target` refuses while `channel_unsaved` | not yet: `updater-engine-channel-save-failure` (planned) |
+| G04 | A check result from before a channel change is discarded; the check restarts for the new channel | L169, L274-275, L314-317, L327-333 | `CheckGen` fence in `Command::TargetKnown` and `Command::Decide` | `updater-engine-stale-check-after-channel-change` (passes) |
+| G05 | Channel save must succeed before revalidation; a failed save refuses the target and reports a feed error, not a silent result | L129-137, L166 | `set_update_channel` saves first; `resolve_target` refuses while `channel_unsaved` | `updater-engine-channel-save-failure` (passes) |
 | G06 | Channel change during a download cancels it, emits one `cancelled`, and rechecks after the transfer settles | L178-188 | `Command::SetChannel` | `updater-generation-retry (state-updater.spec.js)` (passes) |
 | G07 | Channel change during install waits for the install; it releases the identity only before the install started | L170-176 | `Command::SetChannel` (`recheck_after_install`) | not yet: `updater-engine-channel-change-during-install` (planned) |
 | G08 | A download that completes after cancel is discarded; no `downloaded` event, no bytes kept | L440-443, L466-469, L509-519 | `Command::FinishDownload` (`is_current`) | `updater-engine-download-cancel-discards` (passes) |

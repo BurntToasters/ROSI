@@ -15,7 +15,7 @@ import {
 // Each scenario runs the Rust engine against a local signed update server. The
 // engine probe counts installs and restarts; scenarios read deltas because the
 // probe belongs to the app process.
-const EXPECTED_CHECKS = 9;
+const EXPECTED_CHECKS = 11;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const runDirectory = path.join(
   here,
@@ -40,6 +40,16 @@ function writeReport() {
     path.join(runDirectory, "report.json"),
     `${JSON.stringify({ area: "updater-engine", passed, checks }, null, 2)}\n`,
   );
+}
+
+const DATA_DIR = process.env.ROSI_E2E_DATA_DIR;
+
+function feedTargets(index) {
+  return fixture.server.requests
+    .slice(index)
+    .map((request) => request.path)
+    .filter((item) => item.startsWith("/latest-"))
+    .map((item) => item.replace(/^\/latest-|\.json$/g, ""));
 }
 
 function osName() {
@@ -498,5 +508,148 @@ describe("Updater engine failure modes", () => {
       noCompactStable: plain.feeds,
       noCompactBeta: betaFeeds,
     });
+  });
+
+  it("discards a check result that arrives after the channel changed", async () => {
+    // G04: the beta answer is held while the channel moves to stable.
+    await startScenario({ channel: "beta" });
+    await browser.pause(1_000);
+    let releaseBeta = () => {};
+    const betaGate = new Promise((resolve) => {
+      releaseBeta = resolve;
+    });
+    try {
+      fixture.server.publish({
+        target: "darwin-beta-aarch64-app",
+        version: "9.1.0-beta.1",
+        payload: Buffer.from("stale beta payload"),
+        fileName: "ROSI-9.1.0-beta.1.bin",
+        manifestGate: betaGate,
+      });
+      fixture.server.publish({
+        target: stableTarget(),
+        route: osName(),
+        version: "9.1.0",
+        payload: Buffer.from("stable payload"),
+        fileName: "ROSI-9.1.0.bin",
+      });
+      const requestIndex = fixture.server.requests.length;
+      const statusIndex = (await statuses("engineStatuses")).length;
+      // Not awaited: the command returns only when the held check settles.
+      await browser.execute(() => {
+        window.__TAURI__.core.invoke("check_for_updates").catch(() => {});
+      });
+      await browser.waitUntil(
+        () => feedTargets(requestIndex).includes("darwin-beta-aarch64-app"),
+        {
+          timeout: 20_000,
+          interval: 100,
+          timeoutMsg: "the beta feed was not requested",
+        },
+      );
+      await setUpdateChannel("stable");
+      await waitForStatus(
+        "engineStatuses",
+        (event) => event.status === "available" && event.version === "9.1.0",
+        "the stable update was not offered after the channel change",
+      );
+      releaseBeta();
+      // Give the released beta answer time to reach the engine and be fenced.
+      await browser.pause(1_500);
+      const seen = (await statuses("engineStatuses")).slice(statusIndex);
+      assert.ok(
+        !seen.some((event) => event.version === "9.1.0-beta.1"),
+        JSON.stringify(seen),
+      );
+      const offered = seen.filter((event) => event.status === "available");
+      assert.equal(offered.at(-1)?.version, "9.1.0", JSON.stringify(seen));
+      const modal = await readModal();
+      if (modal.active && modal.buttons.includes("Later")) {
+        await clickModal("Later");
+      }
+      record("updater-engine-stale-check-after-channel-change", {
+        feeds: feedTargets(requestIndex),
+        offered: offered.map((event) => event.version),
+      });
+    } finally {
+      releaseBeta();
+    }
+  });
+
+  it("refuses to revalidate until the channel is saved, then rechecks", async () => {
+    // G05: a settings.json from a newer schema makes every save fail.
+    assert.ok(DATA_DIR, "ROSI_E2E_DATA_DIR is not set");
+    const settingsPath = path.join(DATA_DIR, "settings.json");
+    await startScenario({ channel: "stable" });
+    await browser.pause(1_000);
+    fixture.server.publish({
+      target: "darwin-beta-aarch64-app",
+      version: "9.2.0-beta.1",
+      payload: Buffer.from("beta payload after save"),
+      fileName: "ROSI-9.2.0-beta.1.bin",
+    });
+    const original = fs.readFileSync(settingsPath);
+    try {
+      const newer = JSON.parse(original.toString("utf8"));
+      newer.settingsVersion = 9_999;
+      fs.writeFileSync(settingsPath, JSON.stringify(newer));
+      const requestIndex = fixture.server.requests.length;
+      const statusIndex = (await statuses("engineStatuses")).length;
+      await setUpdateChannel("beta");
+      await waitForStatus(
+        "engineStatuses",
+        (event) => event.status === "error",
+        "the unsaved channel did not refuse the background check",
+      );
+      await clickManualCheck();
+      const modal = await waitForModal("Update Error");
+      assert.match(modal.message, /could not be saved before revalidation/);
+      await clickModal("OK");
+      const errors = (await statuses("engineStatuses"))
+        .slice(statusIndex)
+        .filter((event) => event.status === "error");
+      assert.ok(errors.length >= 2, JSON.stringify(errors));
+      assert.ok(
+        errors.every((event) => event.kind === "feed"),
+        JSON.stringify(errors),
+      );
+      const feedsWhileUnsaved = feedTargets(requestIndex);
+      assert.deepEqual(feedsWhileUnsaved, []);
+      assert.equal(
+        JSON.parse(fs.readFileSync(settingsPath, "utf8")).settingsVersion,
+        9_999,
+        "the refused save replaced the newer settings file",
+      );
+
+      // The same channel saved successfully counts as a change and rechecks.
+      fs.writeFileSync(settingsPath, original);
+      const savedIndex = fixture.server.requests.length;
+      await setUpdateChannel("beta");
+      await waitForStatus(
+        "engineStatuses",
+        (event) =>
+          event.status === "available" && event.version === "9.2.0-beta.1",
+        "the saved channel did not recheck the beta feed",
+      );
+      assert.ok(
+        feedTargets(savedIndex).every(
+          (target) => target === "darwin-beta-aarch64-app",
+        ),
+        JSON.stringify(feedTargets(savedIndex)),
+      );
+      record("updater-engine-channel-save-failure", {
+        refusedErrors: errors.length,
+        feedsWhileUnsaved,
+        feedsAfterSave: feedTargets(savedIndex),
+      });
+    } finally {
+      fs.writeFileSync(settingsPath, original);
+      const modal = await readModal();
+      if (modal.active) {
+        await clickModal(modal.buttons.includes("Later") ? "Later" : "OK");
+      }
+      await setUpdateChannel("stable");
+      await browser.pause(500);
+    }
   });
 });

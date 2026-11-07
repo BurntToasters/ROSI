@@ -55,6 +55,8 @@ export async function startUpdaterServer({ key }) {
    * key inside the manifest; `route` is the name in `latest-{route}.json`
    * (defaults to `target`). With no explicit target the engine requests the
    * OS name only, e.g. `latest-darwin.json`, and then looks up `{os}-{arch}`.
+   * `gate` holds the artifact response and `manifestGate` holds the manifest
+   * response until the scenario resolves the promise.
    */
   function publish({
     target,
@@ -63,6 +65,7 @@ export async function startUpdaterServer({ key }) {
     payload,
     fileName,
     gate = null,
+    manifestGate = null,
   }) {
     const artifactPath = `/artifacts/${fileName}`;
     routes.set(artifactPath, {
@@ -84,6 +87,7 @@ export async function startUpdaterServer({ key }) {
     routes.set(`/latest-${route}.json`, {
       contentType: "application/json",
       body: JSON.stringify(manifest),
+      gate: manifestGate,
     });
     return manifest;
   }
