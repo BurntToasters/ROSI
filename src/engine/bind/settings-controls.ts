@@ -38,8 +38,11 @@ function buildEffectiveOptionsReadiness(): EffectiveOptionsReadiness {
   if (settingsStore.settingsSavedRevision !== settingsStore.settingsRevision) {
     return { state: 'settings-unsaved' };
   }
-  const outputPath = settings.askDownloadLocation ? '' : (settings.downloadFolder?.trim() ?? '');
-  if (!outputPath) return { state: 'destination' };
+  // "Ask every time" defers the folder to each download, so the preview waits for
+  // it. Otherwise an empty folder is not a blocker: download_options::resolve_output_path
+  // falls back to the downloads directory, so the request omits outputPath below.
+  if (settings.askDownloadLocation) return { state: 'destination' };
+  const outputPath = settings.downloadFolder?.trim() ?? '';
 
   const formatSelections = readAdvancedFormatSelections(url);
   if (settings.advancedOptions && !formatSelections.videoFormat && !formatSelections.audioFormat) {
@@ -54,7 +57,7 @@ function buildEffectiveOptionsReadiness(): EffectiveOptionsReadiness {
   const convertEnabled = settings.convertEnabled && !settings.audioOnly;
   const request = {
     url,
-    outputPath,
+    ...(outputPath ? { outputPath } : {}),
     videoFormat: formatSelections.videoFormat,
     audioFormat: formatSelections.audioFormat,
     convertFormat: convertEnabled ? refs.convertFormatSelect?.value.trim() || undefined : undefined,

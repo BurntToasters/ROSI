@@ -181,20 +181,49 @@ async function pressEnterOnFocusedControl() {
   });
 }
 
+// The prompt moves focus into itself on the next animation frame, so a check made
+// in the same round trip that reports the prompt open can run before that frame.
+async function waitForModalFocus() {
+  await waitFor(
+    () => {
+      const modal = document.getElementById("app-modal");
+      return Boolean(modal?.contains(document.activeElement));
+    },
+    "focus did not move into the open prompt",
+    5_000,
+  );
+}
+
 async function setSidebarOpen(open) {
   const isOpen = await browser.execute(
     () =>
       document.getElementById("sidebar")?.classList.contains("open") === true,
   );
-  if (isOpen === open) return;
-  await clickById(open ? "settingsBtn" : "closeSidebar");
-  await waitFor(
-    (want) =>
-      document.getElementById("sidebar")?.classList.contains("open") === want,
-    `settings did not ${open ? "open" : "close"}`,
-    10_000,
-    open,
-  );
+  if (isOpen !== open) {
+    await clickById(open ? "settingsBtn" : "closeSidebar");
+    await waitFor(
+      (want) =>
+        document.getElementById("sidebar")?.classList.contains("open") === want,
+      `settings did not ${open ? "open" : "close"}`,
+      10_000,
+      open,
+    );
+  }
+  // The sidebar slides in with a transform. Wait until it rests at its open
+  // position, so focus and layout checks never run against a moving panel.
+  if (open) {
+    await waitFor(
+      () => {
+        const sidebar = document.getElementById("sidebar");
+        if (!sidebar) return false;
+        const rect = sidebar.getBoundingClientRect();
+        const restingLeft = parseFloat(getComputedStyle(sidebar).left);
+        return Math.abs(rect.left - restingLeft) < 1;
+      },
+      "settings sidebar did not finish opening",
+      10_000,
+    );
+  }
 }
 
 async function setProfile(mode) {
@@ -412,6 +441,7 @@ describe("ROSI full-app UI polish", () => {
         document.querySelector('[data-reset-section="download"]').click();
       });
       await waitForModal(true);
+      await waitForModalFocus();
       const modal = await browser.execute(() => ({
         title: document.getElementById("modal-title").textContent.trim(),
         focusedInside: document
@@ -478,6 +508,7 @@ describe("ROSI full-app UI polish", () => {
       assert.equal(reachable, true, "reset button is not keyboard focusable");
       await pressEnterOnFocusedControl();
       await waitForModal(true);
+      await waitForModalFocus();
       for (let press = 0; press < 3; press += 1) await browser.keys("Tab");
       const trapped = await browser.execute(() =>
         document.getElementById("app-modal").contains(document.activeElement),
