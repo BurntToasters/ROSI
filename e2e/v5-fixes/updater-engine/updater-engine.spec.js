@@ -15,7 +15,7 @@ import {
 // Each scenario runs the Rust engine against a local signed update server. The
 // engine probe counts installs and restarts; scenarios read deltas because the
 // probe belongs to the app process.
-const EXPECTED_CHECKS = 8;
+const EXPECTED_CHECKS = 9;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const runDirectory = path.join(
   here,
@@ -399,5 +399,104 @@ describe("Updater engine failure modes", () => {
     assert.equal(errors.length, 1, JSON.stringify(errors));
     assert.equal(errors[0].kind, "download");
     record("updater-engine-download-error", { kind: errors[0].kind });
+  });
+
+  it("routes compact targets and falls back only when the compact feed fails", async () => {
+    // Z03.1, Z03.3 (stable), Z03.4, Z03.6 of e2e/updater-zst.failure-modes.md.
+    const compact = `${osName()}-aarch64-app-zst`;
+    const feedsSince = (index) =>
+      fixture.server.requests
+        .slice(index)
+        .map((request) => request.path)
+        .filter((item) => item.startsWith("/latest-"))
+        .map((item) => item.replace(/^\/latest-|\.json$/g, ""));
+    const manualCheck = async (expectedTitle) => {
+      const requestIndex = fixture.server.requests.length;
+      const statusIndex = (await statuses("engineStatuses")).length;
+      await clickManualCheck();
+      await waitForModal(expectedTitle);
+      await clickModal(
+        expectedTitle === "ROSI is up to date!" ? "OK" : "Later",
+      );
+      const settled = (await statuses("engineStatuses"))
+        .slice(statusIndex)
+        .map((event) => event.status);
+      return { feeds: feedsSince(requestIndex), settled };
+    };
+
+    // Z03.1: the stable compact target is asked once and its answer is used.
+    await startScenario({ compactTarget: compact, disableCompact: false });
+    fixture.server.publish({
+      target: compact,
+      version: "9.0.6",
+      payload: Buffer.from("compact payload"),
+      fileName: "ROSI-9.0.6.app.tar.zst",
+    });
+    const used = await manualCheck("Update Available!");
+    assert.deepEqual(used.feeds, [compact]);
+    assert.ok(used.settled.includes("available"), JSON.stringify(used));
+
+    // Z03.4: a compact feed with no newer version is asked again, never falls back.
+    fixture.server.publish({
+      target: compact,
+      version: "1.0.0",
+      payload: Buffer.from("older compact payload"),
+      fileName: "ROSI-1.0.0.app.tar.zst",
+    });
+    fixture.server.publish({
+      target: stableTarget(),
+      route: osName(),
+      version: "9.0.7",
+      payload: Buffer.from("legacy payload that must not be offered"),
+      fileName: "ROSI-9.0.7.app.tar.gz",
+    });
+    const empty = await manualCheck("ROSI is up to date!");
+    assert.deepEqual(empty.feeds, [compact, compact]);
+    assert.ok(empty.settled.includes("not-available"), JSON.stringify(empty));
+
+    // Z03.3 (stable): a missing compact feed is not retried in place; the
+    // default target is asked once and its update is offered.
+    fixture.server.unpublish(compact);
+    const fallback = await manualCheck("Update Available!");
+    assert.deepEqual(fallback.feeds, [compact, osName()]);
+    const offered = (await statuses("engineStatuses"))
+      .filter((event) => event.status === "available")
+      .at(-1);
+    assert.equal(offered?.version, "9.0.7", JSON.stringify(offered));
+
+    // Z03.6: with no compact target, stable asks the default target and beta
+    // asks the beta target, as before 5.1.
+    await startScenario({});
+    fixture.server.publish({
+      target: stableTarget(),
+      route: osName(),
+      version: "9.0.8",
+      payload: Buffer.from("default target payload"),
+      fileName: "ROSI-9.0.8.app.tar.gz",
+    });
+    const plain = await manualCheck("Update Available!");
+    assert.deepEqual(plain.feeds, [osName()]);
+    const betaIndex = fixture.server.requests.length;
+    await setUpdateChannel("beta");
+    await browser.waitUntil(() => feedsSince(betaIndex).length >= 1, {
+      timeout: 20_000,
+      interval: 100,
+      timeoutMsg: "the channel change did not recheck the beta target",
+    });
+    await browser.pause(500);
+    const betaFeeds = feedsSince(betaIndex);
+    assert.ok(
+      betaFeeds.every((target) => target === "darwin-beta-aarch64-app"),
+      JSON.stringify(betaFeeds),
+    );
+    await setUpdateChannel("stable");
+    await browser.pause(500);
+    record("updater-engine-compact-routing", {
+      compactUsed: used.feeds,
+      compactEmpty: empty.feeds,
+      compactMissing: fallback.feeds,
+      noCompactStable: plain.feeds,
+      noCompactBeta: betaFeeds,
+    });
   });
 });

@@ -51,10 +51,15 @@ Enumerated before implementation. Each case names the layer that must catch it.
    universal `.app.tar.gz`.
 6. Windows, Linux, and Flatpak targets must not change.
 
-Scope: Z03.1 through Z03.6 mock `get_compact_updater_target`, so they test renderer
-routing given the command's answer. The Rust target selection itself (bundle-type
-gate, Rosetta sysctl, arch) is covered only by Z03.2's `sysctl.proc_translated`
-probe and must be confirmed on real macOS hardware.
+Scope: since 5.1.0-beta.1 the Rust engine (`src-tauri/src/updater.rs`) picks the
+target, so Z03.1, Z03.3 (stable), Z03.4 and Z03.6 run against the real engine and a
+local signed feed in `e2e/v5-fixes/updater-engine` (`updater-engine-compact-routing`,
+row G34 of that area's failure modes). The beta half of Z03.3 is
+`updater-compact-target-fallback` in `e2e/state-updater.spec.js`. This script keeps
+the checks that need release archives or old clients: Z03.2 (the Rosetta
+`sysctl.proc_translated` probe and the per-arch Mach-O matrix) and Z03.5 (the real
+5.0.2 renderer from git). The Rust target selection itself (bundle-type gate,
+Rosetta sysctl, arch) must still be confirmed on real macOS hardware.
 
 ## Z04: release pipeline
 

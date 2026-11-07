@@ -11,18 +11,14 @@ Line numbers refer to `src/updater.ts` at the start of this change.
 
 ## Status
 
-Written with the Rust engine. Rows marked "(passes)" have a scenario that ran against the
-real engine on macOS: eight in `e2e/v5-fixes/updater-engine/updater-engine.spec.js`
-(dev-mode refusal, retired package, candidate mismatch, restart refusal with retry, download
-cancel, checking order, feed error, download error), `updater-compact-target-fallback` in
-`e2e/state-updater.spec.js`, `updater-channel-and-singleflight` in
-`e2e/renderer-updates.spec.js`, and the four flatpak scenarios in `e2e/v5-fixes/flatpak-updates`.
-`updater-generation-retry` (`e2e/state-updater.spec.js`) is ported but hangs in the run, so its
-guards (G04, G06, G09, G13, G16, G26, G15 via the generation path) are NOT covered yet. Rows marked "not yet" name a planned scenario
-that does not exist. Those guards are not covered by E2E yet, and G33 is not covered at all.
-The generation scenario (`updater-generation-retry`) and the single-flight scenario
-(`updater-channel-and-singleflight`) still drive the removed adapter, so their guards stay
-uncovered until they are ported.
+Rows marked "(passes)" have a scenario that ran against the real engine on macOS: nine in
+`e2e/v5-fixes/updater-engine/updater-engine.spec.js` (dev-mode refusal, retired package,
+candidate mismatch, restart refusal with retry, download cancel, checking order, feed error,
+download error, compact routing), `updater-compact-target-fallback` and
+`updater-generation-retry` in `e2e/state-updater.spec.js`, `updater-channel-and-singleflight`
+in `e2e/renderer-updates.spec.js`, and the four flatpak scenarios in
+`e2e/v5-fixes/flatpak-updates`. Rows marked "not yet" name a planned scenario that does not
+exist; those guards are not covered by E2E yet, and G33 is not covered at all.
 
 ## Guards
 
@@ -33,17 +29,17 @@ uncovered until they are ported.
 | G03 | Flatpak builds read the feed but never download or install; the candidate carries `manualInstall: true` | L290-292, L385, L415, L522-525 | `check_flow`, `download_update`, `install_update` | `flatpak-newer-release-prompt` (passes) |
 | G04 | A check result from before a channel change is discarded; the check restarts for the new channel | L169, L274-275, L314-317, L327-333 | `CheckGen` fence in `Command::TargetKnown` and `Command::Decide` | not yet: `updater-engine-stale-check-after-channel-change` (planned) |
 | G05 | Channel save must succeed before revalidation; a failed save refuses the target and reports a feed error, not a silent result | L129-137, L166 | `set_update_channel` saves first; `resolve_target` refuses while `channel_unsaved` | not yet: `updater-engine-channel-save-failure` (planned) |
-| G06 | Channel change during a download cancels it, emits one `cancelled`, and rechecks after the transfer settles | L178-188 | `Command::SetChannel` | not yet: `updater-engine-channel-change-during-download` (planned) |
+| G06 | Channel change during a download cancels it, emits one `cancelled`, and rechecks after the transfer settles | L178-188 | `Command::SetChannel` | `updater-generation-retry (state-updater.spec.js)` (passes) |
 | G07 | Channel change during install waits for the install; it releases the identity only before the install started | L170-176 | `Command::SetChannel` (`recheck_after_install`) | not yet: `updater-engine-channel-change-during-install` (planned) |
 | G08 | A download that completes after cancel is discarded; no `downloaded` event, no bytes kept | L440-443, L466-469, L509-519 | `Command::FinishDownload` (`is_current`) | `updater-engine-download-cancel-discards` (passes) |
-| G09 | The effective target is confirmed after the download; a target change releases the candidate and rechecks | L470-478 | `Command::FinishDownload` | not yet: `updater-engine-target-changed-during-download` (planned) |
+| G09 | The effective target is confirmed after the download; a target change releases the candidate and rechecks | L470-478 | `Command::FinishDownload` | `updater-generation-retry (state-updater.spec.js)` (passes) |
 | G10 | Single-flight: a second download is refused while one runs; install is refused while a download runs | L421, L536 | `Command::BeginDownload`, `Command::BeginInstall` | `updater-channel-and-singleflight (renderer-updates.spec.js)` (passes) |
 | G11 | A download for a candidate that is not the pending one is cancelled silently | L417-419 | `Command::BeginDownload` | `updater-engine-candidate-mismatch` (passes) |
 | G12 | Install of a candidate that was not downloaded refuses with an error; a stale candidate id is ignored | L527-535 | `Command::BeginInstall` | `updater-engine-candidate-mismatch` (passes) |
 | G13 | Install revalidates the pending identity and target after the await; a stale identity exits without effects | L544, L552 | `Command::ConfirmInstallTarget`, `Command::FinishInstall` | not yet: `updater-engine-candidate-mismatch` (planned) |
 | G14 | Install target changed since download releases the candidate and rechecks | L545-549 | `Command::ConfirmInstallTarget` | `updater-channel-and-singleflight (renderer-updates.spec.js)` (passes) |
 | G15 | Restart refusal keeps the installed identity so the next install only restarts; the user sees an install error | L553, L555-559, L561-563, L542 | `Command::FinishInstall`, `restart_failed` | `updater-engine-restart-refusal-retry` (passes) |
-| G16 | Checks do not start while a download or install runs | L276, L300, L312 | `Command::BeginCheck` | not yet: `updater-engine-single-flight` (planned) |
+| G16 | Checks do not start while a download or install runs | L276, L300, L312 | `Command::BeginCheck` | `updater-generation-retry (state-updater.spec.js)` (passes) |
 | G17 | Compact `-app-zst` target: one check with no in-place retry, then the legacy `-beta-` target without `-zst` | L147-153, L205-216 | `check_feed`, `legacy_target` | `updater-compact-target-fallback` (passes) |
 | G18 | The compact failure is logged; logging never changes the check | L219-228 | `check_feed` (`logging::warn`) | `updater-compact-target-fallback` (passes) |
 | G19 | A feed that answers with no update is retried once when a target was requested (beta manifests are renamed in two steps) | L257-259 | `check_target` | not yet: `updater-engine-feed-empty-retry` (planned) |
@@ -61,6 +57,7 @@ uncovered until they are ported.
 | G31 | Finally block: a download that held the candidate releases it on cancel or recheck, and clears the single-flight lock | L492-506 | `Command::FinishDownload` | `updater-engine-download-cancel-discards` (passes) |
 | G32 | Install failure keeps the candidate only while it is still pending; the error is an `install` error | L560-563 | `Command::FinishInstall` | `updater-engine-restart-refusal-retry` (passes) |
 | G33 | The plugin's `on_before_exit` flush can refuse before an install; the candidate and its bytes are kept for retry | vendored `updater.rs` (`run_preinstall_flush`), `main.rs` | `install_flow` (plugin `install`) | not yet: `Not covered by E2E. The install probe skips the plugin install, so the flush hook does not run. Covered only by the vendored plugin's own tests.` (planned) |
+| G34 | Compact routing: a stable compact target is asked once and used; a failed compact feed falls back to the default target once (no in-place retry); a compact feed that answers with no update is asked again but never falls back; with no compact target, stable asks the default target and beta asks the beta target | L147-153, L205-216, L257-259 | `resolve_target`, `check_feed`, `check_target` | `updater-engine-compact-routing` (passes) |
 
 ## Ordering rules that carry over
 

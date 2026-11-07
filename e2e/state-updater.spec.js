@@ -937,6 +937,9 @@ describe("state and updater repair E2E", () => {
     const betaTarget = "darwin-beta-aarch64-app";
     const stableTarget = `${platformOs}-aarch64`;
     let priorBackup = null;
+    // Released in finally too, so a failed step never leaves the held B
+    // response open (the server could not close and the engine stays busy).
+    let releaseB = () => {};
     await reloadRenderer();
     // The channel change rechecks in the background; set it before the feed.
     await setUpdateChannel("beta");
@@ -1000,7 +1003,6 @@ describe("state and updater repair E2E", () => {
       await dismissModal("Update Ready", "Later");
 
       // Generation B downloads behind a held response.
-      let releaseB;
       const gateB = new Promise((resolve) => {
         releaseB = resolve;
       });
@@ -1058,9 +1060,10 @@ describe("state and updater repair E2E", () => {
       await setUpdateChannel("stable");
       await engineInvoke("cancel_update_download");
       await dismissModal("Download Cancelled", "OK");
+      // Compared in the page: WebDriver returns an undefined value as null.
       assert.equal(
-        await browser.execute(() => window.auditDownloadBResult),
-        undefined,
+        await browser.execute(() => window.auditDownloadBResult === undefined),
+        true,
         "cancelled download resolved before it settled",
       );
       releaseB();
@@ -1117,7 +1120,8 @@ describe("state and updater repair E2E", () => {
         urls: ["https://93.184.216.34/updater-install-backup-fault"],
         options: null,
       });
-      assert.equal(queued.data?.added, 1, JSON.stringify(queued));
+      // add_to_queue answers with the IpcResult wrapper ({ ok, data }).
+      assert.equal(queued.data?.data?.added, 1, JSON.stringify(queued));
       const queue = await engineInvoke("get_queue");
       const latestQueueId = queue.data.at(-1)?.id;
       assert.ok(latestQueueId);
@@ -1161,8 +1165,9 @@ describe("state and updater repair E2E", () => {
       assert.ok(retry.ok, JSON.stringify(retry));
       await browser.pause(800);
       const afterRetry = await engineProbe();
-      assert.equal(afterRetry.installs - probeBeforeRefusal.installs, 0);
-      assert.equal(afterRetry.restarts - probeBeforeRefusal.restarts, 1);
+      // Measured from the refusal: the refused attempt already counted its install.
+      assert.equal(afterRetry.installs - afterRefusal.installs, 0);
+      assert.equal(afterRetry.restarts - afterRefusal.restarts, 1);
       record("updater-generation-retry", {
         feedTargets: fixture.server.requests
           .map((request) => request.path)
@@ -1170,10 +1175,11 @@ describe("state and updater repair E2E", () => {
         staleDownloadResult: { cancelled: true },
         singleflightRefused: second.data.error,
         refusedInstallBytesKept: true,
-        retryRestarts: afterRetry.restarts - probeBeforeRefusal.restarts,
+        retryRestarts: afterRetry.restarts - afterRefusal.restarts,
         installsAfterRefusal: afterRefusal.installs - probeBefore.installs,
       });
     } finally {
+      releaseB();
       fs.rmSync(backupPath, { recursive: true, force: true });
       if (priorBackup) fs.writeFileSync(backupPath, priorBackup);
       await browser.execute(() => {

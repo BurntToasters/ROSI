@@ -2,7 +2,7 @@
 // End-to-end check of the compact macOS updater path, failure modes in
 // e2e/updater-zst.failure-modes.md. It runs the real packer, Tauri signer,
 // manifest generator and validator, the vendored plugin's extractor, and the
-// renderer's updater.ts against real release archives, then writes
+// 5.0.2 renderer's updater.ts (from git) against real release archives, then writes
 // e2e/artifacts/updater-zst-report.json.
 //
 // Inputs: per-arch `ROSI.app.tar.gz` from `tauri build --target
@@ -173,8 +173,9 @@ function resolveFeed(manifests, target) {
 }
 
 /**
- * Runs an updater.ts against a scripted feed; returns the targets it checked
- * and the warnings it logged. `sourceText` defaults to src/updater.ts.
+ * Runs an old renderer's updater.ts (from git) against a scripted feed; returns
+ * the targets it checked and the warnings it logged. Since 5.1 the current
+ * target selection is Rust and is covered by the updater-engine E2E area.
  */
 async function runRendererCheck({
   channel,
@@ -185,9 +186,7 @@ async function runRendererCheck({
   sourceText,
 }) {
   const ts = require(path.join(root, "node_modules/typescript"));
-  const source = (
-    sourceText ?? fs.readFileSync(path.join(root, "src/updater.ts"), "utf8")
-  ).replaceAll("import.meta.env.VITE_ROSI_E2E", "'1'");
+  const source = sourceText.replaceAll("import.meta.env.VITE_ROSI_E2E", "'1'");
   const js = ts.transpileModule(source, {
     compilerOptions: {
       target: ts.ScriptTarget.ES2020,
@@ -554,45 +553,12 @@ async function main() {
     );
 
     await scenario(
-      "Z03.1",
-      "stable macOS check uses the compact feed",
-      async () => {
-        const result = await runRendererCheck({
-          channel: "stable",
-          compactTarget: "darwin-aarch64-app-zst",
-          feed: () => "9.0.0",
-        });
-        assert.deepEqual(result.checks, ["darwin-aarch64-app-zst"]);
-        // The channel is re-read before and after the feed request.
-        assert.ok(result.compactArgs.length > 0);
-        assert.ok(result.compactArgs.every((args) => args.beta === false));
-        assert.equal(result.available, "9.0.0");
-        return result;
-      },
-    );
-
-    await scenario(
       "Z03.2",
-      "renderer routes the native aarch64 target the command returns under Rosetta (command mocked)",
+      "a Rosetta process accepts the native aarch64 compact archive",
       async () => {
-        const rosettaTarget = (args) =>
-          args?.beta ? "darwin-beta-aarch64-app-zst" : "darwin-aarch64-app-zst";
-        const stable = await runRendererCheck({
-          channel: "stable",
-          compactTarget: rosettaTarget,
-          feed: () => "9.0.0",
-        });
-        assert.deepEqual(stable.checks, ["darwin-aarch64-app-zst"]);
-        assert.ok(stable.compactArgs.every((args) => args.beta === false));
-        assert.equal(stable.available, "9.0.0");
-        const beta = await runRendererCheck({
-          channel: "beta",
-          compactTarget: rosettaTarget,
-          feed: () => "9.0.0-beta.1",
-        });
-        assert.deepEqual(beta.checks, ["darwin-beta-aarch64-app-zst"]);
-        assert.ok(beta.compactArgs.every((args) => args.beta === true));
-        assert.equal(beta.available, "9.0.0-beta.1");
+        // Target routing moved to the Rust engine and is covered by the
+        // updater-engine E2E area (updater-engine-compact-routing). This keeps
+        // the parts that need real archives and hardware.
         assert.equal(archMatrix["ROSI-aarch64.app.tar.zst"]?.rosetta, true);
         let rosettaSysctl = "skipped";
         if (os.arch() === "arm64") {
@@ -607,69 +573,9 @@ async function main() {
           }
         }
         return {
-          stable: stable.checks,
-          beta: beta.checks,
           rosettaMachOAccepted: archMatrix["ROSI-aarch64.app.tar.zst"]?.rosetta,
           rosettaSysctl,
         };
-      },
-    );
-
-    await scenario(
-      "Z03.3",
-      "missing compact feed falls back to the legacy target",
-      async () => {
-        const missing = new Error(
-          "Could not fetch a valid release JSON from the remote",
-        );
-        const stable = await runRendererCheck({
-          channel: "stable",
-          compactTarget: "darwin-aarch64-app-zst",
-          feed: (target) => (target ? missing : "9.0.0"),
-        });
-        // The compact check is not retried in place; the legacy target is the retry.
-        assert.deepEqual(stable.checks, ["darwin-aarch64-app-zst", null]);
-        assert.equal(stable.available, "9.0.0");
-        assert.equal(stable.warnings.length, 1);
-        assert.match(
-          stable.warnings[0],
-          /darwin-aarch64-app-zst check failed, falling back to the default target: Could not fetch/,
-        );
-        const beta = await runRendererCheck({
-          channel: "beta",
-          compactTarget: "darwin-beta-aarch64-app-zst",
-          feed: (target) =>
-            target.endsWith("-zst") ? missing : "9.0.0-beta.1",
-        });
-        assert.deepEqual(beta.checks, [
-          "darwin-beta-aarch64-app-zst",
-          "darwin-beta-aarch64-app",
-        ]);
-        assert.equal(beta.available, "9.0.0-beta.1");
-        assert.equal(beta.warnings.length, 1);
-        assert.match(
-          beta.warnings[0],
-          /darwin-beta-aarch64-app-zst check failed, falling back to darwin-beta-aarch64-app target/,
-        );
-        return { stable, beta };
-      },
-    );
-
-    await scenario(
-      "Z03.4",
-      "compact feed reporting no update does not fall back",
-      async () => {
-        const result = await runRendererCheck({
-          channel: "stable",
-          compactTarget: "darwin-aarch64-app-zst",
-          feed: () => null,
-        });
-        assert.ok(
-          result.checks.every((target) => target === "darwin-aarch64-app-zst"),
-        );
-        assert.equal(result.available, null);
-        assert.deepEqual(result.warnings, []);
-        return result;
       },
     );
 
@@ -718,28 +624,6 @@ async function main() {
           stable: { checks: stable.checks, feed: stableFeed },
           beta: { checks: beta.checks, feed: betaFeed },
         };
-      },
-    );
-
-    await scenario(
-      "Z03.6",
-      "renderer keeps existing targets when the command returns no compact target (non-macOS)",
-      async () => {
-        const stable = await runRendererCheck({
-          channel: "stable",
-          compactTarget: null,
-          feed: () => null,
-        });
-        const beta = await runRendererCheck({
-          channel: "beta",
-          compactTarget: null,
-          feed: () => null,
-        });
-        assert.ok(stable.checks.every((target) => target === null));
-        assert.ok(
-          beta.checks.every((target) => target === "darwin-beta-aarch64-app"),
-        );
-        return { stable: stable.checks, beta: beta.checks };
       },
     );
   } finally {
