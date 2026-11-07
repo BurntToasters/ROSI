@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::watch;
 
 const ENV_ALLOWLIST: &[&str] = &[
     "HOME",
@@ -663,7 +664,7 @@ struct TrackedState {
 struct TrackedOperation {
     generation: u64,
     child: Option<Arc<ManagedChild>>,
-    cancelled: Arc<std::sync::atomic::AtomicBool>,
+    cancelled: Arc<watch::Sender<bool>>,
 }
 
 pub enum TrackedError {
@@ -678,16 +679,18 @@ pub enum TrackedError {
 pub struct TrackedReservation<'a> {
     slot: &'a TrackedSlot,
     generation: u64,
-    cancelled: Arc<std::sync::atomic::AtomicBool>,
+    cancelled: Arc<watch::Sender<bool>>,
 }
 
 impl TrackedReservation<'_> {
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(std::sync::atomic::Ordering::Acquire)
+        *self.cancelled.borrow()
     }
 
-    pub fn cancellation_flag(&self) -> Arc<std::sync::atomic::AtomicBool> {
-        Arc::clone(&self.cancelled)
+    /// A receiver that observes this reservation's cancellation. It starts
+    /// with the current value, so a cancel that already happened is seen.
+    pub fn cancellation_flag(&self) -> watch::Receiver<bool> {
+        self.cancelled.subscribe()
     }
 }
 
@@ -719,9 +722,7 @@ impl TrackedSlot {
             state.current.take()
         };
         if let Some(operation) = operation {
-            operation
-                .cancelled
-                .store(true, std::sync::atomic::Ordering::SeqCst);
+            operation.cancelled.send_replace(true);
             if let Some(child) = operation.child {
                 terminate_tree(&child);
             }
@@ -736,7 +737,7 @@ impl TrackedSlot {
             .starting
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancelled = Arc::new(watch::channel(false).0);
         let (generation, previous) = {
             let mut state = self
                 .state
@@ -753,9 +754,7 @@ impl TrackedSlot {
             (generation, previous)
         };
         if let Some(previous) = previous {
-            previous
-                .cancelled
-                .store(true, std::sync::atomic::Ordering::Release);
+            previous.cancelled.send_replace(true);
             if let Some(child) = previous.child {
                 terminate_tree(&child);
             }
@@ -781,7 +780,7 @@ impl TrackedSlot {
             })
     }
 
-    fn release_reservation(&self, generation: u64, cancelled: &Arc<std::sync::atomic::AtomicBool>) {
+    fn release_reservation(&self, generation: u64, cancelled: &Arc<watch::Sender<bool>>) {
         let mut state = self
             .state
             .lock()
@@ -843,9 +842,7 @@ impl TrackedSlot {
         };
         drop(starting);
         if !registered {
-            reservation
-                .cancelled
-                .store(true, std::sync::atomic::Ordering::Release);
+            reservation.cancelled.send_replace(true);
             terminate_tree(&child);
             return Err(TrackedError::Cancelled);
         }

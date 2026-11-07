@@ -41,9 +41,10 @@ use crate::validation::{is_path_within, is_safe_http_url, resolve_path};
 use std::collections::{HashSet, VecDeque};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, MutexGuard};
+use tokio::sync::watch;
 
 const CANCELLED_STATUS: &str = "⏹️ Cancelled.";
 const CANCELLED_PROGRESS: &str = "⏹️ Download/Conversion cancelled by user.";
@@ -57,7 +58,8 @@ struct Session {
     request: DownloadRequestOptions,
     owner: Owner,
     cancelled: bool,
-    network_cancellation: Arc<AtomicBool>,
+    /// Signalled by `cancel_session`; the proxy observes it through a receiver.
+    network_cancellation: watch::Sender<bool>,
     cancel_notify: bool,
     ytdlp: Option<Arc<crate::process_util::ManagedChild>>,
     ytdlp_exit_pending: bool,
@@ -526,7 +528,7 @@ fn cancel_session(notify: bool, notify_manual: bool, ytdlp_first: bool) {
             return;
         };
         session.cancelled = true;
-        session.network_cancellation.store(true, Ordering::Release);
+        session.network_cancellation.send_replace(true);
         let show = notify || (notify_manual && session.owner == Owner::Manual);
         session.cancel_notify = show;
         let wait_for_ytdlp =
@@ -740,7 +742,7 @@ pub fn start_download(
         None => {}
     }
     let id = COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
-    let network_cancellation = Arc::new(AtomicBool::new(false));
+    let (network_cancellation, network_cancel_receiver) = watch::channel(false);
     let session = Session {
         id,
         completion_id: crate::fs_util::uuid_v4(),
@@ -748,7 +750,7 @@ pub fn start_download(
         request: snapshot,
         owner,
         cancelled: false,
-        network_cancellation: Arc::clone(&network_cancellation),
+        network_cancellation,
         cancel_notify: false,
         ytdlp: None,
         ytdlp_exit_pending: false,
@@ -928,31 +930,32 @@ pub fn start_download(
         }
     };
     let ffmpeg_location = ffmpeg_guard.location().to_string_lossy().into_owned();
-    let network_guard = match crate::network_security::NetworkSecurityGuard::start_with_cancellation(
-        Arc::clone(&network_cancellation),
-        &effective.upstream_proxy,
-    ) {
-        Ok(guard) => guard,
-        Err(error) => {
-            let _ = std::fs::remove_file(&path_output_file);
-            if !active_not_cancelled(id) {
+    let network_guard =
+        match crate::network_security::NetworkSecurityGuard::start_with_cancel_signal(
+            network_cancel_receiver,
+            &effective.upstream_proxy,
+        ) {
+            Ok(guard) => guard,
+            Err(error) => {
+                let _ = std::fs::remove_file(&path_output_file);
+                if !active_not_cancelled(id) {
+                    drop(startup.take());
+                    return Ok(id);
+                }
+                send_progress(id, format!("❌ Secure network setup failed: {error}"));
                 drop(startup.take());
+                complete_session(
+                    id,
+                    "❌ Download failed (secure network setup error).",
+                    Outcome::Failed,
+                    CompletionMeta {
+                        error: Some(error),
+                        ..CompletionMeta::default()
+                    },
+                );
                 return Ok(id);
             }
-            send_progress(id, format!("❌ Secure network setup failed: {error}"));
-            drop(startup.take());
-            complete_session(
-                id,
-                "❌ Download failed (secure network setup error).",
-                Outcome::Failed,
-                CompletionMeta {
-                    error: Some(error),
-                    ..CompletionMeta::default()
-                },
-            );
-            return Ok(id);
-        }
-    };
+        };
     let (args, status_messages) = build_ytdlp_args(YtdlpArgsInput {
         download_dir: &download_stage.directory,
         url: &url,
@@ -3167,7 +3170,7 @@ mod audit4_tests {
             request: DownloadRequestOptions::default(),
             owner: Owner::Queue,
             cancelled: false,
-            network_cancellation: Arc::new(AtomicBool::new(false)),
+            network_cancellation: watch::channel(false).0,
             cancel_notify: false,
             ytdlp: None,
             ytdlp_exit_pending: false,

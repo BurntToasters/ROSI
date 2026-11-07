@@ -22,13 +22,14 @@ use std::io::{self, Read, Write};
 #[cfg(feature = "e2e")]
 use std::net::TcpStream;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
-use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::mpsc;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Condvar, Mutex, OnceLock,
 };
 use std::thread;
 use std::time::{Duration, Instant};
+use tokio::sync::oneshot;
 
 const MAX_PROXY_HEADER_BYTES: usize = 64 * 1024;
 /// Status line and headers of the upstream proxy's answer to CONNECT.
@@ -66,7 +67,7 @@ struct DnsJob {
     host: String,
     port: u16,
     cancelled: Arc<AtomicBool>,
-    response: SyncSender<Option<Vec<SocketAddr>>>,
+    response: oneshot::Sender<Option<Vec<SocketAddr>>>,
 }
 
 struct DnsResolverState {
@@ -106,7 +107,7 @@ struct DnsResolverPool {
 struct PendingDnsJob {
     id: u64,
     cancelled: Arc<AtomicBool>,
-    response: Receiver<Option<Vec<SocketAddr>>>,
+    response: oneshot::Receiver<Option<Vec<SocketAddr>>>,
     shared: Arc<DnsResolverShared>,
     finished: bool,
 }
@@ -325,7 +326,7 @@ impl DnsResolverPool {
     fn enqueue(&self, host: &str, port: u16) -> Option<PendingDnsJob> {
         let id = NEXT_DNS_JOB_ID.fetch_add(1, Ordering::Relaxed);
         let cancelled = Arc::new(AtomicBool::new(false));
-        let (response_sender, response_receiver) = mpsc::sync_channel(1);
+        let (response_sender, response_receiver) = oneshot::channel();
         let mut state = self
             .shared
             .state
@@ -826,20 +827,20 @@ fn resolve_system_dns_with_cancel(
             resolver.cancel(&mut pending);
             return None;
         }
-        match pending
-            .response
-            .recv_timeout(remaining.min(DNS_RESOLUTION_POLL_INTERVAL))
-        {
+        // Blocking callers have no runtime to await on. They check the reply
+        // at the interval below, which only bounds how late a cancel is seen.
+        match pending.response.try_recv() {
             Ok(result) => {
                 pending.finish();
                 return result;
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err(oneshot::error::TryRecvError::Closed) => {
                 pending.finish();
                 return None;
             }
+            Err(oneshot::error::TryRecvError::Empty) => {}
         }
+        thread::sleep(remaining.min(DNS_RESOLUTION_POLL_INTERVAL));
     }
 }
 

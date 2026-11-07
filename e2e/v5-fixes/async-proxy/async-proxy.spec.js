@@ -118,6 +118,23 @@ describe("V5 bounded asynchronous proxy", () => {
     assert.ok(drop.elapsedMs <= 5000);
   });
 
+  it("keeps an idle tunnel from waking the relay", async () => {
+    const idle = probeSection("idle");
+    const invariantPassed =
+      idle.openTunnels === 1 &&
+      idle.activeTunnelsAtWindowEnd === 1 &&
+      idle.windowMs === 5000 &&
+      idle.idleWakeups <= 2;
+    record("idle-tunnel-wakeups", { idle, invariantPassed });
+    assert.equal(idle.openTunnels, 1);
+    assert.equal(idle.activeTunnelsAtWindowEnd, 1);
+    assert.equal(idle.windowMs, 5000);
+    assert.ok(
+      idle.idleWakeups <= 2,
+      `idle tunnel woke the relay ${idle.idleWakeups} times`,
+    );
+  });
+
   it("retains HTTP pipeline blocking and bounded DNS resolution", async () => {
     const requests = outcome.value?.requests ?? [];
     const dns = outcome.value?.dnsResolution;

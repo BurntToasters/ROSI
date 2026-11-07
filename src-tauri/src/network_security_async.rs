@@ -22,7 +22,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 #[cfg(feature = "e2e")]
 use std::sync::OnceLock;
 use std::sync::{mpsc, Arc};
-use std::time::{Duration, Instant as StdInstant};
+use std::time::Duration;
+#[cfg(feature = "e2e")]
+use std::time::Instant as StdInstant;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{watch, Semaphore};
@@ -37,7 +39,6 @@ const OVERLOAD_WRITE_TIMEOUT: Duration = Duration::from_millis(100);
 const CLIENT_DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
 const CLIENT_DRAIN_MAX_BYTES: usize = 64 * 1024;
 const MAX_DRAINING_REJECTS: usize = 32;
-const EXTERNAL_CANCELLATION_POLL: Duration = Duration::from_millis(25);
 const MAX_CHUNK_METADATA_LINE_BYTES: usize = 8192;
 
 fn io_timeout_error() -> io::Error {
@@ -52,6 +53,10 @@ struct ProxyMetrics {
     pending_admissions: AtomicUsize,
     peak_pending_admissions: AtomicUsize,
     overload_rejections: AtomicUsize,
+    /// E2E only: relay or listener wakes that made no I/O progress and were
+    /// not a cancellation. A polling sleep would make this grow while idle.
+    #[cfg(feature = "e2e")]
+    idle_wakeups: AtomicU64,
 }
 
 impl ProxyMetrics {
@@ -64,6 +69,8 @@ impl ProxyMetrics {
             pending_admissions: AtomicUsize::new(0),
             peak_pending_admissions: AtomicUsize::new(0),
             overload_rejections: AtomicUsize::new(0),
+            #[cfg(feature = "e2e")]
+            idle_wakeups: AtomicU64::new(0),
         }
     }
 
@@ -98,6 +105,7 @@ impl ProxyMetrics {
             pending_admissions: self.pending_admissions.load(Ordering::Acquire),
             peak_pending_admissions: self.peak_pending_admissions.load(Ordering::Acquire),
             overload_rejections: self.overload_rejections.load(Ordering::Acquire),
+            idle_wakeups: self.idle_wakeups.load(Ordering::Acquire),
         }
     }
 }
@@ -155,11 +163,50 @@ struct ProxyMetricsSnapshot {
     pending_admissions: usize,
     peak_pending_admissions: usize,
     overload_rejections: usize,
+    idle_wakeups: u64,
+}
+
+/// Where an operation's cancellation comes from. Downloader and metadata
+/// sessions both own a watch sender, and their proxies await the change.
+enum OperationCancel {
+    #[cfg(feature = "e2e")]
+    Absent,
+    Signal(watch::Receiver<bool>),
+}
+
+impl OperationCancel {
+    /// Synchronous read of the current value, for blocking callers and checks
+    /// that run between awaits.
+    fn is_set(&self) -> bool {
+        match self {
+            #[cfg(feature = "e2e")]
+            Self::Absent => false,
+            Self::Signal(receiver) => *receiver.borrow(),
+        }
+    }
+}
+
+/// Completes once a signal reports cancellation. A signal whose sender is gone
+/// can never change again, so it stays pending and the shutdown wait decides.
+async fn signal_cancelled(signal: &mut Option<watch::Receiver<bool>>) {
+    let Some(receiver) = signal.as_mut() else {
+        return std::future::pending().await;
+    };
+    loop {
+        // Reads the current value first, so a signal sent before this
+        // receiver was cloned or subscribed is not missed.
+        if *receiver.borrow_and_update() {
+            return;
+        }
+        if receiver.changed().await.is_err() {
+            return std::future::pending().await;
+        }
+    }
 }
 
 struct ProxyShared {
     stopped: AtomicBool,
-    operation_cancelled: Option<Arc<AtomicBool>>,
+    operation_cancelled: OperationCancel,
     shutdown: watch::Sender<bool>,
     upstream: Option<UpstreamProxy>,
     metrics: Arc<ProxyMetrics>,
@@ -167,23 +214,35 @@ struct ProxyShared {
 
 impl ProxyShared {
     fn is_cancelled(&self) -> bool {
-        self.stopped.load(Ordering::Acquire)
-            || self
-                .operation_cancelled
-                .as_ref()
-                .is_some_and(|flag| flag.load(Ordering::Acquire))
+        self.stopped.load(Ordering::Acquire) || self.operation_cancelled.is_set()
     }
 
+    /// Completes when the operation is cancelled or the guard stops. Waits on
+    /// the change itself; it never wakes on a timer.
     async fn cancelled(&self) {
         let mut shutdown = self.shutdown.subscribe();
+        let mut signal = match &self.operation_cancelled {
+            OperationCancel::Signal(receiver) => Some(receiver.clone()),
+            #[cfg(feature = "e2e")]
+            OperationCancel::Absent => None,
+        };
         loop {
             if self.is_cancelled() {
                 return;
             }
             tokio::select! {
                 _ = shutdown.changed() => {},
-                _ = time::sleep(EXTERNAL_CANCELLATION_POLL) => {},
+                _ = signal_cancelled(&mut signal) => {},
             }
+            #[cfg(feature = "e2e")]
+            self.note_idle_wakeup();
+        }
+    }
+
+    #[cfg(feature = "e2e")]
+    fn note_idle_wakeup(&self) {
+        if !self.is_cancelled() {
+            self.metrics.idle_wakeups.fetch_add(1, Ordering::AcqRel);
         }
     }
 
@@ -222,25 +281,24 @@ pub struct NetworkSecurityGuard {
 impl NetworkSecurityGuard {
     #[cfg(feature = "e2e")]
     pub fn start() -> Result<Self, String> {
-        Self::start_inner(None, None)
+        Self::start_inner(OperationCancel::Absent, None)
     }
 
-    pub fn start_with_cancellation(
-        operation_cancelled: Arc<AtomicBool>,
+    /// Guard for a download or metadata session. The receiver's current value
+    /// is read before the guard starts, and a later change wakes its client tasks.
+    pub fn start_with_cancel_signal(
+        operation_cancelled: watch::Receiver<bool>,
         upstream_proxy: &str,
     ) -> Result<Self, String> {
         let upstream = super::parse_upstream_proxy(upstream_proxy)?;
-        Self::start_inner(Some(operation_cancelled), upstream)
+        Self::start_inner(OperationCancel::Signal(operation_cancelled), upstream)
     }
 
     fn start_inner(
-        operation_cancelled: Option<Arc<AtomicBool>>,
+        operation_cancelled: OperationCancel,
         upstream: Option<UpstreamProxy>,
     ) -> Result<Self, String> {
-        if operation_cancelled
-            .as_ref()
-            .is_some_and(|flag| flag.load(Ordering::Acquire))
-        {
+        if operation_cancelled.is_set() {
             return Err("The network operation was cancelled.".into());
         }
 
@@ -745,25 +803,13 @@ async fn resolve_destination(host: &str, port: u16) -> Option<Vec<SocketAddr>> {
 
     let resolver = super::shared_dns_resolver()?;
     let mut pending = resolver.enqueue(host, port)?;
-    let started = StdInstant::now();
-    loop {
-        match pending.response.try_recv() {
-            Ok(addresses) => {
-                pending.finish();
-                return addresses;
-            }
-            Err(mpsc::TryRecvError::Disconnected) => {
-                pending.finish();
-                return None;
-            }
-            Err(mpsc::TryRecvError::Empty) => {}
-        }
-        let remaining = DNS_RESOLUTION_TIMEOUT.saturating_sub(started.elapsed());
-        if remaining.is_zero() {
-            return None;
-        }
-        time::sleep(remaining.min(Duration::from_millis(25))).await;
-    }
+    // The worker sends one reply. A closed reply means the worker dropped the
+    // job (pool stop or panic), which is a refusal. Dropping this future before
+    // the reply cancels the queued job through `PendingDnsJob::drop`. Callers
+    // wrap this in `DNS_RESOLUTION_TIMEOUT`.
+    let answer = (&mut pending.response).await;
+    pending.finish();
+    answer.ok().flatten()
 }
 
 async fn connect_addresses(addresses: Vec<SocketAddr>) -> Option<TcpStream> {
@@ -1027,6 +1073,9 @@ struct Activity {
     started: Instant,
     last_activity_ms: AtomicU64,
     changed: tokio::sync::Notify,
+    /// E2E only: count of I/O records, used to tell progress from a bare wake.
+    #[cfg(feature = "e2e")]
+    records: AtomicU64,
 }
 
 impl Activity {
@@ -1035,12 +1084,16 @@ impl Activity {
             started: Instant::now(),
             last_activity_ms: AtomicU64::new(0),
             changed: tokio::sync::Notify::new(),
+            #[cfg(feature = "e2e")]
+            records: AtomicU64::new(0),
         }
     }
 
     fn record(&self) {
         let elapsed = self.started.elapsed().as_millis().min(u64::MAX as u128) as u64;
         self.last_activity_ms.store(elapsed, Ordering::Release);
+        #[cfg(feature = "e2e")]
+        self.records.fetch_add(1, Ordering::AcqRel);
         self.changed.notify_one();
     }
 
@@ -1124,20 +1177,52 @@ async fn relay_bidirectional(
     };
     let relay = tokio::io::copy_bidirectional(&mut client, &mut upstream);
     tokio::pin!(relay);
-    loop {
-        let idle_deadline = activity.deadline();
-        tokio::select! {
-            result = &mut relay => return result.map(|_| ()),
-            _ = shared.shutdown_notified() => {
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "network operation was cancelled"));
-            }
-            _ = activity.idle(idle_deadline) => {
-                if activity.deadline() <= Instant::now() {
-                    return Ok(());
+    let relay_loop = async {
+        loop {
+            let idle_deadline = activity.deadline();
+            tokio::select! {
+                result = &mut relay => return result.map(|_| ()),
+                _ = shared.shutdown_notified() => {
+                    return Err(io::Error::new(io::ErrorKind::Interrupted, "network operation was cancelled"));
+                }
+                _ = activity.idle(idle_deadline) => {
+                    if activity.deadline() <= Instant::now() {
+                        return Ok(());
+                    }
                 }
             }
         }
-    }
+    };
+    #[cfg(feature = "e2e")]
+    let relay_loop = count_bare_wakeups(relay_loop, Arc::clone(&activity), Arc::clone(&shared));
+    relay_loop.await
+}
+
+/// E2E only: counts each poll of a tunnel's relay that found no I/O since the
+/// previous poll, was not an idle close, and was not a cancellation. The first
+/// poll is the start of the tunnel, not a wake.
+#[cfg(feature = "e2e")]
+fn count_bare_wakeups<F: std::future::Future>(
+    inner: F,
+    activity: Arc<Activity>,
+    shared: Arc<ProxyShared>,
+) -> impl std::future::Future<Output = F::Output> {
+    let mut inner = Box::pin(inner);
+    let mut polls = 0u64;
+    let mut seen_records = 0u64;
+    std::future::poll_fn(move |cx| {
+        let records = activity.records.load(Ordering::Acquire);
+        let bare = polls > 0
+            && records == seen_records
+            && activity.deadline() > Instant::now()
+            && !shared.is_cancelled();
+        if bare {
+            shared.metrics.idle_wakeups.fetch_add(1, Ordering::AcqRel);
+        }
+        polls += 1;
+        seen_records = records;
+        std::future::Future::poll(inner.as_mut(), cx)
+    })
 }
 
 #[cfg(feature = "e2e")]
@@ -1154,8 +1239,8 @@ pub(super) fn e2e_capacity_probe() -> Result<serde_json::Value, String> {
 
 #[cfg(feature = "e2e")]
 fn run_e2e_capacity_probe() -> Result<serde_json::Value, String> {
-    let cancellation = Arc::new(AtomicBool::new(false));
-    let guard = NetworkSecurityGuard::start_with_cancellation(Arc::clone(&cancellation), "")?;
+    let (cancel_sender, cancel_receiver) = watch::channel(false);
+    let guard = NetworkSecurityGuard::start_with_cancel_signal(cancel_receiver.clone(), "")?;
     let metrics = Arc::clone(&guard.shared.metrics);
     let origin = StdTcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .map_err(|error| format!("could not bind async proxy origin: {error}"))?;
@@ -1168,7 +1253,7 @@ fn run_e2e_capacity_probe() -> Result<serde_json::Value, String> {
         .port();
     let (origin_count_sender, origin_count_receiver) = mpsc::sync_channel(1);
     let (origin_release_sender, origin_release_receiver) = mpsc::sync_channel(1);
-    let origin_cancellation = Arc::clone(&cancellation);
+    let origin_cancellation = cancel_receiver.clone();
     let origin_thread = std::thread::Builder::new()
         .name("rosi-e2e-async-proxy-origin".into())
         .spawn(move || {
@@ -1176,7 +1261,7 @@ fn run_e2e_capacity_probe() -> Result<serde_json::Value, String> {
             let deadline = StdInstant::now() + Duration::from_secs(20);
             while streams.len() < MAX_ACTIVE_PROXY_CLIENTS
                 && StdInstant::now() < deadline
-                && !origin_cancellation.load(Ordering::Acquire)
+                && !*origin_cancellation.borrow()
             {
                 match origin.accept() {
                     Ok((stream, _)) => streams.push(stream),
@@ -1204,7 +1289,7 @@ fn run_e2e_capacity_probe() -> Result<serde_json::Value, String> {
 
     let capacity_phase = run_capacity_phase(&guard, origin_port, origin_count_receiver);
     let cancellation_started = StdInstant::now();
-    cancellation.store(true, Ordering::Release);
+    cancel_sender.send_replace(true);
     let cancellation_drained =
         wait_for_proxy_metrics(&metrics, Duration::from_secs(5), |snapshot| {
             snapshot.active_connections == 0
@@ -1250,9 +1335,12 @@ fn run_e2e_capacity_probe() -> Result<serde_json::Value, String> {
         ));
     }
 
+    let cancellation_elapsed_ms = cancellation_started.elapsed().as_millis();
     let drop = e2e_guard_drop_probe()?;
+    let idle = e2e_idle_wakeup_probe()?;
     Ok(serde_json::json!({
         "capacity": capacity,
+        "idle": idle,
         "cancellation": {
             "activeConnectionsAfterCancel": after_cancel.active_connections,
             "activeTunnelsAfterCancel": after_cancel.active_tunnels,
@@ -1261,7 +1349,7 @@ fn run_e2e_capacity_probe() -> Result<serde_json::Value, String> {
             "expectedClientSockets": MAX_ACTIVE_PROXY_CLIENTS + MAX_PENDING_PROXY_CLIENTS,
             "closedOriginSockets": origin_closed,
             "expectedOriginSockets": MAX_ACTIVE_PROXY_CLIENTS,
-            "elapsedMs": cancellation_started.elapsed().as_millis(),
+            "elapsedMs": cancellation_elapsed_ms,
         },
         "drop": drop,
     }))
@@ -1475,6 +1563,93 @@ fn e2e_guard_drop_probe() -> Result<serde_json::Value, String> {
         "activeConnectionsAfterDrop": metrics.snapshot().active_connections,
         "closedClientSocket": closed_client,
         "elapsedMs": started.elapsed().as_millis(),
+    }))
+}
+
+/// Measurement window for the idle check. Shorter than the 60 s in the plan so
+/// the suite stays fast; the tunnel idle deadline is 15 s, so it stays open.
+#[cfg(feature = "e2e")]
+const E2E_IDLE_WINDOW: Duration = Duration::from_secs(5);
+
+/// Holds one CONNECT tunnel open with no traffic for `E2E_IDLE_WINDOW` and
+/// reports the relay wakes counted during that window. A healthy relay has
+/// none: it wakes only for I/O, cancellation, or its idle deadline.
+#[cfg(feature = "e2e")]
+fn e2e_idle_wakeup_probe() -> Result<serde_json::Value, String> {
+    let guard = NetworkSecurityGuard::start()?;
+    let metrics = Arc::clone(&guard.shared.metrics);
+    let origin = StdTcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .map_err(|error| format!("could not bind idle origin: {error}"))?;
+    origin
+        .set_nonblocking(true)
+        .map_err(|error| format!("could not configure idle origin: {error}"))?;
+    let origin_port = origin
+        .local_addr()
+        .map_err(|error| format!("could not inspect idle origin: {error}"))?
+        .port();
+    let (release_sender, release_receiver) = mpsc::sync_channel::<()>(1);
+    let origin_thread = std::thread::Builder::new()
+        .name("rosi-e2e-async-proxy-idle-origin".into())
+        .spawn(move || {
+            let deadline = StdInstant::now() + Duration::from_secs(20);
+            let held = loop {
+                match origin.accept() {
+                    Ok((stream, _)) => break Some(stream),
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        if StdInstant::now() >= deadline {
+                            break None;
+                        }
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                    Err(_) => break None,
+                }
+            };
+            let _ = release_receiver.recv_timeout(Duration::from_secs(30));
+            drop(held);
+        })
+        .map_err(|error| format!("could not start idle origin: {error}"))?;
+
+    let (address, authorization) = proxy_e2e_credentials(guard.proxy_url())?;
+    let mut client = connect_e2e_client(address)?;
+    let connect_request = format!(
+        "CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\nHost: 127.0.0.1:{origin_port}\r\nProxy-Authorization: Basic {authorization}\r\n\r\n"
+    );
+    client
+        .write_all(connect_request.as_bytes())
+        .map_err(|error| format!("could not open idle E2E tunnel: {error}"))?;
+    let (status, _) = read_e2e_response_head(&mut client)?;
+    if status != 200 {
+        return Err(format!(
+            "idle E2E tunnel received HTTP {status}, expected 200"
+        ));
+    }
+    if !wait_for_proxy_metrics(&metrics, Duration::from_secs(5), |snapshot| {
+        snapshot.active_tunnels == 1
+    }) {
+        return Err("idle E2E tunnel did not become active".into());
+    }
+    let baseline = metrics.snapshot().idle_wakeups;
+    std::thread::sleep(E2E_IDLE_WINDOW);
+    let after = metrics.snapshot();
+    let idle_wakeups = after.idle_wakeups.saturating_sub(baseline);
+    if after.active_tunnels != 1 {
+        return Err(format!(
+            "idle E2E tunnel closed during the {}s window (active={})",
+            E2E_IDLE_WINDOW.as_secs(),
+            after.active_tunnels
+        ));
+    }
+    drop(client);
+    drop(guard);
+    let _ = release_sender.send(());
+    origin_thread
+        .join()
+        .map_err(|_| "idle E2E origin thread panicked".to_owned())?;
+    Ok(serde_json::json!({
+        "openTunnels": 1,
+        "windowMs": E2E_IDLE_WINDOW.as_millis(),
+        "activeTunnelsAtWindowEnd": after.active_tunnels,
+        "idleWakeups": idle_wakeups,
     }))
 }
 

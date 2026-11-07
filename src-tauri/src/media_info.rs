@@ -403,7 +403,7 @@ fn fetch_formats(
         return Err(format!("yt-dlp binary not found at {}", ytdlp.display()));
     }
     let settings = crate::settings::load();
-    let guard = crate::network_security::NetworkSecurityGuard::start_with_cancellation(
+    let guard = crate::network_security::NetworkSecurityGuard::start_with_cancel_signal(
         reservation.cancellation_flag(),
         &settings.upstream_proxy,
     )
@@ -491,8 +491,8 @@ fn fetch_video_info(
     let mode = resolve_playlist_mode(&url, playlist_mode.as_deref());
     let cancellation = reservation.cancellation_flag();
     let settings = crate::settings::load();
-    let guard = crate::network_security::NetworkSecurityGuard::start_with_cancellation(
-        std::sync::Arc::clone(&cancellation),
+    let guard = crate::network_security::NetworkSecurityGuard::start_with_cancel_signal(
+        cancellation.clone(),
         &settings.upstream_proxy,
     )
     .map_err(|error| {
@@ -541,7 +541,7 @@ fn fetch_video_info(
         MAX_OUTPUT_BUFFER * 20,
         MAX_ERROR_BUFFER,
         |output| {
-            if cancellation.load(std::sync::atomic::Ordering::Acquire) {
+            if *cancellation.borrow() {
                 return Err("Video info request cancelled.".into());
             }
             if output.code != Some(0) {

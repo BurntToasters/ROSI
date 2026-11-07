@@ -124,7 +124,7 @@ const body = {
 };
 const passed =
   result.status === 0 &&
-  observations.length === 5 &&
+  observations.length === 6 &&
   observations.every((observation) => observation.invariantPassed === true);
 const report = {
   ...body,

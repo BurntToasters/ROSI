@@ -92,6 +92,46 @@ run on Tauri's Tokio runtime, with admission and DNS work bounded independently.
     held lookup returns after a fixed fail-safe timeout, so the process-wide
     resolver cannot stay blocked. Ordinary `rosi-dns-delay-` lookups used by other
     specs keep their existing synthetic delay and are not gated.
+24. **A cancel is signalled before a relay task subscribes.** Download and metadata
+    cancellation are `watch` channels whose value stays `true`. A receiver
+    created or cloned after the signal reads `true` at once, so
+    `ProxyShared::cancelled()` checks the current value before it awaits a
+    change and returns without waiting. A guard started after cancel fails with
+    the existing cancelled error.
+25. **The cancellation sender is dropped without signalling.** The session that
+    owns the sender ends without cancelling the operation. `changed()` returns an
+    error, which can never become a cancel, so the wait stays pending on the
+    shutdown signal alone. No busy loop starts, and guard drop still stops every
+    task.
+26. **A blocking resolver caller needs the current value.** Blocking code reads
+    the cancellation synchronously with `borrow()` (guard start and `is_cancelled`),
+    never through a poll loop on the relay side. The blocking DNS probe keeps its
+    per-caller `AtomicBool`, which it sets itself, and the blocking
+    `is_public_http_destination` path is unchanged. The blocking DNS caller still
+    checks its oneshot reply every 25 ms (`try_recv` then sleep). That loop runs on
+    a plain thread, not in the relay, so the 25 ms bound is kept deliberately; the
+    relay itself never polls.
+27. **A DNS oneshot sender is dropped without a reply.** A worker panic or pool
+    stop drops the job, and the waiting relay task receives a closed error. It
+    returns `None` (the existing "Destination Blocked" 403), never hangs, and
+    leaves no queue entry behind.
+28. **The resolver queue is full.** `enqueue` still rejects under the pool lock
+    before any oneshot is created. The caller gets `None` at once, and the
+    rejected count the DNS probe checks still increments.
+29. **Cancellation arrives during DNS.** Guard cancel or drop aborts the client
+    task that waits on the reply. Dropping `PendingDnsJob` removes a queued job,
+    while a running lookup finishes and its reply is discarded. The answer-count
+    cap (more than 32 answers) and `ip_policy` vetting run unchanged.
+30. **An idle tunnel wakes the relay with nothing to do.** With one open idle
+    tunnel, the relay task and the listener wake only for I/O, cancellation, or
+    the idle deadline. A debug counter records any other wake, and the probe
+    requires at most 2 such wakes in a 5 s window (the old 25 ms poll would give
+    about 200 in that window).
+31. **A metadata caller cancels through the process-utility sender.** `process_util`
+    holds the reservation cancellation as a `watch` sender, and metadata guards
+    subscribe to it like downloads. A cancelled stalled thumbnail therefore wakes
+    its relay at once and closes its fixture socket within the scenario's 5 s.
+    No `AtomicBool` cancel source feeds a relay any more.
 
 The native E2E probe is the acceptance mechanism for concurrency and cleanup.
 Rust unit tests must not be added after implementation; existing network and
