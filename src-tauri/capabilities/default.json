@@ -26,6 +26,7 @@
     "allow-get-video-info",
     "allow-cancel-video-info",
     "allow-download-video",
+    "allow-resolve-download-options",
     "allow-cancel-download",
     "allow-add-to-queue",
     "allow-remove-from-queue",

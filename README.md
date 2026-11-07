@@ -40,8 +40,9 @@ webview, so installers and memory use are much smaller.
 
 ## System requirements
 
-- macOS 15 or later (universal build for Intel and Apple silicon). The bundled
-  FFmpeg is built for macOS 15.
+- macOS 15 or later. Choose the arm64 package for Apple silicon, the x64
+  package for Intel or Rosetta, or the universal package for either processor.
+  The bundled FFmpeg is built for macOS 15.
 - Windows 10 version 2004 (build 19041) or later, on x64 or ARM64, with the
   Microsoft Edge WebView2 runtime (installed automatically when missing).
 - Linux x64 with WebKitGTK 4.1 (Ubuntu 24.04+, Debian 13+, Fedora 43+, or a
@@ -83,7 +84,8 @@ See the Microsoft Store section of [build-setup.md](build-setup.md).
    convert).
 5. Packaged builds:
    - Windows: `npm run build:win`
-   - macOS: `npm run build:mac:universal`, then `npm run build:mac:zip`
+   - macOS: `npm run build:mac:universal`, then `npm run build:mac:zip` for
+     universal packages; `npm run build:mac:native` for arm64 and x64 packages
    - Linux x64: `npm run build:linux` (or `npm run build:linux:x64`)
    - Linux ARM64 (native ARM64 hardware only): `npm run build:linux:arm64`
    - Flatpak: `npm run flatpak:bundle`

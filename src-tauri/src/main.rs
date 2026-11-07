@@ -5,7 +5,9 @@ mod app_menu;
 mod app_state;
 mod command_builders;
 mod constants;
+mod coordinator;
 mod deno;
+mod download_options;
 mod downloader;
 mod ffmpeg_guard;
 mod fs_util;
@@ -61,12 +63,22 @@ fn report_missing_ytdlp(app: &tauri::AppHandle) -> bool {
 fn e2e_emit_stale_download_events(
     window: tauri::WebviewWindow,
     current_session_id: u64,
+    stale_queue_snapshot: Option<bool>,
 ) -> Result<(), String> {
     if window.label() != app_state::MAIN_WINDOW {
         return Err("Only the main window may emit E2E download events.".into());
     }
     if !(2..=1_000_000_000).contains(&current_session_id) {
         return Err("The E2E session ID is outside the permitted range.".into());
+    }
+    if stale_queue_snapshot.unwrap_or(false) {
+        // The coordinator starts revisions at 1, so revision 0 is older than
+        // any snapshot the renderer has seen. Applying it would drop every row.
+        app_state::emit(
+            "queue-update",
+            serde_json::json!({ "revision": 0, "items": [] }),
+        );
+        return Ok(());
     }
     let stale_session_id = current_session_id - 1;
     app_state::emit(
@@ -139,6 +151,7 @@ macro_rules! generate_app_handler {
             media_info::cancel_video_info,
             downloader::download_video,
             downloader::cancel_download,
+            download_options::resolve_download_options,
             queue::add_to_queue,
             queue::remove_from_queue,
             queue::retry_queue_item,

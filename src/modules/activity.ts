@@ -1,5 +1,7 @@
 (function initRosiActivityModule(global: Window & typeof globalThis) {
   const windowRef = global;
+  // window.rosiMessages is published by engine/messages.ts before any render runs.
+  const uiMessages = () => windowRef.rosiMessages as NonNullable<Window['rosiMessages']>;
 
   // Read at render time so module load order cannot leave it unset.
   function formatBytes(bytes: number) {
@@ -35,6 +37,7 @@
   interface ActivityRow {
     id: string;
     outcome: 'success' | 'failed' | 'cancelled';
+    partial?: boolean;
     title: string;
     subtitle: string;
     timestamp: number;
@@ -85,31 +88,43 @@
           // A failed entry's retained original is listed as an output and as
           // a failure; count it once, as failed.
           const failedPaths = entry.failedPaths ?? [];
-          const successfulOutputs = entry.outputPaths
-            ? entry.outputPaths.filter((outputPath) => !failedPaths.includes(outputPath)).length
-            : entry.outputPath
-              ? 1
-              : 0;
+          const candidatePaths = [
+            ...new Set([
+              ...(entry.outputPaths ?? []),
+              ...(entry.outputPath ? [entry.outputPath] : []),
+            ]),
+          ];
+          const successfulPaths = candidatePaths.filter(
+            (outputPath) => !failedPaths.includes(outputPath)
+          );
+          const successfulOutputs = successfulPaths.length;
           const failedOutputs = failedPaths.length;
           const parts = [
             hostFromUrl(entry.url),
             describeActivityProfile(entry),
             typeof entry.sizeBytes === 'number' ? formatBytes(entry.sizeBytes) : '',
             failedOutputs > 0
-              ? `${successfulOutputs} of ${successfulOutputs + failedOutputs} entries completed`
+              ? uiMessages().activity.partialCount(
+                  successfulOutputs,
+                  successfulOutputs + failedOutputs
+                )
               : successfulOutputs > 1
-                ? `${successfulOutputs} files saved`
+                ? uiMessages().activity.filesSaved(successfulOutputs)
                 : '',
             formatRelativeTime(entry.completedAt),
           ].filter(Boolean);
           return {
             id: entry.id,
             outcome: entry.outcome,
+            partial: entry.outcome === 'failed' && successfulOutputs > 0 && failedOutputs > 0,
             title: entry.filename || hostFromUrl(entry.url) || entry.url,
             subtitle: parts.join(' • '),
             timestamp: entry.completedAt,
             url: entry.url,
-            outputPath: entry.outputPath,
+            outputPath:
+              entry.outputPath && successfulPaths.includes(entry.outputPath)
+                ? entry.outputPath
+                : (successfulPaths[0] ?? null),
             outputPaths: entry.outputPaths,
             error: entry.error,
             request: entry.request,
@@ -120,6 +135,7 @@
       return loadLegacyHistory().map((entry, index) => ({
         id: `legacy-${index}`,
         outcome: entry.status,
+        partial: false,
         title: entry.filename || 'Unknown file',
         subtitle: formatRelativeTime(entry.timestamp),
         timestamp: entry.timestamp,
@@ -182,12 +198,13 @@
         item.className = 'history-item';
         item.setAttribute('role', 'listitem');
 
-        const statusLabel =
-          row.outcome === 'success'
-            ? 'Completed'
+        const statusLabel = row.partial
+          ? uiMessages().activity.partial
+          : row.outcome === 'success'
+            ? uiMessages().activity.completed
             : row.outcome === 'cancelled'
-              ? 'Cancelled'
-              : 'Failed';
+              ? uiMessages().activity.cancelled
+              : uiMessages().activity.failed;
 
         const info = document.createElement('div');
         info.className = 'history-item-info';
@@ -209,7 +226,7 @@
         const actions = document.createElement('div');
         actions.className = 'history-item-actions';
         const statusEl = document.createElement('span');
-        statusEl.className = `history-status ${row.outcome}`;
+        statusEl.className = `history-status ${row.outcome}${row.partial ? ' partial' : ''}`;
         statusEl.textContent = statusLabel;
         actions.appendChild(statusEl);
 

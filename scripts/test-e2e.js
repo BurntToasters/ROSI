@@ -22,111 +22,130 @@ import {
 import { usesWindowsCmdShell } from "./npm-safe-update.mjs";
 
 const ARTIFACT_DIR = path.join(REPO_ROOT, "e2e", "artifacts");
-export const EXPECTED_SCENARIOS = [
-  "legacy-v4-import",
-  "legacy-v4-corrupt-settings",
-  "launch",
-  "legacy-v4-preserve",
-  "settings-sidebar",
-  "settings-persistence",
-  "download-profiles",
-  "settings-layout",
-  "flat-ui-tokens",
-  "window-theme",
-  "no-overscroll",
-  "sidebar-glass",
-  "url-safety",
-  "loopback-exception-and-thumbnail-data",
-  "loopback-download",
-  "proxy-delayed-http-response",
-  "proxy-cancels-streamed-response",
-  "private-dns-alias",
-  "dns-rebinding-connection-time",
-  "redirect-and-extractor-handoffs",
-  "verified-https-connect-proxy",
-  "untrusted-https-certificate-rejected",
-  "credential-bearing-urls",
-  "guarded-hls-fragments",
-  "bracketed-ipv6-classification",
-  "proxy-cancellation-closes-active-sockets",
-  "thumbnail-fetch-cancellation",
-  "dns-cancellation-reserved-ipc",
-  "proxy-rejects-unreviewed-pipelined-destination",
-  "bounded-dns-cancellation",
-  "persisted-offline-queue",
-  "manual-download",
-  "unicode-download",
-  "queue",
-  "cancel",
-  "conversion",
-  "audio-extract",
-  "gpu-detect",
-  "licenses",
-  "navigation-guard",
-  "preview",
-  "formats",
-  "merge-download",
-  "queue-management",
-  "queue-cancel",
-  "dock-tabs",
-  "webview-guard",
-  "link-drop",
-  "small-window",
-  "dock-empty",
-  "save-path",
-  "lucide-icons",
-  "status-icons",
-  "console-log",
-  "activity-actions",
-  "activity-action-clicks",
-  "theme-contrast",
-  "setup-wizard",
-  "setup-wizard-skip",
-  "setup-wizard-escape",
-  "setup-wizard-small",
-  "setup-wizard-deno",
-  "browser-choice",
-  "xdg-download-dir",
-  "ui-screenshots",
-  "stats",
-  "settings-search-reset",
-  "settings-controls",
-  "settings-reset-all",
-  "settings-response-revision",
-  "settings-rejection-preserves-newer-field",
-  "settings-lifecycle-latest-revision",
-  "settings-captured-wizard-deno",
-  "compatible-profile-wording",
-  "guarded-preview-thumbnail",
-  "queue-latest-snapshot",
-  "updater-generation-retry",
-  "queue-flush-backup-failure",
-  "close-pending-timeout",
-  "download-session-isolation",
-  "external-links",
-  "menu-actions",
-  "update-check",
-  "dialogs",
-  "download-card-input",
-  "presets",
-  "custom-formats",
-  "playlist-range",
-  "embed-extras",
-  "queue-controls",
-  "save-location",
-  "notifications",
-  "download-again-quickly",
-  "download-process-repairs",
-  "activity-clear",
-  "close-flow",
-  "round2-renderer",
-  "round2-native",
-  "long-term-persistence",
-  "audit3-native-targeted",
-  "audit4-repairs",
-  "audit-v5-beta2",
-  "round3-renderer-repairs",
-];
+const SUITE_MANIFEST_PATH = path.join(REPO_ROOT, "e2e", "suites.json");
+export const E2E_SUITE_MANIFEST = JSON.parse(
+  fs.readFileSync(SUITE_MANIFEST_PATH, "utf8"),
+);
+
+function validateSuiteManifest(manifest) {
+  if (manifest?.schemaVersion !== 1) {
+    throw new Error("e2e/suites.json has an unsupported schemaVersion");
+  }
+  if (!Array.isArray(manifest.scenarios) || !Array.isArray(manifest.groups)) {
+    throw new Error("e2e/suites.json must define scenarios and groups arrays");
+  }
+  const ownerIds = new Set(Object.keys(manifest.owners ?? {}));
+  const groupIds = new Set();
+  for (const group of manifest.groups) {
+    if (!group?.id || groupIds.has(group.id)) {
+      throw new Error(
+        `e2e/suites.json has a missing or duplicate group id: ${group?.id}`,
+      );
+    }
+    groupIds.add(group.id);
+    if (!Array.isArray(group.owners) || !Array.isArray(group.v5FixAreas)) {
+      throw new Error(
+        `e2e/suites.json group ${group.id} has invalid owner or area lists`,
+      );
+    }
+    for (const owner of group.owners) {
+      if (!ownerIds.has(owner)) {
+        throw new Error(
+          `e2e/suites.json group ${group.id} has unknown owner ${owner}`,
+        );
+      }
+    }
+    if (group.v5FixAreas.some((area) => typeof area !== "string" || !area)) {
+      throw new Error(
+        `e2e/suites.json group ${group.id} has an invalid v5-fixes area`,
+      );
+    }
+  }
+  const names = new Set();
+  for (const scenario of manifest.scenarios) {
+    if (!scenario?.name || names.has(scenario.name)) {
+      throw new Error(
+        `e2e/suites.json has a missing or duplicate scenario: ${scenario?.name}`,
+      );
+    }
+    names.add(scenario.name);
+    if (!groupIds.has(scenario.feature) || !ownerIds.has(scenario.owner)) {
+      throw new Error(
+        `e2e/suites.json scenario ${scenario.name} has an unknown feature or owner`,
+      );
+    }
+    if (!Array.isArray(scenario.allowedSkips)) {
+      throw new Error(
+        `e2e/suites.json scenario ${scenario.name} has invalid skip allowances`,
+      );
+    }
+    if (
+      scenario.allowedSkips.some(
+        (platform) => !["darwin", "linux", "win32"].includes(platform),
+      )
+    ) {
+      throw new Error(
+        `e2e/suites.json scenario ${scenario.name} has an unknown platform allowance`,
+      );
+    }
+  }
+  const areaGroups = manifest.dynamicV5Fixes?.groupAreas ?? {};
+  const mappedAreas = new Set();
+  for (const [groupId, areas] of Object.entries(areaGroups)) {
+    const group = manifest.groups.find((candidate) => candidate.id === groupId);
+    if (!group || !Array.isArray(areas)) {
+      throw new Error(
+        `e2e/suites.json has invalid dynamic area mapping for ${groupId}`,
+      );
+    }
+    for (const area of areas) {
+      if (mappedAreas.has(area) || !group.v5FixAreas.includes(area)) {
+        throw new Error(
+          `e2e/suites.json has duplicate or inconsistent v5-fixes mapping: ${area}`,
+        );
+      }
+      mappedAreas.add(area);
+    }
+  }
+  for (const group of manifest.groups) {
+    const scenarioOwners = new Set(
+      manifest.scenarios
+        .filter((scenario) => scenario.feature === group.id)
+        .map((scenario) => scenario.owner),
+    );
+    if ([...scenarioOwners].some((owner) => !group.owners.includes(owner))) {
+      throw new Error(
+        `e2e/suites.json group ${group.id} omits a scenario owner`,
+      );
+    }
+    for (const area of group.v5FixAreas) {
+      if (!mappedAreas.has(area)) {
+        throw new Error(
+          `e2e/suites.json group ${group.id} has unmapped v5-fixes area ${area}`,
+        );
+      }
+    }
+  }
+  if (!ownerIds.has(manifest.dynamicV5Fixes?.owner)) {
+    throw new Error("e2e/suites.json has an unknown dynamic v5-fixes owner");
+  }
+  for (const group of manifest.groups) {
+    if (
+      group.v5FixAreas.length > 0 &&
+      !group.owners.includes(manifest.dynamicV5Fixes.owner)
+    ) {
+      throw new Error(
+        `e2e/suites.json group ${group.id} omits its dynamic v5-fixes owner`,
+      );
+    }
+  }
+}
+
+validateSuiteManifest(E2E_SUITE_MANIFEST);
+
+export const EXPECTED_SCENARIOS = E2E_SUITE_MANIFEST.scenarios.map(
+  (scenario) => scenario.name,
+);
 export const ROUND2_RENDERER_OBSERVATIONS = Object.freeze([
   "renderer-startup-settings-ready",
   "updater-channel-and-singleflight",
@@ -146,12 +165,42 @@ export const ROUND2_NATIVE_OBSERVATIONS = Object.freeze([
   "download-retry-cleans-staging",
   "windows-job-object-leader-exit",
 ]);
-export const ALLOWED_E2E_SKIPS = Object.freeze({
-  "download-process-repairs": Object.freeze(["win32"]),
-  "audit3-native-targeted": Object.freeze(["win32"]),
-  "audit-v5-beta2": Object.freeze(["linux", "win32"]),
-  "xdg-download-dir": Object.freeze(["darwin", "win32"]),
-});
+export const ALLOWED_E2E_SKIPS = Object.freeze(
+  Object.fromEntries(
+    E2E_SUITE_MANIFEST.scenarios
+      .filter((scenario) => scenario.allowedSkips.length > 0)
+      .map((scenario) => [scenario.name, Object.freeze(scenario.allowedSkips)]),
+  ),
+);
+
+function groupedScenarioResults(scenarios, expectedScenarios) {
+  const expected = new Set(expectedScenarios);
+  const dynamicGroups = E2E_SUITE_MANIFEST.dynamicV5Fixes.groupAreas;
+  return Object.fromEntries(
+    E2E_SUITE_MANIFEST.groups.map((group) => {
+      const groupNames = [
+        ...E2E_SUITE_MANIFEST.scenarios
+          .filter((scenario) => scenario.feature === group.id)
+          .map((scenario) => scenario.name),
+        ...(dynamicGroups[group.id] ?? []).map((area) => `v5-fixes/${area}`),
+      ].filter((name) => expected.has(name));
+      const reported = scenarios.filter((scenario) =>
+        groupNames.includes(scenario?.name),
+      );
+      const reportedNames = new Set(reported.map((scenario) => scenario.name));
+      return [
+        group.id,
+        {
+          expectedScenarios: groupNames,
+          reportedScenarios: reported,
+          missingScenarios: groupNames.filter(
+            (name) => !reportedNames.has(name),
+          ),
+        },
+      ];
+    }),
+  );
+}
 
 export function scenarioOutcomeProblems(
   scenarios,
@@ -468,17 +517,67 @@ export function e2eOnlySpec(value) {
   return spec === "" ? null : spec;
 }
 
+/** Read one or more manifest feature groups from CLI arguments or the env. */
+export function parseE2eGroups(argv, env = process.env) {
+  const fromArgs = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--group") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("--")) {
+        throw new Error("--group needs a comma-separated feature group list");
+      }
+      fromArgs.push(value);
+      index += 1;
+    } else if (argument.startsWith("--group=")) {
+      const value = argument.slice("--group=".length);
+      if (value.trim() === "") {
+        throw new Error("--group needs a comma-separated feature group list");
+      }
+      fromArgs.push(value);
+    }
+  }
+  const rawGroups =
+    fromArgs.length > 0 ? fromArgs : [env.ROSI_E2E_GROUPS ?? ""];
+  const groups = rawGroups.flatMap((value) => value.split(","));
+  const normalized = groups.map((group) => group.trim()).filter(Boolean);
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error("E2E feature groups must not be listed more than once");
+  }
+  return normalized;
+}
+
 /** True for specs under e2e/v5-fixes/, which report through their own files. */
 export function isV5FixesSpec(spec) {
   return /^(\.\/)?v5-fixes\//.test((spec ?? "").replace(/\\/g, "/"));
 }
 
 /**
- * The full gate keeps the complete inventory. An ad-hoc ROSI_E2E_ONLY run
- * names no suites and is always partial, so its report cannot pass as proof.
+ * The full gate keeps the complete inventory. Ad-hoc specs and manifest group
+ * selections are always partial, so neither report can pass as release proof.
  */
-export function e2eRunPlan({ onlySpec, v5AreaNames = [] }) {
-  if (onlySpec === null) {
+export function e2eRunPlan({
+  onlySpec,
+  v5AreaNames = [],
+  selectedGroups = [],
+}) {
+  if (onlySpec !== null && selectedGroups.length > 0) {
+    throw new Error(
+      "ROSI_E2E_ONLY cannot be combined with --group or ROSI_E2E_GROUPS",
+    );
+  }
+  const mappedV5Areas = new Set(
+    Object.values(E2E_SUITE_MANIFEST.dynamicV5Fixes.groupAreas).flat(),
+  );
+  const ungroupedV5Areas = v5AreaNames.filter(
+    (area) => !mappedV5Areas.has(area),
+  );
+  if (ungroupedV5Areas.length > 0) {
+    throw new Error(
+      `v5-fixes area(s) need a feature group in e2e/suites.json: ${ungroupedV5Areas.join(", ")}`,
+    );
+  }
+  if (onlySpec === null && selectedGroups.length === 0) {
     return {
       fullSuite: true,
       mainSpecs: "./specs/main.spec.js",
@@ -486,9 +585,62 @@ export function e2eRunPlan({ onlySpec, v5AreaNames = [] }) {
         ...EXPECTED_SCENARIOS,
         ...v5AreaNames.map((area) => `v5-fixes/${area}`),
       ],
+      enabledOwners: Object.keys(E2E_SUITE_MANIFEST.owners),
+      selectedGroups: [],
+      v5AreaNames,
     };
   }
-  return { fullSuite: false, mainSpecs: onlySpec, expectedScenarios: [] };
+  if (onlySpec !== null) {
+    return {
+      fullSuite: false,
+      mainSpecs: onlySpec,
+      expectedScenarios: [],
+      enabledOwners: [],
+      selectedGroups: [],
+      v5AreaNames: [],
+    };
+  }
+
+  const groupsById = new Map(
+    E2E_SUITE_MANIFEST.groups.map((group) => [group.id, group]),
+  );
+  const unknownGroups = selectedGroups.filter(
+    (group) => !groupsById.has(group),
+  );
+  if (unknownGroups.length > 0) {
+    throw new Error(
+      `unknown E2E feature group(s): ${unknownGroups.join(", ")}`,
+    );
+  }
+  const selected = selectedGroups.map((id) => groupsById.get(id));
+  const enabledOwners = new Set(selected.flatMap((group) => group.owners));
+  const requiredV5Areas = new Set(
+    selected.flatMap((group) => group.v5FixAreas),
+  );
+  const selectedV5Areas = v5AreaNames.filter((area) =>
+    requiredV5Areas.has(area),
+  );
+  const missingV5Areas = [...requiredV5Areas].filter(
+    (area) => !v5AreaNames.includes(area),
+  );
+  if (missingV5Areas.length > 0) {
+    throw new Error(
+      `selected E2E feature group(s) require missing v5-fixes area(s): ${missingV5Areas.join(", ")}`,
+    );
+  }
+  return {
+    fullSuite: false,
+    mainSpecs: "./specs/main.spec.js",
+    expectedScenarios: [
+      ...E2E_SUITE_MANIFEST.scenarios
+        .filter((scenario) => enabledOwners.has(scenario.owner))
+        .map((scenario) => scenario.name),
+      ...selectedV5Areas.map((area) => `v5-fixes/${area}`),
+    ],
+    enabledOwners: [...enabledOwners],
+    selectedGroups,
+    v5AreaNames: selectedV5Areas,
+  };
 }
 
 /**
@@ -1546,6 +1698,18 @@ async function main() {
     );
   }
   const onlySpec = e2eOnlySpec(process.env.ROSI_E2E_ONLY);
+  const selectedGroups = parseE2eGroups(process.argv.slice(2), process.env);
+  const availableV5Areas = onlySpec ? [] : discoverV5Fixes();
+  const runPlan = e2eRunPlan({
+    onlySpec,
+    selectedGroups,
+    v5AreaNames: availableV5Areas.map((area) => area.area),
+  });
+  const v5Areas = availableV5Areas.filter((area) =>
+    runPlan.v5AreaNames.includes(area.area),
+  );
+  const ownerEnabled = (owner) =>
+    runPlan.fullSuite || runPlan.enabledOwners.includes(owner);
   // Set before any launch so every pass, runner and probe inherits it.
   const background = e2eBackgroundValue({
     env: process.env,
@@ -1558,7 +1722,7 @@ async function main() {
   const reuseRequested = process.env.ROSI_E2E_REUSE === "1";
   if (
     !mayReuseE2eBinary({
-      onlySpec: Boolean(onlySpec),
+      onlySpec: Boolean(onlySpec) && selectedGroups.length === 0,
       reuseRequested,
       binaryFresh: !reuseRequested || e2eBinaryIsFresh(),
     })
@@ -1702,20 +1866,21 @@ async function main() {
 
   // Fresh ROSI 5 profiles with ROSI 4 data beside them, each a separate app
   // launch because the import only runs before the first settings file.
-  // ROSI_E2E_ONLY runs one ad-hoc spec, so it skips these passes.
-  const legacyPasses = onlySpec
-    ? []
-    : ["import", "corrupt-settings"].map((legacyCase) => {
-        const legacyProfile = createE2eProfile({ seedSettings: false });
-        return {
-          legacyCase,
-          profile: legacyProfile,
-          seed: seedLegacyV4Data(legacyProfile, {
-            corruptSettings: legacyCase === "corrupt-settings",
-          }),
-          resultsPath: path.join(legacyProfile.profileDir, "results.json"),
-        };
-      });
+  // Ad-hoc and group runs include only their selected owner passes.
+  const legacyPasses =
+    onlySpec || !ownerEnabled("legacy-import")
+      ? []
+      : ["import", "corrupt-settings"].map((legacyCase) => {
+          const legacyProfile = createE2eProfile({ seedSettings: false });
+          return {
+            legacyCase,
+            profile: legacyProfile,
+            seed: seedLegacyV4Data(legacyProfile, {
+              corruptSettings: legacyCase === "corrupt-settings",
+            }),
+            resultsPath: path.join(legacyProfile.profileDir, "results.json"),
+          };
+        });
   const mainPass = {
     profile,
     // The main profile already has ROSI 5 settings, so this ROSI 4 folder
@@ -1730,91 +1895,90 @@ async function main() {
   // Security downloads intentionally populate stats/activity and can exercise
   // renderer state that the main UI suite expects to start fresh. Keep the
   // security proof in its own profile while aggregating both result files.
-  const securityPass = onlySpec
-    ? null
-    : (() => {
-        const securityProfile = createE2eProfile({
-          ffmpegPath: ffmpeg?.customPath ?? "",
-        });
-        return {
-          profile: securityProfile,
-          resultsPath: path.join(
-            securityProfile.profileDir,
-            "security-repairs-results.json",
-          ),
-        };
-      })();
+  const securityPass =
+    onlySpec || !ownerEnabled("security")
+      ? null
+      : (() => {
+          const securityProfile = createE2eProfile({
+            ffmpegPath: ffmpeg?.customPath ?? "",
+          });
+          return {
+            profile: securityProfile,
+            resultsPath: path.join(
+              securityProfile.profileDir,
+              "security-repairs-results.json",
+            ),
+          };
+        })();
   // State-repair close-failure scenarios deliberately leave native warning
   // dialogs open. Run them in their own profile before the security and main
   // specs, whose final close-flow scenario closes this app window.
-  const stateRepairPass = onlySpec
-    ? null
-    : (() => {
-        const stateProfile = createE2eProfile({
-          ffmpegPath: ffmpeg?.customPath ?? "",
-        });
-        return {
-          profile: stateProfile,
-          resultsPath: path.join(
-            stateProfile.profileDir,
-            "state-repairs-results.json",
-          ),
-        };
-      })();
-  const offlineQueuePass = onlySpec
-    ? null
-    : (() => {
-        const offlineProfile = createE2eProfile({
-          ffmpegPath: ffmpeg?.customPath ?? "",
-        });
-        fs.writeFileSync(
-          path.join(offlineProfile.dataDir, "download-queue.json"),
-          `${JSON.stringify(
-            [
-              {
-                id: "offline-dns-queue",
-                url: "http://offline-repair.invalid/video.mp4",
-                status: "pending",
-                addedAt: Date.now(),
-                request: null,
-              },
-            ],
-            null,
-            2,
-          )}\n`,
-        );
-        return {
-          profile: offlineProfile,
-          resultsPath: path.join(
-            offlineProfile.profileDir,
-            "offline-queue-results.json",
-          ),
-        };
-      })();
-  const round2RendererPass = onlySpec
-    ? null
-    : (() => {
-        const rendererProfile = createE2eProfile({
-          ffmpegPath: ffmpeg?.customPath ?? "",
-        });
-        const resultsDirectory = path.join(
-          ARTIFACT_DIR,
-          "round2-renderer",
-          `${process.platform}-${process.arch}`,
-        );
-        fs.mkdirSync(resultsDirectory, { recursive: true });
-        const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`;
-        const resultsPath = path.join(resultsDirectory, `${runId}.json`);
-        fs.rmSync(resultsPath, { force: true });
-        return { profile: rendererProfile, resultsPath };
-      })();
+  const stateRepairPass =
+    onlySpec || !ownerEnabled("state-repairs")
+      ? null
+      : (() => {
+          const stateProfile = createE2eProfile({
+            ffmpegPath: ffmpeg?.customPath ?? "",
+          });
+          return {
+            profile: stateProfile,
+            resultsPath: path.join(
+              stateProfile.profileDir,
+              "state-repairs-results.json",
+            ),
+          };
+        })();
+  const offlineQueuePass =
+    onlySpec || !ownerEnabled("offline-queue")
+      ? null
+      : (() => {
+          const offlineProfile = createE2eProfile({
+            ffmpegPath: ffmpeg?.customPath ?? "",
+          });
+          fs.writeFileSync(
+            path.join(offlineProfile.dataDir, "download-queue.json"),
+            `${JSON.stringify(
+              [
+                {
+                  id: "offline-dns-queue",
+                  url: "http://offline-repair.invalid/video.mp4",
+                  status: "pending",
+                  addedAt: Date.now(),
+                  request: null,
+                },
+              ],
+              null,
+              2,
+            )}\n`,
+          );
+          return {
+            profile: offlineProfile,
+            resultsPath: path.join(
+              offlineProfile.profileDir,
+              "offline-queue-results.json",
+            ),
+          };
+        })();
+  const round2RendererPass =
+    onlySpec || !ownerEnabled("round2-renderer")
+      ? null
+      : (() => {
+          const rendererProfile = createE2eProfile({
+            ffmpegPath: ffmpeg?.customPath ?? "",
+          });
+          const resultsDirectory = path.join(
+            ARTIFACT_DIR,
+            "round2-renderer",
+            `${process.platform}-${process.arch}`,
+          );
+          fs.mkdirSync(resultsDirectory, { recursive: true });
+          const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`;
+          const resultsPath = path.join(resultsDirectory, `${runId}.json`);
+          fs.rmSync(resultsPath, { force: true });
+          return { profile: rendererProfile, resultsPath };
+        })();
   // Each e2e/v5-fixes/<area>/ with *.spec.js and no run.mjs gets its own fresh
   // profile. Areas that skip or focus tests fail before WebdriverIO starts.
-  const v5Areas = onlySpec ? [] : discoverV5Fixes();
-  const runPlan = e2eRunPlan({
-    onlySpec,
-    v5AreaNames: v5Areas.map((area) => area.area),
-  });
   // Runner-owned areas (run.mjs) get no generic wdio pass; the runner drives
   // their specs.
   const v5Passes = v5Areas
@@ -1889,16 +2053,18 @@ async function main() {
         pass.status = "failed";
       }
     }
-    await runPass(mainPass, {
-      // ROSI_E2E_ONLY runs a single ad-hoc spec while debugging; the full
-      // gate always runs main.spec.js and requires every scenario.
-      ROSI_E2E_SPECS: runPlan.mainSpecs,
-      // Preserve this path for ROSI_E2E_ONLY debugging when the selected spec
-      // is the state-repair suite. The full gate uses the isolated pass above.
-      ROSI_STATE_REPAIR_RESULTS: mainPass.stateRepairResultsPath,
-      ROSI_E2E_LEGACY_V4: JSON.stringify(mainPass.seed),
-      ROSI_E2E_SCREENSHOTS: screenshotDir,
-    });
+    if (onlySpec || ownerEnabled("main")) {
+      await runPass(mainPass, {
+        // ROSI_E2E_ONLY runs a single ad-hoc spec while debugging; the full
+        // gate always runs main.spec.js and requires every scenario.
+        ROSI_E2E_SPECS: runPlan.mainSpecs,
+        // Preserve this path for ROSI_E2E_ONLY debugging when the selected spec
+        // is the state-repair suite. The full gate uses the isolated pass above.
+        ROSI_STATE_REPAIR_RESULTS: mainPass.stateRepairResultsPath,
+        ROSI_E2E_LEGACY_V4: JSON.stringify(mainPass.seed),
+        ROSI_E2E_SCREENSHOTS: screenshotDir,
+      });
+    }
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error);
   } finally {
@@ -1907,45 +2073,52 @@ async function main() {
 
   // Both specs share one isolated wrapper, which is the only code that starts
   // WebdriverIO with the process-level probe fixtures.
-  const processRepairScenarios = onlySpec
-    ? []
-    : [
-        runDownloadProcessRepairs({
-          ffmpeg,
-          binary: e2eBinaryPath(),
-          suiteStartedAt: startedAt,
-        }),
-        runDownloadProcessRepairs({
-          ffmpeg,
-          binary: e2eBinaryPath(),
-          suiteStartedAt: startedAt,
-          name: "audit3-native-targeted",
-          spec: "./audit3-native-targeted.spec.js",
-        }),
-      ];
-  const round2NativeScenarios = onlySpec
-    ? []
-    : [
-        runRound2NativeRepairs({
-          ffmpeg,
-          binary: e2eBinaryPath(),
-          suiteStartedAt: startedAt,
-        }),
-      ];
+  const processRepairScenarios =
+    onlySpec || !ownerEnabled("process-repairs")
+      ? []
+      : [
+          runDownloadProcessRepairs({
+            ffmpeg,
+            binary: e2eBinaryPath(),
+            suiteStartedAt: startedAt,
+          }),
+          runDownloadProcessRepairs({
+            ffmpeg,
+            binary: e2eBinaryPath(),
+            suiteStartedAt: startedAt,
+            name: "audit3-native-targeted",
+            spec: "./audit3-native-targeted.spec.js",
+          }),
+        ];
+  const round2NativeScenarios =
+    onlySpec || !ownerEnabled("round2-native")
+      ? []
+      : [
+          runRound2NativeRepairs({
+            ffmpeg,
+            binary: e2eBinaryPath(),
+            suiteStartedAt: startedAt,
+          }),
+        ];
   const round2RendererScenarios = round2RendererPass
     ? [round2RendererScenario(round2RendererPass, round2RendererFailure)]
     : [];
-  const persistenceScenarios = onlySpec
-    ? []
-    : [runLongTermPersistenceRepairs()];
+  const persistenceScenarios =
+    onlySpec || !ownerEnabled("persistence")
+      ? []
+      : [runLongTermPersistenceRepairs()];
   const binary = e2eBinaryPath();
   const auditScenarios = onlySpec
     ? []
     : [
-        runAudit4Repairs({ ffmpeg, binary, suiteStartedAt: startedAt }),
-        runAuditV5Probes({ ffmpeg, binary, suiteStartedAt: startedAt }),
-        runRound3Renderer(),
-        ...v5Areas.map((area) => {
+        ...(ownerEnabled("audit4-repairs")
+          ? [runAudit4Repairs({ ffmpeg, binary, suiteStartedAt: startedAt })]
+          : []),
+        ...(ownerEnabled("audit-v5-beta2")
+          ? [runAuditV5Probes({ ffmpeg, binary, suiteStartedAt: startedAt })]
+          : []),
+        ...(ownerEnabled("round3-renderer") ? [runRound3Renderer()] : []),
+        ...(ownerEnabled("v5-fixes") ? v5Areas : []).map((area) => {
           const pass = v5Passes.find((candidate) => candidate.area === area);
           const runnerResult = area.runner
             ? runV5FixesRunner(area, binary, ffmpeg)
@@ -1988,7 +2161,7 @@ async function main() {
     ...(offlineQueuePass ? [offlineQueuePass] : []),
     ...(stateRepairPass ? [stateRepairPass] : []),
     ...(securityPass ? [securityPass] : []),
-    mainPass,
+    ...(onlySpec || ownerEnabled("main") ? [mainPass] : []),
   ].flatMap((pass) => [
     ...readResults(pass.resultsPath),
     ...(pass === mainPass && !stateRepairPass
@@ -2009,11 +2182,13 @@ async function main() {
       },
     ]),
   );
-  const uncovered = onlySpec
-    ? []
-    : Object.entries(legacyImportCoverage)
+  const checksLegacyImportCoverage =
+    fullSuite || runPlan.enabledOwners.includes("legacy-import");
+  const uncovered = checksLegacyImportCoverage
+    ? Object.entries(legacyImportCoverage)
         .filter(([, mode]) => mode.coveredBy.length === 0)
-        .map(([id]) => id);
+        .map(([id]) => id)
+    : [];
   const { screenshots, problems: screenshotProblems } = verifyScreenshots(
     scenarios,
     screenshotDir,
@@ -2021,18 +2196,25 @@ async function main() {
   const packageJson = JSON.parse(
     fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
   );
-  const scenarioProblems = fullSuite
-    ? scenarioOutcomeProblems(scenarios, process.platform, expectedScenarios)
-    : onlyRunScenarioProblems({
-        onlySpec,
-        scenarios,
-        platform: process.platform,
-      });
+  const scenarioProblems =
+    fullSuite || selectedGroups.length > 0
+      ? scenarioOutcomeProblems(scenarios, process.platform, expectedScenarios)
+      : onlyRunScenarioProblems({
+          onlySpec,
+          scenarios,
+          platform: process.platform,
+        });
   const evidence = writeEvidence({
     app: "ROSI",
     fullSuite,
     // Present only on partial runs, so full-gate evidence keeps its shape.
     ...(onlySpec ? { onlySpec } : {}),
+    ...(selectedGroups.length > 0
+      ? {
+          selectedGroups,
+          selectedOwners: runPlan.enabledOwners,
+        }
+      : {}),
     expectedScenarios,
     version: packageJson.version,
     commit: gitCommit(),
@@ -2055,6 +2237,7 @@ async function main() {
     appTmpdir: process.env.ROSI_E2E_APP_TMPDIR || null,
     fixtures,
     scenarios,
+    scenarioGroups: groupedScenarioResults(scenarios, expectedScenarios),
     missingScenarios: missing,
     scenarioProblems,
     legacyImportCoverage,
@@ -2126,13 +2309,25 @@ export function parseRepeat(argv, env = process.env) {
  */
 export function summarizeStability(runs) {
   const names = new Set([
-    ...EXPECTED_SCENARIOS,
+    ...runs.flatMap((run) => run.expected ?? EXPECTED_SCENARIOS),
     ...runs.flatMap((run) => run.passed),
+    ...runs.flatMap((run) => run.skipped),
+    ...runs.flatMap((run) => run.failed ?? []),
   ]);
   const scenarios = [...names].sort().map((name) => {
-    const passed = runs.filter((run) => run.passed.includes(name)).length;
-    const skipped = runs.filter((run) => run.skipped.includes(name)).length;
-    return { name, passed, skipped, failed: runs.length - passed - skipped };
+    const eligible = runs.filter(
+      (run) =>
+        (run.expected ?? EXPECTED_SCENARIOS).includes(name) ||
+        run.passed.includes(name) ||
+        run.skipped.includes(name) ||
+        (run.failed ?? []).includes(name),
+    );
+    const passed = eligible.filter((run) => run.passed.includes(name)).length;
+    const skipped = eligible.filter((run) => run.skipped.includes(name)).length;
+    const failed = eligible.filter(
+      (run) => !run.passed.includes(name) && !run.skipped.includes(name),
+    ).length;
+    return { name, passed, skipped, failed };
   });
   return {
     runs: runs.length,
@@ -2183,6 +2378,10 @@ async function runStability(times) {
       skipped: report.scenarios
         .filter((scenario) => scenario.status === "skipped")
         .map((scenario) => scenario.name),
+      failed: report.scenarios
+        .filter((scenario) => scenario.status === "failed")
+        .map((scenario) => scenario.name),
+      expected: report.expectedScenarios ?? EXPECTED_SCENARIOS,
     });
   }
   const summary = {

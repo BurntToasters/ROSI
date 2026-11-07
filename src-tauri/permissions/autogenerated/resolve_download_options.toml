@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resolve-download-options"
+description = "Enables the resolve_download_options command without any pre-configured scope."
+commands.allow = ["resolve_download_options"]
+
+[[permission]]
+identifier = "deny-resolve-download-options"
+description = "Denies the resolve_download_options command without any pre-configured scope."
+commands.deny = ["resolve_download_options"]

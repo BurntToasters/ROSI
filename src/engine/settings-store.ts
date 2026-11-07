@@ -1,12 +1,14 @@
 // Settings state, change tracking, and serialized saves to the backend.
 import { RosiDownloadPreset, RosiSettings, logError } from './core';
+import { refreshEffectiveOptionsSummary, UI_MESSAGES } from './messages';
 import { showModal } from './overlays';
 import { downloadState } from './progress';
 import { queueController } from './queue-controller';
 import { showRestartFailure } from './updater-ui';
 
-export const trackSettings = (value: RosiSettings): RosiSettings =>
-  new Proxy(value, {
+export const trackSettings = (value: RosiSettings): RosiSettings => {
+  settingsStore.settingsSavedRevision = settingsStore.settingsRevision;
+  return new Proxy(value, {
     set(target, property, next, receiver) {
       const previous = Reflect.get(target, property, receiver);
       const applied = Reflect.set(target, property, next, receiver);
@@ -23,6 +25,7 @@ export const trackSettings = (value: RosiSettings): RosiSettings =>
       return applied;
     },
   });
+};
 
 export const reconcileSettingsInPlace = (value: RosiSettings) => {
   const current = settingsStore.settings as unknown as Record<string, unknown>;
@@ -38,18 +41,20 @@ export const reconcileSettingsInPlace = (value: RosiSettings) => {
   }
 };
 
-export function showSettingsSaveError(message: string) {
-  const now = Date.now();
-  if (now - settingsStore.settingsSaveErrorShownAt < 5000) {
-    return;
-  }
-  settingsStore.settingsSaveErrorShownAt = now;
-  showModal({
-    title: 'Settings Save Failed',
-    message,
-    buttons: [{ label: 'OK', primary: true }],
-    priority: true,
-  });
+export function setSettingsSaveFeedback(state: 'saving' | 'saved' | 'error', message: string) {
+  const feedback = document.getElementById('settingsSaveFeedback');
+  if (!(feedback instanceof HTMLElement)) return;
+  feedback.dataset.state = state;
+  const messageElement = feedback.querySelector<HTMLElement>('.settings-save-message');
+  if (messageElement) messageElement.textContent = message;
+  const retry = document.getElementById('retrySettingsSave') as HTMLButtonElement | null;
+  if (retry) retry.hidden = state !== 'error';
+}
+
+export function showSettingsSaveError(message: string, retryable = true) {
+  setSettingsSaveFeedback('error', message);
+  const retry = document.getElementById('retrySettingsSave') as HTMLButtonElement | null;
+  if (retry) retry.hidden = !retryable;
 }
 
 export function settleSettingsSaveWaiters(
@@ -123,6 +128,7 @@ export async function drainSettingsSaves() {
       // snapshot is still the newest renderer revision.
       if (snapshotRevision === settingsStore.settingsRevision) {
         reconcileSettingsInPlace(result.data as RosiSettings);
+        settingsStore.settingsSavedRevision = snapshotRevision;
       }
     } else if (result?.error?.code === 'VALIDATION_ERROR' && result.error.details) {
       // The other fields were saved; only the listed ones were refused.
@@ -146,6 +152,7 @@ export async function drainSettingsSaves() {
         settingsStore.reconcilingSettings = false;
       }
       settingsStore.refreshSettingsControls?.();
+      settingsStore.settingsSavedRevision = snapshotRevision;
       saved = true;
       settingsStore.lastSettingsSaveErrorCode = null;
       rejectedMessage = result.error.message;
@@ -161,21 +168,23 @@ export async function drainSettingsSaves() {
   // A newer ROSI owns settings.json: the file is preserved and the user was
   // told once. Callers proceed with the in-memory values.
   const preserved = !saved && settingsStore.lastSettingsSaveErrorCode === 'NEWER_VERSION';
-  const settled = settleSettingsSaveWaiters(snapshotRevision, saved || preserved, latestRevision);
+  settleSettingsSaveWaiters(snapshotRevision, saved || preserved, latestRevision);
   if (rejectedMessage) {
     showSettingsSaveError(
-      `This setting was not changed:\n${rejectedMessage}\nYour other settings were saved.`
+      `This setting was not changed. ${rejectedMessage} Other settings were saved.`,
+      false
     );
-  } else if (
-    !saved &&
-    settingsStore.lastSettingsSaveErrorCode !== 'NEWER_VERSION' &&
-    snapshotRevision === latestRevision &&
-    settled.some((waiter) => !waiter.silent)
-  ) {
-    // A newer-version settings file is reported once by the backend.
-    showSettingsSaveError(`${errorMessage}\nChanges may not persist after restart.`);
+  } else if (preserved && snapshotRevision === latestRevision) {
+    showSettingsSaveError(UI_MESSAGES.settings.conflict, false);
+  } else if (saved && snapshotRevision === latestRevision) {
+    setSettingsSaveFeedback('saved', UI_MESSAGES.settings.saved);
+  } else if (!saved && snapshotRevision === latestRevision) {
+    showSettingsSaveError(`${UI_MESSAGES.settings.saveFailed} ${errorMessage}`);
+  } else if (settingsStore.settingsSaveWaiters.length > 0) {
+    setSettingsSaveFeedback('saving', UI_MESSAGES.settings.saving);
   }
   settingsStore.settingsSaveInFlight = false;
+  refreshEffectiveOptionsSummary(true);
 
   // A save requested during this request either fired its debounce already,
   // or explicitly asked for an immediate flush. Preserve debounce spacing
@@ -190,6 +199,7 @@ export async function drainSettingsSaves() {
 }
 
 export async function persistSettings(silent = false, immediate = false): Promise<boolean> {
+  setSettingsSaveFeedback('saving', UI_MESSAGES.settings.saving);
   if (settingsStore.persistDebounceTimer) {
     clearTimeout(settingsStore.persistDebounceTimer);
     settingsStore.persistDebounceTimer = null;
@@ -290,6 +300,7 @@ export async function checkUpdatesOnStartup() {
 // Owned by the renderer controller; set during startup and updated while it runs.
 export const settingsStore: {
   settingsRevision: number;
+  settingsSavedRevision: number;
   settings: RosiSettings;
   reconcilingSettings: boolean;
   settingsSaveErrorShownAt: number;
@@ -307,6 +318,7 @@ export const settingsStore: {
   isFlatpakBuild: boolean;
 } = {
   settingsRevision: 0,
+  settingsSavedRevision: 0,
   settings: undefined as unknown as RosiSettings,
   reconcilingSettings: false,
   settingsSaveErrorShownAt: 0,

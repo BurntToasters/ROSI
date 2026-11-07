@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from 'typescript';
+// Publishes window.rosiMessages, which the eval-loaded modules read at render time.
+import '../engine/messages';
 
 const REPO = path.resolve(__dirname, '..', '..');
 const RENDERER = path.join(REPO, 'src');
@@ -29,12 +31,6 @@ function loadModule(name: string) {
 type RosiModules = {
   downloads?: {
     formatBytes: (bytes: number) => string;
-    parseYtdlpProgress: (message: string) => {
-      percent: number;
-      totalSize: string;
-      speed: string | null;
-      eta: string | null;
-    } | null;
   };
   ui?: {
     isValidUrl: (value: string) => boolean;
@@ -124,32 +120,6 @@ describe('renderer modules', () => {
 
   describe('downloads module', () => {
     beforeEach(() => loadModule('downloads'));
-
-    it('parseYtdlpProgress parses full progress line', () => {
-      const result = modules().downloads!.parseYtdlpProgress(
-        '[download]  45.2% of ~10.5MiB at  1.2MiB/s ETA 00:08'
-      );
-      expect(result).toEqual({
-        percent: 45.2,
-        totalSize: '10.5MiB',
-        speed: '1.2MiB/s',
-        eta: '00:08',
-      });
-    });
-
-    it('parseYtdlpProgress parses simple progress line', () => {
-      const result = modules().downloads!.parseYtdlpProgress('[download]  10.0% of ~5.00MiB');
-      expect(result).toEqual({
-        percent: 10,
-        totalSize: '5.00MiB',
-        speed: null,
-        eta: null,
-      });
-    });
-
-    it('parseYtdlpProgress returns null for non-progress lines', () => {
-      expect(modules().downloads!.parseYtdlpProgress('random output')).toBeNull();
-    });
 
     it('formatBytes formats byte sizes', () => {
       expect(modules().downloads!.formatBytes(0)).toBe('0 B');

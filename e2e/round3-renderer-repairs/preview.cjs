@@ -1,3 +1,8 @@
+const {
+  audioFormat,
+  formatList,
+  videoFormat,
+} = require("./format-fixtures.cjs");
 const fs = require("fs");
 const path = require("node:path");
 const root = path.resolve(__dirname, "../..");
@@ -54,7 +59,8 @@ w.api = new Proxy(
     getAppPlatform: () => Promise.resolve("darwin"),
     checkDenoInstalled: () => Promise.resolve(true),
     getQueue: () => Promise.resolve([]),
-    getFormats: () => ok("137 mp4 1920x1080 video only\n140 m4a audio only"),
+    getFormats: () =>
+      ok(formatList([videoFormat("137", "1920x1080"), audioFormat("140")])),
     getVideoInfo: (url) => {
       previewCalls.push(url);
       return new Promise((r) => {

@@ -3,7 +3,7 @@
 use crate::constants::*;
 use crate::ipc::{self, IpcResult, INTERNAL_ERROR, INVALID_URL, NOT_AVAILABLE, VALIDATION_ERROR};
 use crate::process_util::{TrackedError, TrackedReservation, TrackedSlot};
-use crate::types::VideoInfo;
+use crate::types::{FormatEntry, FormatList, StreamKind, VideoInfo};
 use crate::validation::{is_safe_http_url, is_syntactically_safe_http_url};
 use serde_json::{Map, Value};
 
@@ -74,6 +74,139 @@ pub fn parse_video_info(json: &str, entry_limit: usize) -> Option<VideoInfo> {
     })
 }
 
+enum CodecMetadata {
+    Missing,
+    NoStream,
+    Codec(String),
+}
+
+fn codec_metadata(value: Option<&Value>) -> CodecMetadata {
+    let Some(codec) = value.and_then(Value::as_str).map(str::trim) else {
+        return CodecMetadata::Missing;
+    };
+    if codec.is_empty() {
+        CodecMetadata::Missing
+    } else if codec.eq_ignore_ascii_case("none") {
+        CodecMetadata::NoStream
+    } else {
+        CodecMetadata::Codec(codec.to_string())
+    }
+}
+
+fn codec_name(metadata: &CodecMetadata) -> Option<String> {
+    match metadata {
+        CodecMetadata::Codec(codec) => Some(codec.clone()),
+        CodecMetadata::Missing | CodecMetadata::NoStream => None,
+    }
+}
+
+fn pick_file_size(value: Option<&Value>) -> Option<u64> {
+    value.and_then(|value| {
+        value.as_u64().or_else(|| {
+            value
+                .as_f64()
+                .filter(|size| size.is_finite() && *size >= 0.0 && *size <= u64::MAX as f64)
+                .map(|size| size.round() as u64)
+        })
+    })
+}
+
+fn pick_resolution(data: &Map<String, Value>) -> Option<String> {
+    pick_string(data.get("resolution"))
+        .filter(|resolution| {
+            !resolution.eq_ignore_ascii_case("unknown")
+                && !resolution.eq_ignore_ascii_case("audio only")
+        })
+        .or_else(|| {
+            let width = data.get("width").and_then(Value::as_u64)?;
+            let height = data.get("height").and_then(Value::as_u64)?;
+            (width > 0 && height > 0).then(|| format!("{width}x{height}"))
+        })
+}
+
+fn is_non_media_format(data: &Map<String, Value>) -> bool {
+    let ext = pick_string(data.get("ext"));
+    let note = pick_string(data.get("format_note"));
+    ext.is_some_and(|ext| ext.eq_ignore_ascii_case("mhtml"))
+        || note.is_some_and(|note| {
+            let note = note.to_ascii_lowercase();
+            note.contains("storyboard") || note.contains("images only") || note.contains("image only")
+        })
+}
+
+fn fallback_stream_kind(data: &Map<String, Value>) -> Option<StreamKind> {
+    let ext = pick_string(data.get("ext"))?.to_ascii_lowercase();
+    match ext.as_str() {
+        "aac" | "ac3" | "alac" | "eac3" | "flac" | "m4a" | "m4b" | "mp3" | "opus"
+        | "wav" | "wma" => Some(StreamKind::Audio),
+        "3gp" | "avi" | "flv" | "m2ts" | "m4v" | "mkv" | "mov" | "mp4" | "mpd"
+        | "m3u8" | "mts" | "mxf" | "ts" | "vob" | "webm" | "wmv" => {
+            Some(StreamKind::AudioVideo)
+        }
+        _ => None,
+    }
+}
+
+fn parse_format_entry(value: &Value) -> Option<FormatEntry> {
+    let data = value.as_object()?;
+    let format_id = pick_string(data.get("format_id"))?;
+    if !is_format_id(&format_id) || is_non_media_format(data) {
+        return None;
+    }
+    let vcodec_metadata = codec_metadata(data.get("vcodec"));
+    let acodec_metadata = codec_metadata(data.get("acodec"));
+    let vcodec = codec_name(&vcodec_metadata);
+    let acodec = codec_name(&acodec_metadata);
+    let stream_kind = match (&vcodec_metadata, &acodec_metadata) {
+        (CodecMetadata::Codec(_), CodecMetadata::Codec(_)) => StreamKind::AudioVideo,
+        (CodecMetadata::Codec(_), CodecMetadata::NoStream | CodecMetadata::Missing)
+        | (CodecMetadata::Missing | CodecMetadata::NoStream, CodecMetadata::Codec(_)) => {
+            if vcodec.is_some() {
+                StreamKind::Video
+            } else {
+                StreamKind::Audio
+            }
+        }
+        (CodecMetadata::NoStream, CodecMetadata::NoStream) => return None,
+        (CodecMetadata::NoStream, CodecMetadata::Missing) => StreamKind::Audio,
+        (CodecMetadata::Missing, CodecMetadata::NoStream) => StreamKind::Video,
+        (CodecMetadata::Missing, CodecMetadata::Missing) => fallback_stream_kind(data)?,
+    };
+    Some(FormatEntry {
+        format_id,
+        stream_kind,
+        vcodec,
+        acodec,
+        resolution: pick_resolution(data),
+        fps: pick_number(data.get("fps")).filter(|fps| *fps > 0.0),
+        file_size_bytes: pick_file_size(data.get("filesize")),
+        estimated_size_bytes: pick_file_size(data.get("filesize_approx")),
+    })
+}
+
+pub fn parse_format_list(json: &str) -> Result<FormatList, String> {
+    let parsed: Value =
+        serde_json::from_str(json).map_err(|_| "Could not parse format metadata.".to_string())?;
+    let data = parsed
+        .as_object()
+        .ok_or_else(|| "Could not parse format metadata.".to_string())?;
+    if data.get("_type").and_then(Value::as_str) == Some("playlist")
+        || data.get("entries").and_then(Value::as_array).is_some()
+    {
+        return Err(
+            "Format lookup needs a single video URL. Open a specific playlist item and try again."
+                .into(),
+        );
+    }
+    let formats = data
+        .get("formats")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Could not parse format metadata.".to_string())?;
+    Ok(FormatList {
+        formats: formats.iter().filter_map(parse_format_entry).collect(),
+    })
+}
+
 fn resolve_playlist_mode(url: &str, requested: Option<&str>) -> &'static str {
     match requested {
         Some("all") => return "all",
@@ -133,7 +266,7 @@ fn error_result<T: serde::Serialize>(message: String) -> IpcResult<T> {
     }
 }
 
-fn fetch_formats(url: String, reservation: TrackedReservation<'static>) -> Result<String, String> {
+fn fetch_formats(url: String, reservation: TrackedReservation<'static>) -> Result<FormatList, String> {
     if reservation.is_cancelled() {
         return Err("Format fetch cancelled.".into());
     }
@@ -170,20 +303,25 @@ fn fetch_formats(url: String, reservation: TrackedReservation<'static>) -> Resul
     if reservation.is_cancelled() {
         return Err("Format fetch cancelled.".into());
     }
-    let mut args = vec!["-F".into(), "--".into(), url];
+    let mut args = vec![
+        "--dump-single-json".into(),
+        "--no-playlist".into(),
+        "--no-warnings".into(),
+        "--skip-download".into(),
+        "--".into(),
+        url,
+    ];
     insert_common_args(&mut args, &settings, &guard, &ffmpeg_guard);
     let command = ytdlp_command(args);
     match FORMATS.run_reserved_with(
         reservation,
         command,
         FORMAT_FETCH_TIMEOUT,
-        MAX_OUTPUT_BUFFER,
+        MAX_OUTPUT_BUFFER * 4,
         MAX_ERROR_BUFFER,
         |output| {
             if output.code == Some(0) {
-                Ok(output
-                    .stdout
-                    .replace(guard.proxy_url(), "<ephemeral proxy credentials>"))
+                parse_format_list(&output.stdout)
             } else {
                 Err(format!(
                     "yt-dlp exited with code {}.\nOutput:\n{}\nError:\n{}",
@@ -321,7 +459,7 @@ fn fetch_video_info(
 }
 
 #[tauri::command]
-pub async fn get_formats(url: Value) -> IpcResult<String> {
+pub async fn get_formats(url: Value) -> IpcResult<FormatList> {
     let reservation = FORMATS.reserve();
     let Some(url) = url
         .as_str()

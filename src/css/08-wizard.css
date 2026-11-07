@@ -255,11 +255,22 @@
 
 .wizard-nav {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   margin-top: var(--spacing-xl);
   padding-top: var(--spacing-lg);
   border-top: 1px solid var(--border-subtle);
+}
+
+.wizard-nav-error {
+  flex-basis: 100%;
+  margin: 0 0 var(--spacing-sm);
+}
+
+#wizard-folder-error {
+  margin: 0;
+  line-height: 1.35;
 }
 
 .wizard-dots {

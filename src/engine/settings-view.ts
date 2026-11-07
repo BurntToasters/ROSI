@@ -1,5 +1,6 @@
 // Settings controls: rendering from settings, search, and section collapse.
 import { RosiSettings, dockModule, renderFolderSummary, settingsModule } from './core';
+import { refreshEffectiveOptionsSummary, UI_MESSAGES } from './messages';
 import { isModalActive, modalQueue, showModal } from './overlays';
 import { refs } from './refs';
 import { persistSettings, settingsStore } from './settings-store';
@@ -124,29 +125,21 @@ export const updateUIFromSettings = () => {
   if (refs.downloadFolderSummary) {
     renderFolderSummary(refs.downloadFolderSummary, settingsStore.settings.downloadFolder);
   }
-  if (refs.downloadOutputSummary) {
-    if (settingsStore.settings.downloadMode === 'best-video') {
-      refs.downloadOutputSummary.textContent =
-        'Highest available video and audio quality, merged into one file';
-    } else if (settingsStore.settings.downloadMode === 'audio') {
-      refs.downloadOutputSummary.textContent = `Audio only, saved as ${(settingsStore.settings.audioFormat || 'mp3').toUpperCase()}`;
-    } else if (settingsStore.settings.downloadMode === 'custom') {
-      refs.downloadOutputSummary.textContent = 'Pick exact video and audio formats below';
-    } else {
-      refs.downloadOutputSummary.textContent =
-        'Prefer MP4 when available; otherwise use the best available format. Often low resolution';
-    }
-  }
   // disable convert when audio-only is enabled
   if (refs.convertToggle) {
-    refs.convertToggle.disabled = settingsStore.settings.audioOnly ?? false;
-    if (settingsStore.settings.audioOnly) {
+    const conversionUnavailable = settingsStore.settings.audioOnly ?? false;
+    refs.convertToggle.disabled = conversionUnavailable;
+    const conversionHint = document.getElementById('convertDisabledHint');
+    if (conversionUnavailable) {
       refs.convertToggle.parentElement!.classList.add('disabled');
-      refs.convertToggle.parentElement!.title = 'Disabled when Audio-only mode is enabled';
+      refs.convertToggle.parentElement!.title = UI_MESSAGES.controls.convertAudioOnly;
+      refs.convertToggle.setAttribute('aria-describedby', 'convertDisabledHint');
     } else {
       refs.convertToggle.parentElement!.classList.remove('disabled');
       refs.convertToggle.parentElement!.title = '';
+      refs.convertToggle.removeAttribute('aria-describedby');
     }
+    if (conversionHint instanceof HTMLElement) conversionHint.hidden = !conversionUnavailable;
   }
   if (refs.notificationsToggle) {
     refs.notificationsToggle.checked = settingsStore.settings.notifications ?? true;
@@ -192,6 +185,7 @@ export const updateUIFromSettings = () => {
       if (refs.showUpdateChannelBtn) refs.showUpdateChannelBtn.classList.add('hidden');
     }
   }
+  refreshEffectiveOptionsSummary();
 };
 
 export const applyDownloadProfile = (mode: RosiSettings['downloadMode']) => {

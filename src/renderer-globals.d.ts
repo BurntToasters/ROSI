@@ -25,6 +25,7 @@ interface RosiUpdaterProgressEvent {
 // IPC shapes come from the Rust types (src/generated/ipc-types.ts).
 type RosiJobProgressEvent = import('./generated/ipc-types').JobProgressEvent;
 type RosiDownloadStats = import('./generated/ipc-types').DownloadStats;
+type RosiFormatEntry = import('./generated/ipc-types').FormatEntry;
 type RosiDownloadCompletion = import('./generated/ipc-types').DownloadCompletion;
 type RosiDownloadRequestOptions = import('./generated/ipc-types').DownloadRequestOptions;
 type RosiSettings = import('./generated/ipc-types').Settings;
@@ -33,7 +34,7 @@ type RosiDownloadActivity = RosiDownloadCompletion;
 interface RosiRendererApi {
   restartApp: () => Promise<void>;
   getChannel: () => 'github' | 'msstore';
-  getFormats: (url: string) => Promise<RosiIpcResult<string>>;
+  getFormats: (url: string) => Promise<RosiIpcResult<import('./generated/ipc-types').FormatList>>;
   getVideoInfo: (
     url: string,
     playlistMode?: 'current' | 'all'
@@ -48,6 +49,9 @@ interface RosiRendererApi {
   downloadVideo: (
     options: Partial<RosiDownloadRequestOptions>
   ) => Promise<RosiIpcResult<import('./generated/ipc-types').DownloadStarted>>;
+  resolveDownloadOptions: (
+    options: Partial<RosiDownloadRequestOptions>
+  ) => Promise<RosiIpcResult<RosiDownloadRequestOptions>>;
   cancelDownload: () => void;
   cancelFormats: () => void;
   getAppVersion: () => Promise<string>;
@@ -113,7 +117,7 @@ interface RosiRendererApi {
   startQueue: () => Promise<RosiIpcResult<{ started: boolean }>>;
   cancelQueue: () => Promise<RosiIpcResult<void>>;
   onPrepareForClose: (callback: (generation: number) => void | Promise<void>) => () => void;
-  onQueueUpdate: (callback: (queue: RosiQueueItem[]) => void) => () => void;
+  onQueueUpdate: (callback: (snapshot: RosiQueueSnapshot | RosiQueueItem[]) => void) => () => void;
   onSettingsImported: (callback: (settings: RosiSettings) => void) => () => void;
 }
 
@@ -139,13 +143,6 @@ interface RosiUiModule {
   updateConsoleVisibility: (show: boolean) => void;
 }
 
-interface RosiParsedProgress {
-  percent: number;
-  totalSize: string;
-  speed: string | null;
-  eta: string | null;
-}
-
 interface RosiActivityPanelDeps {
   showToast: (
     message: unknown,
@@ -166,7 +163,7 @@ interface RosiActivityPanel {
 
 interface RosiDownloadsModule {
   formatBytes: (bytes: number) => string;
-  parseYtdlpProgress: (message: string) => RosiParsedProgress | null;
+  formatFormatEntry: (format: RosiFormatEntry) => string;
 }
 
 interface RosiActivityModule {
@@ -177,6 +174,9 @@ interface RosiActivityModule {
 type RosiQueueItem = import('./generated/ipc-types').QueueItem & {
   progress?: RosiJobProgressEvent;
 };
+
+// `queue-update` payload. A bare array is accepted for payloads without a revision.
+type RosiQueueSnapshot = import('./generated/ipc-types').QueueSnapshot;
 
 interface RosiQueueModule {
   renderQueue: (

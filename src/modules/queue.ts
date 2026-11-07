@@ -39,6 +39,9 @@
     cancelled: 'Cancelled',
   };
 
+  // window.rosiMessages is published by engine/messages.ts before any render runs.
+  const uiMessages = () => window.rosiMessages as NonNullable<Window['rosiMessages']>;
+
   function resolveQueueSectionElement(root?: Document) {
     const doc = root ?? document;
     return doc.getElementById('queueSection') || doc.getElementById('queue-section');
@@ -254,7 +257,7 @@
       statusEl.setAttribute('aria-hidden', 'true');
       const srEl = document.createElement('span');
       srEl.className = 'sr-only';
-      srEl.textContent = statusLabel;
+      srEl.textContent = `${statusLabel}. ${uiMessages().queue[item.status]}`;
 
       const content = document.createElement('div');
       content.className = 'queue-item-content';
@@ -285,6 +288,10 @@
           `Move ${hostname} up in queue`
         );
         up.disabled = pendingIndex <= 0;
+        if (up.disabled) {
+          up.title = uiMessages().queue.first;
+          up.setAttribute('aria-description', uiMessages().queue.first);
+        }
         const down = createActionButton(
           'Down',
           'queue-item-move-down',
@@ -293,6 +300,10 @@
           `Move ${hostname} down in queue`
         );
         down.disabled = pendingIndex === pendingItems.length - 1;
+        if (down.disabled) {
+          down.title = uiMessages().queue.last;
+          down.setAttribute('aria-description', uiMessages().queue.last);
+        }
         const remove = createActionButton(
           'Remove',
           'queue-item-remove',

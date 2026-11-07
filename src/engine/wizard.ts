@@ -7,6 +7,7 @@ import {
   renderFolderSummary,
 } from './core';
 import { DENO_INSTALL_DOCS, isLinuxPlatform } from './deno';
+import { UI_MESSAGES } from './messages';
 import {
   focusFirstElement,
   focusTopOverlayOr,
@@ -99,6 +100,8 @@ export function launchSetupWizard(
   // Destination step: the folder is optional when asking every time.
   let wizardChosenFolder = settings.downloadFolder?.trim() || '';
   const wizardFolderSummary = document.getElementById('wizard-folder-summary');
+  const wizardFolderError = document.getElementById('wizard-folder-error');
+  const wizardError = document.getElementById('wizard-error');
   const wizardChooseFolderBtn = document.getElementById(
     'wizard-choose-folder'
   ) as HTMLButtonElement | null;
@@ -110,26 +113,52 @@ export function launchSetupWizard(
     if (!wizardFolderSummary) return;
     if (wizardAskLocation?.checked) {
       wizardFolderSummary.textContent = 'ROSI will ask before every download';
+      wizardFolderSummary.title = '';
       return;
     }
-    wizardFolderSummary.textContent = wizardChosenFolder || 'Choose a folder or ask each time';
+    wizardFolderSummary.textContent =
+      wizardChosenFolder || 'Choose a folder or ask before each download';
+    wizardFolderSummary.title = wizardChosenFolder;
+  };
+  const clearFolderError = () => {
+    if (wizardFolderError) {
+      wizardFolderError.textContent = '';
+      wizardFolderError.hidden = true;
+    }
+  };
+  const showFolderError = (message: string) => {
+    if (wizardFolderError) {
+      wizardFolderError.textContent = message;
+      wizardFolderError.hidden = false;
+    }
   };
   if (wizardAskLocation) {
     wizardAskLocation.checked = !!settings.askDownloadLocation;
-    wizardAskLocation.addEventListener('change', syncWizardFolderSummary);
+    wizardAskLocation.addEventListener('change', () => {
+      clearFolderError();
+      syncWizardFolderSummary();
+    });
   }
   if (wizardChooseFolderBtn) {
     wizardChooseFolderBtn.addEventListener('click', async () => {
       wizardChooseFolderBtn.disabled = true;
+      wizardChooseFolderBtn.setAttribute('aria-busy', 'true');
+      clearFolderError();
       try {
         const chosen = await window.api.selectDownloadLocation();
         if (chosen) {
           wizardChosenFolder = chosen;
           if (wizardAskLocation) wizardAskLocation.checked = false;
           syncWizardFolderSummary();
+        } else if (!wizardAskLocation?.checked) {
+          showFolderError(UI_MESSAGES.wizard.folderCancelled);
         }
+      } catch (error) {
+        logError('Wizard folder selection failed', error);
+        showFolderError(UI_MESSAGES.wizard.folderFailed);
       } finally {
         wizardChooseFolderBtn.disabled = false;
+        wizardChooseFolderBtn.removeAttribute('aria-busy');
       }
     });
   }
@@ -239,21 +268,18 @@ export function launchSetupWizard(
   }
 
   function showDenoMissing() {
-    setDenoStatus(
-      'missing',
-      "Deno isn't installed. Some YouTube videos may not download until it is."
-    );
+    setDenoStatus('missing', UI_MESSAGES.wizard.denoMissing);
     if (isLinuxPlatform()) {
-      setDenoAction('Open install instructions', () => {
+      setDenoAction(UI_MESSAGES.wizard.installInstructions, () => {
         void window.api.openExternal(DENO_INSTALL_DOCS);
       });
     } else {
-      setDenoAction('Install Deno', () => void installDenoFromWizard());
+      setDenoAction(UI_MESSAGES.wizard.installDeno, () => void installDenoFromWizard());
     }
   }
 
   async function installDenoFromWizard() {
-    setDenoStatus('installing', 'Installing Deno. This may take a moment…');
+    setDenoStatus('installing', UI_MESSAGES.wizard.denoInstalling);
     if (denoAction) denoAction.disabled = true;
     try {
       const result = await window.api.installDeno();
@@ -264,14 +290,14 @@ export function launchSetupWizard(
       if (result?.success !== true) {
         throw new Error(result?.error || 'Deno installation did not complete successfully.');
       }
-      setDenoStatus('installed', 'Deno is installed. Restart ROSI after setup to use it.');
+      setDenoStatus('installed', UI_MESSAGES.wizard.denoInstalledRestart);
       setDenoAction(null, null);
     } catch (error) {
       const message =
         (error as { error?: string })?.error ||
         (error instanceof Error ? error.message : 'Unknown error');
-      setDenoStatus('error', `Automatic install failed: ${message}`);
-      setDenoAction('Open install instructions', () => {
+      setDenoStatus('error', UI_MESSAGES.wizard.denoInstallFailed(message));
+      setDenoAction(UI_MESSAGES.wizard.installInstructions, () => {
         void window.api.openExternal(DENO_INSTALL_DOCS);
       });
     }
@@ -287,23 +313,20 @@ export function launchSetupWizard(
         denoDescription.textContent =
           'yt-dlp uses a small JavaScript runtime for full YouTube support. This Flatpak build includes its own.';
       }
-      setDenoStatus(
-        'installed',
-        'This Flatpak build includes its own JavaScript runtime. YouTube downloads are fully supported.'
-      );
+      setDenoStatus('installed', UI_MESSAGES.wizard.flatpakRuntime);
       return;
     }
-    setDenoStatus('checking', 'Checking for Deno…');
+    setDenoStatus('checking', UI_MESSAGES.wizard.denoChecking);
     try {
       if (await window.api.checkDenoInstalled()) {
-        setDenoStatus('installed', 'Deno is installed. YouTube downloads are fully supported.');
+        setDenoStatus('installed', UI_MESSAGES.wizard.denoInstalled);
       } else {
         showDenoMissing();
       }
     } catch (error) {
       logError('Wizard Deno check failed', error);
-      setDenoStatus('error', "Couldn't check for Deno.");
-      setDenoAction('Open install instructions', () => {
+      setDenoStatus('error', UI_MESSAGES.wizard.denoCheckFailed);
+      setDenoAction(UI_MESSAGES.wizard.installInstructions, () => {
         void window.api.openExternal(DENO_INSTALL_DOCS);
       });
     }
@@ -411,16 +434,16 @@ export function launchSetupWizard(
     } catch (error) {
       logError('Could not load default settings for setup skip', error);
     }
-    if (defaults) {
-      const target = settings as unknown as Record<string, unknown>;
-      const source = defaults as unknown as Record<string, unknown>;
-      WIZARD_SETTING_KEYS.forEach((key) => {
-        if (key in source) target[key] = source[key];
-      });
-    }
+    if (!defaults) return false;
+    const target = settings as unknown as Record<string, unknown>;
+    const source = defaults as unknown as Record<string, unknown>;
+    WIZARD_SETTING_KEYS.forEach((key) => {
+      if (key in source) target[key] = source[key];
+    });
     applyThemeFn(settings.theme || 'system');
     applyFlatUi(!!settings.flatUi);
     updateBackgroundAnimation(settings.animateBackground ?? true);
+    return true;
   }
 
   async function finalizeWizard(skipped: boolean): Promise<boolean> {
@@ -485,7 +508,16 @@ export function launchSetupWizard(
     if (wizardSkipping || wizardClosed) return;
     wizardSkipping = true;
     if (skipBtn) skipBtn.disabled = true;
-    await applyWizardDefaults();
+    const defaultsLoaded = await applyWizardDefaults();
+    if (!defaultsLoaded) {
+      wizardSkipping = false;
+      if (skipBtn) skipBtn.disabled = false;
+      if (wizardError) {
+        wizardError.textContent = UI_MESSAGES.wizard.defaultsFailed;
+        wizardError.hidden = false;
+      }
+      return;
+    }
     await closeWizard(true);
   }
   skipBtn?.addEventListener('click', () => void skipWizard());
@@ -504,7 +536,15 @@ export function launchSetupWizard(
       nextButton.disabled = false;
       backBtnEl.disabled = false;
       if (skipBtn) skipBtn.disabled = false;
+      if (wizardError) {
+        wizardError.textContent = UI_MESSAGES.wizard.saveFailed;
+        wizardError.hidden = false;
+      }
       return;
+    }
+    if (wizardError) {
+      wizardError.textContent = '';
+      wizardError.hidden = true;
     }
     wizardClosed = true;
     if (wizardTrapHandler) {

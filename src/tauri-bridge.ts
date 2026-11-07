@@ -70,6 +70,7 @@ const api: RosiRendererApi = {
   resetSettings: () => call('reset_settings'),
   openExternal: (url) => call('open_external', { url }),
   downloadVideo: (options) => call('download_video', { options }),
+  resolveDownloadOptions: (options) => call('resolve_download_options', { options }),
   cancelDownload: () => fire('cancel_download'),
   cancelFormats: () => fire('cancel_formats'),
   getAppVersion: () => getVersion(),

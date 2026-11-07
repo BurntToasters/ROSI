@@ -2,61 +2,53 @@
 //! that feeds queued items to the downloader one at a time.
 
 use crate::constants::MAX_QUEUE_SIZE;
-use crate::downloader::{self, CompletionCallback};
-use crate::ipc::{self, IpcResult, NOT_AVAILABLE, VALIDATION_ERROR};
+use crate::coordinator::{self, Command, QueueCommand};
+use crate::downloader;
+use crate::ipc::{
+    self, DownloadRequestOverrides, FalliblePayload, IpcResult, QueueUrlInput, QueueUrlsInput,
+    VALIDATION_ERROR,
+};
 use crate::types::{
-    DownloadCompletion, DownloadRequestOptions, Outcome, Owner, PlaylistSelection, QueueItem,
-    QueueProgress, QueueStatus, Settings,
+    DownloadCompletion, DownloadRequestOptions, Outcome, Owner, QueueItem, QueueProgress,
+    QueueStatus, Settings,
 };
 use crate::validation::{
-    normalize_queue_url, validate_download_path, validate_download_request, validate_file_location,
-    validate_queue_item_id, validate_queue_reorder,
+    normalize_queue_url, validate_file_location, validate_queue_item_id, validate_queue_reorder,
 };
 use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Condvar, Mutex, MutexGuard, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
 #[derive(Default)]
-struct QueueState {
-    items: Vec<QueueItem>,
-    revision: u64,
-    running: bool,
-    cancelled: bool,
-    active_item_id: Option<String>,
-    runner_alive: bool,
+pub(crate) struct QueueState {
+    pub(crate) items: Vec<QueueItem>,
+    pub(crate) revision: u64,
+    pub(crate) running: bool,
+    pub(crate) cancelled: bool,
+    pub(crate) active_item_id: Option<String>,
+    pub(crate) runner_alive: bool,
     /// When the current run started. Progress weighting counts only items
     /// finished during this run, not results kept from earlier runs.
-    run_started_at: u64,
+    pub(crate) run_started_at: u64,
     /// Set while `stop()` waits for the runner to exit, so a start cannot
     /// replace that runner and leave `stop()` waiting on the new one.
-    stopping: bool,
+    pub(crate) stopping: bool,
 }
 
 static QUEUE: OnceLock<Mutex<QueueState>> = OnceLock::new();
-/// Serialize queue snapshots through their event emission. This is acquired
-/// before the queue lock and never while holding queue state.
-static QUEUE_PUBLICATION: Mutex<()> = Mutex::new(());
 const MAX_QUEUE_FILE_BYTES: usize = 32 * 1024 * 1024;
 // Reserve space for completion paths, filenames, and error messages.
-const MAX_QUEUE_ADMISSION_BYTES: usize = 24 * 1024 * 1024;
+pub(crate) const MAX_QUEUE_ADMISSION_BYTES: usize = 24 * 1024 * 1024;
 const MAX_QUEUE_URL_BYTES: usize = 64 * 1024;
-/// Serializes the runner's "is the queue still running? then start" step
-/// against cancel/clear/stop, so a cancel can never land between the check and
-/// `start_download`. Never acquired while holding the queue lock.
-static START_GUARD: Mutex<()> = Mutex::new(());
-static RUNNER_CHANGED: Condvar = Condvar::new();
-
 struct RunnerFinished;
 
 impl Drop for RunnerFinished {
     fn drop(&mut self) {
-        state().runner_alive = false;
-        RUNNER_CHANGED.notify_all();
+        coordinator::submit(Command::Queue(QueueCommand::RunnerExited));
     }
 }
-static PERSIST_SIGNAL: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
 
 fn queue_path() -> std::path::PathBuf {
     crate::app_state::data_dir().join("download-queue.json")
@@ -191,15 +183,14 @@ fn persistence() -> &'static QueuePersistence {
     })
 }
 
-fn revisioned_snapshot(increment_revision: bool) -> (u64, Vec<QueueItem>) {
-    let mut queue = state();
+pub(crate) fn revisioned_snapshot(queue: &mut QueueState, increment_revision: bool) -> (u64, Vec<QueueItem>) {
     if increment_revision {
         queue.revision = queue.revision.saturating_add(1);
     }
     (queue.revision, queue.items.clone())
 }
 
-fn state() -> MutexGuard<'static, QueueState> {
+pub(crate) fn state() -> MutexGuard<'static, QueueState> {
     QUEUE
         .get_or_init(|| {
             Mutex::new(QueueState {
@@ -319,42 +310,97 @@ fn load_persisted() -> Vec<QueueItem> {
     Vec::new()
 }
 
-/// Debounced (300 ms) background persistence.
-fn schedule_persist() {
-    static WORKER: OnceLock<()> = OnceLock::new();
-    WORKER.get_or_init(|| {
-        std::thread::spawn(|| loop {
-            {
-                let (lock, signal) = &PERSIST_SIGNAL;
-                let mut pending = lock.lock().unwrap_or_else(|p| p.into_inner());
-                while !*pending {
-                    pending = signal.wait(pending).unwrap_or_else(|p| p.into_inner());
+/// Commands for the single queue writer. `Debounced` asks for a write after
+/// the settle window; `Flush` writes now and acknowledges the durable revision.
+enum WriteRequest {
+    Debounced,
+    Flush(std::sync::mpsc::SyncSender<Result<u64, String>>),
+}
+
+const PERSIST_DEBOUNCE: Duration = Duration::from_millis(300);
+
+/// The one thread that writes queue files. Writes never overlap: debounced
+/// requests are coalesced, and a flush is served from the latest state.
+fn writer() -> &'static std::sync::mpsc::Sender<WriteRequest> {
+    static WRITER: OnceLock<std::sync::mpsc::Sender<WriteRequest>> = OnceLock::new();
+    WRITER.get_or_init(|| {
+        let (sender, receiver) = std::sync::mpsc::channel::<WriteRequest>();
+        std::thread::spawn(move || writer_loop(receiver));
+        sender
+    })
+}
+
+fn writer_loop(receiver: std::sync::mpsc::Receiver<WriteRequest>) {
+    while let Ok(first) = receiver.recv() {
+        let mut flushes = Vec::new();
+        match first {
+            WriteRequest::Flush(ack) => flushes.push(ack),
+            WriteRequest::Debounced => {
+                // A flush arriving inside the window ends it early.
+                let deadline = std::time::Instant::now() + PERSIST_DEBOUNCE;
+                loop {
+                    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                    match receiver.recv_timeout(remaining) {
+                        Ok(WriteRequest::Flush(ack)) => {
+                            flushes.push(ack);
+                            break;
+                        }
+                        Ok(WriteRequest::Debounced) => {}
+                        Err(_) => break,
+                    }
                 }
             }
-            std::thread::sleep(Duration::from_millis(300));
-            {
-                let (lock, _) = &PERSIST_SIGNAL;
-                *lock.lock().unwrap_or_else(|p| p.into_inner()) = false;
+        }
+        while let Ok(next) = receiver.try_recv() {
+            if let WriteRequest::Flush(ack) = next {
+                flushes.push(ack);
             }
-            let (revision, snapshot) = revisioned_snapshot(false);
+        }
+        if flushes.is_empty() {
+            let Some((revision, snapshot)) = coordinator::request(|reply| {
+                Command::Queue(QueueCommand::Snapshot { bump: false, reply })
+            }) else {
+                continue;
+            };
             if let Err(error) = persistence().persist(revision, snapshot) {
                 crate::logging::error(&format!(
                     "Failed to persist queue revision {revision}: {error}"
                 ));
             }
-        });
-    });
-    let (lock, signal) = &PERSIST_SIGNAL;
-    *lock.lock().unwrap_or_else(|p| p.into_inner()) = true;
-    signal.notify_one();
+            continue;
+        }
+        let Some((revision, snapshot)) = coordinator::request(|reply| {
+            Command::Queue(QueueCommand::Snapshot { bump: true, reply })
+        }) else {
+            for ack in flushes {
+                let _ = ack.send(Err("Queue coordinator is not running.".into()));
+            }
+            continue;
+        };
+        let result = persistence().flush(revision, snapshot).map(|()| revision);
+        for ack in flushes {
+            let _ = ack.send(result.clone());
+        }
+    }
+}
+
+/// Debounced (300 ms) background persistence.
+pub(crate) fn schedule_persist() {
+    let _ = writer().send(WriteRequest::Debounced);
 }
 
 /// Durably write the latest queue. A queue file owned by a newer ROSI version
 /// is never rewritten; it is already the preserved state, so its refusal does
 /// not block closing, restarting, or installing an update.
 pub fn flush() -> Result<(), String> {
-    let (revision, snapshot) = revisioned_snapshot(true);
-    match persistence().flush(revision, snapshot) {
+    let (ack, acknowledged) = std::sync::mpsc::sync_channel(1);
+    let result = match writer().send(WriteRequest::Flush(ack)) {
+        Ok(()) => acknowledged
+            .recv()
+            .unwrap_or_else(|_| Err("Queue writer stopped before saving.".into())),
+        Err(_) => Err("Queue writer is not running.".into()),
+    };
+    match result {
         Err(_)
             if crate::fs_util::is_newer_schema_file(&queue_path(), MAX_QUEUE_FILE_BYTES as u64) =>
         {
@@ -363,7 +409,7 @@ pub fn flush() -> Result<(), String> {
             );
             Ok(())
         }
-        result => result,
+        result => result.map(|_| ()),
     }
 }
 
@@ -382,90 +428,12 @@ pub fn init() {
     drop(state());
 }
 
-fn broadcast() {
-    let publication = QUEUE_PUBLICATION
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let (_, items) = revisioned_snapshot(true);
-    crate::app_state::emit("queue-update", items);
-    drop(publication);
-    schedule_persist();
-}
-
-fn resolve_output_path(settings: &Settings) -> String {
-    let configured = settings.download_folder.trim();
-    if !configured.is_empty() {
-        if let Ok(path) = validate_download_path(configured) {
-            if !path.is_empty() {
-                return path;
-            }
-        }
-    }
-    crate::app_state::downloads_dir()
-        .to_string_lossy()
-        .into_owned()
-}
-
-fn request_from_settings(url: &str, settings: &Settings) -> DownloadRequestOptions {
-    DownloadRequestOptions {
-        url: url.to_string(),
-        output_path: resolve_output_path(settings),
-        ffmpeg_path: Some(settings.ffmpeg_path.clone()).filter(|path| !path.is_empty()),
-        convert_enabled: Some(settings.convert_enabled),
-        convert_format: Some(settings.convert_format.clone()),
-        keep_original: Some(settings.keep_original_after_convert),
-        playlist: Some(PlaylistSelection {
-            mode: "current".into(),
-            start: None,
-            end: None,
-        }),
-        profile: Some(settings.download_mode.as_str().to_string()),
-        best_quality: Some(settings.best_quality),
-        advanced_options: Some(settings.advanced_options),
-        audio_only: Some(settings.audio_only),
-        audio_output_format: Some(settings.audio_format.clone()),
-        hook_browser: Some(settings.hook_browser),
-        browser_choice: Some(settings.browser_choice.clone()),
-        gpu_acceleration: Some(settings.gpu_acceleration),
-        gpu_type: Some(settings.gpu_type.as_str().to_string()),
-        write_subtitles: Some(settings.write_subtitles),
-        subtitle_langs: Some(settings.subtitle_langs.clone()),
-        embed_thumbnail: Some(settings.embed_thumbnail),
-        embed_metadata: Some(settings.embed_metadata),
-        sponsorblock_remove: Some(settings.sponsorblock_remove),
-        ..DownloadRequestOptions::default()
-    }
-}
-
 fn build_request(
     url: &str,
     settings: &Settings,
     overrides: Option<&Map<String, Value>>,
 ) -> Result<DownloadRequestOptions, crate::ipc::IpcError> {
-    let mut candidate = match serde_json::to_value(request_from_settings(url, settings)) {
-        Ok(Value::Object(map)) => map,
-        _ => Map::new(),
-    };
-    let preset_id = overrides
-        .and_then(|map| map.get("presetId"))
-        .and_then(Value::as_str)
-        .map(str::trim);
-    if let Some(preset) =
-        preset_id.and_then(|id| settings.download_presets.iter().find(|p| p.id == id))
-    {
-        candidate.extend(crate::settings::preset_to_request_options(preset));
-    }
-    if let Some(overrides) = overrides {
-        for (key, value) in overrides {
-            if !value.is_null() {
-                candidate.insert(key.clone(), value.clone());
-            }
-        }
-    }
-    candidate.insert("url".into(), Value::String(url.to_string()));
-    // Always validate: a snapshot that cannot be re-validated later would be
-    // silently discarded on reload and would never reach the activity log.
-    validate_download_request(&Value::Object(candidate))
+    crate::download_options::resolve_queue_request(settings, url, overrides)
 }
 
 fn resolve_request(item: &QueueItem) -> DownloadRequestOptions {
@@ -489,12 +457,12 @@ fn resolve_request(item: &QueueItem) -> DownloadRequestOptions {
                 "Running queued {} from unvalidated settings-derived options.",
                 item.url
             ));
-            request_from_settings(&item.url, &settings)
+            crate::download_options::request_from_settings(&item.url, &settings)
         }
     }
 }
 
-fn clear_attempt(item: &mut QueueItem) {
+pub(crate) fn clear_attempt(item: &mut QueueItem) {
     item.started_at = None;
     item.completed_at = None;
     item.filename = None;
@@ -534,7 +502,7 @@ fn synthetic_completion(
     }
 }
 
-fn apply_completion(item: &mut QueueItem, completion: &DownloadCompletion) {
+pub(crate) fn apply_completion(item: &mut QueueItem, completion: &DownloadCompletion) {
     item.status = match completion.outcome {
         Outcome::Success => QueueStatus::Completed,
         Outcome::Failed => QueueStatus::Failed,
@@ -552,7 +520,7 @@ fn apply_completion(item: &mut QueueItem, completion: &DownloadCompletion) {
 
 /// Apply a completion to the matching item (if still present). Returns true
 /// when this completion ended the run.
-fn apply_completion_in_state(
+pub(crate) fn apply_completion_in_state(
     queue: &mut QueueState,
     item_id: &str,
     completion: &DownloadCompletion,
@@ -570,7 +538,7 @@ fn apply_completion_in_state(
 /// the same lock as the completion, so a retry after this point sees the run
 /// as over and leaves its item pending. The runner thread exits on its own.
 /// Returns true when this call ended the run.
-fn end_run_if_drained(queue: &mut QueueState) -> bool {
+pub(crate) fn end_run_if_drained(queue: &mut QueueState) -> bool {
     let has_work = queue
         .items
         .iter()
@@ -585,7 +553,7 @@ fn end_run_if_drained(queue: &mut QueueState) -> bool {
 
 /// Claim the next pending item for the runner. When nothing can be claimed,
 /// the runner's run is over, so the state is reset and `None` is returned.
-fn claim_next_in_state(queue: &mut QueueState) -> Option<QueueItem> {
+pub(crate) fn claim_next_in_state(queue: &mut QueueState) -> Option<QueueItem> {
     let next_index = queue
         .items
         .iter()
@@ -609,87 +577,82 @@ fn claim_next_in_state(queue: &mut QueueState) -> Option<QueueItem> {
     }
 }
 
-/// Whether `start_queue` should wait for a runner that is still exiting after
-/// its run drained. A stop in progress is never waited on: `stop()` waits for
-/// the runner to exit too, and a start must not replace that runner first.
-fn start_waits_for_exit(queue: &QueueState) -> bool {
-    queue.runner_alive && !queue.running && !queue.stopping
-}
-
-/// Apply a completion to the matching item (if still present) and record it.
+/// Record a session's terminal result for its item. The coordinator applies it
+/// and publishes the queue; the activity record follows.
 fn finish_item(item_id: &str, completion: DownloadCompletion) {
-    {
-        let mut queue = state();
-        apply_completion_in_state(&mut queue, item_id, &completion);
-    }
+    let _ = coordinator::request(|reply| {
+        Command::Queue(QueueCommand::ItemFinished {
+            item_id: item_id.to_string(),
+            completion: Box::new(completion.clone()),
+            reply,
+        })
+    });
     crate::activity::record(&completion);
-    broadcast();
 }
 
-/// Record a cancelled outcome for an item the runner claimed but never
-/// started, if the item is still in the queue (a cleared queue records nothing).
-fn finish_unstarted_item(item: &QueueItem, request: &DownloadRequestOptions) {
-    let completion = synthetic_completion(item, request, Outcome::Cancelled, "⏹️ Cancelled.");
-    {
-        let mut queue = state();
-        if queue.active_item_id.as_deref() == Some(item.id.as_str()) {
-            queue.active_item_id = None;
-        }
-        let Some(entry) = queue
-            .items
-            .iter_mut()
-            .find(|entry| entry.id == item.id && entry.status == QueueStatus::Downloading)
+/// Progress for an item the runner is about to start: items finished during
+/// this run plus everything still pending or downloading.
+pub(crate) fn progress_for(queue: &QueueState, item_id: &str) -> QueueProgress {
+    let run_started_at = queue.run_started_at;
+    let finished_this_run = |entry: &&QueueItem| {
+        matches!(
+            entry.status,
+            QueueStatus::Completed | QueueStatus::Failed | QueueStatus::Cancelled
+        ) && entry
+            .completed_at
+            .is_some_and(|completed| completed >= run_started_at)
+    };
+    let completed_items = queue.items.iter().filter(finished_this_run).count();
+    let remaining = queue
+        .items
+        .iter()
+        .filter(|entry| {
+            matches!(
+                entry.status,
+                QueueStatus::Pending | QueueStatus::Downloading
+            )
+        })
+        .count();
+    QueueProgress {
+        completed_items,
+        queue_total: completed_items + remaining,
+        queue_item_id: Some(item_id.to_string()),
+    }
+}
+
+/// Non-terminal URLs, checked before building requests so duplicates are
+/// skipped without reading settings. The coordinator checks again at admission.
+fn nonterminal_urls() -> HashSet<String> {
+    state()
+        .items
+        .iter()
+        .filter(|item| matches!(item.status, QueueStatus::Pending | QueueStatus::Downloading))
+        .map(|item| item.url.clone())
+        .collect()
+}
+
+/// Runner thread for one queue run. It does the settings, request, and
+/// download waits; every queue transition is a coordinator request.
+pub(crate) fn run_queue() {
+    let _finished = RunnerFinished;
+    loop {
+        let Some(Some(item)) =
+            coordinator::request(|reply| Command::Queue(QueueCommand::ClaimNext { reply }))
         else {
             return;
         };
-        apply_completion(entry, &completion);
-        end_run_if_drained(&mut queue);
-    }
-    crate::activity::record(&completion);
-    broadcast();
-}
-
-fn run_queue() {
-    let _finished = RunnerFinished;
-    loop {
-        let next = claim_next_in_state(&mut state());
-        let Some(item) = next else {
-            broadcast();
-            return;
-        };
-        broadcast();
-
         let request = resolve_request(&item);
-        let progress = {
-            let mut queue = state();
-            if let Some(current) = queue.items.iter_mut().find(|entry| entry.id == item.id) {
-                current.request = Some(request.clone());
-            }
-            let run_started_at = queue.run_started_at;
-            let finished_this_run = |entry: &&QueueItem| {
-                matches!(
-                    entry.status,
-                    QueueStatus::Completed | QueueStatus::Failed | QueueStatus::Cancelled
-                ) && entry
-                    .completed_at
-                    .is_some_and(|completed| completed >= run_started_at)
-            };
-            let completed_items = queue.items.iter().filter(finished_this_run).count();
-            let remaining = queue
-                .items
-                .iter()
-                .filter(|entry| {
-                    matches!(
-                        entry.status,
-                        QueueStatus::Pending | QueueStatus::Downloading
-                    )
-                })
-                .count();
-            QueueProgress {
-                completed_items,
-                queue_total: completed_items + remaining,
-                queue_item_id: Some(item.id.clone()),
-            }
+        let resolved =
+            crate::download_options::resolve_validated(&crate::settings::load(), request);
+        let request = resolved.request.clone();
+        let Some(progress) = coordinator::request(|reply| {
+            Command::Queue(QueueCommand::Prepare {
+                item_id: item.id.clone(),
+                request: Box::new(request.clone()),
+                reply,
+            })
+        }) else {
+            return;
         };
         if crate::app_state::main_window().is_none() {
             finish_item(
@@ -698,63 +661,71 @@ fn run_queue() {
             );
             continue;
         }
-        let (sender, receiver) = std::sync::mpsc::channel::<()>();
-        let item_id = item.id.clone();
-        let completion_sender = sender.clone();
-        let mut on_complete: Option<CompletionCallback> = Some(Box::new(move |completion| {
-            finish_item(&item_id, completion);
-            let _ = completion_sender.send(());
-        }));
-        drop(sender);
+        let (completion_sink, completions) = std::sync::mpsc::channel::<DownloadCompletion>();
         let started = loop {
-            let attempt = {
-                let _guard = START_GUARD.lock().unwrap_or_else(|p| p.into_inner());
-                let still_wanted = {
-                    let queue = state();
-                    queue.running
-                        && !queue.cancelled
-                        && queue.items.iter().any(|entry| {
-                            entry.id == item.id && entry.status == QueueStatus::Downloading
-                        })
-                };
-                if !still_wanted {
-                    None
-                } else if !downloader::can_start(Owner::Queue) {
-                    // A manual download that was accepted just before the queue
-                    // started still holds the slot. Wait for it instead of
-                    // failing this and every later item.
-                    Some(None)
-                } else {
-                    let callback = on_complete.take().expect("queue callback is used once");
-                    Some(Some(downloader::start_download(
-                        request.clone(),
-                        Owner::Queue,
-                        Some(progress.clone()),
-                        callback,
-                    )))
+            let wanted = coordinator::request(|reply| {
+                Command::Queue(QueueCommand::Attempt {
+                    item_id: item.id.clone(),
+                    reply,
+                })
+            })
+            .unwrap_or(false);
+            if !wanted {
+                break false;
+            }
+            if let Some(blocking) = downloader::blocking_session(Owner::Queue) {
+                // A manual download that was accepted just before the queue
+                // started still holds the slot. Wait for its finalization ack
+                // instead of failing this and every later item.
+                coordinator::await_finalized(Some(blocking));
+                continue;
+            }
+            match downloader::start_download(
+                resolved.clone(),
+                Owner::Queue,
+                Some(progress.clone()),
+                completion_sink.clone(),
+            ) {
+                Ok(_session_id) => {
+                    // A cancel that landed while the session was starting
+                    // applies to it now, from this thread.
+                    if let Some(Some(notify)) = coordinator::request(|reply| {
+                        Command::Queue(QueueCommand::SessionStarted { reply })
+                    }) {
+                        downloader::cancel_active_session(notify);
+                    }
+                    break true;
                 }
-            };
-            match attempt {
-                Some(None) => std::thread::sleep(Duration::from_millis(250)),
-                Some(Some(Err(conflict))) => {
-                    on_complete = Some(conflict.on_complete);
-                    std::thread::sleep(Duration::from_millis(250));
-                }
-                Some(Some(Ok(session_id))) => break Some(session_id),
-                None => break None,
+                Err(conflict) => coordinator::await_finalized(Some(conflict.session_id)),
             }
         };
-        match started {
-            // Cancelled or cleared before the download started: the runner
-            // owns this item, so it records exactly one outcome for it.
-            None => finish_unstarted_item(&item, &request),
-            // The callback always runs exactly once per started session.
-            Some(_session_id) => {
-                let _ = receiver.recv();
+        // Once started, the coordinator holds the only remaining sender, so
+        // this receive ends when the session's terminal result is delivered.
+        drop(completion_sink);
+        if !started {
+            // Cancelled or cleared before the download started: the runner owns
+            // this item, so it records exactly one outcome for it.
+            let completion =
+                synthetic_completion(&item, &request, Outcome::Cancelled, "⏹️ Cancelled.");
+            let recorded = coordinator::request(|reply| {
+                Command::Queue(QueueCommand::ItemUnstarted {
+                    item_id: item.id.clone(),
+                    completion: Box::new(completion.clone()),
+                    reply,
+                })
+            })
+            .unwrap_or(false);
+            if recorded {
+                crate::activity::record(&completion);
             }
+            continue;
+        }
+        if let Ok(completion) = completions.recv() {
+            finish_item(&item.id, completion);
         }
     }
 }
+
 
 #[cfg(test)]
 mod persistence_tests {
@@ -1149,84 +1120,56 @@ pub fn is_running() -> bool {
 /// The interrupted item goes back to pending, so it runs again on the next
 /// start instead of looking like the user cancelled it.
 pub fn stop() {
-    let _guard = START_GUARD.lock().unwrap_or_else(|p| p.into_inner());
-    let interrupted = {
-        let mut queue = state();
-        queue.cancelled = true;
-        queue.running = false;
-        queue.stopping = true;
-        queue.active_item_id.take()
-    };
-    downloader::cancel_active_session(false);
-    downloader::kill_all_processes();
-    // The claimed-but-unstarted item must acquire START_GUARD to finish.
-    drop(_guard);
-    let mut queue = state();
-    while queue.runner_alive {
-        queue = RUNNER_CHANGED
-            .wait(queue)
-            .unwrap_or_else(|p| p.into_inner());
-    }
-    let requeued = interrupted.is_some_and(|id| {
-        queue
-            .items
-            .iter_mut()
-            .find(|item| item.id == id && item.status == QueueStatus::Cancelled)
-            .map(|item| {
-                clear_attempt(item);
-                item.status = QueueStatus::Pending;
-            })
-            .is_some()
-    });
-    queue.stopping = false;
-    drop(queue);
-    if requeued {
-        broadcast();
-    }
+    coordinator::stop();
 }
 
 #[derive(serde::Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct AddResult {
-    added: usize,
-    skipped: usize,
+    pub(crate) added: usize,
+    pub(crate) skipped: usize,
 }
 
 #[tauri::command(async)]
-pub fn add_to_queue(urls: Value, options: Option<Value>) -> IpcResult<AddResult> {
-    let Some(urls) = urls.as_array() else {
-        return ipc::err(VALIDATION_ERROR, "URLs must be an array.");
+pub fn add_to_queue(
+    urls: FalliblePayload<QueueUrlsInput>,
+    options: Option<FalliblePayload<DownloadRequestOverrides>>,
+) -> IpcResult<AddResult> {
+    let urls = match urls {
+        FalliblePayload::Typed(urls) => urls.0,
+        FalliblePayload::Invalid(_) => return ipc::err(VALIDATION_ERROR, "URLs must be an array."),
     };
+    let options = options
+        .map(FalliblePayload::into_value)
+        .unwrap_or(Value::Null);
     let overrides = match &options {
-        None | Some(Value::Null) => None,
-        Some(Value::Object(map)) => Some(map),
-        Some(_) => return ipc::err(VALIDATION_ERROR, "Queue request options must be an object."),
+        Value::Null => None,
+        Value::Object(map) => Some(map),
+        _ => return ipc::err(VALIDATION_ERROR, "Queue request options must be an object."),
     };
     let settings = crate::settings::load();
-    let mut queue = state();
-    let nonterminal: HashSet<String> = queue
-        .items
-        .iter()
-        .filter(|item| {
-            item.status == QueueStatus::Pending || item.status == QueueStatus::Downloading
-        })
-        .map(|item| item.url.clone())
-        .collect();
+    let nonterminal = nonterminal_urls();
     let mut batch = HashSet::new();
     let mut pending = Vec::new();
     let input_count = urls.len();
     let mut valid = 0;
     let mut skipped = 0;
     for raw in urls {
-        if raw
-            .as_str()
-            .is_some_and(|url| url.len() > MAX_QUEUE_URL_BYTES)
-        {
-            return ipc::err(VALIDATION_ERROR, "Queue URLs must not exceed 64 KiB.");
-        }
-        let Some(url) = raw.as_str().and_then(normalize_queue_url) else {
-            skipped += 1;
-            continue;
+        let url = match raw {
+            QueueUrlInput::Text(raw) if raw.len() > MAX_QUEUE_URL_BYTES => {
+                return ipc::err(VALIDATION_ERROR, "Queue URLs must not exceed 64 KiB.");
+            }
+            QueueUrlInput::Text(raw) => match normalize_queue_url(&raw) {
+                Some(url) => url,
+                None => {
+                    skipped += 1;
+                    continue;
+                }
+            },
+            QueueUrlInput::Other(_) => {
+                skipped += 1;
+                continue;
+            }
         };
         valid += 1;
         if nonterminal.contains(&url) || batch.contains(&url) {
@@ -1265,115 +1208,31 @@ pub fn add_to_queue(urls: Value, options: Option<Value>) -> IpcResult<AddResult>
         }
         return ipc::err(VALIDATION_ERROR, "No valid URLs provided.");
     }
-    if queue.items.len() + pending.len() > MAX_QUEUE_SIZE {
-        return ipc::err(
-            VALIDATION_ERROR,
-            format!("Queue limit reached (max {MAX_QUEUE_SIZE} items)."),
-        );
-    }
-    let added = pending.len();
-    if added > 0 {
-        let candidate: Vec<&QueueItem> = queue.items.iter().chain(pending.iter()).collect();
-        match crate::fs_util::encode_list(&candidate) {
-            Ok(encoded) if encoded.len() <= MAX_QUEUE_ADMISSION_BYTES => {}
-            Ok(_) => return ipc::err(VALIDATION_ERROR, "Queue storage limit reached. Remove items or shorten URLs before adding this batch."),
-            Err(_) => return ipc::err(VALIDATION_ERROR, "Could not encode the queue; no items were added."),
-        }
-        queue.items.extend(pending);
-        drop(queue);
-        broadcast();
-    }
-    ipc::ok(AddResult { added, skipped })
+    coordinator::admit_items(pending, skipped)
 }
 
 #[tauri::command(async)]
 pub fn remove_from_queue(id: Value) -> IpcResult<()> {
-    let id = match validate_queue_item_id(&id) {
-        Ok(id) => id,
-        Err(error) => return ipc::from_error(error),
-    };
-    let mut queue = state();
-    let Some(index) = queue.items.iter().position(|item| item.id == id) else {
-        return ipc::err(NOT_AVAILABLE, "Queue item not found.");
-    };
-    if queue.items[index].status == QueueStatus::Downloading {
-        return ipc::err(
-            VALIDATION_ERROR,
-            "Cannot remove an actively downloading item.",
-        );
+    match validate_queue_item_id(&id) {
+        Ok(id) => coordinator::remove_item(id),
+        Err(error) => ipc::from_error(error),
     }
-    queue.items.remove(index);
-    drop(queue);
-    broadcast();
-    ipc::ok(())
 }
 
 #[tauri::command(async)]
 pub fn retry_queue_item(id: Value) -> IpcResult<()> {
-    let id = match validate_queue_item_id(&id) {
-        Ok(id) => id,
-        Err(error) => return ipc::from_error(error),
-    };
-    let mut queue = state();
-    let Some(item) = queue.items.iter_mut().find(|item| item.id == id) else {
-        return ipc::err(NOT_AVAILABLE, "Queue item not found.");
-    };
-    if item.status != QueueStatus::Failed && item.status != QueueStatus::Cancelled {
-        return ipc::err(
-            VALIDATION_ERROR,
-            "Only failed or cancelled queue items can be retried.",
-        );
+    match validate_queue_item_id(&id) {
+        Ok(id) => coordinator::retry_item(id),
+        Err(error) => ipc::from_error(error),
     }
-    clear_attempt(item);
-    item.status = QueueStatus::Pending;
-    drop(queue);
-    broadcast();
-    ipc::ok(())
 }
 
 #[tauri::command(async)]
 pub fn reorder_queue_item(request: Value) -> IpcResult<()> {
-    let (id, up) = match validate_queue_reorder(&request) {
-        Ok(parsed) => parsed,
-        Err(error) => return ipc::from_error(error),
-    };
-    let mut queue = state();
-    let Some(index) = queue.items.iter().position(|item| item.id == id) else {
-        return ipc::err(NOT_AVAILABLE, "Queue item not found.");
-    };
-    if queue.items[index].status != QueueStatus::Pending {
-        return ipc::err(
-            VALIDATION_ERROR,
-            "Only pending queue items can be reordered.",
-        );
+    match validate_queue_reorder(&request) {
+        Ok((id, up)) => coordinator::reorder_item(id, up),
+        Err(error) => ipc::from_error(error),
     }
-    let pending: Vec<usize> = queue
-        .items
-        .iter()
-        .enumerate()
-        .filter(|(_, item)| item.status == QueueStatus::Pending)
-        .map(|(position, _)| position)
-        .collect();
-    let position = pending
-        .iter()
-        .position(|candidate| *candidate == index)
-        .unwrap_or(0);
-    let destination = if up {
-        position.checked_sub(1)
-    } else {
-        Some(position + 1)
-    }
-    .and_then(|slot| pending.get(slot).copied());
-    let Some(destination) = destination else {
-        return ipc::err(
-            NOT_AVAILABLE,
-            format!("Queue item cannot move {}.", if up { "up" } else { "down" }),
-        );
-    };
-    queue.items.swap(index, destination);
-    drop(queue);
-    broadcast();
-    ipc::ok(())
 }
 
 #[tauri::command]
@@ -1384,50 +1243,36 @@ pub async fn clear_queue() -> IpcResult<()> {
 }
 
 fn clear_queue_blocking() -> IpcResult<()> {
-    let _guard = START_GUARD.lock().unwrap_or_else(|p| p.into_inner());
-    let was_running = {
-        let mut queue = state();
-        let running = queue.running;
-        if running {
-            queue.cancelled = true;
-            queue.running = false;
-            queue.active_item_id = None;
-        }
-        running
+    let Some(was_running) =
+        coordinator::request(|reply| Command::Queue(QueueCommand::ClearBegin { reply }))
+    else {
+        return ipc::err(crate::ipc::INTERNAL_ERROR, "Queue coordinator is not running.");
     };
     if was_running {
+        // Completes the running session synchronously; its result reaches the
+        // runner, which records the cancelled outcome.
         downloader::cancel_active_session(true);
     }
-    {
-        let mut queue = state();
-        queue.items.clear();
+    match coordinator::request(|reply| Command::Queue(QueueCommand::ClearItems { reply })) {
+        Some(()) => ipc::ok(()),
+        None => ipc::err(crate::ipc::INTERNAL_ERROR, "Queue coordinator is not running."),
     }
-    broadcast();
-    ipc::ok(())
 }
 
 /// Remove every completed, failed or cancelled item. Pending and active items
 /// stay, so this never interrupts a run.
 #[tauri::command(async)]
 pub fn clear_finished_queue() -> IpcResult<RemovedCount> {
-    let removed = {
-        let mut queue = state();
-        let before = queue.items.len();
-        queue
-            .items
-            .retain(|item| matches!(item.status, QueueStatus::Pending | QueueStatus::Downloading));
-        before - queue.items.len()
-    };
-    if removed > 0 {
-        broadcast();
+    match coordinator::clear_finished_items() {
+        Some(removed) => ipc::ok(RemovedCount { removed }),
+        None => ipc::err(crate::ipc::INTERNAL_ERROR, "Queue coordinator is not running."),
     }
-    ipc::ok(RemovedCount { removed })
 }
 
 #[derive(serde::Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct RemovedCount {
-    removed: usize,
+    pub(crate) removed: usize,
 }
 
 #[tauri::command(async)]
@@ -1435,53 +1280,16 @@ pub fn get_queue() -> Vec<QueueItem> {
     state().items.clone()
 }
 
-/// Longest a start waits for the previous runner to exit after its run drained.
-/// The runner exits within a loop turn, so this only bounds a stuck runner.
-const RUNNER_EXIT_WAIT: Duration = Duration::from_secs(2);
-
 #[tauri::command(async)]
 pub fn start_queue() -> IpcResult<Started> {
-    let (mut queue, _) = RUNNER_CHANGED
-        .wait_timeout_while(state(), RUNNER_EXIT_WAIT, |queue| {
-            start_waits_for_exit(queue)
-        })
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if !queue
-        .items
-        .iter()
-        .any(|item| item.status == QueueStatus::Pending)
-    {
-        return ipc::err(NOT_AVAILABLE, "No pending items in queue.");
-    }
-    if queue.stopping {
-        return ipc::err(NOT_AVAILABLE, "Queue is stopping.");
-    }
-    if queue.running {
-        return ipc::err(VALIDATION_ERROR, "Queue is already running.");
-    }
-    if queue.runner_alive {
-        return ipc::err(
-            NOT_AVAILABLE,
-            "Queue is still finishing. Try again shortly.",
-        );
-    }
-    if !downloader::can_start(Owner::Queue) {
-        return ipc::err(NOT_AVAILABLE, "A manual download is already in progress.");
-    }
-    queue.running = true;
-    queue.cancelled = false;
-    queue.runner_alive = true;
-    queue.run_started_at = crate::app_state::now_ms();
-    drop(queue);
-    std::thread::spawn(run_queue);
-    ipc::ok(Started { started: true })
+    coordinator::start()
 }
 
 #[derive(serde::Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(rename = "QueueStarted"))]
 pub struct Started {
-    started: bool,
+    pub(crate) started: bool,
 }
 
 #[tauri::command]
@@ -1492,58 +1300,57 @@ pub async fn cancel_queue() -> IpcResult<()> {
 }
 
 fn cancel_queue_blocking() -> IpcResult<()> {
-    let _guard = START_GUARD.lock().unwrap_or_else(|p| p.into_inner());
-    let active = {
-        let mut queue = state();
-        queue.cancelled = true;
-        queue.running = false;
-        queue.active_item_id.clone()
+    let Some(active) =
+        coordinator::request(|reply| Command::Queue(QueueCommand::CancelBegin { reply }))
+    else {
+        return ipc::err(crate::ipc::INTERNAL_ERROR, "Queue coordinator is not running.");
     };
-    if active.is_some() {
-        // Completes the running session synchronously; its callback records
-        // the item's single cancelled outcome.
+    if active {
+        // Completes the running session synchronously; its result reaches the
+        // runner, which records the item's single cancelled outcome.
         downloader::cancel_active_session(true);
     }
-    // A "downloading" item without a session belongs to the runner, which
-    // records it once it sees the cancel. Only untouched items are cancelled
-    // here, so no item is ever recorded twice.
-    let remaining: Vec<QueueItem> = state()
-        .items
+    // A pending item belongs to no runner, so the handler records it here.
+    let Some((_, items)) =
+        coordinator::request(|reply| Command::Queue(QueueCommand::Snapshot { bump: false, reply }))
+    else {
+        return ipc::err(crate::ipc::INTERNAL_ERROR, "Queue coordinator is not running.");
+    };
+    let completions: Vec<(String, DownloadCompletion)> = items
         .iter()
         .filter(|item| item.status == QueueStatus::Pending)
-        .cloned()
+        .map(|item| {
+            let request = resolve_request(item);
+            (
+                item.id.clone(),
+                synthetic_completion(item, &request, Outcome::Cancelled, "⏹️ Cancelled."),
+            )
+        })
         .collect();
-    let mut completions = Vec::new();
-    for item in &remaining {
-        let request = resolve_request(item);
-        completions.push((
-            item.id.clone(),
-            synthetic_completion(item, &request, Outcome::Cancelled, "⏹️ Cancelled."),
-        ));
-    }
+    let records: Vec<DownloadCompletion> = completions
+        .iter()
+        .map(|(_, completion)| completion.clone())
+        .collect();
+    if coordinator::request(|reply| {
+        Command::Queue(QueueCommand::CancelApply {
+            completions,
+            reply,
+        })
+    })
+    .is_none()
     {
-        let mut queue = state();
-        for (id, completion) in &completions {
-            if let Some(item) = queue
-                .items
-                .iter_mut()
-                .find(|item| &item.id == id && item.status == QueueStatus::Pending)
-            {
-                apply_completion(item, completion);
-            }
-        }
-        queue.active_item_id = None;
+        return ipc::err(crate::ipc::INTERNAL_ERROR, "Queue coordinator is not running.");
     }
-    for (_, completion) in &completions {
+    for completion in &records {
         crate::activity::record(completion);
     }
-    broadcast();
     ipc::ok(())
 }
 
 #[cfg(test)]
 mod run_drain_tests {
     use super::*;
+    use crate::coordinator::start_waits_for_exit;
 
     fn item(id: &str, status: QueueStatus) -> QueueItem {
         QueueItem {

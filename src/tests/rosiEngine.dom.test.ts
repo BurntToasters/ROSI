@@ -385,7 +385,18 @@ describe('rosiEngine DOM wiring', () => {
       getFormats: vi.fn(() =>
         Promise.resolve({
           ok: true,
-          data: '137 mp4 1920x1080 video only\n140 m4a audio only',
+          data: {
+            formats: [
+              {
+                formatId: '137',
+                streamKind: 'video',
+                vcodec: 'avc1.640028',
+                resolution: '1920x1080',
+                fps: 30,
+              },
+              { formatId: '140', streamKind: 'audio', acodec: 'mp4a.40.2' },
+            ],
+          },
         })
       ) as unknown as ReturnType<typeof vi.fn>,
     });
@@ -443,7 +454,18 @@ describe('rosiEngine DOM wiring', () => {
       getFormats: vi.fn(() =>
         Promise.resolve({
           ok: true,
-          data: '137 mp4 1920x1080 video only\n140 m4a audio only',
+          data: {
+            formats: [
+              {
+                formatId: '137',
+                streamKind: 'video',
+                vcodec: 'avc1.640028',
+                resolution: '1920x1080',
+                fps: 30,
+              },
+              { formatId: '140', streamKind: 'audio', acodec: 'mp4a.40.2' },
+            ],
+          },
         })
       ) as unknown as ReturnType<typeof vi.fn>,
     });

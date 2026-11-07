@@ -66,6 +66,10 @@ export function requiredDraftInstallerNames({
   const names = [
     "ROSI-Windows-x64.exe",
     "ROSI-Windows-arm64.exe",
+    "ROSI-MacOS-arm64.dmg",
+    "ROSI-MacOS-arm64.zip",
+    "ROSI-MacOS-x64.dmg",
+    "ROSI-MacOS-x64.zip",
     "ROSI-MacOS-universal.dmg",
     "ROSI-MacOS-universal.zip",
     "ROSI-Linux-x64.AppImage",

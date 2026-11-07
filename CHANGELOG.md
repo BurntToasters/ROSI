@@ -1,11 +1,13 @@
 # ⬇️ Downloads
 
-| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux |
-| :-- | :-- | :-- |
-| **EXE: [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-MacOS-universal.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-Linux-x64.AppImage) |
-| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div> | **[Universal ZIP](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-MacOS-universal.zip)** | **Flatpak:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-Linux-x64.flatpak) |
+| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                  | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS                                                                                                                                                                                                              | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux    |
+| :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------- |
+| **EXE: [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-Windows-arm64.exe)** | **DMG: [arm64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-MacOS-arm64.dmg) / [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-MacOS-x64.dmg) / [universal](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-MacOS-universal.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-Linux-x64.AppImage) |
+| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div>                    | **ZIP: [arm64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-MacOS-arm64.zip) / [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-MacOS-x64.zip) / [universal](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-MacOS-universal.zip)** | **Flatpak:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-Linux-x64.flatpak)   |
 
 > macOS downloads require macOS 15 or later.
+> Native arm64 builds run on Apple silicon; native x64 builds run on Intel and
+> under Rosetta on Apple silicon. Universal builds run on both architectures.
 
 > [!IMPORTANT]
 > The `.sig` files in this repo are NOT normal GPG signatures. They are for Tauri V2's updater to verify the integrity of updates before downloading and installing.
@@ -23,6 +25,7 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 - **Updater:** Architecture verification ensures downloaded macOS updates match the host machine before installation.
 - **Updater:** Rosetta-translated processes on Apple Silicon automatically request the native arm64 target to migrate away from emulation.
 - **Packaging:** Per-architecture updater archives are verified for codesigning and notarization stapling prior to packaging.
+- **Packaging:** Native arm64 and x64 DMG/ZIP downloads are available alongside the universal macOS packages.
 
 ## Changes in `v5.0.2:`
 

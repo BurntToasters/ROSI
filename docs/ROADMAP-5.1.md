@@ -1,20 +1,26 @@
 # ROSI 5.1 roadmap
 
-These are deferred, long-term items. None of them blocks 5.0.0 stable. Each
-entry gives the problem with file and line evidence, a concrete plan, and
+This status ledger separates work already present in the repository, scope
+accepted for ROSI 5.1, and work deferred beyond 5.1. “Accepted” is a planning
+status, not evidence that implementation or platform verification is complete.
+The accepted delivery plan and proof gaps are in
+[IMPLEMENTATION-5.1.md](IMPLEMENTATION-5.1.md). The required stable matrix is
+macOS 15 and newer, Linux x64, and Windows x64 and arm64. Linux arm64 remains
+deferred. Each entry gives the problem with file evidence, a concrete plan, and
 acceptance criteria. Line numbers were read on 2026-10-19 and will drift; search
 for the named symbol when they do.
 
-Items already covered by the current stable-readiness fixes are not listed
-here. Keep each item's acceptance criteria as the definition of done, and check
-them against the E2E evidence the change produces. Where a plan adds a
-dependency, the change must be approved on its own; this roadmap does not add
-one.
+Check acceptance criteria against evidence from the change that produces it.
+Where a plan adds a dependency, the change must be approved on its own; this
+roadmap does not add one.
 
 ## 1. Split the renderer engine into feature modules
 
-**Status (2026-10-20): done in 5.0.0-beta.4.** Feature logic lives in `src/engine/`, and per-feature event binding in `src/engine/bind/`. `src/rosiEngine.ts` (about 570 lines) loads settings, looks up the DOM, and calls the bind functions in their original order.
-
+**Status (2026-11-06): partial implementation present.** Feature logic lives in
+`src/engine/`, and per-feature event binding in `src/engine/bind/`.
+`src/rosiEngine.ts` is about 440 lines and still defines `initializeRenderer`;
+`window.rosiModules` remains in use. The extraction is useful existing work, but
+the acceptance criteria below are not all met. No completion is claimed here.
 
 **Problem.** `src/rosiEngine.ts` is 5,943 lines. `initializeRenderer` starts at
 `src/rosiEngine.ts:2370` and runs to about line 5927. It holds 66 nested
@@ -47,8 +53,12 @@ taking explicit inputs.
 
 ## 2. Typed command layer and generated IPC types
 
-**Status (2026-10-20): done in 5.0.0-beta.4.** `src/generated/ipc-types.ts` is generated from the Rust types (test-only `ts-rs`), `src/commands.ts` types every command call, and a contract test checks the command names against `build.rs` and the capability. `window.api` stays as the seam for vitest and E2E; removing it would mean rewriting those harnesses, which is not planned.
-
+**Status (2026-11-06): partial implementation present.**
+`src/generated/ipc-types.ts`, `src/commands.ts`, and the command contract check
+exist. Runtime callers still use `window.api`, and the ambient renderer globals
+remain. The former acceptance criterion that `window.api` disappear is not
+met; removing the compatibility seam is deferred until its callers and harness
+are migrated together.
 
 **Problem.** `src/tauri-bridge.ts:132` assigns `window.api`, a shim that copies
 the v4 Electron contract onto Tauri. The renderer also depends on IIFE modules
@@ -81,6 +91,10 @@ can drift without a compile error. Neither `tauri-specta` nor `ts-rs` is in
 
 **Status (2026-10-20): settings enums done in 5.0.0-beta.4** (`Theme`, `DockTab`, `DownloadProfile`, `GpuType`, `UpdateChannel`). Remaining: typed IPC structs in place of `serde_json::Value` plus hand validation.
 
+**Status (2026-11-06): partially implemented; typed IPC structs remain open.**
+The settings enums are present in `src-tauri/src/types.rs`. `serde_json::Value`
+still appears in backend helpers and command/probe code; no claim is made that
+the old acceptance criteria are complete.
 
 **Problem.** Several settings are free-form strings: `theme`
 (`src-tauri/src/types.rs:61`), `dock_tab` (`:63`), `download_mode` (`:65`),
@@ -117,6 +131,10 @@ back to defaults rather than failing the import.
 
 ## 4. Replace the downloader and queue locks with a state thread
 
+**Status (2026-11-06): accepted for ROSI 5.1; implementation not started in
+this workstream.** The existing global mutex and condition-variable design
+remains in `downloader.rs` and `queue.rs`.
+
 **Problem.** The download and queue state uses global locks and condition
 variables. `src-tauri/src/downloader.rs:78` holds `ACTIVE: Mutex<Option<Session>>`
 with `SESSION_CHANGED` (`:82`), `FINALIZING` (`:83`), and
@@ -145,6 +163,10 @@ rather than enforced by types.
   process.
 
 ## 5. Async proxy relay on the Tauri runtime
+
+**Status (2026-11-06): accepted for ROSI 5.1; implementation and runtime proof
+remain outstanding.** `network_security.rs` still has the blocking worker pool
+and relay polling described below.
 
 **Problem.** `src-tauri/src/network_security.rs` is 1,917 lines. It starts
 `PROXY_WORKERS: usize = 32` blocking workers (`:35`). Each `proxy_worker`
@@ -178,6 +200,12 @@ idle relay still wakes up on its sleep.
 
 ## 6. Regroup E2E suites by feature
 
+**Status (2026-11-06): verification foundation in progress.** The ROSI 5.1
+foundation adds a feature manifest and group selection while retaining every
+scenario and its current file. The full folder move and runner split in this
+section remain deferred; current full-suite and release evidence requirements
+are preserved.
+
 **Problem.** `e2e/` holds about 95 files and roughly 25,000 lines. 35 of the
 file names refer to audit rounds or repair passes (for example
 `round2-native.spec.js`, `audit4-repairs.spec.js`, and
@@ -205,6 +233,8 @@ names say nothing about what they cover. `scripts/test-e2e.js` is 2,165 lines.
 
 ## 7. Centralize user-facing strings
 
+**Status (2026-11-06): deferred beyond ROSI 5.1.**
+
 **Problem.** User-facing text is written inline in the renderer and the Rust
 backend. `src/rosiEngine.ts` has about 56 lines that call a toast helper, and the Rust
 backend has about 225 `format!` string literals, not all of them user-facing. Wording differs between the two sides, and no one
@@ -231,6 +261,10 @@ can translate or review the full set in one place.
 
 ## 8. macOS sidecar entitlements
 
+**Status (2026-11-06): entitlement redesign deferred beyond ROSI 5.1.** The
+current signing model remains part of platform verification; this roadmap item
+does not authorize a pipeline or entitlement change.
+
 **Problem.** Today `src-tauri/entitlements.plist` grants the whole app, including
 every sidecar, `disable-library-validation` and `allow-unsigned-executable-memory`.
 Only the PyInstaller `rosi-yt-dlp` needs them. The fix is already planned in
@@ -250,6 +284,9 @@ with a dry run before changing the pipeline.
   pipeline update.
 
 ## 9. Signed yt-dlp-only update channel
+
+**Status (2026-11-06): deferred beyond ROSI 5.1.** This is the independent
+yt-dlp update channel explicitly excluded from the accepted 5.1 milestones.
 
 **Problem.** yt-dlp is bundled. `assets/ytdlp-checksums.json` is the committed
 manifest (`scripts/fetch-ytdlp.cjs:37`), and `.github/workflows/ytdlp-watch.yml`
@@ -283,6 +320,8 @@ work, even though only one binary changed.
 
 ## 10. Dual-key updater support
 
+**Status (2026-11-06): deferred beyond ROSI 5.1.**
+
 **Problem.** The vendored updater trusts one Minisign public key, set in
 `src-tauri/tauri.conf.json:115` as `plugins.updater.pubkey`. A rotation needs a
 release signed with the old key, and a compromised old key can publish such a
@@ -309,6 +348,8 @@ release too. [KEY-COMPROMISE.md](KEY-COMPROMISE.md) describes this limit.
 
 ## 11. Deno end of life (about October 2027)
 
+**Status (2026-11-06): deferred beyond ROSI 5.1.**
+
 **Problem.** yt-dlp uses Deno as its default JavaScript runtime for YouTube.
 Deno is expected to shut down around October 2027, and yt-dlp has not picked a
 replacement. ROSI finds Deno by path in `src-tauri/src/deno.rs:19` to `:48`, and
@@ -332,6 +373,10 @@ wizard in `src/rosiEngine.ts`. See also the "Deno end of life" section of
   and downloads that do not need a runtime still succeed.
 
 ## 12. Flathub or a hosted Flatpak repository
+
+**Status (2026-11-06): new Flatpak hosting and Linux arm64 deferred beyond
+ROSI 5.1.** Existing Flatpak packaging remains in the required Linux x64
+verification scope.
 
 **Problem.** The Flatpak is a single-file bundle, `ROSI-Linux-x64.flatpak`, on
 the GitHub release. The in-app updater does not apply to Flatpak, so Flatpak

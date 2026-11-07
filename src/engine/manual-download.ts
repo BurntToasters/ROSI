@@ -168,29 +168,6 @@ export function handleManualDownloadCompletion(completion: RosiDownloadCompletio
   showManualDownloadCompletion(completion, manualDownload.manualDownloadOperation);
 }
 
-export function handleLegacyManualCompletion(statusMessage: string) {
-  if (
-    manualDownload.manualDownloadStartPending ||
-    !manualDownload.manualSessionIdentityReceived ||
-    manualDownload.manualDownloadSessionId !== null ||
-    !downloadState.isDownloading
-  ) {
-    return;
-  }
-  const normalizedStatus = String(statusMessage || '').toLowerCase();
-  const isCancelled = normalizedStatus.includes('cancel');
-  const isSuccess =
-    !isCancelled && (statusMessage.includes('✅') || normalizedStatus.includes('complete'));
-  showManualDownloadCompletion(
-    {
-      outcome: isSuccess ? 'success' : isCancelled ? 'cancelled' : 'failed',
-      statusMessage,
-      outputPath: isSuccess ? (downloadState.lastDownloadedFilePath ?? undefined) : undefined,
-    },
-    manualDownload.manualDownloadOperation
-  );
-}
-
 // Owned by the renderer controller; set during startup and updated while it runs.
 export const manualDownload: {
   manualDownloadOperation: number;

@@ -7,43 +7,43 @@
 //! publication with replacing the active session so older terminal events
 //! cannot arrive after a newer session becomes current.
 //!
-//! Lock order, outermost first. A path may skip links but never reverses one:
+//! Lifecycle waits go through the coordinator (coordinator.rs): a session is
+//! registered in the same critical section that installs it in `ACTIVE`, and
+//! its terminal result acks every `await_finalized` on it. Events for a stale
+//! session are dropped under `EVENT_PUBLISH`, since `with_session` matches only
+//! the current session.
 //!
-//! - Session chain: `STARTUP` -> `EVENT_PUBLISH` -> `ACTIVE` -> `FINALIZING`.
-//! - Queue chain: `START_GUARD` (queue.rs) is taken before `STARTUP`, `ACTIVE`
-//!   and `QUEUE`. `QUEUE` is not held across `start_download` or
-//!   `cancel_active_session`; `start_queue` is the one place that calls into
-//!   the session lock while holding it (`QUEUE` -> `ACTIVE`, via `can_start`).
-//! - `QUEUE_PUBLICATION` -> `QUEUE` (queue.rs `broadcast`). `PERSIST_SIGNAL` is a leaf.
-//! - Completion callbacks run after `EVENT_PUBLISH` and `ACTIVE` are released,
-//!   with the session still listed in `FINALIZING`. The queue callback then
-//!   takes `QUEUE`, then `QUEUE_PUBLICATION`.
-//! - Condvars release their lock while waiting: `SESSION_CHANGED` with `ACTIVE`,
-//!   `FINALIZATION_CHANGED` with `FINALIZING`, `RUNNER_CHANGED` with `QUEUE`.
+//! Lock order, outermost first:
+//!
+//! - Session chain: `STARTUP` -> `EVENT_PUBLISH` -> `ACTIVE`. `STARTUP` only
+//!   serializes starts; no completion path takes it.
+//! - Queue chain: only the coordinator thread takes `QUEUE` and `ACTIVE` (via
+//!   `can_start`), and it never waits on a process or an ack.
+//! - `PERSIST_SIGNAL` is a leaf.
+//! - Registration and terminal results are non-blocking sends to the
+//!   coordinator.
 
 use crate::command_builders::{
     build_ffmpeg_args, build_ytdlp_args, resolve_video_encoder, YtdlpArgsInput,
 };
 use crate::constants::*;
-use crate::ipc::{self, IpcResult, NOT_AVAILABLE};
+use crate::ipc::{self, DownloadRequestInput, FalliblePayload, IpcResult, NOT_AVAILABLE};
 use crate::progress::{self, Metrics, Reporter};
 use crate::staging::{
     file_identity, install_no_replace, reserve_download_stage, reserve_path_output_file,
     sync_staged_file, DownloadStage, FileIdentity,
 };
 use crate::types::{
-    DownloadCompletion, DownloadProfile, DownloadRequestOptions, GpuType, JobProgressEvent,
-    Outcome, Owner, Phase, QueueProgress, Settings,
+    DownloadCompletion, DownloadRequestOptions, JobProgressEvent, Outcome, Owner, Phase,
+    QueueProgress, Settings,
 };
 use crate::validation::{is_path_within, is_safe_http_url, resolve_path};
-use serde_json::{Map, Value};
 use std::collections::{HashSet, VecDeque};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-
-pub type CompletionCallback = Box<dyn FnOnce(DownloadCompletion) + Send + 'static>;
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 const CANCELLED_STATUS: &str = "⏹️ Cancelled.";
 const CANCELLED_PROGRESS: &str = "⏹️ Download/Conversion cancelled by user.";
@@ -63,7 +63,6 @@ struct Session {
     ytdlp_exit_pending: bool,
     conversion_pending: bool,
     ffmpeg: Option<Arc<crate::process_util::ManagedChild>>,
-    on_complete: Option<CompletionCallback>,
     ytdlp_postprocess: bool,
     ytdlp_download_finished: bool,
     conversion_format: Option<String>,
@@ -75,54 +74,12 @@ struct Session {
     reporter: Reporter,
 }
 
+/// The session slot. It holds session data only; lifecycle waits go through
+/// the coordinator's await acks.
 static ACTIVE: Mutex<Option<Session>> = Mutex::new(None);
 /// Mirrors whether ACTIVE holds a session, so the main thread can ask without
 /// waiting on the session lock.
 static ACTIVE_PRESENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-static SESSION_CHANGED: Condvar = Condvar::new();
-static FINALIZING: Mutex<Vec<u64>> = Mutex::new(Vec::new());
-static FINALIZATION_CHANGED: Condvar = Condvar::new();
-
-struct CompletionFinalizer(u64);
-
-impl CompletionFinalizer {
-    fn begin(id: u64) -> Self {
-        FINALIZING
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .push(id);
-        Self(id)
-    }
-}
-
-impl Drop for CompletionFinalizer {
-    fn drop(&mut self) {
-        FINALIZING
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .retain(|id| *id != self.0);
-        FINALIZATION_CHANGED.notify_all();
-        SESSION_CHANGED.notify_all();
-    }
-}
-
-fn finalizing_ids() -> Vec<u64> {
-    FINALIZING
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .iter()
-        .copied()
-        .collect()
-}
-
-fn wait_for_finalizations(ids: &[u64]) {
-    let mut pending = FINALIZING.lock().unwrap_or_else(|p| p.into_inner());
-    while ids.iter().any(|id| pending.contains(id)) {
-        pending = FINALIZATION_CHANGED
-            .wait(pending)
-            .unwrap_or_else(|p| p.into_inner());
-    }
-}
 
 static STARTUP: Mutex<()> = Mutex::new(());
 static EVENT_PUBLISH: Mutex<()> = Mutex::new(());
@@ -132,17 +89,6 @@ fn lock() -> MutexGuard<'static, Option<Session>> {
     ACTIVE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-fn wait_for_session_completion(id: u64) {
-    let mut active = lock();
-    while active.as_ref().is_some_and(|session| session.id == id) {
-        active = SESSION_CHANGED
-            .wait(active)
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-    }
-    drop(active);
-    wait_for_finalizations(&[id]);
 }
 
 fn with_session<R>(id: u64, f: impl FnOnce(&mut Session) -> R) -> Option<R> {
@@ -163,6 +109,15 @@ pub fn is_busy() -> bool {
 
 pub fn can_start(owner: Owner) -> bool {
     lock().as_ref().is_none_or(|session| session.owner == owner)
+}
+
+/// The active session's id when another owner holds the slot. Callers wait on
+/// it with `coordinator::await_finalized` instead of polling.
+pub fn blocking_session(owner: Owner) -> Option<u64> {
+    lock()
+        .as_ref()
+        .filter(|session| session.owner != owner)
+        .map(|session| session.id)
 }
 
 fn send_progress(id: u64, message: impl Into<String>) {
@@ -443,19 +398,20 @@ fn complete_session(id: u64, status_message: &str, outcome: Outcome, meta: Compl
     let publish = EVENT_PUBLISH
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // The session stays registered with the coordinator until its terminal
+    // result is routed below, so awaits on it are not released early.
     let session = {
         let mut guard = lock();
         match guard.as_ref() {
             Some(session) if session.id == id => {
-                let finalizer = CompletionFinalizer::begin(id);
-                let taken = guard.take().map(|session| (session, finalizer));
+                let taken = guard.take();
                 ACTIVE_PRESENT.store(false, Ordering::SeqCst);
                 taken
             }
             _ => None,
         }
     };
-    let Some((mut session, _finalizer)) = session else {
+    let Some(mut session) = session else {
         return;
     };
     let mut outcome = outcome;
@@ -539,10 +495,7 @@ fn complete_session(id: u64, status_message: &str, outcome: Outcome, meta: Compl
         Outcome::Success => crate::stats::record(outcome, meta.format.as_deref(), size_bytes),
         _ => crate::stats::record(outcome, None, None),
     }
-    if let Some(callback) = session.on_complete.take() {
-        callback(completion);
-    }
-    SESSION_CHANGED.notify_all();
+    crate::coordinator::terminal(session.id, completion);
 }
 
 /// Cancel the active session. `notify` controls whether the user-facing
@@ -565,11 +518,11 @@ fn cancel_session(notify: bool, notify_manual: bool, ytdlp_first: bool) {
     let (id, children, partial, wait_for_ytdlp, show) = {
         let mut guard = lock();
         let Some(session) = guard.as_mut() else {
-            // Snapshot under ACTIVE so completion cannot clear the slot before
-            // registering its pending callback. Do not wait on future sessions.
-            let pending = finalizing_ids();
+            // Registration happens in the same critical section that installs a
+            // session, so every session still awaiting finalization is already
+            // registered. A session started after this point is not awaited.
             drop(guard);
-            wait_for_finalizations(&pending);
+            crate::coordinator::await_finalized(None);
             return;
         };
         session.cancelled = true;
@@ -598,7 +551,8 @@ fn cancel_session(notify: bool, notify_manual: bool, ytdlp_first: bool) {
         crate::process_util::terminate_tree(&child);
     }
     if wait_for_ytdlp {
-        wait_for_session_completion(id);
+        // The reader thread finalizes the session once yt-dlp has exited.
+        crate::coordinator::await_finalized(Some(id));
         return;
     }
     complete_session(
@@ -611,159 +565,6 @@ fn cancel_session(notify: bool, notify_manual: bool, ytdlp_first: bool) {
             ..partial
         },
     );
-}
-
-fn to_map(value: &impl serde::Serialize) -> Map<String, Value> {
-    match serde_json::to_value(value) {
-        Ok(Value::Object(map)) => map,
-        _ => Map::new(),
-    }
-}
-
-fn resolve_preset_options(
-    settings: &Settings,
-    options: DownloadRequestOptions,
-) -> DownloadRequestOptions {
-    let Some(preset) = options.preset_id.as_deref().and_then(|id| {
-        settings
-            .download_presets
-            .iter()
-            .find(|preset| preset.id == id)
-    }) else {
-        return options;
-    };
-    let mut merged = crate::settings::preset_to_request_options(preset);
-    for (key, value) in to_map(&options) {
-        merged.insert(key, value);
-    }
-    if options.preset_name.is_none() {
-        merged.insert("presetName".into(), Value::String(preset.name.clone()));
-    }
-    serde_json::from_value(Value::Object(merged)).unwrap_or(options)
-}
-
-fn apply_request_to_settings(settings: &Settings, options: &DownloadRequestOptions) -> Settings {
-    let mut effective = settings.clone();
-    // IPC validation admits only known names, so an unknown value cannot reach here.
-    if let Some(profile) = options.profile.as_deref().and_then(DownloadProfile::parse) {
-        effective.download_mode = profile;
-    }
-    effective.advanced_options = effective.download_mode == DownloadProfile::Custom;
-    effective.audio_only = effective.download_mode == DownloadProfile::Audio;
-    effective.best_quality = effective.download_mode == DownloadProfile::BestVideo;
-    if let Some(value) = options.advanced_options {
-        effective.advanced_options = value;
-    }
-    if let Some(value) = options.audio_only {
-        effective.audio_only = value;
-    }
-    if let Some(value) = options.best_quality {
-        effective.best_quality = value;
-    }
-    if let Some(value) = &options.audio_output_format {
-        effective.audio_format = value.clone();
-    }
-    if let Some(value) = options.convert_enabled {
-        effective.convert_enabled = value;
-    }
-    if let Some(format) = &options.convert_format {
-        if !format.trim().is_empty() {
-            effective.convert_format = format.clone();
-            if options.convert_enabled.is_none() {
-                effective.convert_enabled = true;
-            }
-        } else if options.convert_enabled.is_none() {
-            effective.convert_enabled = false;
-        }
-    }
-    if let Some(value) = options.keep_original {
-        effective.keep_original_after_convert = value;
-    }
-    if let Some(value) = options.hook_browser {
-        effective.hook_browser = value;
-    }
-    if let Some(value) = options
-        .browser_choice
-        .as_ref()
-        .filter(|value| !value.is_empty())
-    {
-        effective.browser_choice = value.clone();
-    }
-    if let Some(value) = options.gpu_acceleration {
-        effective.gpu_acceleration = value;
-    }
-    if let Some(value) = options.gpu_type.as_deref().and_then(GpuType::parse) {
-        effective.gpu_type = value;
-    }
-    if let Some(value) = options.write_subtitles {
-        effective.write_subtitles = value;
-    }
-    if let Some(value) = options
-        .subtitle_langs
-        .as_ref()
-        .filter(|value| !value.is_empty())
-    {
-        effective.subtitle_langs = value.clone();
-    }
-    if let Some(value) = options.embed_thumbnail {
-        effective.embed_thumbnail = value;
-    }
-    if let Some(value) = options.embed_metadata {
-        effective.embed_metadata = value;
-    }
-    if let Some(value) = options.sponsorblock_remove {
-        effective.sponsorblock_remove = value;
-    }
-    if let Some(value) = &options.ffmpeg_path {
-        effective.ffmpeg_path = value.clone();
-    }
-    effective
-}
-
-fn resolved_snapshot(
-    options: &DownloadRequestOptions,
-    effective: &Settings,
-) -> DownloadRequestOptions {
-    DownloadRequestOptions {
-        url: options.url.trim().to_string(),
-        output_path: options.output_path.clone(),
-        ffmpeg_path: options
-            .ffmpeg_path
-            .clone()
-            .filter(|path| !path.is_empty())
-            .or_else(|| Some(effective.ffmpeg_path.clone()).filter(|path| !path.is_empty())),
-        convert_enabled: Some(effective.convert_enabled),
-        convert_format: Some(effective.convert_format.clone()),
-        keep_original: Some(effective.keep_original_after_convert),
-        video_format: options.video_format.clone(),
-        audio_format: options.audio_format.clone(),
-        playlist: Some(
-            options
-                .playlist
-                .clone()
-                .unwrap_or(crate::types::PlaylistSelection {
-                    mode: "current".into(),
-                    start: None,
-                    end: None,
-                }),
-        ),
-        profile: Some(effective.download_mode.as_str().to_string()),
-        preset_id: options.preset_id.clone(),
-        preset_name: options.preset_name.clone(),
-        best_quality: Some(effective.best_quality),
-        advanced_options: Some(effective.advanced_options),
-        audio_only: Some(effective.audio_only),
-        audio_output_format: Some(effective.audio_format.clone()),
-        hook_browser: Some(effective.hook_browser),
-        browser_choice: Some(effective.browser_choice.clone()),
-        gpu_acceleration: Some(effective.gpu_acceleration),
-        gpu_type: Some(effective.gpu_type.as_str().to_string()),
-        write_subtitles: Some(effective.write_subtitles),
-        subtitle_langs: Some(effective.subtitle_langs.clone()),
-        embed_thumbnail: Some(effective.embed_thumbnail),
-        embed_metadata: Some(effective.embed_metadata),
-        sponsorblock_remove: Some(effective.sponsorblock_remove),
-    }
 }
 
 /// Stream lines (split on `\n` and `\r`) from a child pipe.
@@ -902,37 +703,39 @@ fn append_bounded(buffer: &Mutex<String>, line: &str, limit: usize, keep_tail: b
     text.push('\n');
 }
 
-/// Returned when another owner holds the session slot. The unused completion
-/// callback is handed back so the caller can retry later.
+/// Returned when another owner holds the session slot. The caller keeps its
+/// completion sender and can retry later.
 pub struct OwnerConflict {
     pub message: String,
-    pub on_complete: CompletionCallback,
+    /// The session holding the slot, for the caller to await.
+    pub session_id: u64,
 }
 
 /// Start a download. Validation failures are reported through the normal
 /// completion path; `Err` only means another owner holds the session slot.
 pub fn start_download(
-    options: DownloadRequestOptions,
+    options: crate::download_options::ResolvedDownloadOptions,
     owner: Owner,
     queue_progress: Option<QueueProgress>,
-    on_complete: CompletionCallback,
+    completion: Sender<DownloadCompletion>,
 ) -> Result<u64, OwnerConflict> {
-    let settings = crate::settings::load();
-    let request = resolve_preset_options(&settings, options);
-    let effective = apply_request_to_settings(&settings, &request);
-    let snapshot = resolved_snapshot(&request, &effective);
+    let request = options.request;
+    let effective = options.effective_settings;
+    let snapshot = request.clone();
     let plan = progress::resolve_plan(&effective);
     let startup = STARTUP
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let existing_owner = lock().as_ref().map(|session| session.owner);
-    match existing_owner {
-        Some(current) if current != owner => {
+    let existing = lock().as_ref().map(|session| (session.id, session.owner));
+    match existing {
+        Some((session_id, current)) if current != owner => {
             return Err(OwnerConflict {
                 message: "Download session already active with a different owner.".to_string(),
-                on_complete,
+                session_id,
             })
         }
+        // Waits for the previous session's finalization ack before this one
+        // installs, so the slot is never shared.
         Some(_) => cancel_active_session(false),
         None => {}
     }
@@ -951,7 +754,6 @@ pub fn start_download(
         ytdlp_exit_pending: false,
         conversion_pending: false,
         ffmpeg: None,
-        on_complete: Some(on_complete),
         ytdlp_postprocess: false,
         ytdlp_download_finished: false,
         conversion_format: None,
@@ -965,7 +767,12 @@ pub fn start_download(
         let _publish = EVENT_PUBLISH
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *lock() = Some(session);
+        let mut guard = lock();
+        // Registration is a non-blocking send made under the same lock that
+        // installs the session. Any cancel that can see the session is
+        // therefore ordered after its registration.
+        crate::coordinator::register(id, completion);
+        *guard = Some(session);
         ACTIVE_PRESENT.store(true, Ordering::SeqCst);
     }
     let mut startup = Some(startup);
@@ -974,7 +781,7 @@ pub fn start_download(
         .ffmpeg_path
         .clone()
         .filter(|path| !path.is_empty())
-        .unwrap_or_else(|| settings.ffmpeg_path.clone());
+        .unwrap_or_else(|| effective.ffmpeg_path.clone());
     let ffmpeg_command = crate::sidecars::effective_ffmpeg(Some(&requested_ffmpeg));
     let ytdlp = crate::sidecars::ytdlp_path();
     let url = request.url.clone();
@@ -1735,7 +1542,6 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
         (session.cancelled, session.cancel_notify)
     }) else {
         let _ = std::fs::remove_file(&exit.path_output_file);
-        SESSION_CHANGED.notify_all();
         return;
     };
     let path_output_file = exit.path_output_file.clone();
@@ -3309,9 +3115,11 @@ pub struct Started {
 }
 
 #[tauri::command(async)]
-pub fn download_video(options: Value) -> IpcResult<Started> {
-    let request = match crate::validation::validate_download_request(&options) {
-        Ok(request) => request,
+pub fn download_video(options: FalliblePayload<DownloadRequestInput>) -> IpcResult<Started> {
+    let settings = crate::settings::load();
+    let resolved = match crate::download_options::resolve_value(&settings, &options.into_value(), None)
+    {
+        Ok(resolved) => resolved,
         Err(error) => return ipc::from_error(error),
     };
     // The runner briefly holds no session between items, so the session slot
@@ -3319,9 +3127,13 @@ pub fn download_video(options: Value) -> IpcResult<Started> {
     if !can_start(Owner::Manual) || crate::queue::is_running() {
         return ipc::err(NOT_AVAILABLE, "A queue download is already in progress.");
     }
-    let on_complete: CompletionCallback =
-        Box::new(|completion| crate::activity::record(&completion));
-    match start_download(request, Owner::Manual, None, on_complete) {
+    let (completion, recorded) = std::sync::mpsc::channel::<DownloadCompletion>();
+    std::thread::spawn(move || {
+        if let Ok(completion) = recorded.recv() {
+            crate::activity::record(&completion);
+        }
+    });
+    match start_download(resolved, Owner::Manual, None, completion) {
         Ok(session_id) => ipc::ok(Started {
             started: true,
             session_id,
@@ -3347,7 +3159,7 @@ mod audit4_tests {
     use std::time::Duration;
     static SERIAL: Mutex<()> = Mutex::new(());
 
-    fn session(callback: CompletionCallback) -> Session {
+    fn session() -> Session {
         Session {
             id: u64::MAX,
             completion_id: "audit4".into(),
@@ -3361,7 +3173,6 @@ mod audit4_tests {
             ytdlp_exit_pending: false,
             conversion_pending: false,
             ffmpeg: None,
-            on_complete: Some(callback),
             ytdlp_postprocess: false,
             ytdlp_download_finished: false,
             conversion_format: None,
@@ -3374,46 +3185,11 @@ mod audit4_tests {
     }
 
     #[test]
-    fn cancellation_waits_for_callback_after_active_slot_is_empty() {
-        let _serial = SERIAL.lock().unwrap();
-        let (entered_tx, entered_rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        *lock() = Some(session(Box::new(move |_| {
-            entered_tx.send(()).unwrap();
-            release_rx.recv().unwrap();
-        })));
-        let completion = std::thread::spawn(|| {
-            complete_session(
-                u64::MAX,
-                "Done",
-                Outcome::Success,
-                CompletionMeta::default(),
-            )
-        });
-        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert!(lock().is_none());
-        let (cancel_tx, cancel_rx) = mpsc::channel();
-        let cancel = std::thread::spawn(move || {
-            cancel_active_session(false);
-            cancel_tx.send(()).unwrap();
-        });
-        let early = cancel_rx.recv_timeout(Duration::from_millis(100)).is_ok();
-        release_tx.send(()).unwrap();
-        completion.join().unwrap();
-        cancel.join().unwrap();
-        assert!(
-            !early,
-            "Cancellation returned before completion callback finished"
-        );
-    }
-
-    #[test]
     fn cancellation_retains_explicit_recovery_error() {
         let _serial = SERIAL.lock().unwrap();
         let (tx, rx) = mpsc::channel();
-        *lock() = Some(session(Box::new(move |completion| {
-            tx.send(completion).unwrap();
-        })));
+        crate::coordinator::register(u64::MAX, tx);
+        *lock() = Some(session());
         complete_session(
             u64::MAX,
             "Cancelled",
@@ -3424,7 +3200,7 @@ mod audit4_tests {
             },
         );
         assert_eq!(
-            rx.recv().unwrap().error.as_deref(),
+            rx.recv_timeout(Duration::from_secs(5)).unwrap().error.as_deref(),
             Some("Recovery at /tmp/staging")
         );
     }

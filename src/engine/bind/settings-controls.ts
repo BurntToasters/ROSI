@@ -1,12 +1,112 @@
 // Startup bindings for settings controls.
-import { RosiSettings, isValidSubtitleLangs } from '../core';
+import { RosiSettings, isValidSubtitleLangs, isValidUrl } from '../core';
+import {
+  configureEffectiveOptionsRequestBuilder,
+  refreshEffectiveOptionsSummary,
+} from '../messages';
+import type { EffectiveOptionsReadiness } from '../messages';
 import { showModal } from '../overlays';
+import { isPlaylistScopeVisible, resolvePlaylistSelection } from '../playlist';
+import {
+  buildOnScreenPresetOverrides,
+  getSelectedPreset,
+  readAdvancedFormatSelections,
+} from '../presets';
 import { formatBytes, formatRelativeTime } from '../progress';
 import { refs } from '../refs';
 import { flushBeforeRestart, persistSettings, settingsStore } from '../settings-store';
 import { applyDownloadProfile, bindExternalLink, updateUIFromSettings } from '../settings-view';
 import { applyTheme, updateBackgroundAnimation } from '../theme';
 import { showToast, updateConsoleVisibility } from '../ui-helpers';
+
+function buildEffectiveOptionsReadiness(): EffectiveOptionsReadiness {
+  const url = refs.urlInput?.value.trim() ?? '';
+  const profile = settingsStore.settings?.downloadMode ?? 'compatible';
+  if (!url) {
+    return { state: 'profile-preview', profile, audioFormat: settingsStore.settings?.audioFormat };
+  }
+  if (!isValidUrl(url)) return { state: 'invalid-url' };
+
+  const settings = settingsStore.settings;
+  if (
+    settingsStore.persistDebounceTimer ||
+    settingsStore.settingsSaveInFlight ||
+    settingsStore.settingsSaveWaiters.length > 0
+  ) {
+    return { state: 'settings-saving' };
+  }
+  if (settingsStore.settingsSavedRevision !== settingsStore.settingsRevision) {
+    return { state: 'settings-unsaved' };
+  }
+  const outputPath = settings.askDownloadLocation ? '' : (settings.downloadFolder?.trim() ?? '');
+  if (!outputPath) return { state: 'destination' };
+
+  const formatSelections = readAdvancedFormatSelections(url);
+  if (settings.advancedOptions && !formatSelections.videoFormat && !formatSelections.audioFormat) {
+    return { state: 'formats' };
+  }
+
+  const playlist = resolvePlaylistSelection();
+  const playlistVisible = isPlaylistScopeVisible();
+  if (playlistVisible && !playlist) return { state: 'playlist' };
+
+  const selectedPreset = getSelectedPreset();
+  const convertEnabled = settings.convertEnabled && !settings.audioOnly;
+  const request = {
+    url,
+    outputPath,
+    videoFormat: formatSelections.videoFormat,
+    audioFormat: formatSelections.audioFormat,
+    convertFormat: convertEnabled ? refs.convertFormatSelect?.value.trim() || undefined : undefined,
+    keepOriginal: convertEnabled ? refs.keepOriginalToggle?.checked : undefined,
+    ...(playlistVisible && playlist ? { playlist } : {}),
+    ...(selectedPreset
+      ? {
+          presetId: selectedPreset.id,
+          presetName: selectedPreset.name,
+          ...buildOnScreenPresetOverrides(formatSelections),
+        }
+      : {}),
+  };
+  return { state: 'ready', request };
+}
+
+function bindEffectiveOptionsSummary() {
+  configureEffectiveOptionsRequestBuilder(buildEffectiveOptionsReadiness);
+  const watchedElements = [
+    refs.urlInput,
+    refs.profileAudioFormatSelect,
+    refs.downloadPresetSelect,
+    refs.convertToggle,
+    refs.convertFormatSelect,
+    refs.keepOriginalToggle,
+    refs.gpuAccelerationToggle,
+    refs.gpuTypeSelect,
+    refs.writeSubtitlesToggle,
+    refs.subtitleLangsInput,
+    refs.embedMetadataToggle,
+    refs.embedThumbnailToggle,
+    refs.sponsorblockToggle,
+    refs.askDownloadLocationToggle,
+    refs.playlistRangeStart,
+    refs.playlistRangeEnd,
+  ].filter((element): element is NonNullable<typeof element> => element !== null);
+  watchedElements.forEach((element) => {
+    if (element === refs.urlInput) {
+      element.addEventListener('input', () => refreshEffectiveOptionsSummary());
+    }
+    element.addEventListener('change', () => refreshEffectiveOptionsSummary());
+  });
+  document
+    .getElementById('downloadProfilesComposer')
+    ?.addEventListener('click', () => refreshEffectiveOptionsSummary());
+  document
+    .getElementById('playlistScope')
+    ?.addEventListener('change', () => refreshEffectiveOptionsSummary());
+  document
+    .getElementById('changeDownloadFolderBtn')
+    ?.addEventListener('click', () => window.setTimeout(refreshEffectiveOptionsSummary, 0));
+}
 
 /** Windows-only browser cookie choices. */
 export function bindWindowsBrowserChoice() {
@@ -30,6 +130,7 @@ export function bindWindowsBrowserChoice() {
 
 /** Settings toggles, selects, and inputs that save on change. */
 export function bindSettingsControls() {
+  bindEffectiveOptionsSummary();
   const {
     animateBackgroundToggle,
     askDownloadLocationToggle,
@@ -317,6 +418,10 @@ export function bindSettingsControls() {
 
 /** Update channel, reset, export, import, and statistics. */
 export function bindSettingsActions() {
+  const retrySettingsSave = document.getElementById('retrySettingsSave');
+  retrySettingsSave?.addEventListener('click', () => {
+    void persistSettings(false, true);
+  });
   const {
     exportSettingsBtn,
     importSettingsBtn,

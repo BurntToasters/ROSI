@@ -1,10 +1,6 @@
 // Startup bindings for backend events.
 import { logError } from '../core';
-import {
-  handleLegacyManualCompletion,
-  handleManualDownloadCompletion,
-  manualDownload,
-} from '../manual-download';
+import { handleManualDownloadCompletion, manualDownload } from '../manual-download';
 import { showLicenses } from '../overlays';
 import { renderPresetOptions } from '../presets';
 import { applyJobProgress, downloadState, showProgressBar } from '../progress';
@@ -13,29 +9,21 @@ import { refs } from '../refs';
 import { reconcileSettingsInPlace, settingsStore } from '../settings-store';
 import { syncDockFromSettings, updateUIFromSettings } from '../settings-view';
 import { applyTheme } from '../theme';
-import { appendConsoleOutput, setButtonLoading, toggleSidebar } from '../ui-helpers';
+import { appendConsoleOutput, toggleSidebar } from '../ui-helpers';
 import { checkForUpdates } from '../updater-ui';
 
 /** Backend events: progress, completion, queue, activity, and menu actions. */
 export function bindBackendEvents() {
-  const { activityPanel, fetchFormatsBtn, ipcCleanupFunctions, outputEl } = refs;
+  const { activityPanel, ipcCleanupFunctions, outputEl } = refs;
+  // Newest queue revision rendered so far. Snapshots older than it are dropped.
+  let latestQueueRevision = 0;
+  // Queue snapshots received so far. The startup read carries no revision, so
+  // it is applied only if no snapshot arrived while it was in flight.
+  let queueSnapshotsSeen = 0;
   ipcCleanupFunctions.push(
     window.api.onProgress((message) => {
       if (!outputEl) return;
       appendConsoleOutput(outputEl, message);
-
-      if (
-        !manualDownload.manualDownloadStartPending &&
-        manualDownload.manualSessionIdentityReceived &&
-        manualDownload.manualDownloadSessionId === null &&
-        downloadState.isDownloading &&
-        (message.includes('Identified file:') || message.includes('Successfully converted to'))
-      ) {
-        const fileMatch = message.match(/(?:Identified file:|Successfully converted to)\s*(.+)$/);
-        if (fileMatch && fileMatch[1]) {
-          downloadState.lastDownloadedFilePath = fileMatch[1].trim();
-        }
-      }
     })
   );
 
@@ -94,9 +82,7 @@ export function bindBackendEvents() {
 
   ipcCleanupFunctions.push(
     window.api.onComplete((statusMessage) => {
-      if (fetchFormatsBtn) setButtonLoading(fetchFormatsBtn, false);
       if (outputEl) appendConsoleOutput(outputEl, statusMessage);
-      handleLegacyManualCompletion(statusMessage);
     })
   );
 
@@ -115,8 +101,15 @@ export function bindBackendEvents() {
   }
 
   ipcCleanupFunctions.push(
-    window.api.onQueueUpdate((queue) => {
-      renderQueue(queue);
+    window.api.onQueueUpdate((payload) => {
+      // Older payloads are bare arrays without a revision; they are always applied.
+      const snapshot = Array.isArray(payload) ? { revision: null, items: payload } : payload;
+      if (snapshot.revision !== null) {
+        if (snapshot.revision < latestQueueRevision) return;
+        latestQueueRevision = snapshot.revision;
+      }
+      queueSnapshotsSeen += 1;
+      renderQueue(snapshot.items);
     })
   );
 
@@ -144,8 +137,11 @@ export function bindBackendEvents() {
     })
   );
 
+  const snapshotsBeforeRead = queueSnapshotsSeen;
   window.api
     .getQueue()
-    .then((queue) => renderQueue(queue))
+    .then((queue) => {
+      if (queueSnapshotsSeen === snapshotsBeforeRead) renderQueue(queue);
+    })
     .catch(() => {});
 }

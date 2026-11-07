@@ -42,6 +42,12 @@ export function focusTopOverlayOr(target: Element | null) {
   const topOverlayId = getTopActiveOverlayId();
   if (topOverlayId) {
     const overlay = document.getElementById(topOverlayId);
+    // The control that opened the prompt may live inside the overlay underneath
+    // it (the reset buttons sit in the open settings sidebar). Return there first.
+    if (target instanceof HTMLElement && overlay?.contains(target)) {
+      target.focus();
+      if (document.activeElement === target) return;
+    }
     if (focusFirstElement(overlay)) return;
     if (overlay instanceof HTMLElement) overlay.focus();
     return;

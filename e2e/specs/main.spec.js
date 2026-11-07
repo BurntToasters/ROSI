@@ -1757,12 +1757,27 @@ describe("ROSI main window", () => {
       : `${MEDIA}/clip-one.mp4`;
     const formats = await api("getFormats", url);
     assert.equal(formats.ok, true, formats.error?.message);
+    assert.ok(Array.isArray(formats.data.formats));
+    assert.ok(
+      formats.data.formats.every(
+        (format) =>
+          typeof format.formatId === "string" &&
+          ["audio", "video", "audioVideo"].includes(format.streamKind),
+      ),
+    );
     if (HAS_FFMPEG) {
-      assert.match(formats.data, /audio only/);
-      assert.match(formats.data, /video only/);
+      assert.ok(
+        formats.data.formats.some((format) => format.streamKind === "audio"),
+      );
+      assert.ok(
+        formats.data.formats.some((format) => format.streamKind === "video"),
+      );
     }
     record("formats", {
-      lines: formats.data.split(/\r?\n/).filter(Boolean).length,
+      formats: formats.data.formats.length,
+      streamKinds: [
+        ...new Set(formats.data.formats.map((format) => format.streamKind)),
+      ],
     });
   });
 
@@ -3458,13 +3473,28 @@ describe("ROSI main window", () => {
       !defaults.sponsorblockRemove,
       "SponsorBlock change was not saved",
     );
-    await browser.execute(() =>
-      document
-        .querySelector(
-          '.settings-section-reset[data-reset-section="enhancements"]',
-        )
-        .click(),
+    const resetEnhancements = () =>
+      browser.execute(() =>
+        document
+          .querySelector(
+            '.settings-section-reset[data-reset-section="enhancements"]',
+          )
+          .click(),
+      );
+    // Reset asks first: Cancel must leave the changed values alone.
+    await resetEnhancements();
+    await waitForModal(true, "section reset did not ask for confirmation");
+    await clickModalButton("Cancel");
+    await waitForModal(false, "Cancel did not close the reset prompt");
+    assert.equal(
+      settingsOnDisk().embedMetadata,
+      !defaults.embedMetadata,
+      "Cancel changed the metadata setting",
     );
+    await resetEnhancements();
+    await waitForModal(true, "section reset did not reopen the prompt");
+    await clickModalButton("Reset section");
+    await waitForModal(false, "confirmed reset did not close the prompt");
     await waitForSavedSetting(
       "embedMetadata",
       defaults.embedMetadata,

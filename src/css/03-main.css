@@ -421,7 +421,21 @@
 .download-output-summary {
   margin: 0.45rem 0 0 0.2rem;
   font-size: var(--text-sm);
+  line-height: 1.4;
   color: var(--text-muted);
+}
+
+.download-output-summary[data-state='resolved'] {
+  color: var(--text-secondary);
+}
+
+.download-output-summary[data-state='resolving'] {
+  color: var(--text-tertiary);
+}
+
+.download-output-summary[data-state='error'],
+.download-output-summary[data-state='invalid-url'] {
+  color: var(--danger);
 }
 
 /* ── Saved presets popover ── */

@@ -718,11 +718,11 @@ pub fn validate_download_request(value: &Value) -> Result<DownloadRequestOptions
             ));
         }
     };
-    let ffmpeg_path = validate_ffmpeg_path_value(
-        optional_string(object, "ffmpegPath")?
-            .map(str::trim)
-            .filter(|value| !value.is_empty()),
-    )?;
+    let raw_ffmpeg_path = optional_string(object, "ffmpegPath")?;
+    let ffmpeg_path = match raw_ffmpeg_path {
+        Some(value) if value.trim().is_empty() => Some(String::new()),
+        value => validate_ffmpeg_path_value(value.map(str::trim))?,
+    };
     let convert_format = optional_string(object, "convertFormat")?
         .map(str::trim)
         .filter(|value| !value.is_empty())

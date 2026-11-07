@@ -1,3 +1,8 @@
+const {
+  audioFormat,
+  formatList,
+  videoFormat,
+} = require("./format-fixtures.cjs");
 const fs = require("fs");
 const path = require("node:path");
 const root = path.resolve(__dirname, "../..");
@@ -81,7 +86,8 @@ let updaterStatusHandler;
 const settingsSaveResolvers = [];
 let deferNextSettingsSave = false;
 const ok = (data) => Promise.resolve({ ok: true, data });
-getFormatsImpl = () => ok("137 mp4 1920x1080 video only\n140 m4a audio only");
+getFormatsImpl = () =>
+  ok(formatList([videoFormat("137", "1920x1080"), audioFormat("140")]));
 w.api = new Proxy(
   {
     getChannel: () => "github",
@@ -310,12 +316,12 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   await wait(20);
   resolveSecond?.({
     ok: true,
-    data: "88 mp4 1280x720 video only\n89 m4a audio only",
+    data: formatList([videoFormat("88", "1280x720"), audioFormat("89")]),
   });
   await wait(20);
   resolveFirst?.({
     ok: true,
-    data: "177 mp4 3840x2160 video only\n178 m4a audio only",
+    data: formatList([videoFormat("177", "3840x2160"), audioFormat("178")]),
   });
   await wait(40);
   const staleReplyFormats = {
@@ -357,7 +363,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   await wait(30);
   input.value = "https://example.com/e";
   input.dispatchEvent(new w.Event("input", { bubbles: true }));
-  getFormatsImpl = () => ok("277 mp4 1920x1080 video only\n278 m4a audio only");
+  getFormatsImpl = () =>
+    ok(formatList([videoFormat("277", "1920x1080"), audioFormat("278")]));
   w.document.getElementById("fetchFormatsBtn").click();
   await wait(40);
   w.document.getElementById("videoFormat").value = "277";
@@ -383,7 +390,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   await wait(30);
   input.value = "https://example.com/f";
   input.dispatchEvent(new w.Event("input", { bubbles: true }));
-  getFormatsImpl = () => ok("377 mp4 1920x1080 video only\n378 m4a audio only");
+  getFormatsImpl = () =>
+    ok(formatList([videoFormat("377", "1920x1080"), audioFormat("378")]));
   w.document.getElementById("fetchFormatsBtn").click();
   await wait(40);
   w.document.getElementById("videoFormat").value = "377";
@@ -405,7 +413,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   await wait(30);
   resolvePresetLookup?.({
     ok: true,
-    data: "477 mp4 1920x1080 video only\n478 m4a audio only",
+    data: formatList([videoFormat("477", "1920x1080"), audioFormat("478")]),
   });
   await wait(50);
   const presetSurvivesStaleLookup = {

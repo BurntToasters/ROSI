@@ -52,13 +52,23 @@ export type QueueStatus = "pending" | "downloading" | "completed" | "failed" | "
 
 export type QueueItem = { id: string, url: string, status: QueueStatus, addedAt: number, startedAt?: number | null, completedAt?: number | null, request?: DownloadRequestOptions | null, filename?: string | null, outputPath?: string | null, sizeBytes?: number | null, error?: string | null, };
 
+export type QueueSnapshot = { revision: number, items: Array<QueueItem>, };
+
 export type VideoInfo = { title: string, uploader?: string | null, durationSeconds?: number | null, thumbnail?: string | null, ext?: string | null, viewCount?: number | null, isPlaylist: boolean, playlistCount?: number | null, webpageUrl?: string | null, };
+
+export type StreamKind = "audio" | "video" | "audioVideo";
+
+export type FormatEntry = { formatId: string, streamKind: StreamKind, vcodec?: string | null, acodec?: string | null, resolution?: string | null, fps?: number | null, fileSizeBytes?: number | null, estimatedSizeBytes?: number | null, };
+
+export type FormatList = { formats: Array<FormatEntry>, };
 
 export type DownloadStats = { totalDownloads: number, successfulDownloads: number, failedDownloads: number, cancelledDownloads: number, totalBytesDownloaded: number, formatCounts: { [key in string]: number }, firstDownloadAt?: number | null, lastDownloadAt?: number | null, };
 
 export type GpuDetectionResult = { nvidia: boolean, amd: boolean, intel: boolean, };
 
 export type IpcError = { code: "VALIDATION_ERROR" | "INVALID_URL" | "INVALID_PATH" | "NOT_AVAILABLE" | "INTERNAL_ERROR" | "NEWER_VERSION", message: string, details?: string | null, };
+
+export type DownloadRequestInput = { url?: string | null, outputPath?: string | null, ffmpegPath?: string | null, convertEnabled?: boolean | null, convertFormat?: string | null, keepOriginal?: boolean | null, videoFormat?: string | null, audioFormat?: string | null, playlist?: PlaylistSelection | null, profile?: string | null, presetId?: string | null, presetName?: string | null, bestQuality?: boolean | null, advancedOptions?: boolean | null, audioOnly?: boolean | null, audioOutputFormat?: string | null, hookBrowser?: boolean | null, browserChoice?: string | null, gpuAcceleration?: boolean | null, gpuType?: string | null, writeSubtitles?: boolean | null, subtitleLangs?: string | null, embedThumbnail?: boolean | null, embedMetadata?: boolean | null, sponsorblockRemove?: boolean | null, };
 
 export type DownloadStarted = { started: boolean, sessionId: number, };
 

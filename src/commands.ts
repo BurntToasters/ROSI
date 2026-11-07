@@ -17,7 +17,7 @@ export interface Commands {
   reset_stats: { args: void; result: Envelope<void> };
   get_download_activity: { args: void; result: Envelope<Ipc.DownloadCompletion[]> };
   clear_download_activity: { args: void; result: Envelope<void> };
-  get_formats: { args: { url: string }; result: Envelope<string> };
+  get_formats: { args: { url: string }; result: Envelope<Ipc.FormatList> };
   cancel_formats: { args: void; result: void };
   get_video_info: {
     args: { url: string; playlistMode: 'current' | 'all' | null };
@@ -25,12 +25,16 @@ export interface Commands {
   };
   cancel_video_info: { args: void; result: void };
   download_video: {
-    args: { options: Partial<Ipc.DownloadRequestOptions> };
+    args: { options: Ipc.DownloadRequestInput };
     result: Envelope<Ipc.DownloadStarted>;
+  };
+  resolve_download_options: {
+    args: { options: Ipc.DownloadRequestInput };
+    result: Envelope<Ipc.DownloadRequestOptions>;
   };
   cancel_download: { args: void; result: void };
   add_to_queue: {
-    args: { urls: string[]; options: Partial<Ipc.DownloadRequestOptions> | null };
+    args: { urls: string[]; options: Ipc.DownloadRequestInput | null };
     result: Envelope<Ipc.AddResult>;
   };
   remove_from_queue: { args: { id: string }; result: Envelope<void> };

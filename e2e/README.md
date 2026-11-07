@@ -9,6 +9,16 @@ E2E binary once, runs every suite below against that binary, writes evidence to
 from that spec alone, and its report sets `fullSuite: false` and `onlySpec`, so
 release evidence rejects it. A blank value counts as unset.
 
+`e2e/suites.json` is the canonical static scenario inventory and feature index.
+It maps the existing files to their current runner owners; the files have not
+been moved. To run selected feature groups, use `npm run test:e2e -- --group
+settings,queue` or set `ROSI_E2E_GROUPS=settings,queue`. The selector expands to
+the whole current runner owner, so a group that uses `main.spec.js` can report
+scenarios from other features owned by that same pass. Reports include both the
+requested groups and the expanded scenario list. Group runs set
+`fullSuite: false`, use a fresh E2E binary, and are not release proof. A group
+selection cannot be combined with `ROSI_E2E_ONLY`.
+
 On a local Mac the gate runs ROSI in background mode (`ROSI_E2E_BACKGROUND=1`):
 the E2E app has no Dock icon, never takes focus, and its window stays below
 other apps. Native alert dialogs that specs open on purpose still appear. CI
@@ -34,6 +44,49 @@ runs in the foreground; set `ROSI_E2E_FOREGROUND=1` to do the same locally.
 | `e2e/v5-fixes/network/run.mjs`                                            | Security and network policy                                                       | Runner, `report.json` under `e2e/artifacts/v5-fixes-network/`                 |
 | `e2e/v5-fixes/persistence/run.mjs`                                        | Persistence acceptance                                                            | Runner, `report.json` under `e2e/artifacts/v5-fixes-persistence/`             |
 | `e2e/v5-fixes/downloader/run.mjs`                                         | Downloader (install fallback, orphan sweep, panic log)                            | Runner, `report.json` under `e2e/artifacts/v5-fixes-downloader/`              |
+
+The report keeps the original flat `expectedScenarios` inventory for release
+checks and adds `scenarioGroups` so outcomes can be read by feature. Existing
+runner ownership, platform-specific skip allowances, fresh-report checks, and
+the E2E binary hash checks are described in the manifest and runner.
+
+## ROSI 5.1 baseline capture
+
+`node scripts/benchmark-51.mjs --label current --snapshot <snapshot-directory>`
+records the current source revision and dirty-file hashes, platform, tool
+versions, evidence artifact and sidecar sizes, static and dynamic scenario
+inventory, and references to reports already under `e2e/artifacts/`. Native
+package sizes are recorded separately; when packages are absent, their size is
+`not-measured` rather than zero. Frontend `dist/` size is also separate from
+native packages. The command writes a timestamped JSON report and `.sha256`
+sidecar; it does not execute scenarios. The inventory counts discovered cases,
+while execution evidence remains `not-run` for the benchmark capture.
+
+The first full baseline report created during ROSI 5.1 foundation work was
+overwritten while the shared artifact tree was changing. That report is not
+retained or verifiable, and its contents are not reconstructed. A later
+current-only capture does not stand in for that lost baseline.
+
+To compare a later capture, run:
+
+```sh
+node scripts/benchmark-51.mjs --label candidate \
+  --compare path/to/baseline.json \
+  --runtime-metrics path/to/runtime-metrics.json
+```
+
+The default output includes a timestamp and refuses to replace an existing
+file. An explicit `--out <path>` also refuses to overwrite; pass `--force` only
+when replacement is intentional. The runtime metrics input uses
+`schemaVersion: 1`, the measured `platform` and
+`arch`, a `method` description, and a `measurements` object. Supported fields
+are `startupMs` (`ms`), `idleCpuPercent` (`percent`), `peakMemoryBytes`
+(`bytes`), `queueLatencyMs` (`ms`), and `proxyThroughputBytesPerSecond`
+(`bytes_per_second`). Each value is an object with a numeric `value` and exact
+`unit`; optional `samples`, `method`, and `evidence` fields preserve measurement
+context. Missing values stay `not-measured`; comparisons produce a delta only
+when both reports contain a compatible measurement. No historical runtime
+result is inferred from existing E2E report files.
 
 ### v5-fixes areas and `run.mjs`
 

@@ -3431,6 +3431,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-plugin-wdio",
  "tauri-plugin-wdio-webdriver",
+ "tokio",
  "ts-rs",
  "url",
  "windows-sys 0.61.2",

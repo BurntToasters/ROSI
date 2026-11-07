@@ -1,5 +1,6 @@
 // Deno detection, reminder, and install flow.
 import { RosiSettings, logError } from './core';
+import { UI_MESSAGES } from './messages';
 import { showModal } from './overlays';
 import { showRestartFailure } from './updater-ui';
 
@@ -37,7 +38,7 @@ export async function checkDenoInstallation(
             primary: true,
             action: () => window.api.openExternal(DENO_INSTALL_DOCS),
           },
-          { label: 'Later' },
+          { label: UI_MESSAGES.wizard.later },
           {
             label: "No, don't remind me",
             action: () => {
@@ -138,5 +139,17 @@ export async function checkDenoInstallation(
     }
   } catch (error) {
     logError('Error checking Deno installation', error);
+    showModal({
+      title: UI_MESSAGES.wizard.denoCheckUnavailableTitle,
+      message: UI_MESSAGES.wizard.denoCheckFailed,
+      buttons: [
+        {
+          label: UI_MESSAGES.wizard.installInstructions,
+          primary: true,
+          action: () => window.api.openExternal(DENO_INSTALL_DOCS),
+        },
+        { label: 'Later' },
+      ],
+    });
   }
 }
