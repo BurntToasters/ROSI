@@ -78,6 +78,20 @@ run on Tauri's Tokio runtime, with admission and DNS work bounded independently.
     is written, so `pending_admissions` never counts a client that is only being
     drained. The 128-entry pending cap is unaffected because expired entries have
     already left the queue.
+22. **The DNS capacity probe reads a transient queue state.** The resolver
+    enforces its queue limit under the pool lock, but a worker pop can remove one
+    queued job between two probe samples. Under full-gate load worker wakeups are
+    late: the pool rejected five callers at the limit (`rejectedDelta=5`), yet the
+    sampled `maxQueueLen` stayed at 15, so the probe never saw 16 queued beside 4
+    active workers and failed with `reachedCapacity=false`. The probe must hold its
+    own lookups at a gate until 4 workers are busy, the queue is observed at 16,
+    and the overflow callers are rejected, so each capacity state it checks is
+    stable. A missed sample must not be able to fail a correct pool.
+23. **A held probe lookup outlives the probe.** The gate reopens on every exit
+    path from a batch, including a failed spawn or a failed capacity check, and a
+    held lookup returns after a fixed fail-safe timeout, so the process-wide
+    resolver cannot stay blocked. Ordinary `rosi-dns-delay-` lookups used by other
+    specs keep their existing synthetic delay and are not gated.
 
 The native E2E probe is the acceptance mechanism for concurrency and cleanup.
 Rust unit tests must not be added after implementation; existing network and

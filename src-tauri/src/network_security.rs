@@ -52,6 +52,11 @@ const DNS_RESOLUTION_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const DNS_RESOLVER_START_TIMEOUT: Duration = Duration::from_secs(1);
 #[cfg(feature = "e2e")]
 const E2E_DNS_DELAY: Duration = Duration::from_secs(2);
+/// Fail-safe for lookups the capacity probe holds at its gate. The probe
+/// reopens the gate itself; this bound only keeps a failed probe from leaving
+/// workers blocked for the rest of the process.
+#[cfg(feature = "e2e")]
+const E2E_DNS_HOLD_TIMEOUT: Duration = Duration::from_secs(30);
 
 static DNS_RESOLVER: OnceLock<Option<Arc<DnsResolverPool>>> = OnceLock::new();
 static NEXT_DNS_JOB_ID: AtomicU64 = AtomicU64::new(1);
@@ -83,11 +88,15 @@ struct DnsResolverState {
     cancelled_waits: u64,
     #[cfg(feature = "e2e")]
     synthetic_lookups_started: u64,
+    #[cfg(feature = "e2e")]
+    lookup_gate_closed: bool,
 }
 
 struct DnsResolverShared {
     state: Mutex<DnsResolverState>,
     queue_ready: Condvar,
+    #[cfg(feature = "e2e")]
+    lookup_gate: Condvar,
 }
 
 struct DnsResolverPool {
@@ -267,8 +276,12 @@ impl DnsResolverPool {
                 cancelled_waits: 0,
                 #[cfg(feature = "e2e")]
                 synthetic_lookups_started: 0,
+                #[cfg(feature = "e2e")]
+                lookup_gate_closed: false,
             }),
             queue_ready: Condvar::new(),
+            #[cfg(feature = "e2e")]
+            lookup_gate: Condvar::new(),
         });
         let (ready_sender, ready_receiver) = mpsc::channel();
 
@@ -355,6 +368,20 @@ impl DnsResolverPool {
         pending.cancel();
     }
 
+    /// While closed, lookups for `rosi-dns-hold-` hosts stay on their worker
+    /// until the gate reopens. Ordinary lookups are not affected.
+    #[cfg(feature = "e2e")]
+    fn set_lookup_gate(&self, closed: bool) {
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.lookup_gate_closed = closed;
+        drop(state);
+        self.shared.lookup_gate.notify_all();
+    }
+
     #[cfg(feature = "e2e")]
     fn snapshot(&self) -> DnsResolverSnapshot {
         let state = self
@@ -439,6 +466,51 @@ fn dns_resolver_worker(shared: Arc<DnsResolverShared>) {
     }
 }
 
+/// Holds a probe lookup on its worker while the gate is closed. The wait is
+/// bounded by `E2E_DNS_HOLD_TIMEOUT`, and a stopped pool releases it at once.
+#[cfg(feature = "e2e")]
+fn hold_e2e_lookup(shared: &DnsResolverShared) {
+    let deadline = Instant::now() + E2E_DNS_HOLD_TIMEOUT;
+    let mut state = shared
+        .state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    state.synthetic_lookups_started = state.synthetic_lookups_started.saturating_add(1);
+    while state.lookup_gate_closed && !state.stopped {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let (next, _) = shared
+            .lookup_gate
+            .wait_timeout(state, remaining)
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state = next;
+    }
+}
+
+/// Closes the lookup gate for one probe batch and reopens it on drop, so every
+/// exit from the batch releases the held workers.
+#[cfg(feature = "e2e")]
+struct E2eLookupGate {
+    resolver: Arc<DnsResolverPool>,
+}
+
+#[cfg(feature = "e2e")]
+impl E2eLookupGate {
+    fn close(resolver: Arc<DnsResolverPool>) -> Self {
+        resolver.set_lookup_gate(true);
+        Self { resolver }
+    }
+}
+
+#[cfg(feature = "e2e")]
+impl Drop for E2eLookupGate {
+    fn drop(&mut self) {
+        self.resolver.set_lookup_gate(false);
+    }
+}
+
 fn resolve_dns_addresses(
     host: &str,
     port: u16,
@@ -446,6 +518,12 @@ fn resolve_dns_addresses(
 ) -> Option<Vec<SocketAddr>> {
     #[cfg(not(feature = "e2e"))]
     let _ = shared;
+
+    #[cfg(feature = "e2e")]
+    if host.starts_with("rosi-dns-hold-") {
+        hold_e2e_lookup(shared);
+        return Some(vec![SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)]);
+    }
 
     #[cfg(feature = "e2e")]
     if host.starts_with("rosi-dns-delay-") {
@@ -981,10 +1059,58 @@ fn base64_encode(bytes: &[u8]) -> String {
     encoded
 }
 
+/// Spawns probe callers for `indexes`. Each caller uses a `rosi-dns-hold-`
+/// host, so its lookup stays on a worker while the gate is closed.
+#[cfg(feature = "e2e")]
+fn spawn_e2e_dns_callers(
+    batch: usize,
+    indexes: std::ops::Range<usize>,
+    cancellations: &[Arc<AtomicBool>],
+    result_sender: &mpsc::Sender<(Duration, bool)>,
+    callers: &mut Vec<thread::JoinHandle<()>>,
+) -> Result<(), String> {
+    for index in indexes {
+        let cancellation = Arc::clone(&cancellations[index]);
+        let result_sender = result_sender.clone();
+        let host = format!("rosi-dns-hold-{batch}-{index}.invalid");
+        let caller = thread::Builder::new()
+            .name(format!("rosi-e2e-dns-caller-{batch}-{index}"))
+            .spawn(move || {
+                let started = Instant::now();
+                let result = resolve_system_dns_with_cancel(&host, 443, Some(&cancellation));
+                let _ = result_sender.send((started.elapsed(), result.is_none()));
+            })
+            .map_err(|error| error.to_string())?;
+        callers.push(caller);
+    }
+    Ok(())
+}
+
+/// Polls resolver state until `ready` holds or the deadline passes. Callers
+/// only use it for states that stay put while the gate is closed.
+#[cfg(feature = "e2e")]
+fn wait_for_resolver_state(
+    resolver: &DnsResolverPool,
+    deadline: Instant,
+    ready: impl Fn(&DnsResolverSnapshot) -> bool,
+) -> bool {
+    loop {
+        if ready(&resolver.snapshot()) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+}
+
 #[cfg(feature = "e2e")]
 fn e2e_dns_cancellation_probe() -> Result<serde_json::Value, String> {
     const BATCHES: usize = 3;
     const CALLERS_PER_BATCH: usize = 24;
+    const OVERFLOW_CALLERS: u64 =
+        (CALLERS_PER_BATCH - DNS_RESOLVER_WORKERS - MAX_PENDING_DNS_QUERIES) as u64;
 
     let resolver = shared_dns_resolver().ok_or("bounded DNS resolver did not start")?;
     let mut max_caller_return = Duration::ZERO;
@@ -1017,6 +1143,7 @@ fn e2e_dns_cancellation_probe() -> Result<serde_json::Value, String> {
     idle_reached &= idle;
     let before = resolver.snapshot();
 
+    let mut batches_at_queue_limit = 0usize;
     for batch in 0..BATCHES {
         let (idle, waited) = wait_for_idle(idle_budget_left);
         idle_wait += waited;
@@ -1025,94 +1152,109 @@ fn e2e_dns_cancellation_probe() -> Result<serde_json::Value, String> {
         // Per-batch baseline: the probe-wide one goes stale after batch 0.
         let batch_before = resolver.snapshot();
         let batch_start = Instant::now();
+        // The gate keeps every lookup of this batch on its worker until the
+        // phases below have read their states. Its guard reopens it on every
+        // exit from the batch, including the error paths.
+        let gate = E2eLookupGate::close(Arc::clone(&resolver));
         let cancellations = (0..CALLERS_PER_BATCH)
             .map(|_| Arc::new(AtomicBool::new(false)))
             .collect::<Vec<_>>();
         let (result_sender, result_receiver) = mpsc::channel();
         let mut callers = Vec::with_capacity(CALLERS_PER_BATCH);
-        let mut spawn_error = None;
 
-        for (index, cancellation) in cancellations.iter().enumerate() {
-            let cancellation = Arc::clone(cancellation);
-            let result_sender = result_sender.clone();
-            let host = format!("rosi-dns-delay-{batch}-{index}.invalid");
-            match thread::Builder::new()
-                .name(format!("rosi-e2e-dns-caller-{batch}-{index}"))
-                .spawn(move || {
-                    let started = Instant::now();
-                    let result = resolve_system_dns_with_cancel(&host, 443, Some(&cancellation));
-                    let _ = result_sender.send((started.elapsed(), result.is_none()));
-                }) {
-                Ok(caller) => callers.push(caller),
-                Err(error) => {
-                    spawn_error = Some(error.to_string());
-                    break;
-                }
-            }
-        }
-        drop(result_sender);
-
-        // Latched per batch: a loaded runner may only show full capacity in a
-        // sample that is later drained by a finishing worker.
-        let submit_deadline = batch_start + Duration::from_secs(5);
-        let mut all_attempted = false;
-        let mut reached_capacity = false;
+        // Phase 1 holds every worker. Phase 2 fills the queue to its limit
+        // while the workers stay held. Phase 3 sends callers that must be
+        // rejected. Each wait reads a state that cannot change until the gate
+        // opens, so a loaded runner cannot make it miss the state.
+        let submit_deadline = batch_start + Duration::from_secs(10);
+        let mut workers_held = false;
+        let mut queue_full = false;
+        let mut overflow_rejected = false;
         let mut time_to_capacity = None;
-        let mut last_queue_len = 0;
-        let mut last_active = 0;
-        let mut max_queue_len = 0;
-        let mut max_active = 0;
-        while Instant::now() < submit_deadline {
-            let snapshot = resolver.snapshot();
-            last_queue_len = snapshot.queue_len;
-            last_active = snapshot.active_workers;
-            max_queue_len = max_queue_len.max(snapshot.queue_len);
-            max_active = max_active.max(snapshot.active_workers);
-            let attempts = snapshot
-                .request_attempts
-                .saturating_sub(batch_before.request_attempts);
-            all_attempted |= attempts >= CALLERS_PER_BATCH as u64;
-            if !reached_capacity
-                && snapshot.queue_len == MAX_PENDING_DNS_QUERIES
-                && snapshot.active_workers == DNS_RESOLVER_WORKERS
-                && snapshot.synthetic_lookups_started > batch_before.synthetic_lookups_started
-            {
-                reached_capacity = true;
-                time_to_capacity = Some(batch_start.elapsed());
+        let mut spawn_error = None;
+        'phases: {
+            if let Err(error) = spawn_e2e_dns_callers(
+                batch,
+                0..DNS_RESOLVER_WORKERS,
+                &cancellations,
+                &result_sender,
+                &mut callers,
+            ) {
+                spawn_error = Some(error);
+                break 'phases;
             }
-            if all_attempted && reached_capacity {
-                break;
+            workers_held = wait_for_resolver_state(&resolver, submit_deadline, |state| {
+                state.active_workers == DNS_RESOLVER_WORKERS
+            });
+            if !workers_held {
+                break 'phases;
             }
-            thread::sleep(Duration::from_millis(5));
+            if let Err(error) = spawn_e2e_dns_callers(
+                batch,
+                DNS_RESOLVER_WORKERS..DNS_RESOLVER_WORKERS + MAX_PENDING_DNS_QUERIES,
+                &cancellations,
+                &result_sender,
+                &mut callers,
+            ) {
+                spawn_error = Some(error);
+                break 'phases;
+            }
+            queue_full = wait_for_resolver_state(&resolver, submit_deadline, |state| {
+                state.queue_len == MAX_PENDING_DNS_QUERIES
+                    && state.active_workers == DNS_RESOLVER_WORKERS
+            });
+            if !queue_full {
+                break 'phases;
+            }
+            time_to_capacity = Some(batch_start.elapsed());
+            if let Err(error) = spawn_e2e_dns_callers(
+                batch,
+                DNS_RESOLVER_WORKERS + MAX_PENDING_DNS_QUERIES..CALLERS_PER_BATCH,
+                &cancellations,
+                &result_sender,
+                &mut callers,
+            ) {
+                spawn_error = Some(error);
+                break 'phases;
+            }
+            overflow_rejected = wait_for_resolver_state(&resolver, submit_deadline, |state| {
+                state
+                    .rejected_requests
+                    .saturating_sub(batch_before.rejected_requests)
+                    >= OVERFLOW_CALLERS
+                    && state.queue_len == MAX_PENDING_DNS_QUERIES
+            });
         }
+        let observed = resolver.snapshot();
         max_time_to_capacity = max_time_to_capacity.max(time_to_capacity.unwrap_or(Duration::ZERO));
 
         for cancellation in &cancellations {
             cancellation.store(true, Ordering::Release);
         }
-        for caller in callers {
+        for caller in callers.drain(..) {
             let _ = caller.join();
         }
+        drop(result_sender);
+        drop(gate);
         while let Ok((elapsed, returned_without_answer)) = result_receiver.try_recv() {
             max_caller_return = max_caller_return.max(elapsed);
             callers_returned_without_answer += usize::from(returned_without_answer);
         }
 
-        if let Some(error) = spawn_error {
-            return Err(format!("could not start bounded DNS E2E caller: {error}"));
-        }
-        if !all_attempted || !reached_capacity {
-            let end = resolver.snapshot();
+        if spawn_error.is_some() || !(workers_held && queue_full && overflow_rejected) {
             return Err(format!(
-                "bounded DNS E2E callers did not reach the resolver queue limit (batch={batch} elapsedMs={} lastQueueLen={last_queue_len} lastActiveWorkers={last_active} maxQueueLen={max_queue_len} maxActiveWorkers={max_active} attemptsDelta={} syntheticLookupsDelta={} rejectedDelta={} workersStarted={} idleReached={idle} idleWaitMs={} allAttempted={all_attempted} reachedCapacity={reached_capacity})",
+                "bounded DNS E2E callers did not reach the resolver queue limit (batch={batch} elapsedMs={} heldWorkers={workers_held} queueFull={queue_full} overflowRejected={overflow_rejected} activeWorkers={} queueLen={} attemptsDelta={} rejectedDelta={} syntheticLookupsDelta={} workersStarted={} idleReached={idle} idleWaitMs={} spawnError={spawn_error:?})",
                 batch_start.elapsed().as_millis(),
-                end.request_attempts.saturating_sub(batch_before.request_attempts),
-                end.synthetic_lookups_started.saturating_sub(batch_before.synthetic_lookups_started),
-                end.rejected_requests.saturating_sub(batch_before.rejected_requests),
-                end.workers_started,
+                observed.active_workers,
+                observed.queue_len,
+                observed.request_attempts.saturating_sub(batch_before.request_attempts),
+                observed.rejected_requests.saturating_sub(batch_before.rejected_requests),
+                observed.synthetic_lookups_started.saturating_sub(batch_before.synthetic_lookups_started),
+                observed.workers_started,
                 idle_wait.as_millis(),
             ));
         }
+        batches_at_queue_limit += 1;
     }
 
     let drain_deadline = Instant::now() + E2E_DNS_DELAY + Duration::from_secs(1);
@@ -1130,6 +1272,7 @@ fn e2e_dns_cancellation_probe() -> Result<serde_json::Value, String> {
     let after = resolver.snapshot();
     Ok(serde_json::json!({
         "batches": BATCHES,
+        "batchesAtQueueLimit": batches_at_queue_limit,
         "requestAttempts": after.request_attempts.saturating_sub(before.request_attempts),
         "workersStarted": after.workers_started,
         "workerLimit": DNS_RESOLVER_WORKERS,

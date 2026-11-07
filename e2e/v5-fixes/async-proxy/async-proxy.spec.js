@@ -131,6 +131,7 @@ describe("V5 bounded asynchronous proxy", () => {
       dns?.workerLimit === 4 &&
       dns?.queueHighWater <= dns?.queueLimit &&
       dns?.queueLimit === 16 &&
+      dns?.batchesAtQueueLimit === 3 &&
       dns?.pendingAfterDrain === 0 &&
       dns?.activeAfterDrain === 0;
     record("framing-and-dns-regression", {
@@ -149,6 +150,7 @@ describe("V5 bounded asynchronous proxy", () => {
     assert.equal(dns?.workerLimit, 4);
     assert.ok(dns?.maxActiveWorkers <= dns?.workerLimit);
     assert.ok(dns?.queueHighWater <= dns?.queueLimit);
+    assert.equal(dns?.batchesAtQueueLimit, 3);
     assert.equal(dns?.pendingAfterDrain, 0);
     assert.equal(dns?.activeAfterDrain, 0);
   });
