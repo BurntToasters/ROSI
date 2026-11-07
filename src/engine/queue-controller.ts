@@ -1,23 +1,17 @@
 // Queue rendering, actions, and status messages.
 import { RosiJobProgressEvent, dockModule, logError, queueModule } from './core';
 import { isPlaylistScopeVisible, resolvePlaylistSelection } from './playlist';
-import {
-  buildOnScreenPresetOverrides,
-  getSelectedPreset,
-  readAdvancedFormatSelections,
-} from './presets';
+import { buildRequestOverrides, readAdvancedFormatSelections } from './presets';
 import { revealFileLocation } from './progress';
 import { refs } from './refs';
 import { persistSettings, settingsStore } from './settings-store';
 import { ToastType, showToast } from './ui-helpers';
 
 /**
- * Per-job overrides sent with queue additions.
- * Returns `{ ok: false }` when the visible playlist range is invalid so nothing is queued.
- * When playlist radios are visible, their value (including Current) always wins over a
- * selected preset. When the scope UI is still hidden, playlist is omitted so a preset
- * saved as All/Range can apply. Other on-screen settings are always sent with a preset
- * so convert/GPU/profile toggles cannot be silently overwritten.
+ * Per-job overrides sent with queue additions, built by the same builder as
+ * manual downloads. Returns `{ ok: false }` when the visible playlist range is
+ * invalid so nothing is queued. Playlist is omitted while its radios are hidden,
+ * so a preset saved as All/Range can apply.
  */
 export function buildQueueRequestOverrides(
   outputPath?: string,
@@ -27,20 +21,13 @@ export function buildQueueRequestOverrides(
   const playlist = resolvePlaylistSelection();
   if (scopeVisible && !playlist) return { ok: false };
 
-  const overrides: Record<string, unknown> = {};
+  const overrides: Record<string, unknown> = {
+    ...buildRequestOverrides({
+      formats: formatSelections ?? readAdvancedFormatSelections(),
+      playlist: scopeVisible ? (playlist ?? undefined) : undefined,
+    }),
+  };
   if (outputPath) overrides.outputPath = outputPath;
-  const formats = formatSelections ?? readAdvancedFormatSelections();
-  if (formats.videoFormat) overrides.videoFormat = formats.videoFormat;
-  if (formats.audioFormat) overrides.audioFormat = formats.audioFormat;
-  const preset = getSelectedPreset();
-  if (preset) {
-    overrides.presetId = preset.id;
-    overrides.presetName = preset.name;
-    Object.assign(overrides, buildOnScreenPresetOverrides(formats));
-    if (scopeVisible && playlist) overrides.playlist = playlist;
-  } else if (scopeVisible && playlist && playlist.mode !== 'current') {
-    overrides.playlist = playlist;
-  }
   return {
     ok: true,
     overrides: Object.keys(overrides).length > 0 ? overrides : undefined,

@@ -9,11 +9,7 @@ import {
   receiveManualDownloadStart,
 } from '../manual-download';
 import { isPlaylistScopeVisible, resolvePlaylistSelection } from '../playlist';
-import {
-  buildOnScreenPresetOverrides,
-  getSelectedPreset,
-  readAdvancedFormatSelections,
-} from '../presets';
+import { buildRequestOverrides, readAdvancedFormatSelections } from '../presets';
 import { downloadState, hideProgressBar } from '../progress';
 import { addUrlsToQueue } from '../queue-controller';
 import { refs } from '../refs';
@@ -25,14 +21,7 @@ import { syncPrimaryActionState, updateUrlButtons, urlActionState } from '../url
 
 /** Format fetching, the download button, and manual update checks. */
 export function bindDownloadControls() {
-  const {
-    checkUpdateBtn,
-    convertFormatSelect,
-    downloadBtn,
-    fetchFormatsBtn,
-    keepOriginalToggle,
-    outputEl,
-  } = refs;
+  const { checkUpdateBtn, downloadBtn, fetchFormatsBtn, outputEl } = refs;
   if (fetchFormatsBtn) {
     fetchFormatsBtn.onclick = fetchFormats;
   }
@@ -109,21 +98,11 @@ export function bindDownloadControls() {
           syncPrimaryActionState();
           return;
         }
-        const activePreset = getSelectedPreset();
-        const presetOverrides = activePreset
-          ? {
-              presetId: activePreset.id,
-              presetName: activePreset.name,
-              ...buildOnScreenPresetOverrides(formatSelections),
-            }
-          : {};
+        const requestOverrides = buildRequestOverrides({
+          formats: formatSelections,
+          playlist: scopeVisible ? (playlist ?? undefined) : undefined,
+        });
         const ffmpegPath = settingsStore.settings.ffmpegPath;
-        const convertFormat = settingsStore.settings.convertEnabled
-          ? convertFormatSelect?.value.trim() || undefined
-          : undefined;
-        const keepOriginal = settingsStore.settings.convertEnabled
-          ? keepOriginalToggle?.checked
-          : undefined;
         let savePath = settingsStore.settings.askDownloadLocation
           ? null
           : settingsStore.settings.downloadFolder?.trim() || null;
@@ -185,15 +164,9 @@ export function bindDownloadControls() {
         prepareManualDownloadStart(operation);
         const startResult = await window.api.downloadVideo({
           url: url.trim(),
-          videoFormat,
-          audioFormat,
           outputPath: savePath,
-          convertFormat,
-          keepOriginal,
           ffmpegPath,
-          // When radios are hidden, omit playlist so a selected preset's All/Range applies.
-          ...(scopeVisible && playlist ? { playlist } : {}),
-          ...presetOverrides,
+          ...requestOverrides,
         });
         if (operation !== manualDownload.manualDownloadOperation) return;
         if (!startResult || startResult.ok !== true) {

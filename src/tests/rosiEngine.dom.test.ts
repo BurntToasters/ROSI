@@ -514,6 +514,19 @@ describe('rosiEngine DOM wiring', () => {
           ],
         })
       ) as unknown as ReturnType<typeof vi.fn>,
+      // Apply takes the preset's values from Rust's resolution (B2), so the mock answers
+      // the preset resolution the way resolve_download_options would.
+      resolveDownloadOptions: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          data: {
+            url: 'https://example.com/',
+            outputPath: '/tmp/rosi',
+            presetId: 'p-range',
+            playlist: { mode: 'range', start: 2, end: 5 },
+          },
+        })
+      ),
     });
     await loadEngine(api);
 

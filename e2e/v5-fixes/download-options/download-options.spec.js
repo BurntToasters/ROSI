@@ -11,6 +11,147 @@ function withoutUrl(options) {
   return copy;
 }
 
+/** Request snapshots differ only by the URL and output folder they were started with. */
+function omitUrlAndOutput(request) {
+  const copy = { ...request };
+  delete copy.url;
+  delete copy.outputPath;
+  return copy;
+}
+
+/** Reload the page and wait until its bridge and preset list are installed. */
+async function reloadApp() {
+  await browser.refresh();
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        () =>
+          document.readyState === "complete" &&
+          typeof window.api?.resolveDownloadOptions === "function" &&
+          typeof window.api?.addToQueue === "function",
+      ),
+    { timeout: 60_000, timeoutMsg: "reloaded page never installed window.api" },
+  );
+  await waitForAppReady();
+}
+
+/** Record the renderer's own resolve and queue calls, not the harness's `api()` calls. */
+async function armRendererRecorder() {
+  await browser.execute(() => {
+    window.__b2Calls = [];
+    window.__b2Armed = false;
+    for (const name of ["resolveDownloadOptions", "addToQueue"]) {
+      const original = window.api[name];
+      window.api[name] = (...args) => {
+        if (window.__b2Armed) {
+          window.__b2Calls.push({
+            name,
+            args: JSON.parse(JSON.stringify(args)),
+          });
+        }
+        return original(...args);
+      };
+    }
+  });
+}
+
+async function recordRendererCalls(action) {
+  await browser.execute(() => {
+    window.__b2Calls = [];
+    window.__b2Armed = true;
+  });
+  await action();
+}
+
+async function takeRendererCalls() {
+  return browser.execute(() => {
+    window.__b2Armed = false;
+    const calls = window.__b2Calls ?? [];
+    window.__b2Calls = [];
+    return calls;
+  });
+}
+
+async function selectAndApplyPreset(presetId, presetName) {
+  // After a reload the preset list is rebuilt during startup, so wait for the option.
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        (id) =>
+          [
+            ...(document.getElementById("downloadPresetSelect")?.options ?? []),
+          ].some((option) => option.value === id),
+        presetId,
+      ),
+    { timeout: 20_000, timeoutMsg: "preset option never appeared" },
+  );
+  await browser.execute((id) => {
+    const select = document.getElementById("downloadPresetSelect");
+    select.value = id;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    document.getElementById("applyPresetBtn").click();
+  }, presetId);
+  let lastStatus = "";
+  try {
+    await browser.waitUntil(
+      async () => {
+        lastStatus = await presetStatus();
+        return lastStatus.includes(`Applied ${presetName}.`);
+      },
+      { timeout: 20_000, timeoutMsg: "preset was not applied" },
+    );
+  } catch (error) {
+    throw new Error(
+      `preset was not applied; last status: "${lastStatus}" (${error.message})`,
+    );
+  }
+}
+
+async function presetStatus() {
+  return browser.execute(
+    () => document.getElementById("presetStatus")?.textContent ?? "",
+  );
+}
+
+async function setUrlField(value) {
+  await browser.execute((text) => {
+    const input = document.getElementById("url");
+    input.value = text;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }, value);
+}
+
+async function summaryState() {
+  return browser.execute(() => {
+    const summary = document.getElementById("downloadOutputSummary");
+    return {
+      state: summary?.dataset.state ?? "",
+      text: summary?.textContent ?? "",
+    };
+  });
+}
+
+async function waitForSummary(fragment) {
+  await browser.waitUntil(
+    async () => {
+      const summary = await summaryState();
+      return summary.state === "resolved" && summary.text.includes(fragment);
+    },
+    {
+      timeout: 20_000,
+      timeoutMsg: `effective-options summary never showed ${fragment}`,
+    },
+  );
+  return summaryState();
+}
+
+async function waitForSettingOnDisk(key, value) {
+  await browser.waitUntil(
+    async () => (await api("getSettings"))[key] === value,
+    { timeout: 10_000, timeoutMsg: `${key} was not saved as ${value}` },
+  );
+}
+
 describe("shared download option resolution", () => {
   let originalSettings;
 
@@ -263,5 +404,128 @@ describe("shared download option resolution", () => {
     });
     assert.equal(rejectedPath.ok, false);
     assert.equal(rejectedPath.error.code, "INVALID_PATH");
+  });
+  it("applied preset follows the stored value in Rust, not the renderer copy", async () => {
+    await api("clearQueue");
+    const stored = {
+      id: "resolver-applied",
+      name: "Resolver Applied",
+      profile: "best-video",
+      bestQuality: true,
+      audioOnly: false,
+      convertEnabled: true,
+      convertFormat: "m4a",
+      keepOriginalAfterConvert: false,
+      gpuAcceleration: false,
+    };
+    const saved = await api("saveSettings", {
+      downloadMode: "compatible",
+      bestQuality: false,
+      audioOnly: false,
+      advancedOptions: false,
+      convertEnabled: false,
+      convertFormat: "mp4",
+      keepOriginalAfterConvert: true,
+      gpuAcceleration: false,
+      // A folder prompt would block the queue add, so save to the E2E folder.
+      askDownloadLocation: false,
+      downloadFolder: DOWNLOADS,
+      downloadPresets: [stored],
+    });
+    assert.equal(saved.ok, true, saved.error?.message);
+
+    // Reload so the renderer's preset cache holds the stored preset before Apply.
+    await reloadApp();
+    await armRendererRecorder();
+    await selectAndApplyPreset(stored.id, stored.name);
+    await waitForSettingOnDisk("convertFormat", "m4a");
+    // Apply saved the copied values, so the renderer's next save carries no preset edit.
+
+    // The stored preset changes after Apply. The controls still show the copied m4a.
+    const edited = await api("saveSettings", {
+      downloadPresets: [{ ...stored, convertFormat: "mp3" }],
+    });
+    assert.equal(edited.ok, true, edited.error?.message);
+
+    const url = `${MEDIA}/clip-one.mp4?resolver=applied-${Date.now()}`;
+    await recordRendererCalls(async () => {
+      await setUrlField(url);
+      await waitForSummary("Convert to MP3");
+    });
+    const [summaryCall] = (await takeRendererCalls())
+      .filter(
+        (call) =>
+          call.name === "resolveDownloadOptions" && call.args[0]?.url === url,
+      )
+      .slice(-1);
+    assert.ok(summaryCall, "summary did not resolve through the backend");
+    const summaryKeys = Object.keys(summaryCall.args[0]).filter(
+      (key) => !["url", "outputPath"].includes(key),
+    );
+    assert.deepEqual(
+      summaryKeys,
+      ["presetId"],
+      "summary sent copied preset values as explicit overrides",
+    );
+    const summaryText = (await summaryState()).text;
+    assert.doesNotMatch(
+      summaryText,
+      /Convert to M4A/,
+      "summary showed the cached copy",
+    );
+    const summaryRust = await api(
+      "resolveDownloadOptions",
+      summaryCall.args[0],
+    );
+    assert.equal(summaryRust.ok, true, summaryRust.error?.message);
+    assert.equal(summaryRust.data.convertFormat, "mp3");
+    assert.equal(summaryRust.data.presetName, stored.name);
+
+    // Saving from the renderer would write its cached preset list back over the
+    // stored edit, so reload before starting, then apply the edited preset.
+    await reloadApp();
+    await armRendererRecorder();
+    await selectAndApplyPreset(stored.id, stored.name);
+    await waitForSettingOnDisk("convertFormat", "mp3");
+
+    // The queue add goes through the renderer's builder. The stored request is
+    // checked below against Rust's own resolution, so copied values would show.
+    await setUrlField(url);
+    await waitForSummary("Convert to MP3");
+    await browser.execute((queueUrl) => {
+      document.getElementById("queueUrlInput").value = queueUrl;
+      document.getElementById("addToQueueBtn").click();
+    }, url);
+
+    await browser.waitUntil(
+      async () => {
+        const queue = await api("getQueue");
+        return queue.some((item) => item.url === url && item.request);
+      },
+      {
+        timeout: 20_000,
+        interval: 250,
+        timeoutMsg: "queue item was not stored",
+      },
+    );
+    const queue = await api("getQueue");
+    const queued = queue.find((item) => item.url === url);
+    const queueRust = await api("resolveDownloadOptions", {
+      presetId: stored.id,
+      url,
+    });
+    assert.equal(queueRust.ok, true, queueRust.error?.message);
+    assert.deepEqual(
+      queued.request,
+      queueRust.data,
+      "queued request differs from resolve_download_options for the same request",
+    );
+    assert.equal(queued.request.convertFormat, "mp3");
+    assert.equal(queued.request.presetName, stored.name);
+    assert.deepEqual(
+      omitUrlAndOutput(queued.request),
+      omitUrlAndOutput(summaryRust.data),
+      "summary and queued request disagree",
+    );
   });
 });

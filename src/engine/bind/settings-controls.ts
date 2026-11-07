@@ -7,11 +7,7 @@ import {
 import type { EffectiveOptionsReadiness } from '../messages';
 import { showModal } from '../overlays';
 import { isPlaylistScopeVisible, resolvePlaylistSelection } from '../playlist';
-import {
-  buildOnScreenPresetOverrides,
-  getSelectedPreset,
-  readAdvancedFormatSelections,
-} from '../presets';
+import { buildRequestOverrides, readAdvancedFormatSelections } from '../presets';
 import { formatBytes, formatRelativeTime } from '../progress';
 import { refs } from '../refs';
 import { flushBeforeRestart, persistSettings, settingsStore } from '../settings-store';
@@ -53,23 +49,13 @@ function buildEffectiveOptionsReadiness(): EffectiveOptionsReadiness {
   const playlistVisible = isPlaylistScopeVisible();
   if (playlistVisible && !playlist) return { state: 'playlist' };
 
-  const selectedPreset = getSelectedPreset();
-  const convertEnabled = settings.convertEnabled && !settings.audioOnly;
   const request = {
     url,
     ...(outputPath ? { outputPath } : {}),
-    videoFormat: formatSelections.videoFormat,
-    audioFormat: formatSelections.audioFormat,
-    convertFormat: convertEnabled ? refs.convertFormatSelect?.value.trim() || undefined : undefined,
-    keepOriginal: convertEnabled ? refs.keepOriginalToggle?.checked : undefined,
-    ...(playlistVisible && playlist ? { playlist } : {}),
-    ...(selectedPreset
-      ? {
-          presetId: selectedPreset.id,
-          presetName: selectedPreset.name,
-          ...buildOnScreenPresetOverrides(formatSelections),
-        }
-      : {}),
+    ...buildRequestOverrides({
+      formats: formatSelections,
+      playlist: playlistVisible ? (playlist ?? undefined) : undefined,
+    }),
   };
   return { state: 'ready', request };
 }

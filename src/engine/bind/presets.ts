@@ -1,8 +1,9 @@
 // Startup bindings for the preset menu.
 import { RosiDownloadPreset } from '../core';
 import {
-  applyPresetToSettings,
+  applyPresetToControls,
   buildPresetFromCurrentSettings,
+  clearAppliedPreset,
   createPresetId,
   getSelectedPreset,
   isPresetPopoverOpen,
@@ -27,6 +28,7 @@ export function initPresets() {
 
   if (downloadPresetSelect) {
     downloadPresetSelect.addEventListener('change', () => {
+      clearAppliedPreset();
       if (applyPresetBtn) applyPresetBtn.disabled = !downloadPresetSelect.value;
       if (deletePresetBtn) deletePresetBtn.disabled = !downloadPresetSelect.value;
       const preset = getSelectedPreset();
@@ -34,12 +36,11 @@ export function initPresets() {
     });
   }
   if (applyPresetBtn) {
-    applyPresetBtn.addEventListener('click', () => {
+    applyPresetBtn.addEventListener('click', async () => {
       const preset = getSelectedPreset();
       if (!preset) return;
-      applyPresetToSettings(preset);
-      void persistSettings(true, true);
-      setPresetStatus(`Applied ${preset.name}.`);
+      const applied = await applyPresetToControls(preset);
+      setPresetStatus(applied ? `Applied ${preset.name}.` : `Could not apply ${preset.name}.`);
     });
   }
   if (savePresetBtn) {
@@ -70,6 +71,8 @@ export function initPresets() {
         nextPresets.push(preset);
       }
       settingsStore.settings.downloadPresets = nextPresets;
+      // The saved preset now holds the on-screen values, so nothing is copied any more.
+      clearAppliedPreset();
       const saved = await persistSettings(true, true);
       renderPresetOptions(saved ? id : downloadPresetSelect?.value);
       if (saved) {

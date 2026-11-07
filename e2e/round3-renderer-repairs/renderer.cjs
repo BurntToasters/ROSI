@@ -88,10 +88,49 @@ let deferNextSettingsSave = false;
 const ok = (data) => Promise.resolve({ ok: true, data });
 getFormatsImpl = () =>
   ok(formatList([videoFormat("137", "1920x1080"), audioFormat("140")]));
+// Rust's preset-to-request mapping (settings::preset_to_request_options) for the
+// fields this harness uses, so resolveDownloadOptions answers like the backend.
+function presetRequestFields(preset) {
+  return {
+    profile: preset.profile,
+    bestQuality: preset.bestQuality,
+    audioOnly: preset.audioOnly,
+    advancedOptions: preset.profile === "custom",
+    audioOutputFormat: preset.audioFormat,
+    audioFormat: preset.audioFormatId,
+    videoFormat: preset.videoFormat,
+    convertEnabled: preset.convertEnabled,
+    convertFormat: preset.convertFormat,
+    keepOriginal: preset.keepOriginalAfterConvert,
+    gpuAcceleration: preset.gpuAcceleration,
+    gpuType: preset.gpuType,
+    writeSubtitles: preset.writeSubtitles,
+    subtitleLangs: preset.subtitleLangs,
+    embedThumbnail: preset.embedThumbnail,
+    embedMetadata: preset.embedMetadata,
+    sponsorblockRemove: preset.sponsorblockRemove,
+  };
+}
 w.api = new Proxy(
   {
     getChannel: () => "github",
     getSettings: () => Promise.resolve(s),
+    resolveDownloadOptions: (request) => {
+      const preset = s.downloadPresets.find((p) => p.id === request?.presetId);
+      const explicit = Object.fromEntries(
+        Object.entries(request ?? {}).filter(
+          ([, v]) => v !== null && v !== undefined,
+        ),
+      );
+      return ok({
+        url: "https://example.com/",
+        outputPath: "/tmp/rosi",
+        profile: s.downloadMode,
+        ...(preset ? presetRequestFields(preset) : {}),
+        ...explicit,
+        ...(preset ? { presetId: preset.id, presetName: preset.name } : {}),
+      });
+    },
     saveSettings: (v) => {
       if (!deferNextSettingsSave) return ok(v);
       deferNextSettingsSave = false;
