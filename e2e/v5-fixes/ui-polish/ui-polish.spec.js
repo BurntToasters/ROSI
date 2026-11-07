@@ -212,6 +212,18 @@ async function setSidebarOpen(open) {
   // The sidebar slides in with a transform. Wait until it rests at its open
   // position, so focus and layout checks never run against a moving panel.
   if (open) {
+    // A hidden page (background mode) runs no animation frames, so the slide
+    // never advances on its own. Finish the running slide to its resting end
+    // state there. Visible runs still wait for the real transition.
+    const visibility = await browser.execute(() => document.visibilityState);
+    if (visibility !== "visible") {
+      await browser.execute(() => {
+        document
+          .getElementById("sidebar")
+          ?.getAnimations()
+          .forEach((animation) => animation.finish());
+      });
+    }
     await waitFor(
       () => {
         const sidebar = document.getElementById("sidebar");

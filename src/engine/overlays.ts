@@ -302,10 +302,20 @@ export function displayNextModal() {
   };
   document.addEventListener('focusin', modalFocusinHandler, true);
 
+  // Focus moves into the prompt now, not on the next frame. A page that runs no
+  // frames (a hidden window) would otherwise keep focus on BODY, outside the
+  // prompt's keydown trap, and keys pressed before the frame would miss it.
+  if (getTopActiveOverlayId() === 'app-modal') {
+    if (!focusFirstElement(modal) && typeof modal.focus === 'function') {
+      modal.focus();
+    }
+  }
   requestAnimationFrame(() => {
     if (currentModalData !== displayedModalData || getTopActiveOverlayId() !== 'app-modal') {
       return;
     }
+    // Fallback only: never move focus the user has already placed in the prompt.
+    if (modal.contains(document.activeElement)) return;
     if (!focusFirstElement(modal) && typeof modal.focus === 'function') {
       modal.focus();
     }
