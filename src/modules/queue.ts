@@ -15,13 +15,16 @@
     retryQueueItem: (id: string) => Promise<unknown> | unknown;
     reorderQueueItem: (id: string, direction: QueueDirection) => Promise<unknown> | unknown;
     copyDiagnostics: (item: QueueItem) => Promise<unknown> | unknown;
-    openFileLocation?: (filePath: string) => Promise<unknown> | unknown;
+    openFileLocation?: (filePath: string, queueItemId: string) => Promise<unknown> | unknown;
     focusQueueItemId?: string | null;
+    // The inline error for a row, or null. The controller decides whether it still applies.
+    rowErrorFor?: (item: QueueItem) => string | null;
   }
 
   interface QueueModule {
     renderQueue: (queue: QueueItem[], elements: QueueElements, deps: QueueDeps) => void;
     updateQueueItemProgress: (item: QueueItem, elements: QueueElements) => boolean;
+    setQueueItemError: (queueList: HTMLElement, id: string, message: string | null) => boolean;
     resolveQueueSectionElement: (root?: Document) => HTMLElement | null;
   }
 
@@ -209,6 +212,29 @@
     return true;
   }
 
+  function buildRowError(message: string) {
+    const error = document.createElement('p');
+    error.className = 'queue-item-error';
+    error.textContent = message;
+    return error;
+  }
+
+  /**
+   * Show or clear a row's inline action error without re-rendering the list, so
+   * the row's controls and focus stay where the user left them. Returns false
+   * when the row is not present; the controller then keeps the message for the
+   * next full render.
+   */
+  function setQueueItemError(queueList: HTMLElement, id: string, message: string | null): boolean {
+    const row = findQueueRow(queueList, id);
+    if (!row) return false;
+    Array.from(row.children)
+      .filter((child) => child.classList.contains('queue-item-error'))
+      .forEach((child) => child.remove());
+    if (message) row.appendChild(buildRowError(message));
+    return true;
+  }
+
   function renderQueue(queue: QueueItem[], elements: QueueElements, deps: QueueDeps) {
     const { queueList, queueSection, queueCount } = elements;
     const {
@@ -218,6 +244,7 @@
       copyDiagnostics,
       openFileLocation,
       focusQueueItemId = null,
+      rowErrorFor,
     } = deps;
 
     if (!queueList || !queueSection) return;
@@ -345,7 +372,7 @@
             'Open folder',
             'queue-item-open',
             item,
-            () => openFileLocation(item.outputPath as string),
+            () => openFileLocation(item.outputPath as string, item.id),
             `Open folder containing ${item.filename || hostname}`
           )
         );
@@ -380,6 +407,9 @@
         row.appendChild(details);
       }
 
+      const rowError = rowErrorFor?.(item) ?? null;
+      if (rowError) row.appendChild(buildRowError(rowError));
+
       fragment.appendChild(row);
     });
 
@@ -413,6 +443,7 @@
   moduleTarget.queue = {
     renderQueue,
     updateQueueItemProgress,
+    setQueueItemError,
     resolveQueueSectionElement,
   };
   windowRef.rosiModules = moduleTarget;

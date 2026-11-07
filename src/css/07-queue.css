@@ -52,6 +52,7 @@
   line-height: 1.4;
   color: var(--text-muted);
   border-bottom: 1px solid var(--border-subtle);
+  overflow-wrap: anywhere;
 }
 
 .queue-status-message:empty {
@@ -142,8 +143,10 @@
 }
 
 .queue-item-meta {
+  min-width: 0;
   font-size: var(--text-xs);
   color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
 
 .queue-completed .queue-item-title {
@@ -223,6 +226,24 @@
 .queue-item-details summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.queue-item-details {
+  flex: 1 1 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* Inline result of a row action that failed (retry, remove, reorder, open). */
+.queue-item-error {
+  flex: 1 1 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin: var(--spacing-xs) 0 0;
+  font-size: var(--text-xs);
+  color: var(--danger);
+  overflow-wrap: anywhere;
 }
 
 .queue-item-details p {

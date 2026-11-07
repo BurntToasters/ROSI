@@ -190,8 +190,9 @@ interface RosiQueueModule {
       retryQueueItem: (id: string) => Promise<unknown> | unknown;
       reorderQueueItem: (id: string, direction: 'up' | 'down') => Promise<unknown> | unknown;
       copyDiagnostics: (item: RosiQueueItem) => Promise<unknown> | unknown;
-      openFileLocation?: (filePath: string) => Promise<unknown> | unknown;
+      openFileLocation?: (filePath: string, queueItemId: string) => Promise<unknown> | unknown;
       focusQueueItemId?: string | null;
+      rowErrorFor?: (item: RosiQueueItem) => string | null;
     }
   ) => void;
   updateQueueItemProgress: (
@@ -202,6 +203,7 @@ interface RosiQueueModule {
       queueCount: HTMLElement | null;
     }
   ) => boolean;
+  setQueueItemError: (queueList: HTMLElement, id: string, message: string | null) => boolean;
   resolveQueueSectionElement: (root?: Document) => HTMLElement | null;
 }
 

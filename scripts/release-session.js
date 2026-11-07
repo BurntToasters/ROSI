@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "url";
 import {
   discoverV5Fixes,
   e2eRunPlan,
+  SCREENSHOT_SCENARIO_NAMES,
   scenarioOutcomeProblems,
 } from "./test-e2e.js";
 
@@ -248,9 +249,21 @@ export function verifyFullE2eEvidence(proof, root, identity) {
         expectedScenarios,
       )
     : ["scenario results are missing"];
-  const screenshotScenario = Array.isArray(report.scenarios)
-    ? report.scenarios.find((scenario) => scenario.name === "ui-screenshots")
-    : null;
+  // Every screenshot scenario's shots count: the main UI pass and the ui-polish
+  // area, so a missing ui-polish shot fails the same count and name checks.
+  const screenshotScenarios = Array.isArray(report.scenarios)
+    ? report.scenarios.filter((scenario) =>
+        SCREENSHOT_SCENARIO_NAMES.includes(scenario?.name),
+      )
+    : [];
+  const screenshotScenario =
+    screenshotScenarios.length > 0
+      ? {
+          shots: screenshotScenarios.flatMap((scenario) =>
+            Array.isArray(scenario.shots) ? scenario.shots : [],
+          ),
+        }
+      : null;
   const screenshotArtifactProblems = verifyScreenshotArtifacts(
     report.screenshots,
     root,

@@ -18,7 +18,13 @@ const artifactDir = path.join(
   "v5-fixes-ui-polish",
   `${stamp}-${process.pid}`,
 );
-const screenshotDir = path.join(artifactDir, "screenshots");
+// The gate passes ROSI_E2E_SCREENSHOTS, so the shots land in the folder that
+// verifyScreenshots re-hashes. A standalone run keeps them beside its report.
+const screenshotDir =
+  process.env.ROSI_E2E_SCREENSHOTS || path.join(artifactDir, "screenshots");
+// Screenshot records the gate reads from this pass's results file. The gate
+// attaches them to the v5-fixes/ui-polish scenario (scripts/test-e2e.js).
+const GATE_SCREENSHOT_RECORD = "v5-screenshots";
 const reportPath = path.join(artifactDir, "report.json");
 const report = {
   suite: "v5-fixes-ui-polish",
@@ -83,7 +89,9 @@ function sourceIdentity() {
 }
 
 function writeReport() {
-  fs.mkdirSync(screenshotDir, { recursive: true });
+  // The report folder is separate from the screenshot folder, which the gate
+  // may pass in through ROSI_E2E_SCREENSHOTS.
+  fs.mkdirSync(artifactDir, { recursive: true });
   const contents = `${JSON.stringify(report, null, 2)}\n`;
   const temporaryPath = `${reportPath}.tmp`;
   fs.writeFileSync(temporaryPath, contents);
@@ -283,18 +291,42 @@ async function captureViewport(theme, width, height, increasedText) {
     false,
     "page has horizontal overflow",
   );
-  const name = `${theme}-${width}x${height}${increasedText ? "-text-125" : ""}.png`;
-  const destination = path.join(screenshotDir, name);
+  const name = `ui-polish-${theme}-${width}x${height}${increasedText ? "-text-125" : ""}`;
+  const destination = path.join(screenshotDir, `${name}.png`);
   await browser.saveScreenshot(destination);
+  const bytes = fs.statSync(destination).size;
+  assert.ok(bytes > 1000, `${name} screenshot is empty`);
   report.screenshots.push({
-    path: path.relative(artifactDir, destination).replaceAll(path.sep, "/"),
+    name,
+    path: path.relative(REPO_ROOT, destination).replaceAll(path.sep, "/"),
     sha256: sha256(fs.readFileSync(destination)),
+    bytes,
     width: actual.width,
     height: actual.height,
     theme,
     increasedText,
   });
   return actual;
+}
+
+/**
+ * Appends the screenshot list to this pass's results file. Other records already
+ * in the file are kept, so each spec in the pass adds its own.
+ */
+function writeGateScreenshotRecord(shots) {
+  const resultsPath = process.env.ROSI_E2E_RESULTS;
+  if (!resultsPath) return;
+  let records = [];
+  try {
+    if (fs.existsSync(resultsPath)) {
+      const parsed = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
+      if (Array.isArray(parsed)) records = parsed;
+    }
+  } catch {
+    records = [];
+  }
+  records.push({ name: GATE_SCREENSHOT_RECORD, status: "passed", shots });
+  fs.writeFileSync(resultsPath, `${JSON.stringify(records, null, 2)}\n`);
 }
 
 describe("ROSI full-app UI polish", () => {
@@ -832,6 +864,20 @@ describe("ROSI full-app UI polish", () => {
       assert.equal(keyboard.focused, "settingsSearch");
       assert.equal(keyboard.reducedMotionRule, true);
       await setSidebarOpen(false);
+      // Four themes, each at 900x560 and 1200x900, plus 900x560 at 125% text.
+      assert.equal(
+        report.screenshots.length,
+        12,
+        "screenshot matrix is incomplete",
+      );
+      writeGateScreenshotRecord(
+        report.screenshots.map((shot) => ({
+          name: shot.name,
+          file: path.basename(shot.path),
+          sha256: shot.sha256,
+          bytes: shot.bytes,
+        })),
+      );
       return {
         viewportCases: matrix.length,
         keyboardFocus: keyboard.focused,

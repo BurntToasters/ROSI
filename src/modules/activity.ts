@@ -66,6 +66,45 @@
     return '';
   }
 
+  const LIVE_REGION_ID = 'activity-live-status';
+
+  function activityStatusLabel(row: Pick<ActivityRow, 'partial' | 'outcome'>) {
+    return row.partial
+      ? uiMessages().activity.partial
+      : row.outcome === 'success'
+        ? uiMessages().activity.completed
+        : row.outcome === 'cancelled'
+          ? uiMessages().activity.cancelled
+          : uiMessages().activity.failed;
+  }
+
+  // The focused row action, by row id and action name, so it can be found again
+  // after the list is rebuilt. Null when focus is outside the list.
+  interface ActivityFocusKey {
+    rowId: string;
+    action: string;
+  }
+
+  function activityFocusKey(listEl: HTMLElement): ActivityFocusKey | null {
+    const focused = document.activeElement;
+    if (!(focused instanceof HTMLElement) || !listEl.contains(focused)) return null;
+    const rowId = focused.closest<HTMLElement>('.history-item')?.dataset.activityId;
+    const action = focused.dataset.activityAction;
+    return rowId && action ? { rowId, action } : null;
+  }
+
+  function restoreActivityFocus(listEl: HTMLElement, key: ActivityFocusKey | null) {
+    if (!key) return;
+    const row = Array.from(listEl.querySelectorAll<HTMLElement>('.history-item')).find(
+      (item) => item.dataset.activityId === key.rowId
+    );
+    const target = Array.from(
+      row?.querySelectorAll<HTMLElement>('[data-activity-action]') ?? []
+    ).find((button) => button.dataset.activityAction === key.action);
+    // preventScroll: a rebuilt list must not jump to the focused row.
+    target?.focus({ preventScroll: true });
+  }
+
   // Owns the download activity list. Call once, from the engine's startup.
   function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPanel {
     const {
@@ -81,6 +120,27 @@
     let activityEntries: RosiDownloadActivity[] = [];
     let activityFilter: ActivityFilter = 'all';
     let activityLoaded = false;
+
+    // One polite region, never cleared, so each new entry is read once. Progress
+    // ticks never write to it. It sits beside the panel, which is hidden while
+    // another dock tab is selected.
+    const announcer = document.createElement('p');
+    announcer.id = LIVE_REGION_ID;
+    announcer.className = 'sr-only';
+    announcer.setAttribute('role', 'status');
+    announcer.setAttribute('aria-live', 'polite');
+    announcer.setAttribute('aria-atomic', 'true');
+    document.getElementById('download-history')?.before(announcer);
+
+    function announceNewEntries(newIds: Set<string>) {
+      const newRows = toActivityRows().filter((row) => newIds.has(row.id));
+      const [only] = newRows;
+      if (!only) return;
+      announcer.textContent =
+        newRows.length === 1
+          ? `${activityStatusLabel(only)}: ${only.title}.`
+          : `${newRows.length} new downloads recorded.`;
+    }
 
     function toActivityRows(): ActivityRow[] {
       if (activityEntries.length > 0) {
@@ -147,11 +207,13 @@
       iconName: string,
       label: string,
       ariaLabel: string,
+      actionKey: 'replay' | 'copy' | 'reveal',
       action: () => void
     ) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'history-open-btn btn btn--ghost btn--xs btn--icon btn--accent-hover';
+      button.dataset.activityAction = actionKey;
       button.setAttribute('aria-label', ariaLabel);
       button.title = label;
       const svg = icon(iconName, 16) ?? null;
@@ -177,6 +239,10 @@
         activityFilter === 'all' ? rows : rows.filter((row) => row.outcome === activityFilter);
       if (countEl) countEl.textContent = String(rows.length);
 
+      // Read before the rows are replaced: removing the focused node moves focus
+      // to BODY, and the same action is focused again after the rebuild.
+      const focusKey = activityFocusKey(listEl);
+
       // The panel now stays mounted so the empty state remains discoverable.
       historySection.classList.add('visible');
       listEl.replaceChildren();
@@ -196,15 +262,10 @@
       visibleRows.forEach((row) => {
         const item = document.createElement('div');
         item.className = 'history-item';
+        item.dataset.activityId = row.id;
         item.setAttribute('role', 'listitem');
 
-        const statusLabel = row.partial
-          ? uiMessages().activity.partial
-          : row.outcome === 'success'
-            ? uiMessages().activity.completed
-            : row.outcome === 'cancelled'
-              ? uiMessages().activity.cancelled
-              : uiMessages().activity.failed;
+        const statusLabel = activityStatusLabel(row);
 
         const info = document.createElement('div');
         info.className = 'history-item-info';
@@ -238,6 +299,7 @@
                 'rotate-ccw',
                 'Download again',
                 `Download ${row.title} again`,
+                'replay',
                 () => {
                   onReplay(entry);
                 }
@@ -252,6 +314,7 @@
               'link',
               'Copy source',
               `Copy source link for ${row.title}`,
+              'copy',
               () => {
                 void navigator.clipboard.writeText(sourceUrl).then(
                   () => showToast('Source link copied.', { type: 'info' }),
@@ -268,6 +331,7 @@
               'folder-open',
               'Open folder',
               `Open file location for ${row.title}`,
+              'reveal',
               () => {
                 void revealFileLocation(filePath);
               }
@@ -279,14 +343,22 @@
         fragment.appendChild(item);
       });
       listEl.appendChild(fragment);
+      restoreActivityFocus(listEl, focusKey);
     }
 
     function setActivityEntries(entries: RosiDownloadActivity[]) {
+      const previousIds = new Set(activityEntries.map((entry) => entry.id));
       const previousCount = activityEntries.length;
       activityEntries = Array.isArray(entries) ? entries : [];
       // The first load is history from earlier sessions, which is not news.
       if (activityLoaded && activityEntries.length > previousCount) {
         markUnseen('activity');
+      }
+      if (activityLoaded) {
+        const newIds = new Set(
+          activityEntries.filter((entry) => !previousIds.has(entry.id)).map((entry) => entry.id)
+        );
+        announceNewEntries(newIds);
       }
       activityLoaded = true;
       renderActivity();

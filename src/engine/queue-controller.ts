@@ -2,7 +2,6 @@
 import { RosiJobProgressEvent, dockModule, logError, queueModule } from './core';
 import { isPlaylistScopeVisible, resolvePlaylistSelection } from './playlist';
 import { buildRequestOverrides, readAdvancedFormatSelections } from './presets';
-import { revealFileLocation } from './progress';
 import { refs } from './refs';
 import { persistSettings, settingsStore } from './settings-store';
 import { ToastType, showToast } from './ui-helpers';
@@ -135,8 +134,35 @@ export function updateQueueButtonStates(queue: RosiQueueItem[]) {
   }
 }
 
+/** A row's inline action error. It applies only while the item keeps the status it had. */
+interface QueueRowError {
+  status: RosiQueueItem['status'];
+  message: string;
+}
+
+function rowErrorFor(item: RosiQueueItem): string | null {
+  const entry = queueController.rowErrors.get(item.id);
+  return entry && entry.status === item.status ? entry.message : null;
+}
+
+function reportQueueRowError(id: string, message: string) {
+  const item = queueController.currentQueue.find((candidate) => candidate.id === id);
+  if (!item) return;
+  queueController.rowErrors.set(id, { status: item.status, message });
+  if (queueModule && refs.queueList) queueModule.setQueueItemError(refs.queueList, id, message);
+}
+
+function clearQueueRowError(id: string) {
+  if (!queueController.rowErrors.delete(id)) return;
+  if (queueModule && refs.queueList) queueModule.setQueueItemError(refs.queueList, id, null);
+}
+
 export function renderQueue(queue: RosiQueueItem[]) {
   queueController.currentQueue = queue;
+  // Forget errors for items that have left the queue.
+  for (const id of queueController.rowErrors.keys()) {
+    if (!queue.some((item) => item.id === id)) queueController.rowErrors.delete(id);
+  }
   updateQueueButtonStates(queue);
   if (queueModule && typeof queueModule.renderQueue === 'function') {
     queueModule.renderQueue(
@@ -155,7 +181,9 @@ export function renderQueue(queue: RosiQueueItem[]) {
               const message = result?.error?.message || 'Could not retry the queue item.';
               setQueueStatusMessage(message);
               showToast(message, { type: 'error' });
+              reportQueueRowError(id, message);
             } else {
+              clearQueueRowError(id);
               // A running queue picks the item up on its own; otherwise the
               // user still has to start it.
               const queueIsRunning = queueController.currentQueue.some(
@@ -172,6 +200,7 @@ export function renderQueue(queue: RosiQueueItem[]) {
             const message = 'Could not retry the queue item.';
             setQueueStatusMessage(message);
             showToast(message, { type: 'error' });
+            reportQueueRowError(id, message);
           } finally {
             endQueueAction();
           }
@@ -186,12 +215,15 @@ export function renderQueue(queue: RosiQueueItem[]) {
               queueController.focusQueueItemId = null;
               const message = result?.error?.message || 'Could not reorder the queue item.';
               setQueueStatusMessage(message);
+              reportQueueRowError(id, message);
             } else {
+              clearQueueRowError(id);
               setQueueStatusMessage(`Moved item ${direction} in the queue.`);
             }
           } catch {
             queueController.focusQueueItemId = null;
             setQueueStatusMessage('Could not reorder the queue item.');
+            reportQueueRowError(id, 'Could not reorder the queue item.');
           } finally {
             endQueueAction();
           }
@@ -212,7 +244,23 @@ export function renderQueue(queue: RosiQueueItem[]) {
             showToast('Could not copy diagnostics to the clipboard.', { type: 'warning' });
           }
         },
-        openFileLocation: (filePath: string) => revealFileLocation(filePath),
+        openFileLocation: async (filePath: string, id: string) => {
+          const message = 'Could not open that file location.';
+          try {
+            const result = await window.api.openFileLocation(filePath);
+            if (!result || !result.ok) {
+              const failure = result?.error?.message || message;
+              showToast(failure, { type: 'warning' });
+              reportQueueRowError(id, failure);
+            } else {
+              clearQueueRowError(id);
+            }
+          } catch {
+            showToast(message, { type: 'warning' });
+            reportQueueRowError(id, message);
+          }
+        },
+        rowErrorFor,
         removeFromQueue: async (id: string) => {
           const removeIndex = queueController.currentQueue.findIndex((item) => item.id === id);
           const nextFocusId =
@@ -235,6 +283,7 @@ export function renderQueue(queue: RosiQueueItem[]) {
               const message = result?.error?.message || 'Could not remove the queue item.';
               setQueueStatusMessage(message);
               showToast(message, { type: 'error' });
+              reportQueueRowError(id, message);
             } else {
               setQueueStatusMessage('Removed item from the queue.');
             }
@@ -243,6 +292,7 @@ export function renderQueue(queue: RosiQueueItem[]) {
             const message = 'Could not remove the queue item.';
             setQueueStatusMessage(message);
             showToast(message, { type: 'error' });
+            reportQueueRowError(id, message);
           } finally {
             endQueueAction();
           }
@@ -341,9 +391,11 @@ export const queueController: {
   currentQueue: RosiQueueItem[];
   queueStatusTimer: ReturnType<typeof setTimeout> | null;
   queueActionLocks: number;
+  rowErrors: Map<string, QueueRowError>;
 } = {
   focusQueueItemId: null,
   currentQueue: [],
   queueStatusTimer: null,
   queueActionLocks: 0,
+  rowErrors: new Map(),
 };

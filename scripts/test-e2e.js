@@ -921,13 +921,24 @@ function cleanupProfile(profileDir) {
 }
 
 /**
+ * Scenarios whose `shots` the gate verifies: the main UI pass, and the
+ * v5-fixes/ui-polish area, whose shots come from its results file.
+ */
+export const SCREENSHOT_SCENARIO_NAMES = Object.freeze([
+  "ui-screenshots",
+  "v5-fixes/ui-polish",
+]);
+
+/**
  * Re-hash every screenshot the spec reported, so the evidence report vouches
  * for the PNGs actually on disk. Returns the list and any mismatch problems.
  */
 function verifyScreenshots(scenarios, directory) {
-  const reported =
-    scenarios.find((scenario) => scenario.name === "ui-screenshots")?.shots ??
-    [];
+  const reported = scenarios
+    .filter((scenario) => SCREENSHOT_SCENARIO_NAMES.includes(scenario?.name))
+    .flatMap((scenario) =>
+      Array.isArray(scenario.shots) ? scenario.shots : [],
+    );
   const problems = [];
   const screenshots = reported.map((shot) => {
     const file = path.join(directory, shot.file);
@@ -1541,6 +1552,9 @@ function runRound3Renderer() {
 }
 
 const V5_FIXES_ROOT = path.join(REPO_ROOT, "e2e", "v5-fixes");
+// Record name a v5-fixes spec uses in its results file to hand the gate its
+// screenshots (e2e/v5-fixes/ui-polish/ui-polish.spec.js).
+const V5_SCREENSHOT_RECORD = "v5-screenshots";
 const SKIP_OR_FOCUS_PATTERN =
   /\b(?:describe|it|context|test)\.(?:skip|only)\s*\(|\b(?:xit|xdescribe|xtest)\s*\(|\bthis\.skip\s*\(/;
 
@@ -1638,6 +1652,32 @@ export function findRunnerReport(area, artifactDir, gateStartedMs) {
   return { file, problem: null };
 }
 
+/**
+ * Screenshot records a WebdriverIO v5-fixes pass wrote to its results file
+ * (ROSI_E2E_RESULTS). Returns { shots, problem }; an unreadable file is a
+ * problem, since its shots would otherwise drop out of the gate silently.
+ */
+function v5PassShots(pass) {
+  if (!pass?.resultsPath || !fs.existsSync(pass.resultsPath)) {
+    return { shots: [], problem: null };
+  }
+  let records;
+  try {
+    records = JSON.parse(fs.readFileSync(pass.resultsPath, "utf8"));
+  } catch (error) {
+    return {
+      shots: [],
+      problem: `screenshot results unreadable: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  const shots = Array.isArray(records)
+    ? records
+        .filter((record) => record?.name === V5_SCREENSHOT_RECORD)
+        .flatMap((record) => (Array.isArray(record.shots) ? record.shots : []))
+    : [];
+  return { shots, problem: null };
+}
+
 function v5AreaScenario(area, pass, runnerResult, gateStartedMs) {
   const problems = [];
   if (area.skipFiles.length > 0) {
@@ -1663,6 +1703,11 @@ function v5AreaScenario(area, pass, runnerResult, gateStartedMs) {
   ) {
     problems.push(pass?.reason ? `specs: ${pass.reason}` : "specs did not run");
   }
+  // Runner-owned areas report their own files; only WebdriverIO passes record shots.
+  const { shots, problem: shotProblem } = area.runner
+    ? { shots: [], problem: null }
+    : v5PassShots(pass);
+  if (shotProblem) problems.push(shotProblem);
   const scenario = {
     name: `v5-fixes/${area.area}`,
     status: problems.length > 0 ? "failed" : "passed",
@@ -1670,6 +1715,8 @@ function v5AreaScenario(area, pass, runnerResult, gateStartedMs) {
     runner: area.runner ? relativeToRepo(area.runner) : null,
     report,
   };
+  // Only areas that record screenshots carry a shots list.
+  if (shots.length > 0) scenario.shots = shots;
   if (problems.length > 0) scenario.reason = problems.join("; ");
   return scenario;
 }
@@ -2076,6 +2123,9 @@ async function main() {
         ROSI_E2E_SPECS: pass.area.specs
           .map((spec) => `./v5-fixes/${pass.area.area}/${spec}`)
           .join(","),
+        // Specs that record screenshots write into the gate's folder, so the
+        // gate can re-hash them with the rest of the report.
+        ROSI_E2E_SCREENSHOTS: screenshotDir,
       });
     }
     if (onlySpec || ownerEnabled("main")) {

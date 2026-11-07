@@ -82,6 +82,103 @@ recorded. A static renderer helper passing is not full-app acceptance.
     progress names/values, and action labels must remain operable and
     understandable without a pointer.
 
+## Readiness hint, folder feedback, and long content (D1, D4 to D6)
+
+These rows were written before the code for them. The download readiness hint
+is `#downloadReadiness`, placed after the Download button. The folder "Change…"
+button is in the destination strip of the main panel (`#changeDownloadFolderBtn`),
+not in the settings sidebar, so the feedback sits in that strip.
+
+5a. **Blocking readiness is silent next to Download.** With "Custom" formats and
+no format selected, or an invalid playlist range, Download only shows a toast
+or does nothing. The hint next to Download names the blocker and the next
+action (select a format, fix the playlist range). Download stays enabled and
+still refuses to start.
+5b. **A failed runtime (Deno) check leaves no trace after startup.** The check
+failure is a one-time modal. The hint next to Download keeps the reason and
+the install-instructions next action until a later check succeeds. Not covered
+by an E2E scenario: the check runs once at startup, and the harness cannot make
+the bridge fail without a product test hook. The hint branch is therefore
+unverified by E2E.
+5c. **A failed effective-options lookup is shown only in the summary line.** The
+hint repeats the reason and says Download still validates the options when it
+starts, so the failure does not read as a ready state.
+5d. **"Ask every time" off with no folder.** Decision: an empty folder is not a
+blocker. `resolve_output_path` falls back to the Downloads directory, and the
+readiness state is `ready` without `outputPath`. The Download button used to
+open a folder picker in this case (`bind/download.ts`); it now sends no
+`outputPath`, so Rust uses the Downloads directory, and the hint says so.
+Scenario: `missing-folder-ask-off-uses-default`.
+5e. **"Ask every time" on.** Decision: the folder is chosen per download, so the
+hint says ROSI will ask where to save this download. It is informational,
+not a blocker. Scenario: `ask-each-time-hint`.
+5f. **Turning "Ask every time" off with no folder set gives no feedback.** The
+switch changes nothing visible, and the next download's destination is not
+explained. Decision: switching off with no folder opens the folder picker
+(the same picker the old Download path used). A cancelled pick shows
+`UI_MESSAGES.wizard.folderCancelled` in the folder strip, and a failed pick
+shows `UI_MESSAGES.wizard.folderFailed`. The toggle keeps the user's choice.
+Scenario: `ask-off-cancelled-folder-feedback`.
+11a. **Long content overflows at 900x560.** A 400-character URL, output path,
+title, and error text must wrap or truncate in the queue, activity, console,
+and folder summary. No unclipped box may spill past its own width, clipped
+boxes must stay inside their region, and the document must not scroll
+horizontally. Scenario: `long-content-no-horizontal-overflow`.
+15a. **Change folder cancel or failure is silent.** A cancelled pick returns
+without feedback, and a thrown pick is an unhandled rejection. Both now show
+the wizard strings (`folderCancelled` only while "Ask every time" is off,
+matching the wizard, and `folderFailed` on a thrown pick). A successful pick
+clears the feedback and updates the path, so no stale path is shown.
+Scenario: `change-folder-cancelled-and-failed`.
+D6. **`#queueStatusMessage` live-region attributes set at runtime.** The markup
+in `src/index.html` already has `role="status"`, `aria-live="polite"`, and
+`aria-atomic="true"`. The runtime copy in `src/rosiEngine.ts` is removed, so
+the markup is the single source. Scenario: `queue-status-live-region-markup`
+(checks the served `index.html` tag and the live DOM).
+
+## Activity focus, queue row errors, and screenshot evidence (D2, D3, D7)
+
+Written before the code for them. The D2 and D3 scenarios are in
+`ui-polish-focus.spec.js` and drive a real queue item (`slow.mp4` holds it in
+`downloading`; `clip-one.mp4` completes quickly). Where a scenario needs a
+control that the renderer has already replaced, it clicks the detached element
+the user had pressed, so the handler runs with the id it was rendered with.
+
+8a. **Activity re-render drops focus.** `renderActivity` replaces every row, so a
+focused row action falls back to BODY on each `download-activity-update`.
+Expected: focus returns to the same row's action, matched by the row id
+(`data-activity-id`) and the action (`data-activity-action`). Scenario:
+`activity-focus-retained-on-update`.
+8b. **Announcements are missing or repeated.** New entries must be announced
+once through a polite live region (`#activity-live-status`). A re-sent update
+with no new entry and real `job-progress` ticks must not change it. Scenario:
+`activity-announces-new-entries-once`.
+9a. **Remove of a downloading item fails silently.** The backend refuses it with
+`VALIDATION_ERROR` ("Cannot remove an actively downloading item."), but the
+row shows only a toast and a status line. Expected: the message appears on
+the row, the row still says Downloading, the clicked control is enabled and
+not busy, and the row's other controls stay enabled. The inline message
+does not outlive the state it describes. Scenario:
+`queue-row-remove-error-inline`.
+9b. **Open location failure is silent on the row.** An `openFileLocation` error
+envelope shows only a toast. Expected: the message appears on the completed
+row, its Open folder and Remove controls stay enabled. Scenario:
+`queue-open-location-error-inline`.
+18a. **Screenshots never reach the gate report.** `ui-polish.spec.js` wrote its
+PNGs under its own artifact folder, and the v5-fixes pass did not receive
+`ROSI_E2E_SCREENSHOTS`, so `report.screenshots` and `verifyScreenshots` only
+covered `ui-screenshots`. Expected: the 12 ui-polish shots (4 themes at
+900x560 and 1200x900, plus 900x560 at 125% text) are written to
+`e2e/artifacts/screenshots/<platform>-<arch>/`, attached to the
+`v5-fixes/ui-polish` scenario, listed in `report.screenshots`, and counted by
+the release check next to the `ui-screenshots` shots. Scenario:
+`theme-viewport-keyboard-layout` (gate report).
+18b. **A release check that counts one scenario's shots would accept a gate with
+the ui-polish shots missing.** `verifyFullE2eEvidence` must count the shots
+of every screenshot scenario, so a missing ui-polish shot fails the same
+count and name checks that cover `ui-screenshots`. Scenario: the existing
+`scripts/security-release-repairs.test.mjs` release fixture.
+
 ## E2E evidence requirements
 
 - Keep existing suite ownership and platform skip allowances. Add a
