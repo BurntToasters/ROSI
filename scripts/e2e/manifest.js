@@ -133,6 +133,7 @@ export const EXPECTED_SCENARIOS = E2E_SUITE_MANIFEST.scenarios.map(
 export const ROUND2_RENDERER_OBSERVATIONS = Object.freeze([
   "renderer-startup-settings-ready",
   "updater-channel-and-singleflight",
+  "updater-channel-and-singleflight-install-error",
   "activity-clear-commits-after-backend",
 ]);
 export const ROUND2_NATIVE_OBSERVATIONS = Object.freeze([
