@@ -270,14 +270,21 @@ describe('rosiEngine DOM wiring', () => {
     expect(
       document.getElementById('profileAudioFormatContainer')?.classList.contains('hidden')
     ).toBe(false);
-    expect(api.saveSettings).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        downloadMode: 'audio',
-        audioOnly: true,
-        advancedOptions: false,
-        bestQuality: false,
-      })
-    );
+    // Saves send only the keys that differ from the backend baseline. The switch
+    // changes three keys; advancedOptions stays false and is not resent.
+    const sent = (api.saveSettings as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as Record<
+      string,
+      unknown
+    >;
+    expect(sent).toMatchObject({ downloadMode: 'audio', audioOnly: true, bestQuality: false });
+    // The stored result is the baseline plus the patch: the audio profile, with advancedOptions still false.
+    const merged = { ...defaultSettings(), downloadMode: 'best-video', bestQuality: true, ...sent };
+    expect(merged).toMatchObject({
+      downloadMode: 'audio',
+      audioOnly: true,
+      advancedOptions: false,
+      bestQuality: false,
+    });
   });
 
   it('asks once for a destination when Ask every time is enabled', async () => {
@@ -515,12 +522,12 @@ describe('rosiEngine DOM wiring', () => {
         })
       ) as unknown as ReturnType<typeof vi.fn>,
       // Apply takes the preset's values from Rust's resolution (B2), so the mock answers
-      // the preset resolution the way resolve_download_options would.
-      resolveDownloadOptions: vi.fn(() =>
+      // the preset resolution the way resolve_preset_options would.
+      resolvePresetOptions: vi.fn(() =>
         Promise.resolve({
           ok: true,
           data: {
-            url: 'https://example.com/',
+            url: '',
             outputPath: '/tmp/rosi',
             presetId: 'p-range',
             playlist: { mode: 'range', start: 2, end: 5 },

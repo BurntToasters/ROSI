@@ -130,11 +130,36 @@ w.api = new Proxy(
         ...(preset ? { presetId: preset.id, presetName: preset.name } : {}),
       });
     },
+    // Apply's URL-less preset resolution, answered like resolve_preset_options.
+    resolvePresetOptions: (presetId) => {
+      const preset = s.downloadPresets.find((p) => p.id === presetId);
+      if (!preset) {
+        return Promise.resolve({
+          ok: false,
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "presetId does not match a saved preset.",
+          },
+        });
+      }
+      return ok({
+        url: "",
+        outputPath: "/tmp/rosi",
+        profile: preset.profile,
+        ...presetRequestFields(preset),
+        presetId: preset.id,
+        presetName: preset.name,
+      });
+    },
+    // Saves may send only changed keys, so store the patch and answer with the
+    // full stored settings, as the backend does.
     saveSettings: (v) => {
-      if (!deferNextSettingsSave) return ok(v);
+      Object.assign(s, v);
+      const stored = JSON.parse(JSON.stringify(s));
+      if (!deferNextSettingsSave) return ok(stored);
       deferNextSettingsSave = false;
       return new Promise((resolve) =>
-        settingsSaveResolvers.push(() => resolve({ ok: true, data: v })),
+        settingsSaveResolvers.push(() => resolve({ ok: true, data: stored })),
       );
     },
     getAppVersion: () => Promise.resolve("5.0.0-beta.2"),

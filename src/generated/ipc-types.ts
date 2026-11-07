@@ -74,6 +74,8 @@ export type IpcError = { code: "VALIDATION_ERROR" | "INVALID_URL" | "INVALID_PAT
 
 export type DownloadRequestInput = { url?: string | null, outputPath?: string | null, ffmpegPath?: string | null, convertEnabled?: boolean | null, convertFormat?: string | null, keepOriginal?: boolean | null, videoFormat?: string | null, audioFormat?: string | null, playlist?: PlaylistSelection | null, profile?: string | null, presetId?: string | null, presetName?: string | null, bestQuality?: boolean | null, advancedOptions?: boolean | null, audioOnly?: boolean | null, audioOutputFormat?: string | null, hookBrowser?: boolean | null, browserChoice?: string | null, gpuAcceleration?: boolean | null, gpuType?: string | null, writeSubtitles?: boolean | null, subtitleLangs?: string | null, embedThumbnail?: boolean | null, embedMetadata?: boolean | null, sponsorblockRemove?: boolean | null, };
 
+export type PresetOptionsInput = { presetId: string, };
+
 export type DownloadStarted = { started: boolean, sessionId: number, };
 
 export type QueueStarted = { started: boolean, };

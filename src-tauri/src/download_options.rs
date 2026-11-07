@@ -1,8 +1,13 @@
 //! Shared precedence, validation, and snapshot logic for manual and queued
 //! downloads.
 
-use crate::ipc::{self, DownloadRequestInput, FalliblePayload, IpcError, IpcResult};
-use crate::types::{DownloadProfile, DownloadRequestOptions, GpuType, PlaylistSelection, Settings};
+use crate::ipc::{
+    self, DownloadRequestInput, FalliblePayload, IpcError, IpcResult, VALIDATION_ERROR,
+};
+use crate::types::{
+    DownloadPreset, DownloadProfile, DownloadRequestOptions, GpuType, PlaylistSelection,
+    PresetOptionsInput, Settings,
+};
 use crate::validation::{validate_download_path, validate_download_request};
 use serde_json::{Map, Value};
 
@@ -156,6 +161,31 @@ pub fn resolve_validated(
     finish_resolution(options, effective)
 }
 
+/// The one precedence chain: settings defaults < preset < explicit overrides
+/// (nulls skipped) < forced URL. Validated requests and the URL-less preview
+/// both build their candidate here.
+fn layer_candidate(
+    settings: &Settings,
+    url_hint: &str,
+    preset: Option<&DownloadPreset>,
+    overrides: &Map<String, Value>,
+    forced_url: Option<&str>,
+) -> Map<String, Value> {
+    let mut candidate = to_map(&request_from_settings(url_hint, settings));
+    if let Some(preset) = preset {
+        candidate.extend(crate::settings::preset_to_request_options(preset));
+    }
+    for (key, value) in overrides {
+        if !value.is_null() {
+            candidate.insert(key.clone(), value.clone());
+        }
+    }
+    if let Some(url) = forced_url {
+        candidate.insert("url".into(), Value::String(url.to_string()));
+    }
+    candidate
+}
+
 /// Build a settings-default < preset < explicit-override request and validate
 /// it. The returned snapshot is what the download runner and queue store.
 pub fn resolve_value(
@@ -170,25 +200,34 @@ pub fn resolve_value(
     let url_hint = forced_url
         .or_else(|| overrides.get("url").and_then(Value::as_str))
         .unwrap_or_default();
-    let mut candidate = to_map(&request_from_settings(url_hint, settings));
-    let preset_id = overrides
+    let preset = overrides
         .get("presetId")
         .and_then(Value::as_str)
-        .map(str::trim);
-    if let Some(preset) =
-        preset_id.and_then(|id| settings.download_presets.iter().find(|p| p.id == id))
-    {
-        candidate.extend(crate::settings::preset_to_request_options(preset));
-    }
-    for (key, value) in overrides {
-        if !value.is_null() {
-            candidate.insert(key.clone(), value.clone());
-        }
-    }
-    if let Some(url) = forced_url {
-        candidate.insert("url".into(), Value::String(url.to_string()));
-    }
+        .map(str::trim)
+        .and_then(|id| find_preset(settings, id));
+    let candidate = layer_candidate(settings, url_hint, preset, overrides, forced_url);
     let request = validate_download_request(&Value::Object(candidate))?;
+    let effective = apply_request_to_settings(settings, &request);
+    Ok(finish_resolution(request, effective))
+}
+
+fn find_preset<'a>(settings: &'a Settings, id: &str) -> Option<&'a DownloadPreset> {
+    settings.download_presets.iter().find(|p| p.id == id)
+}
+
+/// Resolve the values a preset sets over the saved settings, with no URL. Only
+/// this path skips URL validation. Stored presets and settings were already
+/// sanitized on load, so the candidate is read straight into the request type.
+pub fn resolve_preset_preview(
+    settings: &Settings,
+    preset_id: &str,
+) -> Result<ResolvedDownloadOptions, IpcError> {
+    let preset = find_preset(settings, preset_id.trim()).ok_or_else(|| {
+        IpcError::new(VALIDATION_ERROR, "presetId does not match a saved preset.")
+    })?;
+    let candidate = layer_candidate(settings, "", Some(preset), &Map::new(), None);
+    let request: DownloadRequestOptions = serde_json::from_value(Value::Object(candidate))
+        .map_err(|_| IpcError::new(VALIDATION_ERROR, "Preset values could not be resolved."))?;
     let effective = apply_request_to_settings(settings, &request);
     Ok(finish_resolution(request, effective))
 }
@@ -232,6 +271,24 @@ pub fn resolve_download_options(
 ) -> IpcResult<DownloadRequestOptions> {
     let settings = crate::settings::load();
     match resolve_value(&settings, &options.into_value(), None) {
+        Ok(resolved) => ipc::ok(resolved.request),
+        Err(error) => ipc::from_error(error),
+    }
+}
+
+#[tauri::command]
+pub fn resolve_preset_options(
+    options: FalliblePayload<PresetOptionsInput>,
+) -> IpcResult<DownloadRequestOptions> {
+    let input = match options.into_typed(
+        VALIDATION_ERROR,
+        "Preset options must be an object with a presetId string.",
+    ) {
+        Ok(input) => input,
+        Err(error) => return ipc::from_error(error),
+    };
+    let settings = crate::settings::load();
+    match resolve_preset_preview(&settings, &input.preset_id) {
         Ok(resolved) => ipc::ok(resolved.request),
         Err(error) => ipc::from_error(error),
     }

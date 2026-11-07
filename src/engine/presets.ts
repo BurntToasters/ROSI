@@ -164,12 +164,6 @@ const SETTINGS_KEY_FOR_REQUEST_FIELD: Record<string, string> = {
 };
 
 /**
- * Placeholder for the URL that `resolve_download_options` requires. Resolution
- * only reads settings and the preset, and never fetches this address.
- */
-const RESOLVE_ONLY_URL = 'https://example.com/';
-
-/**
  * Values Apply copied into the controls, read back right after the copy. A
  * control still holding one of these values is not sent with the next request,
  * so the stored preset decides it. Cleared when the selection or the saved
@@ -266,12 +260,9 @@ export function buildRequestOverrides(input: {
 export async function applyPresetToControls(preset: RosiDownloadPreset): Promise<boolean> {
   // Flush first so the resolution reads the controls' current settings from disk.
   if (!(await persistSettings(true, true))) return false;
-  let resolved: Awaited<ReturnType<typeof window.api.resolveDownloadOptions>>;
+  let resolved: Awaited<ReturnType<typeof window.api.resolvePresetOptions>>;
   try {
-    resolved = await window.api.resolveDownloadOptions({
-      url: RESOLVE_ONLY_URL,
-      presetId: preset.id,
-    });
+    resolved = await window.api.resolvePresetOptions(preset.id);
   } catch {
     return false;
   }

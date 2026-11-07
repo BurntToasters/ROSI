@@ -154,6 +154,7 @@ macro_rules! generate_app_handler {
             downloader::download_video,
             downloader::cancel_download,
             download_options::resolve_download_options,
+            download_options::resolve_preset_options,
             queue::add_to_queue,
             queue::remove_from_queue,
             queue::retry_queue_item,

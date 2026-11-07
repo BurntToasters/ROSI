@@ -40,7 +40,11 @@ async function armRendererRecorder() {
   await browser.execute(() => {
     window.__b2Calls = [];
     window.__b2Armed = false;
-    for (const name of ["resolveDownloadOptions", "addToQueue"]) {
+    for (const name of [
+      "resolveDownloadOptions",
+      "resolvePresetOptions",
+      "addToQueue",
+    ]) {
       const original = window.api[name];
       window.api[name] = (...args) => {
         if (window.__b2Armed) {
@@ -527,5 +531,114 @@ describe("shared download option resolution", () => {
       omitUrlAndOutput(summaryRust.data),
       "summary and queued request disagree",
     );
+  });
+
+  it("preset preview takes no URL and shows backend values", async () => {
+    await api("clearQueue");
+    const stored = {
+      id: "resolver-preview",
+      name: "Resolver Preview",
+      profile: "best-video",
+      bestQuality: true,
+      audioOnly: false,
+      convertEnabled: true,
+      convertFormat: "m4a",
+      keepOriginalAfterConvert: false,
+      gpuAcceleration: false,
+    };
+    const saved = await api("saveSettings", {
+      downloadMode: "compatible",
+      bestQuality: false,
+      audioOnly: false,
+      advancedOptions: false,
+      convertEnabled: false,
+      convertFormat: "mp4",
+      keepOriginalAfterConvert: true,
+      gpuAcceleration: false,
+      askDownloadLocation: false,
+      downloadFolder: DOWNLOADS,
+      downloadPresets: [stored],
+    });
+    assert.equal(saved.ok, true, saved.error?.message);
+
+    await reloadApp();
+    await armRendererRecorder();
+    await recordRendererCalls(() =>
+      selectAndApplyPreset(stored.id, stored.name),
+    );
+    const calls = await takeRendererCalls();
+    const previews = calls.filter(
+      (call) => call.name === "resolvePresetOptions",
+    );
+    assert.equal(
+      previews.length,
+      1,
+      "Apply did not call resolve_preset_options once",
+    );
+    assert.deepEqual(
+      previews[0].args,
+      [stored.id],
+      "Apply sent more than the preset id",
+    );
+    assert.equal(
+      calls.some((call) => JSON.stringify(call.args).includes("example.com")),
+      false,
+      "a request during Apply carried the example.com placeholder",
+    );
+    assert.equal(
+      calls.some((call) => call.name === "resolveDownloadOptions"),
+      false,
+      "Apply still resolved through the URL-based command",
+    );
+
+    // The controls show the backend's preset values, not the saved settings.
+    const controls = await browser.execute(() => ({
+      convertEnabled: document.getElementById("convertToggle")?.checked,
+      convertFormat: document.getElementById("convertFormat")?.value,
+      keepOriginal: document.getElementById("keepOriginalToggle")?.checked,
+    }));
+    assert.deepEqual(
+      controls,
+      { convertEnabled: true, convertFormat: "m4a", keepOriginal: false },
+      "controls did not show the preset values Rust resolved",
+    );
+
+    // The URL-less preview matches the URL-validated preset layer for the same preset.
+    const preview = await api("resolvePresetOptions", stored.id);
+    assert.equal(preview.ok, true, preview.error?.message);
+    assert.equal(preview.data.convertFormat, "m4a");
+    assert.equal(preview.data.presetName, stored.name);
+    const withUrl = await api("resolveDownloadOptions", {
+      url: `${MEDIA}/clip-one.mp4?resolver=preview-${Date.now()}`,
+      outputPath: DOWNLOADS,
+      presetId: stored.id,
+    });
+    assert.equal(withUrl.ok, true, withUrl.error?.message);
+    assert.deepEqual(
+      omitUrlAndOutput(preview.data),
+      omitUrlAndOutput(withUrl.data),
+      "URL-less preview and URL-validated resolution disagree for the same preset",
+    );
+
+    const unknown = await api("resolvePresetOptions", "no-such-preset");
+    assert.equal(unknown.ok, false);
+    assert.equal(unknown.error.code, "VALIDATION_ERROR");
+
+    // A malformed payload comes back as an envelope, not a rejected invoke.
+    const malformed = await browser.executeAsync((done) => {
+      window.__TAURI__.core
+        .invoke("resolve_preset_options", { options: "wrong-shape" })
+        .then(
+          (result) => done({ rejected: false, result }),
+          (error) => done({ rejected: true, error: String(error) }),
+        );
+    });
+    assert.equal(malformed.rejected, false, malformed.error);
+    assert.equal(malformed.result.ok, false);
+    assert.equal(malformed.result.error.code, "VALIDATION_ERROR");
+
+    // Preview only resolves values: no queue item was added.
+    const queue = await api("getQueue");
+    assert.equal(queue.length, 0, "preset preview added a queue item");
   });
 });

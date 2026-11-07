@@ -688,6 +688,14 @@ impl DownloadOutcome {
     }
 }
 
+/// Payload for `resolve_preset_options`: a saved preset id and no URL.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct PresetOptionsInput {
+    pub preset_id: String,
+}
+
 #[cfg(test)]
 mod ts_bindings {
     //! `src/generated/ipc-types.ts` is generated from these types. Run
@@ -728,6 +736,7 @@ mod ts_bindings {
             GpuDetectionResult::decl(&cfg),
             crate::ipc::IpcError::decl(&cfg),
             crate::ipc::DownloadRequestInput::decl(&cfg),
+            PresetOptionsInput::decl(&cfg),
             crate::downloader::Started::decl(&cfg),
             crate::queue::Started::decl(&cfg),
             crate::queue::AddResult::decl(&cfg),

@@ -36,6 +36,7 @@ interface RosiRendererApi {
   resolveDownloadOptions: (
     options: Partial<RosiDownloadRequestOptions>
   ) => Promise<RosiIpcResult<RosiDownloadRequestOptions>>;
+  resolvePresetOptions: (presetId: string) => Promise<RosiIpcResult<RosiDownloadRequestOptions>>;
   cancelDownload: () => void;
   cancelFormats: () => void;
   getAppVersion: () => Promise<string>;

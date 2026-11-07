@@ -633,6 +633,12 @@
           "markdownDescription": "Enables the resolve_download_options command without any pre-configured scope."
         },
         {
+          "description": "Enables the resolve_preset_options command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-resolve-preset-options",
+          "markdownDescription": "Enables the resolve_preset_options command without any pre-configured scope."
+        },
+        {
           "description": "Enables the restart_app command without any pre-configured scope.",
           "type": "string",
           "const": "allow-restart-app",
@@ -961,6 +967,12 @@
           "type": "string",
           "const": "deny-resolve-download-options",
           "markdownDescription": "Denies the resolve_download_options command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the resolve_preset_options command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-resolve-preset-options",
+          "markdownDescription": "Denies the resolve_preset_options command without any pre-configured scope."
         },
         {
           "description": "Denies the restart_app command without any pre-configured scope.",

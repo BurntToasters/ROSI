@@ -32,6 +32,10 @@ export interface Commands {
     args: { options: Ipc.DownloadRequestInput };
     result: Envelope<Ipc.DownloadRequestOptions>;
   };
+  resolve_preset_options: {
+    args: { options: Ipc.PresetOptionsInput };
+    result: Envelope<Ipc.DownloadRequestOptions>;
+  };
   cancel_download: { args: void; result: void };
   add_to_queue: {
     args: { urls: string[]; options: Ipc.DownloadRequestInput | null };

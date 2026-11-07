@@ -66,3 +66,23 @@ The WebdriverIO scenario `applied preset follows the stored value in Rust`
 applies a preset, changes its stored value through the backend, and checks
 that the effective-options summary and a queued request both match
 `resolve_download_options` for the same request, with no copied values sent.
+
+## Preset preview without a URL
+
+| #   | Failure mode                                                                                | Required behavior                                                                                                                         |
+| --- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Apply sends a placeholder URL to `resolve_download_options`.                                | Apply calls `resolve_preset_options` with only a preset id. No request sent by Apply carries a URL, including `example.com`.              |
+| 2   | An unknown or deleted preset id resolves silently to plain settings.                        | `resolve_preset_options` returns a `VALIDATION_ERROR` envelope. Apply reports failure and leaves the controls unchanged.                  |
+| 3   | A malformed payload (not an object, missing or non-string `presetId`) rejects inside Tauri. | The command returns the structured error envelope and starts nothing.                                                                     |
+| 4   | The URL-less preview computes precedence differently from a real request.                   | Both call `layer_candidate`, so for the same settings and preset the preview values equal the preset layer of `resolve_download_options`. |
+| 5   | Apply reads the renderer's cached preset instead of the stored one.                         | The backend resolves the id from stored settings; the cached preset object is not read for values.                                        |
+| 6   | Skipping URL validation for the preview weakens `resolve_download_options`.                 | `resolve_download_options` still returns `INVALID_URL` for a missing or invalid URL. Only the preview path skips the URL.                 |
+| 7   | Preview has side effects.                                                                   | The preview only resolves values. It adds no queue item and starts no download.                                                           |
+
+E2E acceptance: the WebdriverIO scenario `preset preview takes no URL and shows
+backend values` records the renderer's calls during Apply and checks that the
+command received only the preset id, with no call carrying `example.com`. It
+checks that the controls show the preset values, that the URL-less preview
+equals the URL-validated resolution for the same preset, that an unknown id
+and a malformed payload return the `VALIDATION_ERROR` envelope, and that no
+queue item was added.
