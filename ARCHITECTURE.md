@@ -29,6 +29,7 @@ split into focused modules:
 | `sidecars.rs`         | Sidecar location and effective FFmpeg resolution                                   |
 | `process_util.rs`     | Scrubbed environment, process groups, tree termination, bounded output capture     |
 | `platform.rs`         | Platform queries, beta updater target, OS handoffs (open URL, reveal, notify)      |
+| `updater.rs`          | Update engine: one state thread owns channel and target selection (per-arch zstd feeds with a universal fallback, Rosetta to native `aarch64`), check/download/install generations, single-flight download and install, and the Flatpak feed-only rule; emits `updater-status` and `updater-progress` |
 | `window.rs`           | Splash, deferred main-window reveal, close flow (confirm, settings flush), restart |
 | `app_menu.rs`         | Native macOS menu                                                                  |
 | `app_state.rs`        | Process-wide handles: app handle, resolved user directories, background event sink |
@@ -70,13 +71,9 @@ normal loaders validate everything, and the result is recorded in
 - `tauri-bridge.ts` implements the renderer API (`window.api`) on top of
   `commands.ts` and Tauri events. `window.api` stays the seam that the vitest
   DOM tests and the E2E specs drive.
-- `updater.ts` wraps `@tauri-apps/plugin-updater`. Stable checks use the default
-  `latest-{target}-{arch}.json` endpoints; beta checks pass the
-  `{os}-beta-{arch}-{installer}` target from `get_beta_updater_target`. Packaged
-  macOS apps call `get_compact_updater_target` to check per-arch zstd updates
-  (`darwin[-beta]-{arch}-app-zst`) and fall back to the universal target if unavailable.
-  Under Rosetta 2, `get_compact_updater_target` selects the native `aarch64` target to
-  migrate the app to native Apple Silicon execution.
+- `engine/updater-ui.ts` draws update state. It calls the updater commands in
+  `commands.ts` and renders the `updater-status` and `updater-progress` events;
+  it makes no update decisions. The webview has no updater plugin permissions.
 - `main.ts` is the entry point. It imports the bridge first, then the renderer
   modules, then `rosiEngine.ts`. After the renderer reports startup readiness it
   calls `mark_main_window_ready`, which lets the backend close the splash.

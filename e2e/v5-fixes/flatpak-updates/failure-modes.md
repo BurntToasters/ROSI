@@ -69,6 +69,10 @@ extra field does not break them.
 
 ## E2E spec risks
 
+Since 5.1.0-beta.1 the spec drives the Rust update engine against a local signed
+feed (`e2e/helpers/updater-engine-fixture.js`). E1 and N4 describe the removed
+renderer adapter and jsdom tests and are kept as history.
+
 E1. The E2E adapter (`window.__ROSI_E2E__.updaterAdapter`) is only read when
 `VITE_ROSI_E2E === '1'`. Without it the spec would hit the real feed. The
 spec asserts the adapter is installed before it clicks the check button.

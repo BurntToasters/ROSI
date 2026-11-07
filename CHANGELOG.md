@@ -50,6 +50,7 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 - **Accessibility:** Dialogs move focus inside as soon as they open. Long URLs, paths, titles, and errors wrap or truncate instead of widening the window.
 - **Network:** A proxy client turned away with HTTP 503 now receives the full response on macOS instead of a connection reset.
 - **Security:** Every backend command now checks its input against a typed structure. Error messages are unchanged.
+- **Updater:** Update checks, downloads, and installs run in the backend, and the window only shows their status. The window no longer has permission to use the updater plugin directly.
 
 ## Changes in `v5.0.2:`
 
