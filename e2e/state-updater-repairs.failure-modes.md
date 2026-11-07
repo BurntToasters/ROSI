@@ -231,3 +231,28 @@ that fault is removed.
    renderable; absent, malformed, or remote values clear the old thumbnail.
 3. A late preview response must not restore a thumbnail after the preview target
    changes or is cleared.
+
+## B3 default settings come from Rust only
+
+1. `get_settings` rejects at renderer startup. The renderer takes its defaults
+   from `get_default_settings`, never from a copy in `src/rosiEngine.ts`, and
+   shows the "Settings Error" modal. The E2E gate cannot inject an IPC rejection
+   into the startup path without a test hook, so this row is verified by the
+   code path and typecheck, not by the gate.
+2. `get_settings` rejects and `get_default_settings` also rejects or returns
+   `ok: false`. The renderer uses only `{ settingsVersion, theme: 'system' }`,
+   the modal names the defaults failure, and the app still starts. Same
+   limitation as row 1.
+3. `settings.json` is corrupt. `get_settings` answers with Rust defaults and no
+   IPC error, so the sidebar controls must show exactly the values that
+   `get_default_settings` returns, field by field. The scenario corrupts the
+   file, reloads the renderer so startup reads it again, and compares every
+   sidebar control with the live Rust defaults.
+4. Defaults drift between Rust and the renderer. A renderer copy of the defaults
+   can disagree with `default_settings()` and only shows up when a load fails.
+   Because the renderer no longer holds a copy, a changed Rust default reaches
+   the sidebar without a renderer edit, and the scenario reads the Rust values
+   at run time instead of comparing against a fixed table.
+5. Section reset and Reset All keep their existing paths: section reset reads
+   `loadDefaultSettings()` (Rust, cached), and Reset All is handled by the Rust
+   `reset_settings` command. Neither reads the startup fallback.

@@ -1641,4 +1641,101 @@ describe("state and updater repair E2E", () => {
       });
     }
   });
+
+  it("renders the Rust defaults when settings.json is corrupt at startup", async () => {
+    const settingsFile = path.join(DATA_DIR, "settings.json");
+    const original = fs.readFileSync(settingsFile);
+    try {
+      const seeded = JSON.parse(original.toString("utf8"));
+      fs.writeFileSync(
+        settingsFile,
+        '{"theme":"purple","B3_DAMAGED_SETTINGS":',
+      );
+      // A renderer reload runs startup again: get_settings reads the damaged
+      // file from disk and answers with the Rust defaults.
+      await reloadRenderer();
+
+      const defaults = (await api("getDefaultSettings")).data;
+      const loaded = await api("getSettings");
+      const rendered = await browser.execute((controls) => {
+        const read = (control) => {
+          const element = document.getElementById(control.id);
+          if (
+            !(element instanceof HTMLInputElement) &&
+            !(element instanceof HTMLSelectElement)
+          )
+            return null;
+          return control.kind === "checked" ? element.checked : element.value;
+        };
+        return Object.fromEntries(
+          controls.map((control) => [control.id, read(control)]),
+        );
+      }, SIDEBAR_CONTROLS);
+
+      const expectedFor = (control, source) => {
+        const value = source[control.key];
+        return control.id === "browserChoice"
+          ? String(value).toLowerCase()
+          : value;
+      };
+      const differsFromSeed = SIDEBAR_CONTROLS.filter(
+        (control) => seeded[control.key] !== defaults[control.key],
+      ).map((control) => control.key);
+      assert.ok(
+        differsFromSeed.length > 0,
+        "seeded settings must differ from the defaults for this check to prove anything",
+      );
+      for (const control of SIDEBAR_CONTROLS) {
+        const expected = expectedFor(control, defaults);
+        assert.equal(
+          rendered[control.id],
+          expected,
+          `sidebar ${control.id} shows ${JSON.stringify(rendered[control.id])}; get_default_settings ${control.key}=${JSON.stringify(defaults[control.key])}`,
+        );
+        assert.equal(
+          expectedFor(control, loaded),
+          expected,
+          `get_settings ${control.key} differs from get_default_settings`,
+        );
+      }
+
+      record("settings-corrupt-defaults", {
+        settingsFile: "settings.json",
+        defaultsSource: "get_default_settings",
+        controlsCompared: SIDEBAR_CONTROLS.map((control) => control.id),
+        seededKeysDiffering: differsFromSeed,
+      });
+    } finally {
+      fs.writeFileSync(settingsFile, original);
+      await reloadRenderer();
+    }
+  });
 });
+
+// Sidebar controls and the settings key each one renders. Every value is
+// compared with `get_default_settings` at run time, not with a fixed table.
+const SIDEBAR_CONTROLS = [
+  ["consoleToggle", "showConsoleOutput", "checked"],
+  ["keepOriginalToggle", "keepOriginalAfterConvert", "checked"],
+  ["hookBrowserToggle", "hookBrowser", "checked"],
+  ["browserChoice", "browserChoice", "value"],
+  ["convertToggle", "convertEnabled", "checked"],
+  ["convertFormat", "convertFormat", "value"],
+  ["gpuAccelerationToggle", "gpuAcceleration", "checked"],
+  ["gpuType", "gpuType", "value"],
+  ["ffmpegPathInput", "ffmpegPath", "value"],
+  ["upstreamProxyInput", "upstreamProxy", "value"],
+  ["animateBackgroundToggle", "animateBackground", "checked"],
+  ["themeSelect", "theme", "value"],
+  ["flatUiToggle", "flatUi", "checked"],
+  ["askDownloadLocationToggle", "askDownloadLocation", "checked"],
+  ["notificationsToggle", "notifications", "checked"],
+  ["taskbarProgressToggle", "showTaskbarProgress", "checked"],
+  ["checkUpdatesOnStartupToggle", "checkUpdatesOnStartup", "checked"],
+  ["updateChannelSelect", "updateChannel", "value"],
+  ["embedMetadataToggle", "embedMetadata", "checked"],
+  ["embedThumbnailToggle", "embedThumbnail", "checked"],
+  ["sponsorblockToggle", "sponsorblockRemove", "checked"],
+  ["writeSubtitlesToggle", "writeSubtitles", "checked"],
+  ["subtitleLangsInput", "subtitleLangs", "value"],
+].map(([id, key, kind]) => ({ id, key, kind }));

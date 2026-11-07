@@ -67,6 +67,39 @@ function setPrepareForCloseHandler(handler: PrepareForCloseHandler) {
   resolvePrepareForCloseHandler(handler);
 }
 
+/**
+ * Defaults for a startup settings load that failed. Rust owns the defaults, so
+ * they come from `get_default_settings`. The minimal object is used only when
+ * that call fails too; its version mirrors CURRENT_SETTINGS_VERSION in
+ * `src-tauri/src/constants.rs` because no backend answer exists at that point.
+ */
+const MINIMAL_SETTINGS_VERSION = 7;
+
+async function settingsAfterLoadFailure(): Promise<{
+  settings: RosiSettings;
+  defaultsFailed: boolean;
+}> {
+  try {
+    const result =
+      typeof window.api.getDefaultSettings === 'function'
+        ? await window.api.getDefaultSettings()
+        : null;
+    if (!result?.ok) {
+      throw new Error(result?.error?.message ?? 'get_default_settings returned no data');
+    }
+    return { settings: result.data as RosiSettings, defaultsFailed: false };
+  } catch (error) {
+    logError('Failed to load default settings', error);
+    return {
+      settings: {
+        settingsVersion: MINIMAL_SETTINGS_VERSION,
+        theme: 'system',
+      } as RosiSettings,
+      defaultsFailed: true,
+    };
+  }
+}
+
 async function initializeRenderer() {
   const ipcCleanupFunctions: Array<() => void> = (refs.ipcCleanupFunctions = []);
   ipcCleanupFunctions.push(
@@ -90,47 +123,13 @@ async function initializeRenderer() {
     settingsStore.settings = (await window.api.getSettings()) as RosiSettings;
   } catch (error) {
     logError('Failed to load settings', error);
-    settingsStore.settings = {
-      settingsVersion: 7,
-      theme: 'system',
-      showConsoleOutput: false,
-      dockTab: 'queue',
-      dockCollapsed: false,
-      downloadMode: 'compatible',
-      downloadPresets: [],
-      askDownloadLocation: false,
-      advancedOptions: false,
-      audioFormat: 'mp3',
-      convertEnabled: false,
-      convertFormat: 'mp4',
-      keepOriginalAfterConvert: true,
-      firstLaunch: true,
-      hookBrowser: false,
-      browserChoice: 'chrome',
-      animateBackground: true,
-      flatUi: localStorage.getItem('rosi-flat-ui') === 'true',
-      notifications: true,
-      denoReminderDismissed: false,
-      gpuAcceleration: false,
-      gpuType: 'auto',
-      bestQuality: false,
-      ffmpegPath: '',
-      upstreamProxy: '',
-      downloadFolder: '',
-      hideSupportModal: false,
-      checkUpdatesOnStartup: true,
-      updateChannel: 'auto',
-      audioOnly: false,
-      writeSubtitles: false,
-      subtitleLangs: 'en',
-      embedThumbnail: false,
-      embedMetadata: false,
-      sponsorblockRemove: false,
-      showTaskbarProgress: true,
-    };
+    const fallback = await settingsAfterLoadFailure();
+    settingsStore.settings = fallback.settings;
     showModal({
       title: 'Settings Error',
-      message: 'Could not load settings. Using defaults.',
+      message: fallback.defaultsFailed
+        ? 'Could not load settings or the default settings from the backend. ROSI is using minimal settings for this session.'
+        : 'Could not load settings. Using defaults.',
       buttons: [{ label: 'OK', primary: true }],
     });
   }
