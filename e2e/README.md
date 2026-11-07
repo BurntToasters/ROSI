@@ -23,6 +23,12 @@ On a local Mac the gate runs ROSI in background mode (`ROSI_E2E_BACKGROUND=1`):
 the E2E app has no Dock icon, never takes focus, and its window stays below
 other apps. Native alert dialogs that specs open on purpose still appear. CI
 runs in the foreground; set `ROSI_E2E_FOREGROUND=1` to do the same locally.
+The gate report does not record the window mode. Release evidence from a Mac
+uses the default background mode unless `ROSI_E2E_FOREGROUND=1` is set, and
+the release record must state which mode produced the report. The
+`settings-reset-all` and `close-flow` scenarios wait for their observable
+effects (the reset bridge call, the "Main window closed." log line), not fixed
+delays, so both modes use the same waits.
 
 | Suite                                                                     | Area                                                                              | How the gate runs it                                                          |
 | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |

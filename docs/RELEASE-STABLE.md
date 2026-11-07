@@ -113,6 +113,12 @@ finds a runtime change, stop: that runtime must be beta-tested before stable
 promotion. Download the `e2e-*` evidence artifacts from that CI run and confirm each
 report lists every scenario as passed.
 
+On a Mac, the local E2E gate runs ROSI in background mode by default
+(`ROSI_E2E_BACKGROUND=1`, see `e2e/README.md`). CI runs in the foreground. The
+gate report does not record the window mode, so the release record for any
+macOS evidence must state the mode that produced it: background (the default)
+or foreground (`ROSI_E2E_FOREGROUND=1`).
+
 If the accepted beta still needs to be published, use the normal beta release
 flow first and complete beta smoke testing before the stable version change.
 

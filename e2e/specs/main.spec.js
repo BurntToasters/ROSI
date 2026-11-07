@@ -3685,12 +3685,19 @@ describe("ROSI main window", () => {
     );
     await clickById("resetSettings");
     modal = await waitForModal(true, "Reset All asked nothing the second time");
+    const confirmedAt = Date.now();
     await clickModalButton(modal.buttons.find((label) => /reset/i.test(label)));
-    await settle(300);
+    // The confirm runs after the modal's hide timer and the settings flush
+    // round trip, so wait for the bridge call itself instead of a fixed delay.
+    await browser.waitUntil(
+      async () => (await stubCalls("resetSettings")).length > 0,
+      { timeout: 10_000, interval: 50, timeoutMsg: "confirming did not reset" },
+    );
+    const resetMs = Date.now() - confirmedAt;
     const calls = await stubCalls("resetSettings");
     await restoreApi();
     assert.equal(calls.length, 1, "confirming did not reset");
-    record("settings-reset-all", { prompt: modal.title });
+    record("settings-reset-all", { prompt: modal.title, resetMs });
   });
 
   it("opens every help and support link at the right address", async () => {
@@ -4379,6 +4386,7 @@ describe("ROSI main window", () => {
     const target = !before.notifications;
     // Flip a toggle (saved after a 300 ms debounce) and close immediately:
     // the close flow must flush it before the window goes away.
+    const closeAt = Date.now();
     await browser.execute((checked) => {
       const toggle = document.getElementById("notificationsToggle");
       toggle.checked = checked;
@@ -4400,6 +4408,7 @@ describe("ROSI main window", () => {
         timeoutMsg: "main window never closed",
       },
     );
+    const closeMs = Date.now() - closeAt;
     const log = fs.readFileSync(logFile, "utf8");
     assert.match(
       log,
@@ -4410,6 +4419,6 @@ describe("ROSI main window", () => {
       fs.readFileSync(path.join(DATA_DIR, "settings.json"), "utf8"),
     );
     assert.equal(after.notifications, target);
-    record("close-flow", { flushedSetting: "notifications" });
+    record("close-flow", { flushedSetting: "notifications", closeMs });
   });
 });
