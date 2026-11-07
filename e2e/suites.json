@@ -99,47 +99,47 @@
     "security": {
       "id": "security",
       "kind": "webdriverio",
-      "entrypoint": "e2e/specs/security-release-repairs.spec.js"
+      "entrypoint": "e2e/specs/security-release-checks.spec.js"
     },
     "state-repairs": {
       "id": "state-repairs",
       "kind": "webdriverio",
-      "entrypoint": "e2e/state-updater-repairs.spec.js"
+      "entrypoint": "e2e/state-updater.spec.js"
     },
     "round2-renderer": {
       "id": "round2-renderer",
       "kind": "webdriverio",
-      "entrypoint": "e2e/round2-renderer-repairs.spec.js"
+      "entrypoint": "e2e/renderer-updates.spec.js"
     },
     "process-repairs": {
       "id": "process-repairs",
       "kind": "runner",
-      "entrypoint": "e2e/run-download-process-repairs.mjs"
+      "entrypoint": "e2e/run-download-process.mjs"
     },
     "round2-native": {
       "id": "round2-native",
       "kind": "runner",
-      "entrypoint": "e2e/round2-native-run.mjs"
+      "entrypoint": "e2e/native-downloads-run.mjs"
     },
     "persistence": {
       "id": "persistence",
       "kind": "runner",
-      "entrypoint": "e2e/long-term-v5-audit-run.mjs"
+      "entrypoint": "e2e/long-term-persistence-run.mjs"
     },
     "audit4-repairs": {
       "id": "audit4-repairs",
       "kind": "runner",
-      "entrypoint": "e2e/audit4-repairs-run.mjs"
+      "entrypoint": "e2e/download-session-run.mjs"
     },
     "audit-v5-beta2": {
       "id": "audit-v5-beta2",
       "kind": "runner",
-      "entrypoint": "e2e/audit-v5-beta2/run-probes.mjs"
+      "entrypoint": "e2e/platform-probes/run-probes.mjs"
     },
     "round3-renderer": {
       "id": "round3-renderer",
       "kind": "node-runner",
-      "entrypoint": "e2e/round3-renderer-repairs/run.cjs"
+      "entrypoint": "e2e/renderer-dom-checks/run.cjs"
     },
     "v5-fixes": {
       "id": "v5-fixes",

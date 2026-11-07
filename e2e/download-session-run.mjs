@@ -103,12 +103,12 @@ await new Promise((resolve, reject) => {
   server.once("error", reject);
   server.listen(0, "127.0.0.1", resolve);
 });
-const specPath = path.join(REPO_ROOT, "e2e", "audit4-repairs.spec.js");
+const specPath = path.join(REPO_ROOT, "e2e", "download-session.spec.js");
 const env = {
   ...process.env,
   ...profile.env,
   ROSI_E2E_BINARY: binary,
-  ROSI_E2E_SPECS: "./audit4-repairs.spec.js",
+  ROSI_E2E_SPECS: "./download-session.spec.js",
   ROSI_AUDIT4_ARTIFACTS: directory,
   ROSI_AUDIT4_FFPROBE: ffprobe,
   ROSI_AUDIT4_MEDIA: "http://127.0.0.1:" + server.address().port,

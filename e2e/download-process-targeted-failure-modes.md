@@ -1,4 +1,4 @@
-# Audit 3 native repair failure modes
+# Download process targeted failure modes
 
 Findings 1–5 were recorded before the original repair harness and native
 production edits. Follow-up findings 6–14 were recorded before their matching
@@ -108,7 +108,7 @@ and its invariant.
     verify the published original remains in `failedPaths` and also appears in
     `outputPaths` with accurate bytes and its actual format.
 
-Gate wiring: `scripts/test-e2e.js` runs `audit3-native-targeted.spec.js` through
+Gate wiring: `scripts/test-e2e.js` runs `download-process-targeted.spec.js` through
 the isolated process-repair wrapper (`ROSI_REPAIRS_SPEC`) as the
 `audit3-native-targeted` scenario. Its result is verified by the same report
 identity checks as `download-process-repairs`.

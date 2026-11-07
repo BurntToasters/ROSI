@@ -181,6 +181,21 @@ Also confirm:
 - `cargo audit` reports no unignored vulnerability.
 - The stable version is `X.Y.Z` everywhere and contains no `-beta.N` suffix.
 
+On the macOS release machine, also run the E2E stability run on the exact
+stable commit, after the gate above has passed:
+
+```sh
+npm run test:e2e:stability
+```
+
+It repeats the full E2E gate five times (`scripts/test-e2e.js --repeat 5`), so
+expect several hours. It writes `e2e/artifacts/e2e-stability-darwin-arm64.json`,
+and the release record must cite that file. Known flake: the macOS
+`download-process-repairs` scenario (spec `e2e/download-process.spec.js`, runner
+`e2e/run-download-process.mjs`) can fail on execute or async timeouts. Re-run
+the failing pass once before debugging, and record both the first result and
+the re-run result in the release record.
+
 ## 5. Build and sign on isolated platform VMs
 
 Use clean, isolated release VMs. Load their signing secrets for the session

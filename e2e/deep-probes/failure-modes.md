@@ -1,4 +1,4 @@
-# V5 beta 2 deep audit probes: failure modes
+# V5 beta 2 deep probes: failure modes
 
 Written before any probe code. Each probe drives the real unpackaged E2E
 build. A probe records observations; `invariantPassed: false` is a reproduced

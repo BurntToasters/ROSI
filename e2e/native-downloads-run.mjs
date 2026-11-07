@@ -196,7 +196,7 @@ const wdio = spawnSync(npx, ["wdio", "run", "e2e/wdio.conf.js"], {
     ...process.env,
     ...profile.env,
     ROSI_E2E_BINARY: binary,
-    ROSI_E2E_SPECS: "./round2-native.spec.js",
+    ROSI_E2E_SPECS: "./native-downloads.spec.js",
     ROSI_E2E_DOWNLOADS: profile.downloads,
     ROSI_E2E_DATA_DIR: profile.dataDir,
     ROSI_ROUND2_NATIVE_ARTIFACTS: artifactDirectory,
@@ -237,12 +237,13 @@ const reportBody = {
   ffmpegExecutablePath: realFfmpegPath,
   ffmpegExecutableSha256: sha256(fs.readFileSync(realFfmpegPath)),
   probeSources: Object.fromEntries(
-    ["e2e/round2-native.spec.js", "e2e/round2-native-failure-modes.md"].map(
-      (relativePath) => [
-        relativePath,
-        sha256(fs.readFileSync(path.join(REPO_ROOT, relativePath))),
-      ],
-    ),
+    [
+      "e2e/native-downloads.spec.js",
+      "e2e/native-downloads-failure-modes.md",
+    ].map((relativePath) => [
+      relativePath,
+      sha256(fs.readFileSync(path.join(REPO_ROOT, relativePath))),
+    ]),
   ),
   isolatedProfile: profile.profileDir,
   toneFixtureSha256: sha256(fs.readFileSync(tone)),

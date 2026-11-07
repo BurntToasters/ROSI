@@ -13,7 +13,7 @@ import {
 const artifactRoot = path.resolve(
   REPO_ROOT,
   process.env.ROSI_LONG_TERM_ARTIFACT_ROOT ||
-    `e2e/artifacts/long-term-v5-repairs/${new Date().toISOString().replaceAll(":", "-")}-${process.pid}`,
+    `e2e/artifacts/long-term-persistence/${new Date().toISOString().replaceAll(":", "-")}-${process.pid}`,
 );
 const binary = e2eBinaryPath();
 const stamp = e2eStampPath();
@@ -33,18 +33,18 @@ const ownedRoot = path.join(
   REPO_ROOT,
   "e2e",
   "artifacts",
-  "long-term-v5-repairs",
+  "long-term-persistence",
 );
 if (!artifactRoot.startsWith(`${ownedRoot}${path.sep}`)) {
   throw new Error(
-    "Repair artifacts must use a new child directory under e2e/artifacts/long-term-v5-repairs.",
+    "Repair artifacts must use a new child directory under e2e/artifacts/long-term-persistence.",
   );
 }
 fs.mkdirSync(path.dirname(artifactRoot), { recursive: true });
 fs.mkdirSync(artifactRoot);
 const sourceFiles = [
-  "e2e/long-term-v5-audit-run.mjs",
-  "e2e/long-term-v5-audit.spec.js",
+  "e2e/long-term-persistence-run.mjs",
+  "e2e/long-term-persistence.spec.js",
   "e2e/long-term-v5-failure-modes.md",
   "src-tauri/src/settings.rs",
   "src-tauri/src/legacy.rs",
@@ -103,7 +103,7 @@ function run(mode, profile, expectedQueueCount) {
         ...process.env,
         ...profile.env,
         ROSI_E2E_BINARY: binary,
-        ROSI_E2E_SPECS: "./long-term-v5-audit.spec.js",
+        ROSI_E2E_SPECS: "./long-term-persistence.spec.js",
         ROSI_LONG_TERM_MODE: mode,
         ROSI_LONG_TERM_EXPECTED_QUEUE_COUNT: String(expectedQueueCount ?? ""),
         ROSI_LONG_TERM_ARTIFACTS: directory,

@@ -1,4 +1,4 @@
-# Renderer round-two failure modes
+# Renderer updates failure modes
 
 These cases describe the failure paths to cover before changing production code.
 

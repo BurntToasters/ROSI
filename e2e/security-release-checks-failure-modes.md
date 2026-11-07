@@ -1,4 +1,4 @@
-# Security and release repair failure modes
+# Security and release checks failure modes
 
 This inventory is written before the new regression coverage and production
 changes. It covers the F06/F07/F08 audit findings and the two development

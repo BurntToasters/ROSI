@@ -27,8 +27,8 @@ function createNativeReport() {
     binarySha256: "a".repeat(64),
     ffmpegSha256: "b".repeat(64),
     probeSources: {
-      "e2e/round2-native.spec.js": "c".repeat(64),
-      "e2e/round2-native-failure-modes.md": "d".repeat(64),
+      "e2e/native-downloads.spec.js": "c".repeat(64),
+      "e2e/native-downloads-failure-modes.md": "d".repeat(64),
     },
     isolatedProfile: "/tmp/rosi-round2-native-profile",
     toneFixtureSha256: "e".repeat(64),
@@ -63,8 +63,8 @@ const nativeExpectations = {
   binarySha256: "a".repeat(64),
   ffmpegSha256: "b".repeat(64),
   probeSources: {
-    "e2e/round2-native.spec.js": "c".repeat(64),
-    "e2e/round2-native-failure-modes.md": "d".repeat(64),
+    "e2e/native-downloads.spec.js": "c".repeat(64),
+    "e2e/native-downloads-failure-modes.md": "d".repeat(64),
   },
   suiteStartedAt: "2030-01-01T00:00:00.000Z",
 };
@@ -125,7 +125,7 @@ test("native report validation binds identity, source, observations, freshness, 
     (value) => (value.binarySha256 = "f".repeat(64)),
     (value) => (value.ffmpegSha256 = "f".repeat(64)),
     (value) =>
-      (value.probeSources["e2e/round2-native.spec.js"] = "f".repeat(64)),
+      (value.probeSources["e2e/native-downloads.spec.js"] = "f".repeat(64)),
     (value) => value.observations.pop(),
     (value) => (value.observations[0].invariantPassed = false),
     (value) => {

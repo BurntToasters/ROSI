@@ -1,4 +1,4 @@
-# State and updater repair failure modes
+# State and updater failure modes
 
 Enumerate these cases before changing production code. The E2E spec covers
 renderer-visible contracts; temporary-directory native tests cover filesystem

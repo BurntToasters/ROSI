@@ -1,4 +1,4 @@
-# V5 beta 2 audit probes
+# V5 beta 2 platform probes
 
 These observational E2E probes drive the real unpackaged Tauri app, bundled yt-dlp, real FFmpeg, and an isolated local media server. Failure modes were written before probe implementation. They do not modify production code or the user's application profile.
 
@@ -6,10 +6,10 @@ Run from the repository root on macOS with Node dependencies installed and a rea
 
 ```sh
 npm run test:e2e
-node e2e/audit-v5-beta2/run-probes.mjs
-node e2e/audit-v5-beta2/run-probes.mjs --security
-node e2e/audit-v5-beta2/run-probes.mjs --ui
-node e2e/audit-v5-beta2/run-probes.mjs --termination
+node e2e/platform-probes/run-probes.mjs
+node e2e/platform-probes/run-probes.mjs --security
+node e2e/platform-probes/run-probes.mjs --ui
+node e2e/platform-probes/run-probes.mjs --termination
 ```
 
 The first command builds the E2E binary. Its existing suite may fail while the candidate's audit findings remain unresolved. The custom probes can still run if the build completed. Do not run Cargo build, test, or clippy between building the E2E binary and these probes; those commands can replace it without the E2E feature. Rebuild after production source changes.

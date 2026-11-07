@@ -1,6 +1,6 @@
-# Downloader and process repair E2E
+# Downloader and process E2E
 
-The failure inventory is in `download-process-repairs.failures.md`. The probe
+The failure inventory is in `download-process.failures.md`. The probe
 drives the real unpackaged Tauri application and bundled yt-dlp with deterministic
 local media, real FFmpeg, an isolated Firefox cookie database, and test-owned
 FFmpeg behaviors for tree escalation, bounded output, GPU failure fallback, and
@@ -11,7 +11,7 @@ Build a fresh E2E binary with the repository's `npm run test:e2e` gate, then run
 the focused probe without rebuilding it:
 
 ```sh
-node e2e/run-download-process-repairs.mjs
+node e2e/run-download-process.mjs
 ```
 
 The probe currently requires macOS or Linux, Python 3, a real FFmpeg, and the

@@ -5,7 +5,7 @@ const { spawnSync } = require("node:child_process");
 const root = path.resolve(__dirname, "../..");
 const artifactPath = path.join(
   root,
-  "e2e/artifacts/round3-renderer/renderer-repairs.json",
+  "e2e/artifacts/round3-renderer/renderer-dom-checks.json",
 );
 
 function runDiagnostic(name) {

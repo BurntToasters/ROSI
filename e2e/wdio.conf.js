@@ -31,8 +31,8 @@ const specs = process.env.ROSI_E2E_SPECS
 // Process-repair specs batch many native failure cases into one `it`, so they
 // get a longer ceiling than the rest of the GUI suite.
 const LONG_PROCESS_SPECS = new Set([
-  "./download-process-repairs.spec.js",
-  "./audit3-native-targeted.spec.js",
+  "./download-process.spec.js",
+  "./download-process-targeted.spec.js",
 ]);
 const processRepairRun =
   process.env.ROSI_E2E_PROCESS_REPAIRS === "1" &&

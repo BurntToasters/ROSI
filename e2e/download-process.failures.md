@@ -1,4 +1,4 @@
-# Downloader and process repair failure inventory
+# Downloader and process failure inventory
 
 The original cases were written before the repair probe and production edits.
 Follow-up cases below were recorded before the corresponding integration fixes.
@@ -97,7 +97,7 @@ partial playlist failure, cancellation between playlist entries, and the
 stale-event injection described above. Each timing and output-path invariant
 is saved in the hashed repair report.
 
-The existing `e2e/audit-v5-beta2` probes establish the native baseline for
+The existing `e2e/platform-probes` probes establish the native baseline for
 conversion collision, concurrent starts, playlist conversion, VP8 conversion,
 metadata requests, and process-tree escalation. The new probe adds explicit
 repair assertions and records a repeatable JSON artifact. Browser-profile

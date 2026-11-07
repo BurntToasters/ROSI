@@ -23,12 +23,16 @@ if (process.platform === "win32") {
 }
 
 const scriptPath = fileURLToPath(import.meta.url);
-const e2eSpec =
-  process.env.ROSI_REPAIRS_SPEC || "./download-process-repairs.spec.js";
+const e2eSpec = process.env.ROSI_REPAIRS_SPEC || "./download-process.spec.js";
 const artifactToken = `${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`;
 const artifactDir = path.resolve(
   process.env.ROSI_AUDIT3_ARTIFACT_DIR ||
-    path.join(REPO_ROOT, "e2e", "artifacts", `audit3-native-${artifactToken}`),
+    path.join(
+      REPO_ROOT,
+      "e2e",
+      "artifacts",
+      `download-process-${artifactToken}`,
+    ),
 );
 const proxyTracePath = path.join(artifactDir, "proxy-decisions.jsonl");
 const binary = e2eBinaryPath();
@@ -929,7 +933,7 @@ try {
           ROSI_AUDIT3_FAILURE_MODES: path.join(
             REPO_ROOT,
             "e2e",
-            "audit3-native-failure-modes.md",
+            "download-process-targeted-failure-modes.md",
           ),
           ROSI_AUDIT3_REAL_FFPROBE: ffprobeBinary,
           ROSI_AUDIT3_SIDECAR_FIXTURE: sidecarSrt,
@@ -1078,12 +1082,16 @@ try {
       ),
       failureModes: sha256(
         fs.readFileSync(
-          path.join(REPO_ROOT, "e2e", "download-process-repairs.failures.md"),
+          path.join(REPO_ROOT, "e2e", "download-process.failures.md"),
         ),
       ),
       audit3FailureModes: sha256(
         fs.readFileSync(
-          path.join(REPO_ROOT, "e2e", "audit3-native-failure-modes.md"),
+          path.join(
+            REPO_ROOT,
+            "e2e",
+            "download-process-targeted-failure-modes.md",
+          ),
         ),
       ),
     },

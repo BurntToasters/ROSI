@@ -997,7 +997,7 @@ function runLongTermPersistenceRepairs() {
   const relative = path.join(
     "e2e",
     "artifacts",
-    "long-term-v5-repairs",
+    "long-term-persistence",
     `gate-${Date.now()}-${process.pid}`,
   );
   const directory = path.join(REPO_ROOT, relative);
@@ -1008,7 +1008,7 @@ function runLongTermPersistenceRepairs() {
   };
   const result = spawnSync(
     process.execPath,
-    ["e2e/long-term-v5-audit-run.mjs"],
+    ["e2e/long-term-persistence-run.mjs"],
     {
       cwd: REPO_ROOT,
       env: { ...process.env, ROSI_LONG_TERM_ARTIFACT_ROOT: relative },
@@ -1078,7 +1078,7 @@ function runRound2NativeRepairs({ ffmpeg, binary, suiteStartedAt }) {
     };
   }
 
-  const runnerPath = path.join(REPO_ROOT, "e2e", "round2-native-run.mjs");
+  const runnerPath = path.join(REPO_ROOT, "e2e", "native-downloads-run.mjs");
   let result;
   try {
     result = spawnSync(process.execPath, [runnerPath], {
@@ -1139,9 +1139,13 @@ function runRound2NativeRepairs({ ffmpeg, binary, suiteStartedAt }) {
       binarySha256: sha256(fs.readFileSync(binary)),
       ffmpegSha256: sha256(fs.readFileSync(fs.realpathSync(ffmpeg.binary))),
       probeSources: Object.fromEntries(
-        ["e2e/round2-native.spec.js", "e2e/round2-native-failure-modes.md"].map(
-          (file) => [file, sha256(fs.readFileSync(path.join(REPO_ROOT, file)))],
-        ),
+        [
+          "e2e/native-downloads.spec.js",
+          "e2e/native-downloads-failure-modes.md",
+        ].map((file) => [
+          file,
+          sha256(fs.readFileSync(path.join(REPO_ROOT, file))),
+        ]),
       ),
       suiteStartedAt,
     };
@@ -1196,7 +1200,7 @@ function runDownloadProcessRepairs({
   binary,
   suiteStartedAt,
   name = "download-process-repairs",
-  spec = "./download-process-repairs.spec.js",
+  spec = "./download-process.spec.js",
 }) {
   const repairArtifactDir = path.join(
     ARTIFACT_DIR,
@@ -1215,7 +1219,7 @@ function runDownloadProcessRepairs({
 
   let runnerFailure = null;
   try {
-    run(process.execPath, ["e2e/run-download-process-repairs.mjs"], {
+    run(process.execPath, ["e2e/run-download-process.mjs"], {
       env: {
         ROSI_REPAIRS_FFMPEG: ffmpeg?.binary ?? "",
         ROSI_AUDIT3_ARTIFACT_DIR: repairArtifactDir,
@@ -1258,7 +1262,7 @@ function runDownloadProcessRepairs({
       report.probeSourceSha256?.runner !==
         sha256(
           fs.readFileSync(
-            path.join(REPO_ROOT, "e2e", "run-download-process-repairs.mjs"),
+            path.join(REPO_ROOT, "e2e", "run-download-process.mjs"),
           ),
         ) ||
       report.probeSourceSha256?.spec !==
@@ -1270,13 +1274,17 @@ function runDownloadProcessRepairs({
       report.probeSourceSha256?.failureModes !==
         sha256(
           fs.readFileSync(
-            path.join(REPO_ROOT, "e2e", "download-process-repairs.failures.md"),
+            path.join(REPO_ROOT, "e2e", "download-process.failures.md"),
           ),
         ) ||
       report.probeSourceSha256?.audit3FailureModes !==
         sha256(
           fs.readFileSync(
-            path.join(REPO_ROOT, "e2e", "audit3-native-failure-modes.md"),
+            path.join(
+              REPO_ROOT,
+              "e2e",
+              "download-process-targeted-failure-modes.md",
+            ),
           ),
         ) ||
       (selectedFfmpegSha256 !== null &&
@@ -1341,7 +1349,7 @@ function runAudit4Repairs({ ffmpeg, binary, suiteStartedAt }) {
   };
   const ffprobe = companionFfprobe(ffmpeg.binary);
   if (ffprobe) env.ROSI_AUDIT4_FFPROBE = ffprobe;
-  const result = spawnSync(process.execPath, ["e2e/audit4-repairs-run.mjs"], {
+  const result = spawnSync(process.execPath, ["e2e/download-session-run.mjs"], {
     cwd: REPO_ROOT,
     env: e2eChildEnv(env),
     encoding: "utf8",
@@ -1375,7 +1383,9 @@ function runAudit4Repairs({ ffmpeg, binary, suiteStartedAt }) {
     if (
       report.specSha256 !==
       sha256(
-        fs.readFileSync(path.join(REPO_ROOT, "e2e", "audit4-repairs.spec.js")),
+        fs.readFileSync(
+          path.join(REPO_ROOT, "e2e", "download-session.spec.js"),
+        ),
       )
     ) {
       problems.push("audit four spec changed during the run");
@@ -1393,7 +1403,7 @@ function runAudit4Repairs({ ffmpeg, binary, suiteStartedAt }) {
 }
 
 // Each mode is a separate launch of the same binary, as documented in
-// e2e/audit-v5-beta2/README.md. The spec enables one describe block per mode.
+// e2e/platform-probes/README.md. The spec enables one describe block per mode.
 const AUDIT_V5_MODES = Object.freeze([
   { label: "default", args: [], directory: ["audit-v5-beta2"] },
   {
@@ -1438,7 +1448,7 @@ function runAuditV5Probes({ ffmpeg, binary, suiteStartedAt }) {
     fs.rmSync(reportFile, { force: true });
     const result = spawnSync(
       process.execPath,
-      ["e2e/audit-v5-beta2/run-probes.mjs", ...mode.args],
+      ["e2e/platform-probes/run-probes.mjs", ...mode.args],
       {
         cwd: REPO_ROOT,
         env: e2eChildEnv({
@@ -1507,13 +1517,13 @@ function runRound3Renderer() {
   const artifact = path.join(
     ARTIFACT_DIR,
     "round3-renderer",
-    "renderer-repairs.json",
+    "renderer-dom-checks.json",
   );
   // Remove the previous record so a crashed run cannot be read as passing.
   fs.rmSync(artifact, { force: true });
   const result = spawnSync(
     process.execPath,
-    ["e2e/round3-renderer-repairs/run.cjs"],
+    ["e2e/renderer-dom-checks/run.cjs"],
     {
       cwd: REPO_ROOT,
       env: e2eChildEnv(),
@@ -1887,13 +1897,13 @@ async function main() {
     ROSI_E2E_PROXY_DNS_MAP: "private.test=127.0.0.1,rebinding.test=127.0.0.1",
     ROSI_E2E_PROXY_TRACE: path.join(
       ARTIFACT_DIR,
-      "security-release-repairs",
+      "security-release-checks",
       `${process.platform}-${process.arch}`,
       "proxy-decisions.jsonl",
     ),
     ROSI_SECURITY_REPAIR_DIRECTORY: path.join(
       ARTIFACT_DIR,
-      "security-release-repairs",
+      "security-release-checks",
       `${process.platform}-${process.arch}`,
     ),
   };
@@ -2096,19 +2106,19 @@ async function main() {
     }
     if (stateRepairPass) {
       await runRecordedPass(stateRepairPass, {
-        ROSI_E2E_SPECS: "./state-updater-repairs.spec.js",
+        ROSI_E2E_SPECS: "./state-updater.spec.js",
         ROSI_STATE_REPAIR_RESULTS: stateRepairPass.resultsPath,
       });
     }
     if (securityPass) {
       await runRecordedPass(securityPass, {
-        ROSI_E2E_SPECS: "./specs/security-release-repairs.spec.js",
+        ROSI_E2E_SPECS: "./specs/security-release-checks.spec.js",
         ROSI_SECURITY_REPAIR_RESULTS: securityPass.resultsPath,
       });
     }
     if (round2RendererPass) {
       await runRecordedPass(round2RendererPass, {
-        ROSI_E2E_SPECS: "./round2-renderer-repairs.spec.js",
+        ROSI_E2E_SPECS: "./renderer-updates.spec.js",
         ROSI_ROUND2_RENDERER_RESULTS: round2RendererPass.resultsPath,
       });
       // round2-renderer reports this failure through its scenario below.
@@ -2186,7 +2196,7 @@ async function main() {
             binary: e2eBinaryPath(),
             suiteStartedAt: startedAt,
             name: "audit3-native-targeted",
-            spec: "./audit3-native-targeted.spec.js",
+            spec: "./download-process-targeted.spec.js",
           }),
         ];
   const round2NativeScenarios =

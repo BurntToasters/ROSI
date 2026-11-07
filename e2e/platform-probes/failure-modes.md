@@ -1,4 +1,4 @@
-# V5 beta 2 adversarial audit probes
+# V5 beta 2 platform probes: failure modes
 
 The audit probes exercise the actual Tauri app, Rust IPC, bundled yt-dlp, local media server, and real FFmpeg. No production code changes precede these probes.
 

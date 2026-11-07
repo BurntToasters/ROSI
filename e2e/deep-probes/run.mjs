@@ -1,6 +1,6 @@
 // Runner for the V5 beta 2 deep audit probes. See failure-modes.md (written
 // first) and README.md. Usage, after a fresh E2E build:
-//   node e2e/audit-v5-beta2-deep/run.mjs [--only <mode>[,<mode>...]]
+//   node e2e/deep-probes/run.mjs [--only <mode>[,<mode>...]]
 // Exit zero means every observation completed. Inspect each mode's
 // `invariantPassed`; false is a reproduced product defect.
 import crypto from "node:crypto";
@@ -366,7 +366,7 @@ for (const mode of modes) {
       ...profile.env,
       ...seeded.env,
       ROSI_E2E_BINARY: binary,
-      ROSI_E2E_SPECS: "./audit-v5-beta2-deep/deep-audit.spec.js",
+      ROSI_E2E_SPECS: "./deep-probes/probes.spec.js",
       ROSI_DEEP_MODE: mode,
       ROSI_DEEP_ARTIFACTS: directory,
       ROSI_DEEP_DOWNLOADS: profile.downloads,
@@ -428,14 +428,12 @@ const report = {
   binarySha256: sha256(fs.readFileSync(binary)),
   ffmpeg,
   probeSourceSha256: {
-    "deep-audit.spec.js": fileHash(
-      path.join(REPO_ROOT, "e2e/audit-v5-beta2-deep/deep-audit.spec.js"),
+    "probes.spec.js": fileHash(
+      path.join(REPO_ROOT, "e2e/deep-probes/probes.spec.js"),
     ),
-    "run.mjs": fileHash(
-      path.join(REPO_ROOT, "e2e/audit-v5-beta2-deep/run.mjs"),
-    ),
+    "run.mjs": fileHash(path.join(REPO_ROOT, "e2e/deep-probes/run.mjs")),
     "failure-modes.md": fileHash(
-      path.join(REPO_ROOT, "e2e/audit-v5-beta2-deep/failure-modes.md"),
+      path.join(REPO_ROOT, "e2e/deep-probes/failure-modes.md"),
     ),
   },
   platform: `${process.platform}-${process.arch}`,

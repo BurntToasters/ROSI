@@ -1,4 +1,4 @@
-# Long-term ROSI V5 audit and repair probes
+# Long-term ROSI V5 persistence probes
 
 These probes run the real unpackaged Tauri application through WebDriver using generated profiles. The failure inventory predates implementation; repair acceptance extensions precede the relevant production edits. No unit tests are added.
 
@@ -12,21 +12,21 @@ The canonical E2E gate requires the `long-term-persistence` aggregate. To rerun 
 
 ```sh
 node --input-type=module -e "import { buildE2eBinary } from './scripts/test-e2e.js'; buildE2eBinary();"
-node e2e/long-term-v5-audit-run.mjs
+node e2e/long-term-persistence-run.mjs
 ```
 
 Do not run Cargo commands between building the E2E application and running the standalone probes: another Cargo command can replace the binary. Do not run another GUI suite concurrently. The standalone runner currently targets the available macOS environment; Windows/Linux execution and timeout cleanup require validation before claiming release acceptance there.
 
 The runner covers normal settings, failed and successful statistics reset, unreadable settings, a future schema, damaged settings, a blocked migration journal, a temporarily blocked V4 queue import, old-marker compatibility, temporary legacy settings corruption during retry, repaired destination restart, oversized queue rejection with an existing item followed by restart, and 500 short URLs followed by restart. Generated URLs use `audit.invalid`; the queue probes never start downloads or contact that host. All mutations affect generated test profiles.
 
-Each run creates a fresh directory beneath `e2e/artifacts/long-term-v5-repairs/` and prints its report path. Existing directories cannot be reused or overwritten. Each case retains before/after state, native logs and an observation. Source snapshots and `working-tree.patch` identify uncommitted changes. The report binds the Git base, binary hash, copied sources, retained files and acceptance outcomes. Evidence is kept locally under `e2e/artifacts/`, which is gitignored. `.github/workflows/ci.yml` uploads that directory after `npm run test:all` as the `e2e-*` CI artifact (30-day retention). The original audit evidence in `e2e/artifacts/long-term-v5-audit-2026-10-07/` is local only and is not in the repository.
+Each run creates a fresh directory beneath `e2e/artifacts/long-term-persistence/` and prints its report path. Existing directories cannot be reused or overwritten. Each case retains before/after state, native logs and an observation. Source snapshots and `working-tree.patch` identify uncommitted changes. The report binds the Git base, binary hash, copied sources, retained files and acceptance outcomes. Evidence is kept locally under `e2e/artifacts/`, which is gitignored. `.github/workflows/ci.yml` uploads that directory after `npm run test:all` as the `e2e-*` CI artifact (30-day retention). The original audit evidence in `e2e/artifacts/long-term-v5-audit-2026-10-07/` is local only and is not in the repository.
 
 Exit zero requires all fifteen observations to pass. Exit one with `runnerExitCode: 0` and `invariantPassed: false` means a case completed but failed acceptance. Missing observations or nonzero native runner exits are execution failures. The initial repair trial's short-URL false result was a harness assertion error; see the repair report for final results.
 
 Verify a selected run, substituting its actual directory:
 
 ```sh
-ROSI_REPAIR_REPORT=e2e/artifacts/long-term-v5-repairs/<run>/report.json node --input-type=module <<'JS'
+ROSI_REPAIR_REPORT=e2e/artifacts/long-term-persistence/<run>/report.json node --input-type=module <<'JS'
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';

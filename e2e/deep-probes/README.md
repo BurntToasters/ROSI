@@ -1,4 +1,4 @@
-# V5 beta 2 deep audit probes
+# V5 beta 2 deep probes
 
 These observational E2E probes drive the real unpackaged Tauri app with the
 bundled yt-dlp and an isolated profile per mode. The failure modes in
@@ -10,8 +10,8 @@ a real `ffmpeg` on PATH:
 
 ```sh
 npm run test:e2e          # or any command that rebuilds the E2E binary
-node e2e/audit-v5-beta2-deep/run.mjs
-node e2e/audit-v5-beta2-deep/run.mjs --only close-newer-queue,queue-owner-race
+node e2e/deep-probes/run.mjs
+node e2e/deep-probes/run.mjs --only close-newer-queue,queue-owner-race
 ```
 
 Do not run `cargo build`, `cargo test` or `cargo clippy` between the E2E build

@@ -200,7 +200,7 @@ try {
           ...profile.env,
           ROSI_E2E_ALLOW_LOOPBACK: securityOnly ? "0" : "1",
           ROSI_E2E_BINARY: e2eBinaryPath(),
-          ROSI_E2E_SPECS: "./audit-v5-beta2/audit.spec.js",
+          ROSI_E2E_SPECS: "./platform-probes/probes.spec.js",
           ROSI_AUDIT_SECURITY_ONLY: securityOnly ? "1" : "0",
           ROSI_AUDIT_UI_ONLY: uiOnly ? "1" : "0",
           ROSI_AUDIT_TERMINATION_ONLY: terminationOnly ? "1" : "0",
@@ -254,7 +254,7 @@ try {
     binarySha256: hash(fs.readFileSync(e2eBinaryPath())),
     probeSourceSha256: {
       runner: hash(fs.readFileSync(fileURLToPath(import.meta.url))),
-      spec: hash(fs.readFileSync(path.join(scriptDirectory, "audit.spec.js"))),
+      spec: hash(fs.readFileSync(path.join(scriptDirectory, "probes.spec.js"))),
     },
     fixtureSha256: {
       tone: hash(fs.readFileSync(tone)),
