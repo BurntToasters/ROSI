@@ -91,3 +91,7 @@ export type Exported = { exported: boolean, };
 export type Imported = { imported: boolean, };
 
 export type InstallResult = { success?: boolean | null, cancelled?: boolean | null, output?: string | null, error?: string | null, };
+
+export type NotificationInput = { title?: string, body?: string, filePath?: string, };
+
+export type QueueReorderInput = { id?: string, direction?: "up" | "down", };

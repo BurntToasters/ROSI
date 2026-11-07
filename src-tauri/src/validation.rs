@@ -4,10 +4,14 @@
 
 use crate::constants::*;
 use crate::ip_policy::{is_public_ipv4, is_public_ipv6};
-use crate::ipc::{IpcError, INVALID_PATH, INVALID_URL, VALIDATION_ERROR};
-use crate::types::{
-    DownloadPreset, DownloadRequestOptions, NotificationRequest, PlaylistSelection,
+use crate::ipc::{
+    FalliblePayload, IpcError, JsonObject, INVALID_PATH, INVALID_URL, VALIDATION_ERROR,
 };
+use crate::types::{
+    DownloadPreset, DownloadRequestOptions, NotificationInput, NotificationRequest,
+    PlaylistSelection, QueueReorderInput, SettingsPatchInput,
+};
+use serde::Serialize;
 use serde_json::{Map, Value};
 use std::net::Ipv4Addr;
 use std::path::{Component, Path, PathBuf};
@@ -414,10 +418,15 @@ pub fn validate_ffmpeg_path_shape(value: &str) -> Option<String> {
     (base == "ffmpeg" || base == "ffmpeg.exe").then(|| resolved.to_string_lossy().into_owned())
 }
 
+/// Stored activity and queue data pass a `Value`; the commands pass a string.
 pub fn validate_file_location(value: &Value) -> Result<String, IpcError> {
-    let Some(raw) = value.as_str().filter(|raw| !raw.trim().is_empty()) else {
+    validate_file_path(value.as_str().unwrap_or(""))
+}
+
+pub fn validate_file_path(raw: &str) -> Result<String, IpcError> {
+    if raw.trim().is_empty() {
         return Err(path_error("File path must be a non-empty string."));
-    };
+    }
     let trimmed = raw.trim();
     if trimmed.len() > 4096 {
         return Err(path_error("File path exceeds maximum length."));
@@ -432,10 +441,11 @@ pub fn validate_file_location(value: &Value) -> Result<String, IpcError> {
     Ok(resolved.to_string_lossy().into_owned())
 }
 
-pub fn validate_external_url(value: &Value) -> Result<String, IpcError> {
-    match value.as_str() {
-        Some(url) if is_safe_external_url(url) => Ok(url.trim().to_string()),
-        _ => Err(IpcError::new(INVALID_URL, "Invalid external URL payload.")),
+pub fn validate_external_url(url: &str) -> Result<String, IpcError> {
+    if is_safe_external_url(url) {
+        Ok(url.trim().to_string())
+    } else {
+        Err(IpcError::new(INVALID_URL, "Invalid external URL payload."))
     }
 }
 
@@ -661,10 +671,7 @@ fn validate_preset_list(value: &Value) -> Result<Vec<DownloadPreset>, IpcError> 
     Ok(presets)
 }
 
-pub fn validate_queue_item_id(value: &Value) -> Result<String, IpcError> {
-    let Some(raw) = value.as_str() else {
-        return Err(validation_error("Queue item ID must be a string."));
-    };
+pub fn validate_queue_item_id(raw: &str) -> Result<String, IpcError> {
     let id = raw.trim();
     if id.len() > 128 || !is_safe_identifier(id) {
         return Err(validation_error("Queue item ID is invalid."));
@@ -672,12 +679,24 @@ pub fn validate_queue_item_id(value: &Value) -> Result<String, IpcError> {
     Ok(id.to_string())
 }
 
-pub fn validate_queue_reorder(value: &Value) -> Result<(String, bool), IpcError> {
-    let object = as_object(value, "Queue reorder payload must be an object.")?;
-    let id = validate_queue_item_id(object.get("id").unwrap_or(&Value::Null))?;
-    match object.get("direction").and_then(Value::as_str) {
-        Some("up") => Ok((id, true)),
-        Some("down") => Ok((id, false)),
+/// Returns the queue item ID and `true` for up, `false` for down.
+pub fn validate_queue_reorder(
+    payload: FalliblePayload<JsonObject<QueueReorderInput>>,
+) -> Result<(String, bool), IpcError> {
+    let request = payload
+        .into_typed(VALIDATION_ERROR, "Queue reorder payload must be an object.")?
+        .0;
+    let Some(FalliblePayload::Typed(raw_id)) = request.id else {
+        return Err(validation_error("Queue item ID must be a string."));
+    };
+    let id = validate_queue_item_id(&raw_id)?;
+    let direction = match request.direction {
+        Some(FalliblePayload::Typed(direction)) => direction,
+        _ => String::new(),
+    };
+    match direction.as_str() {
+        "up" => Ok((id, true)),
+        "down" => Ok((id, false)),
         _ => Err(validation_error(
             "Queue reorder direction must be up or down.",
         )),
@@ -849,36 +868,29 @@ pub fn validate_download_request(value: &Value) -> Result<DownloadRequestOptions
     })
 }
 
-const SETTINGS_BOOLEAN_KEYS: &[&str] = &[
-    "showConsoleOutput",
-    "dockCollapsed",
-    "askDownloadLocation",
-    "advancedOptions",
-    "audioOnly",
-    "convertEnabled",
-    "keepOriginalAfterConvert",
-    "firstLaunch",
-    "hookBrowser",
-    "animateBackground",
-    "flatUi",
-    "notifications",
-    "showTaskbarProgress",
-    "denoReminderDismissed",
-    "gpuAcceleration",
-    "bestQuality",
-    "hideSupportModal",
-    "checkUpdatesOnStartup",
-    "writeSubtitles",
-    "embedThumbnail",
-    "embedMetadata",
-    "sponsorblockRemove",
-];
-
-fn enum_patch(value: &Value, list: &[&str], message: &str) -> Result<Value, IpcError> {
-    match value.as_str() {
-        Some(choice) if allowed(list, choice) => Ok(Value::String(choice.to_string())),
+fn enum_choice(
+    field: Result<String, Value>,
+    list: &[&str],
+    message: &str,
+) -> Result<Value, IpcError> {
+    match field {
+        Ok(choice) if allowed(list, &choice) => Ok(Value::String(choice)),
         _ => Err(validation_error(message)),
     }
+}
+
+/// A string setting checked against a closed list: key, typed field, allowed values, refusal message.
+type ChoiceSetting = (
+    &'static str,
+    Option<FalliblePayload<String>>,
+    &'static [&'static str],
+    &'static str,
+);
+
+fn boolean_setting(field: Result<bool, Value>, key: &str) -> Result<Value, IpcError> {
+    field
+        .map(Value::Bool)
+        .map_err(|_| validation_error(format!("{key} must be a boolean.")))
 }
 
 /// A validated settings patch plus the fields that were refused.
@@ -893,170 +905,271 @@ pub struct RejectedSetting {
     pub message: String,
 }
 
+/// Runs the policy for one known key. Returns `None` when the key is absent or
+/// already stored with the same JSON: an unchanged value is not validated
+/// again, so a stored path that is missing right now is not reported on every
+/// save. A wrong JSON type reaches the policy as `Err(raw)`.
+fn check_setting<T: Serialize>(
+    key: &str,
+    field: Option<FalliblePayload<T>>,
+    stored: &Map<String, Value>,
+    policy: impl FnOnce(Result<T, Value>) -> Result<Value, IpcError>,
+) -> Option<Result<Value, IpcError>> {
+    let field = field?;
+    if stored.get(key) == Some(&field.as_json()) {
+        return None;
+    }
+    Some(policy(field.into_result()))
+}
+
 /// Validate a partial settings update. Unknown keys are ignored. A known key
 /// with an invalid value is refused on its own, so one bad field never blocks
-/// saving the others (or the close flush).
-pub fn validate_settings_patch(value: &Value) -> Result<SettingsPatch, IpcError> {
-    let object = as_object(value, "Settings payload must be an object.")?;
+/// saving the others (or the close flush). `stored` is the current settings
+/// JSON, used for the unchanged-value check.
+pub fn validate_settings_patch(
+    payload: FalliblePayload<JsonObject<SettingsPatchInput>>,
+    stored: &Map<String, Value>,
+) -> Result<SettingsPatch, IpcError> {
+    let input = payload
+        .into_typed(VALIDATION_ERROR, "Settings payload must be an object.")?
+        .0;
     let mut patch = SettingsPatch {
         values: Map::new(),
         rejected: Vec::new(),
     };
-    for (key, raw) in object {
-        match validate_setting_value(key, raw) {
-            Ok(Some(validated)) => {
-                patch.values.insert(key.clone(), validated);
-            }
-            Ok(None) => {}
-            Err(error) => patch.rejected.push(RejectedSetting {
-                key: key.clone(),
-                message: error.message,
-            }),
+    let mut record = |key: &str, outcome: Option<Result<Value, IpcError>>| match outcome {
+        None => {}
+        Some(Ok(value)) => {
+            patch.values.insert(key.to_string(), value);
         }
-    }
-    Ok(patch)
-}
+        Some(Err(error)) => patch.rejected.push(RejectedSetting {
+            key: key.to_string(),
+            message: error.message,
+        }),
+    };
 
-fn validate_setting_value(key: &str, raw: &Value) -> Result<Option<Value>, IpcError> {
-    {
-        let validated = match key {
-            "settingsVersion" => match raw.as_f64() {
-                Some(version)
+    record(
+        "settingsVersion",
+        check_setting(
+            "settingsVersion",
+            input.settings_version,
+            stored,
+            |field| match field {
+                Ok(version)
                     if version.fract() == 0.0
                         && version >= 1.0
                         && version <= f64::from(CURRENT_SETTINGS_VERSION) =>
                 {
-                    Value::from(version as u32)
+                    Ok(Value::from(version as u32))
                 }
-                _ => {
-                    return Err(validation_error(format!(
-                        "settingsVersion must be an integer between 1 and {CURRENT_SETTINGS_VERSION}."
-                    )));
-                }
+                _ => Err(validation_error(format!(
+                    "settingsVersion must be an integer between 1 and {CURRENT_SETTINGS_VERSION}."
+                ))),
             },
-            "downloadPresets" => {
-                serde_json::to_value(validate_preset_list(raw)?).unwrap_or(Value::Array(vec![]))
-            }
-            key if SETTINGS_BOOLEAN_KEYS.contains(&key) => match raw {
-                Value::Bool(flag) => Value::Bool(*flag),
-                _ => return Err(validation_error(format!("{key} must be a boolean."))),
-            },
-            "downloadMode" => enum_patch(
-                raw,
-                ALLOWED_DOWNLOAD_PROFILES,
-                "downloadMode must be compatible, best-video, audio, or custom.",
-            )?,
-            "dockTab" => enum_patch(
-                raw,
-                ALLOWED_DOCK_TABS,
-                "dockTab must be queue, activity, or console.",
-            )?,
-            "theme" => enum_patch(
-                raw,
-                ALLOWED_THEMES,
-                "theme must be one of: system, light, dark, purple.",
-            )?,
-            "gpuType" => enum_patch(
-                raw,
-                ALLOWED_GPU_TYPES,
-                "gpuType must be one of: auto, nvidia, amd, intel.",
-            )?,
-            "audioFormat" => enum_patch(
-                raw,
-                ALLOWED_AUDIO_FORMATS,
-                "audioFormat must be one of: mp3, flac, ogg, wav, m4a, opus.",
-            )?,
-            "convertFormat" => enum_patch(
-                raw,
-                ALLOWED_CONVERT_FORMATS,
-                "convertFormat must be one of: mp4, mov, mp3, m4a.",
-            )?,
-            "updateChannel" => enum_patch(
-                raw,
-                ALLOWED_UPDATE_CHANNELS,
-                "updateChannel must be auto, stable, or beta.",
-            )?,
-            "subtitleLangs" => match raw.as_str() {
-                Some(langs) if langs.len() <= 256 && is_subtitle_langs(langs) => {
-                    Value::String(langs.to_string())
-                }
-                _ => {
-                    return Err(validation_error(
-                        "subtitleLangs must be a comma-separated list of language codes (e.g. en,es).",
-                    ));
-                }
-            },
-            "browserChoice" => {
-                let Some(choice) = raw.as_str() else {
-                    return Err(validation_error("browserChoice must be a string."));
-                };
-                let normalized = choice.trim().to_lowercase();
-                if !allowed(ALLOWED_BROWSERS, &normalized) {
-                    return Err(validation_error("browserChoice is not an allowed browser."));
-                }
-                Value::String(normalized)
-            }
-            "ffmpegPath" => {
-                let Some(path) = raw.as_str() else {
-                    return Err(validation_error("ffmpegPath must be a string."));
-                };
-                if path.len() > 1024 {
-                    return Err(validation_error(
-                        "ffmpegPath exceeds maximum length of 1024.",
-                    ));
-                }
-                let trimmed = path.trim();
-                Value::String(
-                    validate_ffmpeg_path_value((!trimmed.is_empty()).then_some(trimmed))?
-                        .unwrap_or_default(),
-                )
-            }
-            "upstreamProxy" => {
-                let Some(proxy) = raw.as_str() else {
-                    return Err(validation_error("upstreamProxy must be a string."));
-                };
-                // Not trimmed: a value with surrounding whitespace is refused.
-                crate::network_security::parse_upstream_proxy(proxy).map_err(validation_error)?;
-                Value::String(proxy.to_string())
-            }
-            "downloadFolder" => {
-                let Some(folder) = raw.as_str() else {
-                    return Err(validation_error("downloadFolder must be a string."));
-                };
-                if folder.len() > 4096 {
-                    return Err(validation_error(
-                        "downloadFolder exceeds maximum length of 4096.",
-                    ));
-                }
-                Value::String(validate_download_path(folder)?)
-            }
-            _ => return Ok(None),
-        };
-        Ok(Some(validated))
+        ),
+    );
+    record(
+        "downloadPresets",
+        check_setting("downloadPresets", input.download_presets, stored, |field| {
+            let presets = match field {
+                Ok(list) => validate_preset_list(
+                    &serde_json::to_value(list).unwrap_or(Value::Array(vec![])),
+                ),
+                Err(raw) => validate_preset_list(&raw),
+            }?;
+            Ok(serde_json::to_value(presets).unwrap_or(Value::Array(vec![])))
+        }),
+    );
+
+    let flags: [(&str, Option<FalliblePayload<bool>>); 22] = [
+        ("showConsoleOutput", input.show_console_output),
+        ("dockCollapsed", input.dock_collapsed),
+        ("askDownloadLocation", input.ask_download_location),
+        ("advancedOptions", input.advanced_options),
+        ("audioOnly", input.audio_only),
+        ("convertEnabled", input.convert_enabled),
+        (
+            "keepOriginalAfterConvert",
+            input.keep_original_after_convert,
+        ),
+        ("firstLaunch", input.first_launch),
+        ("hookBrowser", input.hook_browser),
+        ("animateBackground", input.animate_background),
+        ("flatUi", input.flat_ui),
+        ("notifications", input.notifications),
+        ("showTaskbarProgress", input.show_taskbar_progress),
+        ("denoReminderDismissed", input.deno_reminder_dismissed),
+        ("gpuAcceleration", input.gpu_acceleration),
+        ("bestQuality", input.best_quality),
+        ("hideSupportModal", input.hide_support_modal),
+        ("checkUpdatesOnStartup", input.check_updates_on_startup),
+        ("writeSubtitles", input.write_subtitles),
+        ("embedThumbnail", input.embed_thumbnail),
+        ("embedMetadata", input.embed_metadata),
+        ("sponsorblockRemove", input.sponsorblock_remove),
+    ];
+    for (key, field) in flags {
+        record(
+            key,
+            check_setting(key, field, stored, |field| boolean_setting(field, key)),
+        );
     }
+
+    let choices: [ChoiceSetting; 7] = [
+        (
+            "downloadMode",
+            input.download_mode,
+            ALLOWED_DOWNLOAD_PROFILES,
+            "downloadMode must be compatible, best-video, audio, or custom.",
+        ),
+        (
+            "dockTab",
+            input.dock_tab,
+            ALLOWED_DOCK_TABS,
+            "dockTab must be queue, activity, or console.",
+        ),
+        (
+            "theme",
+            input.theme,
+            ALLOWED_THEMES,
+            "theme must be one of: system, light, dark, purple.",
+        ),
+        (
+            "gpuType",
+            input.gpu_type,
+            ALLOWED_GPU_TYPES,
+            "gpuType must be one of: auto, nvidia, amd, intel.",
+        ),
+        (
+            "audioFormat",
+            input.audio_format,
+            ALLOWED_AUDIO_FORMATS,
+            "audioFormat must be one of: mp3, flac, ogg, wav, m4a, opus.",
+        ),
+        (
+            "convertFormat",
+            input.convert_format,
+            ALLOWED_CONVERT_FORMATS,
+            "convertFormat must be one of: mp4, mov, mp3, m4a.",
+        ),
+        (
+            "updateChannel",
+            input.update_channel,
+            ALLOWED_UPDATE_CHANNELS,
+            "updateChannel must be auto, stable, or beta.",
+        ),
+    ];
+    for (key, field, list, message) in choices {
+        record(
+            key,
+            check_setting(key, field, stored, |field| {
+                enum_choice(field, list, message)
+            }),
+        );
+    }
+
+    record(
+        "subtitleLangs",
+        check_setting(
+            "subtitleLangs",
+            input.subtitle_langs,
+            stored,
+            |field| match field {
+                Ok(langs) if langs.len() <= 256 && is_subtitle_langs(&langs) => {
+                    Ok(Value::String(langs))
+                }
+                _ => Err(validation_error(
+                    "subtitleLangs must be a comma-separated list of language codes (e.g. en,es).",
+                )),
+            },
+        ),
+    );
+    record(
+        "browserChoice",
+        check_setting("browserChoice", input.browser_choice, stored, |field| {
+            let choice = field.map_err(|_| validation_error("browserChoice must be a string."))?;
+            let normalized = choice.trim().to_lowercase();
+            if !allowed(ALLOWED_BROWSERS, &normalized) {
+                return Err(validation_error("browserChoice is not an allowed browser."));
+            }
+            Ok(Value::String(normalized))
+        }),
+    );
+    record(
+        "ffmpegPath",
+        check_setting("ffmpegPath", input.ffmpeg_path, stored, |field| {
+            let path = field.map_err(|_| validation_error("ffmpegPath must be a string."))?;
+            if path.len() > 1024 {
+                return Err(validation_error(
+                    "ffmpegPath exceeds maximum length of 1024.",
+                ));
+            }
+            let trimmed = path.trim();
+            Ok(Value::String(
+                validate_ffmpeg_path_value((!trimmed.is_empty()).then_some(trimmed))?
+                    .unwrap_or_default(),
+            ))
+        }),
+    );
+    record(
+        "upstreamProxy",
+        check_setting("upstreamProxy", input.upstream_proxy, stored, |field| {
+            let proxy = field.map_err(|_| validation_error("upstreamProxy must be a string."))?;
+            // Not trimmed: a value with surrounding whitespace is refused.
+            crate::network_security::parse_upstream_proxy(&proxy).map_err(validation_error)?;
+            Ok(Value::String(proxy))
+        }),
+    );
+    record(
+        "downloadFolder",
+        check_setting("downloadFolder", input.download_folder, stored, |field| {
+            let folder = field.map_err(|_| validation_error("downloadFolder must be a string."))?;
+            if folder.len() > 4096 {
+                return Err(validation_error(
+                    "downloadFolder exceeds maximum length of 4096.",
+                ));
+            }
+            Ok(Value::String(validate_download_path(&folder)?))
+        }),
+    );
+
+    // Matches the key order of the old map-based walk.
+    patch.rejected.sort_by(|a, b| a.key.cmp(&b.key));
+    Ok(patch)
 }
 
-pub fn validate_notification(value: &Value) -> Result<NotificationRequest, IpcError> {
-    let object = as_object(value, "Notification payload must be an object.")?;
-    let fields = ["title", "body", "filePath"].map(|key| optional_string(object, key));
-    let [title, body, file_path] = match fields {
-        [Ok(title), Ok(body), Ok(file_path)] => [title, body, file_path],
-        _ => {
-            return Err(validation_error(
-                "Notification title, body, and filePath must be strings when provided.",
-            ));
-        }
+/// `show_notification` options. A non-object is refused as a payload; a wrong
+/// type on any of the three fields refuses the group with one message.
+pub fn validate_notification(
+    payload: FalliblePayload<JsonObject<NotificationInput>>,
+) -> Result<NotificationRequest, IpcError> {
+    const FIELD_TYPES: &str =
+        "Notification title, body, and filePath must be strings when provided.";
+    let input = payload
+        .into_typed(VALIDATION_ERROR, "Notification payload must be an object.")?
+        .0;
+    let text = |field: Option<FalliblePayload<String>>| {
+        field
+            .map(|field| field.into_typed(VALIDATION_ERROR, FIELD_TYPES))
+            .transpose()
     };
-    if title.is_some_and(|value| value.chars().count() > 256)
-        || body.is_some_and(|value| value.chars().count() > 1024)
-        || file_path.is_some_and(|value| value.len() > 4096)
+    let title = text(input.title)?;
+    let body = text(input.body)?;
+    let file_path = text(input.file_path)?;
+    if title
+        .as_ref()
+        .is_some_and(|value| value.chars().count() > 256)
+        || body
+            .as_ref()
+            .is_some_and(|value| value.chars().count() > 1024)
+        || file_path.as_ref().is_some_and(|value| value.len() > 4096)
     {
         return Err(validation_error(
             "Notification field exceeds maximum length.",
         ));
     }
     if let Some(path) = file_path.filter(|path| !path.trim().is_empty()) {
-        validate_file_location(&Value::String(path.to_string()))?;
+        validate_file_path(&path)?;
     }
     Ok(NotificationRequest {
         title: title.map(|value| value.trim().to_string()),

@@ -1,9 +1,11 @@
 //! Platform queries, updater target selection, and OS handoffs (external
 //! URLs, reveal in file manager, notifications, folder picker).
 
-use crate::ipc::{self, IpcResult, INTERNAL_ERROR, INVALID_PATH};
+use crate::ipc::{
+    self, FalliblePayload, IpcResult, JsonObject, INTERNAL_ERROR, INVALID_PATH, INVALID_URL,
+};
+use crate::types::NotificationInput;
 use serde::Serialize;
-use serde_json::Value;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
@@ -179,15 +181,24 @@ pub struct Shown {
 }
 
 #[tauri::command]
-pub async fn open_external(app: tauri::AppHandle, url: Value) -> IpcResult<Opened> {
+pub async fn open_external(
+    app: tauri::AppHandle,
+    url: FalliblePayload<String>,
+) -> IpcResult<Opened> {
     // URL validation resolves DNS, which can block for seconds.
-    tauri::async_runtime::spawn_blocking(move || open_external_blocking(&app, &url))
+    tauri::async_runtime::spawn_blocking(move || open_external_blocking(&app, url))
         .await
         .unwrap_or_else(|error| ipc::err(INTERNAL_ERROR, error.to_string()))
 }
 
-fn open_external_blocking(app: &tauri::AppHandle, url: &Value) -> IpcResult<Opened> {
-    let url = match crate::validation::validate_external_url(url) {
+fn open_external_blocking(
+    app: &tauri::AppHandle,
+    url: FalliblePayload<String>,
+) -> IpcResult<Opened> {
+    let url = match url
+        .into_typed(INVALID_URL, "Invalid external URL payload.")
+        .and_then(|url| crate::validation::validate_external_url(&url))
+    {
         Ok(url) => url,
         Err(error) => return ipc::from_error(error),
     };
@@ -201,8 +212,14 @@ fn open_external_blocking(app: &tauri::AppHandle, url: &Value) -> IpcResult<Open
 }
 
 #[tauri::command(async)]
-pub fn open_file_location(app: tauri::AppHandle, file_path: Value) -> IpcResult<Opened> {
-    let path = match crate::validation::validate_file_location(&file_path) {
+pub fn open_file_location(
+    app: tauri::AppHandle,
+    file_path: FalliblePayload<String>,
+) -> IpcResult<Opened> {
+    let path = match file_path
+        .into_typed(INVALID_PATH, "File path must be a non-empty string.")
+        .and_then(|path| crate::validation::validate_file_path(&path))
+    {
         Ok(path) => std::path::PathBuf::from(path),
         Err(error) => return ipc::from_error(error),
     };
@@ -239,8 +256,11 @@ pub fn open_file_location(app: tauri::AppHandle, file_path: Value) -> IpcResult<
 }
 
 #[tauri::command(async)]
-pub fn show_notification(app: tauri::AppHandle, options: Value) -> IpcResult<Shown> {
-    let request = match crate::validation::validate_notification(&options) {
+pub fn show_notification(
+    app: tauri::AppHandle,
+    options: FalliblePayload<JsonObject<NotificationInput>>,
+) -> IpcResult<Shown> {
+    let request = match crate::validation::validate_notification(options) {
         Ok(request) => request,
         Err(error) => return ipc::from_error(error),
     };

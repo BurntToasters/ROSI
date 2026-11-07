@@ -20,6 +20,75 @@ impl<T: Serialize> FalliblePayload<T> {
             Self::Invalid(value) => value,
         }
     }
+
+    /// The JSON the renderer sent for this field: the re-serialized typed
+    /// value, or the raw value that failed the typed shape.
+    pub fn as_json(&self) -> Value {
+        match self {
+            Self::Typed(value) => serde_json::to_value(value).unwrap_or(Value::Null),
+            Self::Invalid(value) => value.clone(),
+        }
+    }
+}
+
+impl<T> FalliblePayload<T> {
+    /// The typed value, or the error a malformed shape maps to. Commands pass
+    /// the message their `Value` validator used for that shape.
+    pub fn into_typed(self, code: &'static str, message: &str) -> Result<T, IpcError> {
+        match self {
+            Self::Typed(value) => Ok(value),
+            Self::Invalid(_) => Err(IpcError::new(code, message)),
+        }
+    }
+
+    /// The typed value, or the raw JSON that did not match the type, for a
+    /// validator that words its own message per shape.
+    pub fn into_result(self) -> Result<T, Value> {
+        match self {
+            Self::Typed(value) => Ok(value),
+            Self::Invalid(raw) => Err(raw),
+        }
+    }
+}
+
+/// Deserializes a field that must be present to be typed. A missing key is
+/// `None`; `null` and any other wrong type are `Invalid`, so a settings patch
+/// refuses them field by field instead of treating them as absent.
+pub fn present_payload<'de, D, T>(deserializer: D) -> Result<Option<FalliblePayload<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    FalliblePayload::<T>::deserialize(deserializer).map(Some)
+}
+
+/// Accepts only a JSON object for the inner struct. Without this, serde builds
+/// a struct with all-default fields from `[]`, which the old `Value` path
+/// refused as a non-object.
+#[derive(Clone, Debug)]
+pub struct JsonObject<T>(pub T);
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for JsonObject<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ObjectVisitor<T>(std::marker::PhantomData<T>);
+
+        impl<'de, T: Deserialize<'de>> serde::de::Visitor<'de> for ObjectVisitor<T> {
+            type Value = JsonObject<T>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a JSON object")
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> Result<Self::Value, A::Error> {
+                T::deserialize(serde::de::value::MapAccessDeserializer::new(map)).map(JsonObject)
+            }
+        }
+
+        deserializer.deserialize_map(ObjectVisitor(std::marker::PhantomData))
+    }
 }
 
 /// Validly shaped manual/preview request fields. Values are checked again by

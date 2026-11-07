@@ -2,10 +2,10 @@
 //! settings commands (load, save, reset, import, export).
 
 use crate::constants::*;
-use crate::ipc::{self, IpcResult, INTERNAL_ERROR, NEWER_VERSION};
+use crate::ipc::{self, FalliblePayload, IpcResult, JsonObject, INTERNAL_ERROR, NEWER_VERSION};
 use crate::types::{
     DockTab, DownloadPreset, DownloadProfile, DownloadRequestOptions, GpuType, PlaylistSelection,
-    Settings, Theme, UpdateChannel,
+    Settings, SettingsPatchInput, Theme, UpdateChannel,
 };
 use crate::validation::{set_preset_bool, validate_download_path, validate_ffmpeg_path_value};
 use serde_json::{Map, Value};
@@ -617,18 +617,18 @@ fn settings_file_is_newer() -> bool {
 }
 
 #[tauri::command(async)]
-pub fn save_settings(settings: Value) -> IpcResult<Settings> {
+pub fn save_settings(
+    settings: FalliblePayload<JsonObject<SettingsPatchInput>>,
+) -> IpcResult<Settings> {
     // The renderer sends its whole snapshot. Values equal to the stored ones
-    // are not changes, so they are not validated again; a stored FFmpeg path
-    // that is missing right now must not be reported on every save.
-    let settings = match (settings, serde_json::to_value(load())) {
-        (Value::Object(mut incoming), Ok(Value::Object(stored))) => {
-            incoming.retain(|key, value| stored.get(key) != Some(value));
-            Value::Object(incoming)
-        }
-        (settings, _) => settings,
+    // are not changes, so they are not validated again (the validator skips
+    // them); a stored FFmpeg path that is missing right now must not be
+    // reported on every save.
+    let stored = match serde_json::to_value(load()) {
+        Ok(Value::Object(stored)) => stored,
+        _ => Map::new(),
     };
-    let patch = match crate::validation::validate_settings_patch(&settings) {
+    let patch = match crate::validation::validate_settings_patch(settings, &stored) {
         Ok(patch) => patch,
         Err(error) => return ipc::from_error(error),
     };

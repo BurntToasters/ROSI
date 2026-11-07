@@ -39,10 +39,7 @@ export interface Commands {
   };
   remove_from_queue: { args: { id: string }; result: Envelope<void> };
   retry_queue_item: { args: { id: string }; result: Envelope<void> };
-  reorder_queue_item: {
-    args: { request: { id: string; direction: 'up' | 'down' } };
-    result: Envelope<void>;
-  };
+  reorder_queue_item: { args: { request: Ipc.QueueReorderInput }; result: Envelope<void> };
   clear_queue: { args: void; result: Envelope<void> };
   clear_finished_queue: { args: void; result: Envelope<Ipc.RemovedCount> };
   get_queue: { args: void; result: Ipc.QueueItem[] };
@@ -51,10 +48,7 @@ export interface Commands {
   select_download_location: { args: void; result: string | null };
   open_external: { args: { url: string }; result: Envelope<Ipc.Opened> };
   open_file_location: { args: { filePath: string }; result: Envelope<Ipc.Opened> };
-  show_notification: {
-    args: { options: { title?: string; body?: string; filePath?: string } };
-    result: Envelope<Ipc.Shown>;
-  };
+  show_notification: { args: { options: Ipc.NotificationInput }; result: Envelope<Ipc.Shown> };
   check_deno_installed: { args: void; result: boolean };
   install_deno: { args: void; result: Ipc.InstallResult };
   detect_gpu: { args: void; result: Ipc.GpuDetectionResult };

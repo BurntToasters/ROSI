@@ -5,12 +5,12 @@ use crate::constants::MAX_QUEUE_SIZE;
 use crate::coordinator::{self, Command, QueueCommand};
 use crate::downloader;
 use crate::ipc::{
-    self, DownloadRequestOverrides, FalliblePayload, IpcResult, QueueUrlInput, QueueUrlsInput,
-    VALIDATION_ERROR,
+    self, DownloadRequestOverrides, FalliblePayload, IpcError, IpcResult, JsonObject,
+    QueueUrlInput, QueueUrlsInput, VALIDATION_ERROR,
 };
 use crate::types::{
     DownloadCompletion, DownloadRequestOptions, Outcome, Owner, QueueItem, QueueProgress,
-    QueueStatus, Settings,
+    QueueReorderInput, QueueStatus, Settings,
 };
 use crate::validation::{
     normalize_queue_url, validate_file_location, validate_queue_item_id, validate_queue_reorder,
@@ -1213,25 +1213,34 @@ pub fn add_to_queue(
     coordinator::admit_items(pending, skipped)
 }
 
+/// The renderer sends the bare ID string. A non-string is refused with the
+/// ID message before the identifier policy runs.
+fn typed_queue_item_id(id: FalliblePayload<String>) -> Result<String, IpcError> {
+    let raw = id.into_typed(VALIDATION_ERROR, "Queue item ID must be a string.")?;
+    validate_queue_item_id(&raw)
+}
+
 #[tauri::command(async)]
-pub fn remove_from_queue(id: Value) -> IpcResult<()> {
-    match validate_queue_item_id(&id) {
+pub fn remove_from_queue(id: FalliblePayload<String>) -> IpcResult<()> {
+    match typed_queue_item_id(id) {
         Ok(id) => coordinator::remove_item(id),
         Err(error) => ipc::from_error(error),
     }
 }
 
 #[tauri::command(async)]
-pub fn retry_queue_item(id: Value) -> IpcResult<()> {
-    match validate_queue_item_id(&id) {
+pub fn retry_queue_item(id: FalliblePayload<String>) -> IpcResult<()> {
+    match typed_queue_item_id(id) {
         Ok(id) => coordinator::retry_item(id),
         Err(error) => ipc::from_error(error),
     }
 }
 
 #[tauri::command(async)]
-pub fn reorder_queue_item(request: Value) -> IpcResult<()> {
-    match validate_queue_reorder(&request) {
+pub fn reorder_queue_item(
+    request: FalliblePayload<JsonObject<QueueReorderInput>>,
+) -> IpcResult<()> {
+    match validate_queue_reorder(request) {
         Ok((id, up)) => coordinator::reorder_item(id, up),
         Err(error) => ipc::from_error(error),
     }

@@ -1,7 +1,9 @@
 //! yt-dlp format listing (`-F`) and metadata previews (`--dump-single-json`).
 
 use crate::constants::*;
-use crate::ipc::{self, IpcResult, INTERNAL_ERROR, INVALID_URL, NOT_AVAILABLE, VALIDATION_ERROR};
+use crate::ipc::{
+    self, FalliblePayload, IpcResult, INTERNAL_ERROR, INVALID_URL, NOT_AVAILABLE, VALIDATION_ERROR,
+};
 use crate::process_util::{TrackedError, TrackedReservation, TrackedSlot};
 use crate::types::{FormatEntry, FormatList, StreamKind, VideoInfo};
 use crate::validation::{is_safe_http_url, is_syntactically_safe_http_url};
@@ -581,13 +583,30 @@ fn fetch_video_info(
     }
 }
 
+/// `playlistMode` as the renderer sends it: `current`, `all`, or absent/`null`.
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PlaylistPreviewMode {
+    Current,
+    All,
+}
+
+impl PlaylistPreviewMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::All => "all",
+        }
+    }
+}
+
 #[tauri::command]
-pub async fn get_formats(url: Value) -> IpcResult<FormatList> {
+pub async fn get_formats(url: FalliblePayload<String>) -> IpcResult<FormatList> {
     let reservation = FORMATS.reserve();
     let Some(url) = url
-        .as_str()
+        .into_typed(INVALID_URL, "Invalid URL provided.")
+        .ok()
         .filter(|url| is_safe_http_url(url))
-        .map(str::to_string)
     else {
         return ipc::err(INVALID_URL, "Invalid URL provided.");
     };
@@ -604,24 +623,28 @@ pub fn cancel_formats() {
 }
 
 #[tauri::command]
-pub async fn get_video_info(url: Value, playlist_mode: Option<Value>) -> IpcResult<VideoInfo> {
+pub async fn get_video_info(
+    url: FalliblePayload<String>,
+    playlist_mode: Option<FalliblePayload<PlaylistPreviewMode>>,
+) -> IpcResult<VideoInfo> {
     let reservation = VIDEO_INFO.reserve();
     let Some(url) = url
-        .as_str()
+        .into_typed(INVALID_URL, "Invalid URL provided.")
+        .ok()
         .filter(|url| is_safe_http_url(url))
         .map(|url| url.trim().to_string())
     else {
         return ipc::err(INVALID_URL, "Invalid URL provided.");
     };
     let playlist_mode = match playlist_mode {
-        None | Some(Value::Null) => None,
-        Some(Value::String(mode)) if mode == "current" || mode == "all" => Some(mode),
-        Some(_) => {
-            return ipc::err(
-                VALIDATION_ERROR,
-                "Playlist preview mode must be current or all.",
-            )
-        }
+        None => None,
+        Some(mode) => match mode.into_typed(
+            VALIDATION_ERROR,
+            "Playlist preview mode must be current or all.",
+        ) {
+            Ok(mode) => Some(mode.as_str().to_string()),
+            Err(error) => return ipc::from_error(error),
+        },
     };
     match tauri::async_runtime::spawn_blocking(move || {
         fetch_video_info(url, playlist_mode, reservation)

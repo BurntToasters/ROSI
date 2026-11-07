@@ -230,3 +230,43 @@ advisories that beta 2 reported without review.
 5. A warning/allowlist update masks an advisory without a documented review,
    or labels a package dev-only without verifying every affected lock node.
 6. `package.json` and `package-lock.json` disagree after a targeted update.
+
+## B4 typed IPC for the remaining `Value` commands
+
+Commands converted: `get_formats`, `get_video_info`, `open_external`,
+`open_file_location`, `show_notification`, `save_settings`, `log_error`,
+`remove_from_queue`, `retry_queue_item`, `reorder_queue_item`. Each takes
+`FalliblePayload<T>` (or `FalliblePayload<JsonObject<T>>` for objects). A
+`FalliblePayload::Invalid` value carries the malformed JSON, and the command maps
+it to the same envelope and message the `Value` path returned. The rules:
+
+1. Wrong JSON type for a URL, path or ID field (number, array, object, `null`
+   where a string is required): same code and message as before, for example
+   `INVALID_URL "Invalid URL provided."`, `INVALID_PATH "File path must be a
+   non-empty string."`, `VALIDATION_ERROR "Queue item ID must be a string."`.
+2. Missing field: `get_formats`, `open_external`, `open_file_location`,
+   `remove_from_queue` and `retry_queue_item` treat it as wrong type and return
+   the same message. A missing `options` or `request` argument is still a Tauri
+   argument error, as before.
+3. Extra unknown field: ignored. No `deny_unknown_fields` is added, so
+   `show_notification` and `reorder_queue_item` keep today's behavior.
+4. `log_error` with a non-string message is still dropped silently, and long
+   messages are still truncated at `MAX_RENDERER_MESSAGE_CHARS`.
+5. `get_video_info` checks the URL before `playlistMode`, and `reserve()` still
+   runs first. A `playlistMode` that is not `current`, `all` or `null` (including
+   a wrong type) gets `VALIDATION_ERROR "Playlist preview mode must be current or all."`.
+6. `show_notification` with a non-object payload returns `"Notification payload
+   must be an object."`. With an object whose title, body or filePath has the
+   wrong type, it returns `"Notification title, body, and filePath must be
+   strings when provided."`. `JsonObject` keeps arrays out of the struct path.
+7. Validator skipped by a typed path: the typed value still goes through the
+   policy checks. URLs go through `is_safe_http_url` or `validate_external_url`,
+   paths through `validate_file_location`, queue IDs through
+   `validate_queue_item_id` (length and safe identifier), reorder direction
+   through the up/down check, and notifications through the length caps and the
+   `filePath` allow-list. Those checks are kept in `validation.rs`. Only the
+   shape checks that the types enforce were removed.
+8. Message drift: each message string is copied verbatim from the old code.
+   `validate_external_url` and `validate_file_location` keep their existing
+   policy text. `validate_file_location` still accepts `&Value` for stored
+   activity and queue data.
