@@ -19,7 +19,7 @@ split into focused modules:
 | `validation.rs`       | Security boundary: URL safety (no private/loopback hosts), path allow-lists, IPC payloads |
 | `settings.rs`         | Settings model, lenient migration/sanitization, import/export                      |
 | `legacy.rs`           | First-launch import of ROSI 4 data from `<config dir>/rosi`                        |
-| `downloader.rs`       | Single active download session: yt-dlp, optional FFmpeg conversion, cancellation   |
+| `downloader.rs`       | Single active download session: yt-dlp, optional FFmpeg conversion, cancellation. Child modules `downloader/conversion.rs` (FFmpeg runs) and `downloader/publication.rs` (output installs, captions) |
 | `queue.rs`            | Persistent queue (`download-queue.json` + backup) and its sequential runner        |
 | `coordinator.rs`      | Single owner of queue transitions and session results: one thread applies each change in arrival order and publishes revisioned queue snapshots |
 | `command_builders.rs` | yt-dlp / FFmpeg argument builders and codec probing                                |
