@@ -39,6 +39,39 @@
 12. **Unused progress text parser becomes a second authority.** The renderer's
     `parseYtdlpProgress` helper has no production call sites; remove it and its
     dedicated tests while keeping progress strings in the diagnostic console.
+13. **Backend label drifts from the old renderer text.** `display_label` is built
+    in `media_info.rs` and must reproduce the pre-B5 `formatFormatEntry` output
+    byte for byte: `ID:` prefix, resolution, fps, codecs joined with ` + `
+    (video codec first), ` (video + audio)` only for `audioVideo`, then the size
+    suffix. Guarded by golden strings from the old function on the local HLS and
+    MP4 fixtures in `typed-formats.spec.js`.
+14. **Rounding differs from JavaScript.** `toFixed(2)` rounds exact binary ties
+    up; Rust's `{:.2}` rounds them to even. A fps such as 23.976 must become
+    `23.98fps`, and a size such as 1152 bytes (1.125 KB) must become `1.13 KB`.
+    Integer fps must print without decimals (`25fps`). Fixtures do not reach the
+    size branch, so the byte and fps helpers are also checked against the old
+    JavaScript function in a differential run outside the repository (see the
+    E2E section).
+15. **Byte-size boundaries drift.** Sizes just below a power of 1024, and exact
+    powers, must pick the same unit as `Math.floor(Math.log(n) / Math.log(1024))`
+    with the unit capped at `PB`. Zero stays `0 B`. A size is never shown as
+    `NaN`, `Infinity`, or an exponent form.
+16. **Missing fields leave stray separators.** Absent resolution, fps, codecs,
+    or both sizes must not add a space, an empty pair of parentheses, or `~`.
+    Empty codec strings are skipped. A non-finite fps is skipped. The HLS
+    audio-only variant (no resolution) and the MP4 fixture (no codecs) cover
+    the missing-field path.
+17. **Stream kind and label disagree.** `(video + audio)` follows `streamKind`,
+    not codec presence. Audio-only and video-only entries must never carry it,
+    and must never show the `audio only` resolution text. Fixtures cover the
+    combined HLS variant plus audio-only and video-only variants.
+18. **Free-text notes leak into the option text.** `format_note`, titles, and
+    HLS `NAME` values are not read by the label builder, so unicode or very long
+    notes cannot change the option text. Only structured fields are read.
+19. **Renderer shows a missing or stale label.** Option text comes only from
+    `displayLabel`. The renderer has no label fallback, so a missing field would
+    show as `undefined`. The TypeScript type requires the field, and the spec
+    asserts every option's text equals its entry's `displayLabel`.
 
 ## E2E acceptance
 

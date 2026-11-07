@@ -58,7 +58,11 @@ export type VideoInfo = { title: string, uploader?: string | null, durationSecon
 
 export type StreamKind = "audio" | "video" | "audioVideo";
 
-export type FormatEntry = { formatId: string, streamKind: StreamKind, vcodec?: string | null, acodec?: string | null, resolution?: string | null, fps?: number | null, fileSizeBytes?: number | null, estimatedSizeBytes?: number | null, };
+export type FormatEntry = { formatId: string, streamKind: StreamKind, vcodec?: string | null, acodec?: string | null, resolution?: string | null, fps?: number | null, fileSizeBytes?: number | null, estimatedSizeBytes?: number | null, 
+/**
+ * Option text for format pickers, built by the backend. The renderer shows it verbatim.
+ */
+displayLabel: string, };
 
 export type FormatList = { formats: Array<FormatEntry>, };
 

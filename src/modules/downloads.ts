@@ -1,7 +1,6 @@
 (function initRosiDownloadsModule(global: Window & typeof globalThis) {
   interface DownloadsModule {
     formatBytes: (bytes: number) => string;
-    formatFormatEntry: (format: RosiFormatEntry) => string;
   }
 
   type DownloadsModules = {
@@ -18,33 +17,10 @@
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 
-  function formatFormatEntry(format: RosiFormatEntry) {
-    let label = `ID: ${format.formatId}`;
-    if (format.resolution) label += ` ${format.resolution}`;
-    if (typeof format.fps === 'number' && Number.isFinite(format.fps)) {
-      const fps = Number.isInteger(format.fps)
-        ? String(format.fps)
-        : String(Number(format.fps.toFixed(2)));
-      label += ` ${fps}fps`;
-    }
-    const codecs = [format.vcodec, format.acodec].filter(
-      (codec): codec is string => typeof codec === 'string' && codec.length > 0
-    );
-    if (codecs.length > 0) label += ` (${codecs.join(' + ')})`;
-    if (format.streamKind === 'audioVideo') label += ' (video + audio)';
-    if (typeof format.fileSizeBytes === 'number') {
-      label += ` ${formatBytes(format.fileSizeBytes)}`;
-    } else if (typeof format.estimatedSizeBytes === 'number') {
-      label += ` ~${formatBytes(format.estimatedSizeBytes)}`;
-    }
-    return label;
-  }
-
   const windowRef = global as RosiWindow;
   const moduleTarget = (windowRef.rosiModules ?? {}) as DownloadsModules;
   moduleTarget.downloads = {
     formatBytes,
-    formatFormatEntry,
   };
   windowRef.rosiModules = moduleTarget;
 })(window);

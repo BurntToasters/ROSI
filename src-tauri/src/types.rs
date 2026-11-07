@@ -426,6 +426,8 @@ pub struct FormatEntry {
     pub file_size_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub estimated_size_bytes: Option<u64>,
+    /// Option text for format pickers, built by the backend. The renderer shows it verbatim.
+    pub display_label: String,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]

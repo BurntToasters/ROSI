@@ -26,8 +26,7 @@ function appendFormatOption(select: HTMLSelectElement | null, format: RosiFormat
   if (!select) return;
   const option = document.createElement('option');
   option.value = format.formatId;
-  option.textContent =
-    window.rosiModules?.downloads?.formatFormatEntry(format) ?? `ID: ${format.formatId}`;
+  option.textContent = format.displayLabel;
   select.appendChild(option);
 }
 

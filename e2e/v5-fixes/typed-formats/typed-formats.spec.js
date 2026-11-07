@@ -1,9 +1,54 @@
 import assert from "node:assert/strict";
+import http from "node:http";
 import { browser } from "@wdio/globals";
 import { api, waitForAppReady } from "../../helpers/app-bridge.js";
 
 const MEDIA = process.env.ROSI_E2E_MEDIA_URL;
 const HAS_FFMPEG = process.env.ROSI_E2E_HAS_FFMPEG === "1";
+
+// HLS master with a combined variant, a video-only variant with a fractional
+// frame rate (23.976 rounds to 23.98), an integer fps variant without a
+// resolution, and an audio-only variant. yt-dlp lists these without fetching
+// the variant playlists, so the spec serves only this master.
+const HLS_MASTER = [
+  "#EXTM3U",
+  "#EXT-X-VERSION:3",
+  '#EXT-X-STREAM-INF:BANDWIDTH=1200000,RESOLUTION=1280x720,FRAME-RATE=23.976,CODECS="avc1.64001f,mp4a.40.2"',
+  "hi.m3u8",
+  '#EXT-X-STREAM-INF:BANDWIDTH=600000,RESOLUTION=640x360,FRAME-RATE=29.970,CODECS="avc1.4d401e"',
+  "mid.m3u8",
+  '#EXT-X-STREAM-INF:BANDWIDTH=300000,FRAME-RATE=25.000,CODECS="avc1.42c01e"',
+  "lo.m3u8",
+  '#EXT-X-STREAM-INF:BANDWIDTH=128000,CODECS="mp4a.40.2"',
+  "aud.m3u8",
+  "",
+].join("\n");
+
+// Exact text the pre-5.1 renderer (formatFormatEntry) produced for these entries.
+const LEGACY_LABELS = {
+  128: "ID: 128 (mp4a.40.2)",
+  300: "ID: 300 25fps (avc1.42c01e)",
+  600: "ID: 600 640x360 29.97fps (avc1.4d401e)",
+  1200: "ID: 1200 1280x720 23.98fps (avc1.64001f + mp4a.40.2) (video + audio)",
+};
+
+async function startManifestServer() {
+  const server = http.createServer((request, response) => {
+    if (request.url?.split("?")[0] !== "/master.m3u8") {
+      response.writeHead(404).end();
+      return;
+    }
+    response
+      .writeHead(200, { "content-type": "application/vnd.apple.mpegurl" })
+      .end(HLS_MASTER);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  return {
+    baseUrl: `http://127.0.0.1:${port}`,
+    close: () => new Promise((resolve) => server.close(resolve)),
+  };
+}
 
 async function setUrlAndFetch(url) {
   await browser.execute((value) => {
@@ -98,6 +143,75 @@ describe("typed format discovery", () => {
         expectedPicker.some((option) => option.value === format.formatId),
         `format ${format.formatId} was not rendered as an exact option value`,
       );
+    }
+  });
+
+  it("labels each option with the backend displayLabel, matching the pre-5.1 text", async () => {
+    const server = await startManifestServer();
+    try {
+      const url = `${server.baseUrl}/master.m3u8`;
+      const result = await api("getFormats", url);
+      assert.equal(result.ok, true, result.error?.message);
+      const formats = result.data.formats;
+      const byId = new Map(formats.map((format) => [format.formatId, format]));
+
+      for (const [formatId, legacy] of Object.entries(LEGACY_LABELS)) {
+        const format = byId.get(formatId);
+        assert.ok(format, `manifest format ${formatId} was not listed`);
+        assert.equal(
+          format.displayLabel,
+          legacy,
+          `displayLabel for ${formatId}`,
+        );
+      }
+      assert.equal(byId.get("128").streamKind, "audio");
+      assert.equal(byId.get("300").streamKind, "video");
+      assert.equal(byId.get("1200").streamKind, "audioVideo");
+
+      // Fixtures report no byte sizes, so no label may carry a size or "~".
+      for (const format of formats) {
+        assert.equal(typeof format.displayLabel, "string", format.formatId);
+        assert.ok(
+          format.displayLabel.startsWith(`ID: ${format.formatId}`),
+          format.displayLabel,
+        );
+        assert.doesNotMatch(
+          format.displayLabel,
+          /~| (B|KB|MB|GB|TB|PB)$/,
+          format.displayLabel,
+        );
+      }
+
+      const clip = await api("getFormats", `${MEDIA}/clip-one.mp4`);
+      assert.equal(clip.ok, true, clip.error?.message);
+      const mp4 = clip.data.formats.find((format) => format.formatId === "mp4");
+      assert.ok(mp4, "direct MP4 fixture was not listed");
+      assert.equal(mp4.displayLabel, "ID: mp4 (video + audio)");
+
+      await setUrlAndFetch(url);
+      await browser.waitUntil(
+        async () =>
+          browser.execute(
+            () =>
+              !document
+                .getElementById("fetchFormatsBtn")
+                .classList.contains("loading"),
+          ),
+        {
+          timeout: 60_000,
+          timeoutMsg: "manifest format lookup did not finish",
+        },
+      );
+      const pickers = await readFormatPickers();
+      for (const format of formats) {
+        const picker =
+          format.streamKind === "audio" ? pickers.audio : pickers.video;
+        const option = picker.find((entry) => entry.value === format.formatId);
+        assert.ok(option, `format ${format.formatId} has no picker option`);
+        assert.equal(option.text, format.displayLabel);
+      }
+    } finally {
+      await server.close();
     }
   });
 

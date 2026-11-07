@@ -172,7 +172,7 @@ fn parse_format_entry(value: &Value) -> Option<FormatEntry> {
         (CodecMetadata::Missing, CodecMetadata::NoStream) => StreamKind::Video,
         (CodecMetadata::Missing, CodecMetadata::Missing) => fallback_stream_kind(data)?,
     };
-    Some(FormatEntry {
+    let mut entry = FormatEntry {
         format_id,
         stream_kind,
         vcodec,
@@ -181,7 +181,127 @@ fn parse_format_entry(value: &Value) -> Option<FormatEntry> {
         fps: pick_number(data.get("fps")).filter(|fps| *fps > 0.0),
         file_size_bytes: pick_file_size(data.get("filesize")),
         estimated_size_bytes: pick_file_size(data.get("filesize_approx")),
-    })
+        display_label: String::new(),
+    };
+    entry.display_label = display_label(&entry);
+    Some(entry)
+}
+
+const BYTE_UNITS: [&str; 6] = ["B", "KB", "MB", "GB", "TB", "PB"];
+
+/// JavaScript `Number(value.toFixed(2))` followed by `String()`, for a finite
+/// value. `toFixed` rounds the exact binary value half up, away from zero;
+/// Rust's `{:.2}` rounds exact ties to even, so the rounding is done here on
+/// the exact decimal expansion.
+fn js_fixed_two(value: f64) -> String {
+    let exact = format!("{:.80}", value.abs());
+    let (whole, fraction) = exact.split_once('.').unwrap_or((exact.as_str(), ""));
+    let mut digits: Vec<u8> = whole
+        .bytes()
+        .chain(fraction.bytes().take(2))
+        .map(|byte| byte - b'0')
+        .collect();
+    if fraction
+        .as_bytes()
+        .get(2)
+        .is_some_and(|digit| *digit >= b'5')
+    {
+        let mut carry = 1u8;
+        for digit in digits.iter_mut().rev() {
+            let sum = *digit + carry;
+            *digit = sum % 10;
+            carry = sum / 10;
+            if carry == 0 {
+                break;
+            }
+        }
+        if carry > 0 {
+            digits.insert(0, carry);
+        }
+    }
+    let cents = digits.split_off(digits.len() - 2);
+    let whole: String = digits
+        .iter()
+        .map(|digit| char::from(b'0' + digit))
+        .collect();
+    let whole = whole.trim_start_matches('0');
+    let whole = if whole.is_empty() { "0" } else { whole };
+    let is_zero = whole == "0" && cents == [0, 0];
+    let mut out = String::new();
+    if value < 0.0 && !is_zero {
+        out.push('-');
+    }
+    out.push_str(whole);
+    match cents[..] {
+        [0, 0] => {}
+        [tens, 0] => out.push_str(&format!(".{tens}")),
+        [tens, ones] => out.push_str(&format!(".{tens}{ones}")),
+        _ => {}
+    }
+    out
+}
+
+/// Byte count as `formatBytes` shows it: largest 1024-based unit, capped at PB.
+fn byte_size_label(bytes: u64) -> String {
+    if bytes == 0 {
+        return "0 B".into();
+    }
+    let value = bytes as f64;
+    let index = (value.ln() / 1024f64.ln())
+        .floor()
+        .min((BYTE_UNITS.len() - 1) as f64) as usize;
+    let scaled = value / ((1u64 << (10 * index)) as f64);
+    format!("{} {}", js_fixed_two(scaled), BYTE_UNITS[index])
+}
+
+/// Frame rate as the old renderer printed it: integers plain, others to two decimals.
+fn fps_label(fps: f64) -> String {
+    if fps.fract() == 0.0 {
+        format!("{fps:.0}")
+    } else {
+        js_fixed_two(fps)
+    }
+}
+
+/// Option text for a format picker. Reads only structured fields, in the order
+/// `ID`, resolution, fps, codecs, stream kind, size, matching the renderer rules
+/// this replaced.
+fn display_label(entry: &FormatEntry) -> String {
+    let mut label = format!("ID: {}", entry.format_id);
+    if let Some(resolution) = entry
+        .resolution
+        .as_deref()
+        .filter(|resolution| !resolution.is_empty())
+    {
+        label.push(' ');
+        label.push_str(resolution);
+    }
+    if let Some(fps) = entry.fps.filter(|fps| fps.is_finite()) {
+        label.push(' ');
+        label.push_str(&fps_label(fps));
+        label.push_str("fps");
+    }
+    let codecs: Vec<&str> = [entry.vcodec.as_deref(), entry.acodec.as_deref()]
+        .into_iter()
+        .flatten()
+        .filter(|codec| !codec.is_empty())
+        .collect();
+    if !codecs.is_empty() {
+        label.push_str(" (");
+        label.push_str(&codecs.join(" + "));
+        label.push(')');
+    }
+    if entry.stream_kind == StreamKind::AudioVideo {
+        label.push_str(" (video + audio)");
+    }
+    if let Some(bytes) = entry.file_size_bytes {
+        label.push(' ');
+        label.push_str(&byte_size_label(bytes));
+    } else if let Some(bytes) = entry.estimated_size_bytes {
+        label.push_str(" ~");
+        label.push_str(&byte_size_label(bytes));
+    }
+    label
 }
 
 pub fn parse_format_list(json: &str) -> Result<FormatList, String> {

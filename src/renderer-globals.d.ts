@@ -163,7 +163,6 @@ interface RosiActivityPanel {
 
 interface RosiDownloadsModule {
   formatBytes: (bytes: number) => string;
-  formatFormatEntry: (format: RosiFormatEntry) => string;
 }
 
 interface RosiActivityModule {
