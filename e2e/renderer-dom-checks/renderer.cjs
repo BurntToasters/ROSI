@@ -82,7 +82,6 @@ let queueArgs;
 let getFormatsImpl;
 let formatRequests = [];
 let cancelFormatsCount = 0;
-let updaterStatusHandler;
 const settingsSaveResolvers = [];
 let deferNextSettingsSave = false;
 const ok = (data) => Promise.resolve({ ok: true, data });
@@ -160,10 +159,6 @@ w.api = new Proxy(
     },
     isPackaged: () => Promise.resolve(false),
     getDownloadActivity: () => ok([]),
-    onUpdaterStatus: (callback) => {
-      updaterStatusHandler = callback;
-      return () => {};
-    },
   },
   {
     get: (o, k) =>
@@ -174,7 +169,15 @@ w.api = new Proxy(
           : () => ok({}),
   },
 );
-const load = require("./load-renderer.cjs").createRendererLoader(w, root, ts);
+const { createTauriShim } = require("./tauri-shim.cjs");
+const tauriShim = createTauriShim();
+const emitUpdaterStatus = (event) => tauriShim.emit("updater-status", event);
+const load = require("./load-renderer.cjs").createRendererLoader(
+  w,
+  root,
+  ts,
+  tauriShim.externals,
+);
 for (const m of ["ui", "downloads", "queue", "settings", "updates", "dock"])
   load("modules/" + m + ".ts");
 load("rosiEngine.ts");
@@ -217,7 +220,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
   w.document.getElementById("licensesLink").click();
   await wait(30);
-  updaterStatusHandler?.({
+  emitUpdaterStatus({
     status: "available",
     candidateId: 11,
     version: "6.0.0",
@@ -258,7 +261,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
       .getAttribute("aria-hidden"),
     mainInert: w.document.getElementById("main-content").inert,
   };
-  updaterStatusHandler?.({
+  emitUpdaterStatus({
     status: "available",
     candidateId: 12,
     version: "6.0.1",
@@ -293,14 +296,14 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
       .getAttribute("aria-hidden"),
   };
 
-  updaterStatusHandler?.({
+  emitUpdaterStatus({
     status: "available",
     candidateId: 13,
     version: "6.0.2",
   });
   await wait(30);
   w.document.querySelector("#modal-buttons button:last-child").click();
-  updaterStatusHandler?.({
+  emitUpdaterStatus({
     status: "downloaded",
     candidateId: 14,
     version: "7.0.0",

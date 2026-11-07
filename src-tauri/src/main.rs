@@ -27,6 +27,7 @@ mod sidecars;
 mod staging;
 mod stats;
 mod types;
+mod updater;
 mod validation;
 mod window;
 
@@ -116,20 +117,20 @@ fn e2e_emit_stale_download_events(
 
 #[cfg(feature = "e2e")]
 #[tauri::command]
-fn e2e_network_pipelining_probe(window: tauri::WebviewWindow) -> Result<serde_json::Value, String> {
-    if window.label() != app_state::MAIN_WINDOW {
-        return Err("Only the main window may run the E2E network probe.".into());
-    }
-    network_security::e2e_pipelining_probe()
-}
-
-#[cfg(feature = "e2e")]
-#[tauri::command]
 fn e2e_updater_install_probe(window: tauri::WebviewWindow) -> Result<(), String> {
     if window.label() != app_state::MAIN_WINDOW {
         return Err("Only the main window may run the E2E updater install probe.".into());
     }
     window::shutdown()
+}
+
+#[cfg(feature = "e2e")]
+#[tauri::command]
+fn e2e_network_pipelining_probe(window: tauri::WebviewWindow) -> Result<serde_json::Value, String> {
+    if window.label() != app_state::MAIN_WINDOW {
+        return Err("Only the main window may run the E2E network probe.".into());
+    }
+    network_security::e2e_pipelining_probe()
 }
 
 macro_rules! generate_app_handler {
@@ -174,6 +175,11 @@ macro_rules! generate_app_handler {
             platform::get_distribution_channel,
             platform::get_beta_updater_target,
             platform::get_compact_updater_target,
+            updater::check_for_updates,
+            updater::download_update,
+            updater::install_update,
+            updater::cancel_update_download,
+            updater::set_update_channel,
             window::restart_app,
             logging::log_error,
             window::notify_settings_flushed,
@@ -241,6 +247,8 @@ fn main() {
             e2e_emit_stale_download_events,
             e2e_network_pipelining_probe,
             e2e_updater_install_probe,
+            updater::e2e_configure_updater,
+            updater::e2e_updater_probe,
             window::e2e_cancel_close_request,
         ]);
     #[cfg(not(feature = "e2e"))]

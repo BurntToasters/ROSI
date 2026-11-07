@@ -3,6 +3,7 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { browser } from "@wdio/globals";
 import { api, waitForAppReady } from "./helpers/app-bridge.js";
+import { startUpdaterFixture } from "./helpers/updater-engine-fixture.js";
 
 const RESULT_PATH =
   process.env.ROSI_ROUND2_RENDERER_RESULTS || process.env.ROSI_E2E_RESULTS;
@@ -81,16 +82,6 @@ async function dismissModal(titleText, label) {
   );
 }
 
-async function waitForStoredPromise(name) {
-  return browser.executeAsync((promiseName, done) => {
-    window[promiseName].then(
-      (result) => done({ result }),
-      (error) =>
-        done({ error: error instanceof Error ? error.message : String(error) }),
-    );
-  }, name);
-}
-
 describe("renderer round-two repairs", () => {
   before(waitForAppReady);
 
@@ -123,469 +114,242 @@ describe("renderer round-two repairs", () => {
   });
 
   it("keeps updater downloads single-flight and revalidates the target through install", async () => {
-    await browser.execute(() => {
-      const state = {
-        channel: "beta",
-        plans: [
-          { gated: true },
-          { gated: true },
-          {},
-          { noUpdate: true },
-          { noUpdate: true },
-          { error: "background feed failed" },
-          { error: "manual feed failed" },
-          { installError: "controlled installer failure" },
-          { gated: true },
-          { noUpdate: true },
-        ],
-        feeds: [],
-        downloadCalls: [],
-        activeTransfers: 0,
-        maxActiveTransfers: 0,
-        releaseDownload: {},
-        closedResources: [],
-        installCalls: [],
-        statuses: [],
-        nextRid: 9100,
-      };
-      const makeUpdate = (rid, target, plan) => ({
-        rid,
-        version: target ? `5.0.0-beta.${rid - 9100}` : `5.0.${rid - 9100}`,
-        body: "Renderer round-two controlled update",
-        target,
-        downloadedBytes: undefined,
-        async close() {
-          state.closedResources.push(rid);
-          if (this.downloadedBytes) {
-            await this.downloadedBytes.close();
-            this.downloadedBytes = undefined;
-          }
-        },
-        async download(onEvent) {
-          state.activeTransfers += 1;
-          state.maxActiveTransfers = Math.max(
-            state.maxActiveTransfers,
-            state.activeTransfers,
+    const platformOs =
+      process.platform === "darwin"
+        ? "darwin"
+        : process.platform === "linux"
+          ? "linux"
+          : "windows";
+    const stableTarget = `${platformOs}-aarch64`;
+    const betaTarget = "darwin-beta-round2-app";
+    const engine = async (command, args) =>
+      browser.executeAsync(
+        (name, payload, done) => {
+          window.__TAURI__.core.invoke(name, payload).then(
+            (data) => done({ ok: true, data: data ?? null }),
+            (error) => done({ error: String(error) }),
           );
-          state.downloadCalls.push(rid);
-          try {
-            if (plan.gated) {
-              await new Promise((resolve) => {
-                state.releaseDownload[rid] = resolve;
-              });
-            }
-            const bytesRid = 12000 + (rid - 9100);
-            this.downloadedBytes = {
-              rid: bytesRid,
-              async close() {
-                state.closedResources.push(bytesRid);
-              },
-            };
-            onEvent({ event: "Started", data: { contentLength: 1024 } });
-            onEvent({ event: "Progress", data: { chunkLength: 1024 } });
-          } finally {
-            state.activeTransfers -= 1;
-          }
         },
-        async install() {
-          state.installCalls.push(rid);
-          if (plan.installError) throw new Error(plan.installError);
-        },
-      });
-
-      state.originalAdapter = window.__ROSI_E2E__?.updaterAdapter;
-      state.originalSaveSettings = window.api.saveSettings;
-      state.delayNextSettingsSave = false;
-      state.settingsSaveStarted = false;
-      state.settingsSaveCompleted = false;
-      window.api.saveSettings = async (settings) => {
-        if (!state.delayNextSettingsSave)
-          return state.originalSaveSettings(settings);
-        state.delayNextSettingsSave = false;
-        state.settingsSaveStarted = true;
-        await new Promise((resolve) => setTimeout(resolve, 800));
-        const result = await state.originalSaveSettings(settings);
-        state.settingsSaveCompleted = true;
-        return result;
-      };
-      state.unsubscribe = window.api.onUpdaterStatus((event) =>
-        state.statuses.push(event),
+        command,
+        args,
       );
-      window.round2Updater = state;
-      window.__ROSI_E2E__.updaterAdapter = {
-        invoke: async (command, args = {}) => {
-          if (command === "get_settings")
-            return { updateChannel: state.channel };
-          if (command === "is_packaged") return true;
-          if (command === "is_flatpak") return false;
-          if (command === "get_compact_updater_target") return null;
-          if (command === "get_beta_updater_target") {
-            return "darwin-beta-round2-app";
-          }
-          if (command === "restart_app") return undefined;
-          return window.__TAURI__.core.invoke(command, args);
+    const probe = async () => {
+      const result = await engine("e2e_updater_probe");
+      assert.ok(result.ok, JSON.stringify(result));
+      return result.data;
+    };
+    const statuses = () => browser.execute(() => window.round2Statuses.slice());
+    const latestAvailable = async (version) =>
+      (await statuses())
+        .filter(
+          (event) => event.status === "available" && event.version === version,
+        )
+        .at(-1);
+    const waitForAvailable = (version, after = 0) =>
+      browser.waitUntil(
+        async () =>
+          (await statuses()).filter(
+            (event) =>
+              event.status === "available" && event.version === version,
+          ).length > after,
+        {
+          timeout: 20_000,
+          interval: 100,
+          timeoutMsg: `update ${version} was not offered`,
         },
-        check: async (target) => {
-          const plan = state.plans.shift() ?? { noUpdate: true };
-          state.feeds.push({ target: target ?? null, plan });
-          if (plan.error) throw new Error(plan.error);
-          if (plan.noUpdate) return null;
-          const rid = ++state.nextRid;
-          return makeUpdate(rid, target, plan);
-        },
-      };
+      );
+
+    // The beta channel is set before the feed; its background recheck settles first.
+    await engine("set_update_channel", { channel: "beta" });
+    await browser.pause(1_500);
+    const fixture = await startUpdaterFixture({
+      betaTarget,
+      disableCompact: true,
+      restartRefusals: 1,
     });
+    await browser.execute(() => {
+      window.round2Statuses = [];
+      window.__TAURI__.event.listen("updater-status", (event) =>
+        window.round2Statuses.push(event.payload),
+      );
+    });
+    const artifactRequests = () =>
+      fixture.server.requests.filter((request) =>
+        request.path.startsWith("/artifacts/"),
+      ).length;
+    const probeBefore = await probe();
+    const checkManually = () =>
+      browser.execute(() => document.getElementById("checkUpdateBtn").click());
 
     try {
-      const checkForAvailableUpdate = async () => {
-        const before = await browser.execute(
-          () =>
-            window.round2Updater.statuses.filter(
-              (event) => event.status === "available",
-            ).length,
-        );
-        await api("checkForUpdates");
-        await browser.waitUntil(
-          () =>
-            browser.execute(
-              (count) =>
-                window.round2Updater.statuses.filter(
-                  (event) => event.status === "available",
-                ).length > count,
-              before,
-            ),
-          {
-            timeout: 10_000,
-            timeoutMsg: "controlled update was not available",
-          },
-        );
-        const feed = await browser.execute(() =>
-          window.round2Updater.feeds.at(-1),
-        );
-        await dismissModal("Update Available", "Later");
-        return feed;
-      };
-
-      const betaFeed = await checkForAvailableUpdate();
-      assert.equal(betaFeed.target, "darwin-beta-round2-app");
-      await browser.execute(() => {
-        window.round2FirstDownload = window.api.downloadUpdate();
+      // One transfer at a time: a second download is refused while the first runs.
+      let releaseFirst;
+      fixture.server.publish({
+        target: betaTarget,
+        version: "9.0.0-beta.1",
+        payload: Buffer.from("single-flight first payload"),
+        fileName: "ROSI-round2-1.bin",
+        gate: new Promise((resolve) => {
+          releaseFirst = resolve;
+        }),
       });
-      await browser.waitUntil(
-        () =>
-          browser.execute(
-            () => window.round2Updater.downloadCalls.length === 1,
-          ),
-        {
-          timeout: 10_000,
-          timeoutMsg: "first controlled transfer did not start",
-        },
-      );
-      await api("cancelUpdateDownload");
-      await dismissModal("Download Cancelled", "OK");
-      await browser.execute(() => {
-        window.round2Updater.channel = "stable";
-      });
-      await api("checkForUpdates");
-      const blockedRetry = await api("downloadUpdate");
-      const whileFirstTransferRuns = await browser.execute(() => ({
-        feeds: window.round2Updater.feeds.length,
-        downloads: window.round2Updater.downloadCalls.length,
-        active: window.round2Updater.activeTransfers,
-      }));
-      assert.equal(blockedRetry.success, undefined);
-      assert.equal(whileFirstTransferRuns.feeds, 1);
-      assert.equal(whileFirstTransferRuns.downloads, 1);
-      assert.equal(whileFirstTransferRuns.active, 1);
-
-      await browser.execute(
-        (rid) => window.round2Updater.releaseDownload[rid](),
-        9101,
-      );
-      const cancelledResult = await waitForStoredPromise("round2FirstDownload");
-      assert.deepEqual(cancelledResult, { result: { cancelled: true } });
-      const firstBytesRid = 12001;
-      await browser.waitUntil(
-        () =>
-          browser.execute(
-            (rid) => window.round2Updater.closedResources.includes(rid),
-            firstBytesRid,
-          ),
-        {
-          timeout: 10_000,
-          timeoutMsg: "late bytes from the cancelled transfer remained open",
-        },
-      );
-
-      const stableFeed = await checkForAvailableUpdate();
-      assert.equal(stableFeed.target, null);
-      await browser.execute(() => {
-        window.round2StableDownload = window.api.downloadUpdate();
-      });
-      await browser.waitUntil(
-        () =>
-          browser.execute(
-            () => window.round2Updater.downloadCalls.length === 2,
-          ),
-        { timeout: 10_000, timeoutMsg: "stable transfer did not start" },
-      );
-      const statusCountBeforeTargetChange = await browser.execute(
-        () => window.round2Updater.statuses.length,
-      );
-      await browser.execute(() => {
-        window.round2Updater.channel = "beta";
-        window.round2Updater.releaseDownload[9102]();
-      });
-      const staleTargetResult = await waitForStoredPromise(
-        "round2StableDownload",
-      );
-      assert.deepEqual(staleTargetResult, { result: { cancelled: true } });
-      const stableBytesRid = 12002;
-      await browser.waitUntil(
-        () =>
-          browser.execute(
-            (rid) => window.round2Updater.closedResources.includes(rid),
-            stableBytesRid,
-          ),
-        {
-          timeout: 10_000,
-          timeoutMsg: "channel-changed update bytes remained open",
-        },
-      );
-
-      await browser.waitUntil(
-        () =>
-          browser.execute(
-            (previousCount) =>
-              window.round2Updater.statuses
-                .slice(previousCount)
-                .some((event) => event.status === "available" && event.isBeta),
-            statusCountBeforeTargetChange,
-          ),
-        {
-          timeout: 10_000,
-          timeoutMsg: "effective beta target was not checked after transfer",
-        },
-      );
+      await checkManually();
+      await waitForAvailable("9.0.0-beta.1");
+      const first = await latestAvailable("9.0.0-beta.1");
       await dismissModal("Update Available", "Later");
-      const betaReplacement = await browser.execute(() =>
-        window.round2Updater.feeds.at(-1),
-      );
-      assert.equal(betaReplacement.target, "darwin-beta-round2-app");
-      await api("downloadUpdate");
-      await dismissModal("Update Ready", "Later");
-
-      // A same-target no-update response must keep the already downloaded identity.
-      await api("checkForUpdates");
-      await waitForModal("Update Ready");
-      const retained = await browser.execute(() => ({
-        hasDownloadedStatus: window.round2Updater.statuses.some(
-          (event) => event.status === "downloaded",
-        ),
-        lastStatus: window.round2Updater.statuses.at(-1)?.status,
-      }));
-      assert.equal(retained.lastStatus, "downloaded");
-      assert.equal(retained.hasDownloadedStatus, true);
-
-      // The channel may change after download and before the user presses Restart Now.
-      await browser.execute(() => {
-        window.round2Updater.channel = "stable";
+      await browser.execute((id) => {
+        window.round2FirstDownload = undefined;
+        window.__TAURI__.core
+          .invoke("download_update", { candidateId: id })
+          .then((data) => {
+            window.round2FirstDownload = data;
+          });
+      }, first.candidateId);
+      await browser.waitUntil(() => artifactRequests() === 1, {
+        timeout: 20_000,
+        interval: 100,
+        timeoutMsg: "first transfer did not start",
       });
-      await clickModalButton("Restart Now");
+      const second = await engine("download_update", {
+        candidateId: first.candidateId,
+      });
+      assert.equal(second.data?.error, "A download is already in progress.");
+
+      // Cancel, then let the held response finish: its bytes are discarded.
+      await engine("cancel_update_download");
+      await dismissModal("Download Cancelled", "OK");
+      releaseFirst();
       await browser.waitUntil(
-        () =>
-          browser.execute(() =>
-            window.round2Updater.closedResources.some((rid) => rid >= 12003),
-          ),
+        () => browser.execute(() => window.round2FirstDownload !== undefined),
         {
-          timeout: 10_000,
-          timeoutMsg:
-            "pre-install channel check did not retire downloaded bytes",
+          timeout: 20_000,
+          interval: 100,
+          timeoutMsg: "cancelled transfer did not settle",
         },
-      );
-      const staleTargetInstallCalls = await browser.execute(() =>
-        window.round2Updater.installCalls.slice(),
       );
       assert.deepEqual(
-        staleTargetInstallCalls,
-        [],
-        "an update from the former channel was installed",
+        await browser.execute(() => window.round2FirstDownload),
+        {
+          success: false,
+          cancelled: true,
+          error: null,
+        },
+      );
+      assert.ok(
+        !(await statuses()).some(
+          (event) =>
+            event.status === "downloaded" &&
+            event.candidateId === first.candidateId,
+        ),
+        "a cancelled late transfer was reported as downloaded",
       );
 
-      // Background feed failures stay quiet; manual feed failures stay visible.
-      const beforeBackgroundError = await browser.execute(
-        () => window.round2Updater.statuses.length,
-      );
-      await api("checkForUpdates");
+      // A downloaded candidate is released when the channel changes before Restart Now.
+      fixture.server.publish({
+        target: betaTarget,
+        version: "9.0.0-beta.2",
+        payload: Buffer.from("target revalidation payload"),
+        fileName: "ROSI-round2-2.bin",
+      });
+      await checkManually();
+      await waitForAvailable("9.0.0-beta.2");
+      const second2 = await latestAvailable("9.0.0-beta.2");
+      await dismissModal("Update Available", "Later");
+      await browser.execute((id) => {
+        window.__TAURI__.core.invoke("download_update", { candidateId: id });
+      }, second2.candidateId);
+      await dismissModal("Update Ready", "Later");
+      const installsBeforeStale = (await probe()).installs;
+      const checkingBefore = (await statuses()).filter(
+        (event) => event.status === "checking",
+      ).length;
+      await engine("set_update_channel", { channel: "stable" });
       await browser.waitUntil(
-        () =>
-          browser.execute(
-            (count) =>
-              window.round2Updater.statuses
-                .slice(count)
-                .some(
-                  (event) => event.status === "error" && event.kind === "feed",
-                ),
-            beforeBackgroundError,
+        async () =>
+          (await statuses()).filter((event) => event.status === "checking")
+            .length > checkingBefore,
+        {
+          timeout: 20_000,
+          interval: 100,
+          timeoutMsg: "channel change did not recheck",
+        },
+      );
+      await engine("install_update", { candidateId: second2.candidateId });
+      await browser.pause(800);
+      assert.equal(
+        (await probe()).installs,
+        installsBeforeStale,
+        "a candidate from the former channel was installed",
+      );
+      assert.equal(
+        await browser.execute(() =>
+          document.getElementById("app-modal")?.classList.contains("active"),
+        ),
+        false,
+      );
+      record("updater-channel-and-singleflight", {
+        singleflightRefused: second.data.error,
+        lateCancelledTransferDiscarded: true,
+        staleChannelInstallCalls:
+          (await probe()).installs - installsBeforeStale,
+        stableTargetChecked: stableTarget,
+      });
+
+      // Background feed errors stay quiet; a manual feed error is shown.
+      fixture.server.respond(betaTarget, 500, "boom");
+      await engine("set_update_channel", { channel: "beta" });
+      await browser.waitUntil(
+        async () =>
+          (await statuses()).some(
+            (event) => event.status === "error" && event.kind === "feed",
           ),
         {
-          timeout: 10_000,
+          timeout: 20_000,
+          interval: 100,
           timeoutMsg: "background feed error was not reported",
         },
       );
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      const backgroundModalVisible = await browser.execute(() =>
-        document.getElementById("app-modal")?.classList.contains("active"),
-      );
-      if (backgroundModalVisible) await clickModalButton("OK");
-      assert.equal(backgroundModalVisible, false);
-
-      await browser.execute(() =>
-        document.getElementById("checkUpdateBtn").click(),
-      );
-      const manualError = await waitForModal("Update Error");
-      assert.match(manualError.message, /manual feed failed/);
-      await clickModalButton("OK");
-
-      // Installation errors remain visible even when no manual feed check is active.
-      await browser.execute(() => {
-        window.round2Updater.channel = "beta";
-      });
-      await checkForAvailableUpdate();
-      await api("downloadUpdate");
-      await dismissModal("Update Ready", "Later");
-      await api("installUpdate");
-      const installError = await waitForModal("Update Error");
-      assert.match(installError.message, /controlled installer failure/);
-      await clickModalButton("OK");
-
-      // The renderer's selected channel changes before the backend save
-      // commits. A completing beta transfer must retire immediately, remain
-      // single-flight until its late bytes close, and then check Stable.
-      const delayedBetaFeed = await checkForAvailableUpdate();
-      assert.equal(delayedBetaFeed.target, "darwin-beta-round2-app");
-      await browser.execute(() => {
-        window.round2Updater.delayNextSettingsSave = true;
-        window.round2DelayedSaveDownload = window.api.downloadUpdate();
-      });
-      await browser.waitUntil(
-        () =>
-          browser.execute(
-            () => window.round2Updater.downloadCalls.length === 5,
-          ),
-        {
-          timeout: 10_000,
-          timeoutMsg: "delayed-save beta transfer did not start",
-        },
-      );
-      const delayedSaveFeedCount = await browser.execute(
-        () => window.round2Updater.feeds.length,
-      );
-      const delayedSaveStatusCount = await browser.execute(
-        () => window.round2Updater.statuses.length,
-      );
-      await browser.execute(() => {
-        const channel = document.getElementById("updateChannelSelect");
-        channel.value = "stable";
-        channel.dispatchEvent(new Event("change", { bubbles: true }));
-      });
-      await browser.waitUntil(
-        () => browser.execute(() => window.round2Updater.settingsSaveStarted),
-        {
-          timeout: 10_000,
-          timeoutMsg: "controlled delayed settings save did not start",
-        },
-      );
-      await dismissModal("Download Cancelled", "OK");
-      await browser.execute(
-        (rid) => window.round2Updater.releaseDownload[rid](),
-        9105,
-      );
-      const delayedDownloadResult = await waitForStoredPromise(
-        "round2DelayedSaveDownload",
-      );
-      assert.deepEqual(delayedDownloadResult, {
-        result: { cancelled: true },
-      });
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      const targetWhileSettingsSavePending = await browser.execute(() => ({
-        backendChannel: window.round2Updater.channel,
-        settingsSaveCompleted: window.round2Updater.settingsSaveCompleted,
-        feedCount: window.round2Updater.feeds.length,
-      }));
-      assert.equal(targetWhileSettingsSavePending.backendChannel, "beta");
-      assert.equal(targetWhileSettingsSavePending.settingsSaveCompleted, false);
+      await browser.pause(400);
       assert.equal(
-        targetWhileSettingsSavePending.feedCount,
-        delayedSaveFeedCount,
-        "the target check must wait for the pending channel save",
+        await browser.execute(() =>
+          document.getElementById("app-modal")?.classList.contains("active"),
+        ),
+        false,
+        "a background feed error opened a dialog",
       );
-      await browser.waitUntil(
-        () =>
-          browser.execute(
-            (feedCount, statusCount) =>
-              window.round2Updater.settingsSaveCompleted &&
-              window.round2Updater.feeds.length > feedCount &&
-              window.round2Updater.statuses
-                .slice(statusCount)
-                .some((event) => event.status === "not-available"),
-            delayedSaveFeedCount,
-            delayedSaveStatusCount,
-          ),
-        {
-          timeout: 10_000,
-          timeoutMsg: "Stable was not rechecked after the delayed save",
-        },
+      await checkManually();
+      const manualError = await waitForModal("Update Error");
+      assert.ok(
+        manualError.message.length > 0,
+        "manual feed error showed no message",
       );
-      const delayedSaveResult = await browser.execute(() => ({
-        selectedChannel: document.getElementById("updateChannelSelect").value,
-        staleBackendChannel: window.round2Updater.channel,
-        checkedTarget: window.round2Updater.feeds.at(-1).target,
-        lateBytesClosed: window.round2Updater.closedResources.includes(12005),
-      }));
-      assert.equal(delayedSaveResult.selectedChannel, "stable");
-      assert.equal(delayedSaveResult.staleBackendChannel, "beta");
-      assert.equal(delayedSaveResult.checkedTarget, null);
-      assert.equal(delayedSaveResult.lateBytesClosed, true);
+      await dismissModal("Update Error", "OK");
 
-      record("updater-channel-and-singleflight", {
-        maxConcurrentTransfers: await browser.execute(
-          () => window.round2Updater.maxActiveTransfers,
-        ),
-        lateCancelledBytesReleased: firstBytesRid,
-        staleChannelBytesReleased: stableBytesRid,
-        stableAndBetaTargetsChecked: true,
-        sameTargetNoUpdateKeptDownloadedPrompt:
-          retained.lastStatus === "downloaded",
-        staleTargetInstallCalls,
-        backgroundFeedErrorModalVisible: backgroundModalVisible,
-        manualFeedErrorVisible:
-          manualError.message.includes("manual feed failed"),
-        installErrorVisible: installError.message.includes(
-          "controlled installer failure",
-        ),
-        delayedSettingsSaveKeptStaleBackend: true,
-        stableTargetAfterDelayedSave: delayedSaveResult.checkedTarget,
+      // Installation errors stay visible with no manual check active.
+      fixture.server.publish({
+        target: betaTarget,
+        version: "9.0.0-beta.3",
+        payload: Buffer.from("install error payload"),
+        fileName: "ROSI-round2-3.bin",
+      });
+      await checkManually();
+      await waitForAvailable("9.0.0-beta.3");
+      const third = await latestAvailable("9.0.0-beta.3");
+      await dismissModal("Update Available", "Later");
+      await engine("download_update", { candidateId: third.candidateId });
+      await engine("install_update", { candidateId: third.candidateId });
+      const installError = await waitForModal("Update Error");
+      assert.match(installError.message, /refused/);
+      await dismissModal("Update Error", "OK");
+      const probeAfter = await probe();
+      assert.equal(probeAfter.refusedRestarts - probeBefore.refusedRestarts, 1);
+      record("updater-channel-and-singleflight-install-error", {
+        installErrorVisible: installError.message.includes("refused"),
+        manualFeedErrorVisible: manualError.title,
       });
     } finally {
+      await fixture.close();
       await browser.execute(() => {
-        for (const release of Object.values(
-          window.round2Updater?.releaseDownload ?? {},
-        )) {
-          release();
-        }
-      });
-      await browser.execute(() => {
-        window.round2Updater?.unsubscribe?.();
-        if (window.round2Updater?.originalSaveSettings) {
-          window.api.saveSettings = window.round2Updater.originalSaveSettings;
-        }
-        if (window.round2Updater?.originalAdapter) {
-          window.__ROSI_E2E__.updaterAdapter =
-            window.round2Updater.originalAdapter;
-        } else if (window.__ROSI_E2E__) {
-          delete window.__ROSI_E2E__.updaterAdapter;
-        }
         if (
           document.getElementById("app-modal")?.classList.contains("active")
         ) {

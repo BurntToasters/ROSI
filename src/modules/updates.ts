@@ -11,7 +11,6 @@
       data: UpdateProgressData,
       formatBytes: (bytes: number) => string
     ) => string;
-    isPrereleaseVersion: (version: string) => boolean;
   }
 
   type UpdatesModules = {
@@ -19,10 +18,6 @@
   };
 
   type RosiWindow = Window & typeof globalThis & { rosiModules?: UpdatesModules };
-
-  function isPrereleaseVersion(version: string) {
-    return /-(beta|alpha|rc)/i.test(version);
-  }
 
   function formatUpdateProgressInfo(
     data: UpdateProgressData,
@@ -38,7 +33,6 @@
   const moduleTarget = (windowRef.rosiModules ?? {}) as UpdatesModules;
   moduleTarget.updates = {
     formatUpdateProgressInfo,
-    isPrereleaseVersion,
   };
   windowRef.rosiModules = moduleTarget;
 })(window);

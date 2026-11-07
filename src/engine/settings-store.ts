@@ -4,7 +4,7 @@ import { refreshEffectiveOptionsSummary, UI_MESSAGES } from './messages';
 import { showModal } from './overlays';
 import { downloadState } from './progress';
 import { queueController } from './queue-controller';
-import { showRestartFailure } from './updater-ui';
+import { checkForUpdatesOnStartup, showRestartFailure } from './updater-ui';
 
 export const trackSettings = (value: RosiSettings): RosiSettings => {
   settingsStore.settingsSavedRevision = settingsStore.settingsRevision;
@@ -291,7 +291,7 @@ export async function checkUpdatesOnStartup() {
     if (!isPackaged) return;
 
     await new Promise((resolve) => setTimeout(resolve, 2000));
-    await window.api.checkForUpdates();
+    await checkForUpdatesOnStartup();
   } catch (e) {
     logError('Startup update check failed', e);
   }

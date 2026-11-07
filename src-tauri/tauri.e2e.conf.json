@@ -23,6 +23,8 @@
             "allow-e2e-emit-stale-download-events",
             "allow-e2e-network-pipelining-probe",
             "allow-e2e-updater-install-probe",
+            "allow-e2e-configure-updater",
+            "allow-e2e-updater-probe",
             "allow-e2e-cancel-close-request"
           ]
         }

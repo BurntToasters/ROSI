@@ -78,150 +78,107 @@ w.api = new Proxy(
   },
 );
 
-const vm = require("vm");
-const downloaded = [];
-const installed = [];
-const downloadCalls = [];
-const installCalls = [];
-const downloadPromises = [];
-const availableEvents = [];
-let channel = "stable";
-let feedVersion = "6.0.0";
-let checks = [];
-const updaterExports = {};
-const updaterJs = ts.transpileModule(
-  fs
-    .readFileSync(root + "/src/updater.ts", "utf8")
-    .replaceAll("import.meta.env.VITE_ROSI_E2E", "'1'"),
-  {
-    compilerOptions: {
-      target: ts.ScriptTarget.ES2020,
-      module: ts.ModuleKind.CommonJS,
-    },
-  },
-).outputText;
-w.__ROSI_E2E__ = {
-  updaterAdapter: {
-    invoke: (command) =>
-      ({
-        is_packaged: true,
-        is_flatpak: false,
-        get_settings: { updateChannel: channel },
-        get_beta_updater_target: "darwin-beta-aarch64-app",
-      })[command],
-    check: (target) => {
-      checks.push(target ?? "stable");
-      const version = feedVersion;
-      return {
-        version,
-        body: "notes",
-        download: async () => {
-          downloaded.push(version);
-        },
-        close: async () => {},
-        install: async () => {
-          installed.push(version);
-        },
-      };
-    },
-  },
-};
-vm.runInNewContext(updaterJs, {
-  exports: updaterExports,
-  require: (id) =>
-    id.includes("/app")
-      ? { getVersion: async () => "5.0.0-beta.2" }
-      : { invoke: () => {}, check: () => {} },
-  window: w,
-  console,
-  Date,
-  Set,
-  Object,
-  Error,
-});
-w.api.checkForUpdates = updaterExports.checkForUpdates;
-w.api.onUpdaterStatus = updaterExports.onUpdaterStatus;
-w.api.onUpdaterProgress = updaterExports.onUpdaterProgress;
-w.api.onUpdaterStatus((event) => {
-  if (event.status === "available") availableEvents.push(event);
-});
-w.api.downloadUpdate = (candidateId) => {
-  downloadCalls.push(candidateId);
-  const promise = updaterExports.downloadUpdate(candidateId);
-  downloadPromises.push(promise);
-  return promise;
-};
-w.api.installUpdate = (candidateId) => {
-  installCalls.push(candidateId);
-  return updaterExports.installUpdate(candidateId);
-};
-const load = require("./load-renderer.cjs").createRendererLoader(w, root, ts);
+// Renderer-side updater checks. The updater engine lives in Rust
+// (src-tauri/src/updater.rs) and is covered by the real-app scenarios in
+// e2e/v5-fixes/updater-engine. Here the Tauri IPC layer is a fake: commands
+// are recorded, and updater-status events are emitted by the test, so only
+// what the renderer does with each answer and event is checked.
+const { createTauriShim } = require("./tauri-shim.cjs");
+const { invocations, emit, externals } = createTauriShim();
+const load = require("./load-renderer.cjs").createRendererLoader(
+  w,
+  root,
+  ts,
+  externals,
+);
 for (const m of ["ui", "downloads", "queue", "settings", "updates", "dock"])
   load("modules/" + m + ".ts");
-load("rosiEngine.ts");
+const updater = load("engine/updater-ui.ts");
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-(async () => {
-  await wait(120);
-  await w.__ROSI_RENDERER_STARTUP_READY__;
+const commandsNamed = (name) =>
+  invocations.filter((entry) => entry.command === name);
+const modalTitle = () => w.document.getElementById("modal-title").textContent;
+const modalMessage = () =>
+  w.document.getElementById("modal-message").textContent;
+const clickModalButton = (label) => {
+  const button = [...w.document.querySelectorAll("#modal-buttons button")].find(
+    (entry) => entry.textContent.trim() === label,
+  );
+  button?.click();
+  return button;
+};
 
-  await updaterExports.checkForUpdates();
+(async () => {
+  await wait(60);
+  updater.setupAutoUpdater(async () => true);
+
+  // Channel change: the renderer forwards the channel; Rust saves and revalidates it.
+  updater.notifyUpdateChannelChanged("auto");
+  await wait(20);
+  const channelForwarded = commandsNamed("set_update_channel").some(
+    (entry) => entry.args?.channel === "auto",
+  );
+
+  // Two candidates in a row: the first prompt is retired by the second.
+  emit("updater-status", {
+    status: "available",
+    candidateId: 1,
+    version: "6.0.0",
+    releaseNotes: null,
+    isBeta: false,
+    manualInstall: false,
+  });
   await wait(30);
-  const firstPrompt = w.document.getElementById("modal-message").textContent;
-  const oldPromptButton = w.document.querySelector("#modal-buttons button");
-  const bridgeSource = fs.readFileSync(root + "/src/tauri-bridge.ts", "utf8");
-  const bridgeForwardsPreviousChannel =
-    /notifyUpdaterChannelChanged:\s*\(channel,\s*save,\s*previousChannel\)\s*=>\s*notifyUpdaterChannelChanged\(channel,\s*save,\s*previousChannel\)/s.test(
-      bridgeSource,
-    );
-  const bridgeNotify = (next, save, previousChannel) =>
-    updaterExports.notifyUpdaterChannelChanged(next, save, previousChannel);
-  channel = "auto";
-  feedVersion = "7.0.0-beta.1";
-  bridgeNotify("auto", Promise.resolve(true), "stable");
-  await wait(100);
-  const checksAfterChange = checks.slice();
-  await updaterExports.checkForUpdates();
-  await wait(50);
-  const activePromptAfterSecondCheck =
-    w.document.getElementById("modal-message").textContent;
-  oldPromptButton?.click();
-  await wait(80);
-  if (downloadPromises[0]) await downloadPromises[0];
+  const firstPrompt = modalMessage();
+  const oldPromptButton = [...w.document.querySelectorAll("#modal-buttons button")].find(
+    (entry) => entry.textContent.trim() === "Download & Install",
+  );
+  emit("updater-status", {
+    status: "available",
+    candidateId: 2,
+    version: "7.0.0-beta.1",
+    releaseNotes: null,
+    isBeta: true,
+    manualInstall: false,
+  });
   await wait(30);
-  const downloadedAfterStaleAction = downloaded.slice();
+  const activePromptAfterSecondCheck = modalMessage();
   const oldPromptStillConnected = oldPromptButton?.isConnected ?? false;
-  const staleCandidateResult = await updaterExports.downloadUpdate(
-    availableEvents[0]?.candidateId,
+
+  // The superseded prompt must not start a download for candidate 1.
+  oldPromptButton?.click();
+  await wait(30);
+  const downloadCallsAfterStale = commandsNamed("download_update").map(
+    (entry) => entry.args?.candidateId,
   );
-  w.document.querySelector("#modal-buttons button")?.click();
-  await wait(350);
-  const readyPromptTitle = w.document.getElementById("modal-title").textContent;
-  const staleInstallResult = await updaterExports.installUpdate(
-    availableEvents[0]?.candidateId,
+
+  // Downloaded candidate 2 is the only one offered for install.
+  clickModalButton("Later");
+  emit("updater-status", {
+    status: "downloaded",
+    candidateId: 2,
+    version: "7.0.0-beta.1",
+  });
+  await wait(30);
+  const readyPromptTitle = modalTitle();
+  clickModalButton("Restart Now");
+  await wait(400);
+  const installCalls = commandsNamed("install_update").map(
+    (entry) => entry.args?.candidateId,
   );
-  const installedAfterStaleAction = installed.slice();
-  w.document.querySelector("#modal-buttons button")?.click();
-  await wait(350);
+
   console.log(
     JSON.stringify(
       {
+        channelForwarded,
         firstPrompt,
-        bridgeForwardsPreviousChannel,
-        checksAfterChange,
-        checks,
         activePromptAfterSecondCheck,
         readyPromptTitle,
-        firstCandidateId: availableEvents[0]?.candidateId,
-        currentCandidateId: availableEvents.at(-1)?.candidateId,
+        firstCandidateId: 1,
+        currentCandidateId: 2,
         oldPromptStillConnected,
-        staleCandidateResult,
-        staleInstallResult,
-        downloadCalls,
+        downloadCallsAfterStale,
         installCalls,
-        downloadedAfterStaleAction,
-        installedAfterStaleAction,
-        downloaded,
-        installed,
       },
       null,
       2,

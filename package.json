@@ -175,7 +175,6 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.0",
-    "@tauri-apps/plugin-updater": "2.14.0",
     "lucide-static": "1.49.0"
   },
   "devDependencies": {

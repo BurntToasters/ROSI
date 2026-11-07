@@ -14,6 +14,7 @@ import { refs } from '../refs';
 import { flushBeforeRestart, persistSettings, settingsStore } from '../settings-store';
 import { applyDownloadProfile, bindExternalLink, updateUIFromSettings } from '../settings-view';
 import { applyTheme, updateBackgroundAnimation } from '../theme';
+import { notifyUpdateChannelChanged } from '../updater-ui';
 import { showToast, updateConsoleVisibility } from '../ui-helpers';
 
 function buildEffectiveOptionsReadiness(): EffectiveOptionsReadiness {
@@ -479,18 +480,14 @@ export function bindSettingsActions() {
 
   if (updateChannelSelect) {
     updateChannelSelect.addEventListener('change', (e) => {
-      const previousChannel = settingsStore.settings.updateChannel ?? 'auto';
       settingsStore.settings.updateChannel = (e.target as HTMLSelectElement)
         .value as RosiSettings['updateChannel'];
-      // Retire the old update identity before the async settings write can
-      // complete; the updater holds that save before its target recheck.
-      const save = persistSettings(false, true);
+      persistSettings(false, true).catch((error: unknown) =>
+        logError('Could not save the update channel', error)
+      );
+      // Rust saves the channel itself and retires the old update identity first.
       if (window.api.getChannel() !== 'msstore') {
-        window.api.notifyUpdaterChannelChanged?.(
-          settingsStore.settings.updateChannel,
-          save,
-          previousChannel
-        );
+        notifyUpdateChannelChanged(settingsStore.settings.updateChannel);
       }
     });
   }

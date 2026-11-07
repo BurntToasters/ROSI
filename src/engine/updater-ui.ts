@@ -1,4 +1,9 @@
-// Update checks, the update banner, and updater event wiring.
+// Update banner, update dialogs, and updater event wiring. The Rust updater
+// (src-tauri/src/updater.rs) decides every transition; this module draws them
+// and calls the updater commands. Failure modes: e2e/v5-fixes/updater-engine/failure-modes.md.
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { call, fire } from '../commands';
+import type { UpdaterProgressEvent, UpdaterStatusEvent } from '../generated/ipc-types';
 import { logError, updatesModule } from './core';
 import { retireModal, showModal } from './overlays';
 import { formatBytes } from './progress';
@@ -61,9 +66,10 @@ export async function checkForUpdates() {
   }, 30000);
 
   try {
-    const result = await window.api.checkForUpdates();
+    // Null means the check started; its result arrives as updater-status events.
+    const refusal = await call('check_for_updates');
 
-    if (result && result.error === 'dev-mode') {
+    if (refusal?.reason === 'dev-mode') {
       finishManualUpdateCheck();
       showModal({
         title: 'Development Mode',
@@ -75,11 +81,11 @@ export async function checkForUpdates() {
       return;
     }
 
-    if (result && result.error && result.error !== 'dev-mode') {
+    if (refusal) {
       finishManualUpdateCheck();
       showModal({
         title: 'Update Check Failed',
-        message: `Could not check for updates.\n\nError: ${result.error}`,
+        message: `Could not check for updates.\n\nError: ${refusal.message}`,
         buttons: [{ label: 'OK', primary: true }],
         priority: true,
       });
@@ -93,6 +99,16 @@ export async function checkForUpdates() {
       priority: true,
     });
   }
+}
+
+/** Startup check: the result arrives as events, so nothing is shown for a refusal. */
+export async function checkForUpdatesOnStartup(): Promise<void> {
+  await call('check_for_updates');
+}
+
+/** The channel changed; Rust saves it and revalidates the update identity. */
+export function notifyUpdateChannelChanged(channel: 'auto' | 'stable' | 'beta'): void {
+  fire('set_update_channel', { channel });
 }
 
 export let updaterCleanupFunctions: Array<() => void> = [];
@@ -141,16 +157,35 @@ export function releasePageUrl(version: string): string {
   return `https://github.com/BurntToasters/ROSI/releases/tag/v${encodeURIComponent(version)}`;
 }
 
+/** Subscribes to one updater event; the returned function stops it. */
+function subscribe<T>(event: string, handler: (payload: T) => void): () => void {
+  let disposed = false;
+  let stop: UnlistenFn | null = null;
+  listen<T>(event, (message) => {
+    if (!disposed) handler(message.payload);
+  })
+    .then((unlisten) => {
+      if (disposed) unlisten();
+      else stop = unlisten;
+    })
+    .catch((error: unknown) => logError(`Could not listen for ${event}`, error));
+  return () => {
+    disposed = true;
+    stop?.();
+    stop = null;
+  };
+}
+
 export function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boolean>) {
   const cancelBtn = document.getElementById('update-banner-cancel');
   if (cancelBtn) {
     cancelBtn.addEventListener('click', () => {
-      window.api.cancelUpdateDownload();
+      fire('cancel_update_download');
     });
   }
 
   updaterCleanupFunctions.push(
-    window.api.onUpdaterStatus((data) => {
+    subscribe<UpdaterStatusEvent>('updater-status', (data) => {
       const wasManualCheck = isManualUpdateCheck;
       if (isManualUpdateCheck && data.status !== 'checking') {
         finishManualUpdateCheck();
@@ -165,18 +200,13 @@ export function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boole
 
         case 'available': {
           const candidateId = data.candidateId;
-          if (typeof candidateId !== 'number') break;
           updaterCandidateId = candidateId;
           retireModal('updater-candidate');
           retireModal('updater-downloaded');
           hideUpdateBanner();
-          const version = data.version ?? '';
-          const isBetaUpdate =
-            data.isBeta ||
-            (updatesModule && typeof updatesModule.isPrereleaseVersion === 'function'
-              ? updatesModule.isPrereleaseVersion(version)
-              : /-(beta|alpha|rc)/i.test(version));
-          if (data.manualInstall === true) {
+          const version = data.version;
+          const isBetaUpdate = data.isBeta;
+          if (data.manualInstall) {
             showModal({
               title: isBetaUpdate ? 'Beta Update Available!' : 'Update Available!',
               key: 'updater-candidate',
@@ -204,8 +234,8 @@ export function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boole
             title: isBetaUpdate ? 'Beta Update Available!' : 'Update Available!',
             key: 'updater-candidate',
             message: isBetaUpdate
-              ? `A new beta version (v${data.version}) of ROSI is available!\n\nWould you like to download and install it?`
-              : `A new version (v${data.version}) of ROSI is available!\n\nWould you like to download and install it?`,
+              ? `A new beta version (v${version}) of ROSI is available!\n\nWould you like to download and install it?`
+              : `A new version (v${version}) of ROSI is available!\n\nWould you like to download and install it?`,
             priority: wasManualCheck,
             buttons: [
               {
@@ -214,8 +244,8 @@ export function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boole
                 action: async () => {
                   if (updaterCandidateId !== candidateId) return;
                   showUpdateBanner();
-                  const result = await window.api.downloadUpdate(candidateId);
-                  if (result?.cancelled || result?.error) hideUpdateBanner();
+                  const result = await call('download_update', { candidateId });
+                  if (result.cancelled || result.error) hideUpdateBanner();
                 },
               },
               { label: 'Later' },
@@ -266,9 +296,9 @@ export function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boole
           });
           break;
 
-        case 'downloaded':
-          if (typeof data.candidateId !== 'number') break;
-          updaterCandidateId = data.candidateId;
+        case 'downloaded': {
+          const candidateId = data.candidateId;
+          updaterCandidateId = candidateId;
           retireModal('updater-candidate');
           retireModal('updater-downloaded');
           hideUpdateBanner();
@@ -281,9 +311,9 @@ export function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boole
                 label: 'Restart Now',
                 primary: true,
                 action: async () => {
-                  if (updaterCandidateId !== data.candidateId) return;
+                  if (updaterCandidateId !== candidateId) return;
                   if (await flushSettingsBeforeRestart()) {
-                    await window.api.installUpdate(data.candidateId);
+                    await call('install_update', { candidateId });
                   }
                 },
               },
@@ -292,12 +322,13 @@ export function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boole
             priority: true,
           });
           break;
+        }
       }
     })
   );
 
   updaterCleanupFunctions.push(
-    window.api.onUpdaterProgress((data) => {
+    subscribe<UpdaterProgressEvent>('updater-progress', (data) => {
       const progressBar = document.getElementById('update-banner-bar') as HTMLElement | null;
       const progressWrapper = document.getElementById('update-banner-progress');
       const progressInfo = document.getElementById('update-banner-info');

@@ -72,7 +72,7 @@
     {
       "id": "updater",
       "owners": ["main", "state-repairs", "v5-fixes"],
-      "v5FixAreas": ["deno-installer"]
+      "v5FixAreas": ["deno-installer", "updater-engine"]
     },
     {
       "id": "ui-polish",
@@ -787,7 +787,7 @@
       "conversion": ["download-options", "typed-formats"],
       "network-policy": ["async-proxy", "network", "upstream-proxy"],
       "persistence": ["persistence"],
-      "updater": ["deno-installer"],
+      "updater": ["deno-installer", "updater-engine"],
       "packaging": ["flatpak-updates"],
       "platform-verification": ["platform"],
       "ui-polish": ["ui-polish"]

@@ -3,9 +3,10 @@ const path = require("node:path");
 
 /**
  * Loads renderer ES modules into a jsdom window. Each file runs as CommonJS
- * in the window, with a resolver for its relative imports.
+ * in the window, with a resolver for its relative imports. Bare specifiers
+ * (the Tauri API packages) resolve to the `externals` map.
  */
-function createRendererLoader(w, root, ts) {
+function createRendererLoader(w, root, ts, externals = {}) {
   const loaded = new Map();
   const srcDir = path.join(root, "src");
   function load(p) {
@@ -22,8 +23,14 @@ function createRendererLoader(w, root, ts) {
     const run = w.eval(`(function (exports, require, module) {${code}\n})`);
     run(
       module.exports,
-      (spec) =>
-        load(path.relative(srcDir, path.resolve(path.dirname(file), spec))),
+      (spec) => {
+        if (!spec.startsWith(".")) {
+          // Packages the renderer reaches through Tauri: supplied by the caller.
+          if (Object.hasOwn(externals, spec)) return externals[spec];
+          throw new Error(`renderer loader has no module for ${spec}`);
+        }
+        return load(path.relative(srcDir, path.resolve(path.dirname(file), spec)));
+      },
       module,
     );
     return module.exports;

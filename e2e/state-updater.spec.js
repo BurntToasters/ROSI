@@ -4,6 +4,12 @@ import assert from "node:assert/strict";
 import { browser } from "@wdio/globals";
 import { api, waitForAppReady } from "./helpers/app-bridge.js";
 import { readListFile } from "./helpers/persisted.js";
+import {
+  captureUpdaterStatuses,
+  clickManualCheck,
+  setUpdateChannel,
+  startUpdaterFixture,
+} from "./helpers/updater-engine-fixture.js";
 
 const DATA_DIR = process.env.ROSI_E2E_DATA_DIR;
 const RESULT_PATH = process.env.ROSI_STATE_REPAIR_RESULTS;
@@ -74,6 +80,25 @@ async function dismissModal(titleText, buttonText) {
     if (!button) throw new Error(`modal button ${label} was not found`);
     button.click();
   }, buttonText);
+}
+
+async function engineInvoke(command, args) {
+  return browser.executeAsync(
+    (name, payload, done) => {
+      window.__TAURI__.core.invoke(name, payload).then(
+        (data) => done({ ok: true, data: data ?? null }),
+        (error) => done({ error: String(error) }),
+      );
+    },
+    command,
+    args,
+  );
+}
+
+async function engineProbe() {
+  const result = await engineInvoke("e2e_updater_probe");
+  assert.ok(result.ok, JSON.stringify(result));
+  return result.data;
 }
 
 describe("state and updater repair E2E", () => {
@@ -903,338 +928,205 @@ describe("state and updater repair E2E", () => {
     assert.ok(DATA_DIR, "ROSI_E2E_DATA_DIR is not set");
     const queueFile = path.join(DATA_DIR, "download-queue.json");
     const backupPath = path.join(DATA_DIR, "download-queue.backup.json");
+    const platformOs =
+      process.platform === "darwin"
+        ? "darwin"
+        : process.platform === "linux"
+          ? "linux"
+          : "windows";
+    const betaTarget = "darwin-beta-aarch64-app";
+    const stableTarget = `${platformOs}-aarch64`;
     let priorBackup = null;
-
-    await browser.execute(() => {
-      window.auditOriginalE2eUpdaterAdapter =
-        window.__ROSI_E2E__?.updaterAdapter;
-      window.auditUpdateChannel = "beta";
-      window.auditFeedRecords = [];
-      window.auditDownloadCalls = [];
-      window.auditActiveTransfers = 0;
-      window.auditAttachedBytes = [];
-      window.auditDownloadReleases = {};
-      window.auditClosedResources = [];
-      window.auditInstallCalls = [];
-      window.auditRestartCalls = 0;
-      window.auditUpdaterStatuses = [];
-      window.auditCheckResults = [];
-      window.auditInvokeCommands = [];
-      const makeUpdate = (rid, version, target) => ({
-        rid,
-        currentVersion: "5.0.0-beta.2",
-        version,
-        date: null,
-        body: `Controlled ${version}`,
-        rawJson: {},
-        target,
-        available: true,
-        downloadedBytes: undefined,
-        async close() {
-          window.auditClosedResources.push(this.rid);
-          if (this.downloadedBytes) {
-            await this.downloadedBytes.close();
-            this.downloadedBytes = undefined;
-          }
-        },
-        async download(onEvent) {
-          window.auditDownloadCalls.push(this.rid);
-          window.auditActiveTransfers += 1;
-          try {
-            const bytesRid = 8000 + (this.rid - 7000);
-            const attachBytes = () => {
-              window.auditAttachedBytes.push(bytesRid);
-              this.downloadedBytes = {
-                rid: bytesRid,
-                async close() {
-                  window.auditClosedResources.push(bytesRid);
-                },
-              };
-              onEvent({ event: "Started", data: { contentLength: 1024 } });
-              onEvent({ event: "Progress", data: { chunkLength: 1024 } });
-            };
-            if (this.rid === 7001 || this.rid === 7002) {
-              await new Promise((resolve) => {
-                window.auditDownloadReleases[this.rid] = () => {
-                  attachBytes();
-                  resolve();
-                };
-              });
-            } else {
-              attachBytes();
-            }
-          } finally {
-            window.auditActiveTransfers -= 1;
-          }
-        },
-        async install() {
-          const bytesRid = this.downloadedBytes?.rid;
-          window.auditInstallCalls.push({
-            updateRid: this.rid,
-            bytesRid,
-          });
-          await window.__TAURI__.core.invoke("e2e_updater_install_probe");
-          this.downloadedBytes = undefined;
-        },
-      });
-      window.auditOriginalCheckForUpdates = window.api.checkForUpdates;
-      window.api.checkForUpdates = async (...args) => {
-        const result = await window.auditOriginalCheckForUpdates(...args);
-        window.auditCheckResults.push(result);
-        return result;
-      };
-      window.auditUpdaterStatusCleanup = window.api.onUpdaterStatus((event) =>
-        window.auditUpdaterStatuses.push(event),
-      );
-      window.__ROSI_E2E__.updaterAdapter = {
-        invoke: async (command, args = {}) => {
-          window.auditInvokeCommands.push(command);
-          if (command === "get_settings") {
-            return { updateChannel: window.auditUpdateChannel };
-          }
-          if (command === "is_packaged") return true;
-          if (command === "is_flatpak") return false;
-          // Keep the beta-target fence on its own target; the compact path has its own scenario.
-          if (command === "get_compact_updater_target") return null;
-          if (command === "get_beta_updater_target") {
-            return "darwin-beta-e2e-app";
-          }
-          if (command === "restart_app") {
-            window.auditRestartCalls += 1;
-            return undefined;
-          }
-          return window.__TAURI__.core.invoke(command, args);
-        },
-        check: async (target) => {
-          const rid = 7000 + window.auditFeedRecords.length + 1;
-          const version = `5.0.0-beta.${window.auditFeedRecords.length + 3}`;
-          window.auditFeedRecords.push({
-            rid,
-            version,
-            target: target ?? null,
-          });
-          return makeUpdate(rid, version, target);
-        },
-      };
-      window.auditUpdaterAdapterInstalled =
-        typeof window.__ROSI_E2E__.updaterAdapter?.check === "function" &&
-        typeof window.__ROSI_E2E__.updaterAdapter?.invoke === "function";
+    await reloadRenderer();
+    // The channel change rechecks in the background; set it before the feed.
+    await setUpdateChannel("beta");
+    await browser.pause(1_500);
+    const fixture = await startUpdaterFixture({
+      betaTarget,
+      disableCompact: true,
     });
-
-    const resolveDownload = async (rid, promiseName) => {
-      await browser.execute((updateRid) => {
-        window.auditDownloadReleases[updateRid]?.();
-      }, rid);
-      return browser.executeAsync((name, done) => {
-        window[name].then(
-          (result) => done({ result }),
-          (error) => done({ error: String(error) }),
-        );
-      }, promiseName);
-    };
-
-    const checkForAvailableUpdate = async () => {
-      const before = await browser.execute(() => ({
-        checks: window.auditCheckResults.length,
-        feeds: window.auditFeedRecords.length,
-        statuses: window.auditUpdaterStatuses.length,
-      }));
-      await browser.execute(() =>
-        document.getElementById("checkUpdateBtn").click(),
-      );
-      await browser.waitUntil(
-        () =>
-          browser.execute(
-            (count) => window.auditCheckResults.length > count,
-            before.checks,
-          ),
+    await captureUpdaterStatuses("auditGenerationStatuses");
+    const feedRequests = () =>
+      fixture.server.requests.filter((request) =>
+        request.path.startsWith("/latest-"),
+      ).length;
+    const artifactRequests = () =>
+      fixture.server.requests.filter((request) =>
+        request.path.startsWith("/artifacts/"),
+      ).length;
+    const statusesNow = () =>
+      browser.execute(() => window.auditGenerationStatuses.slice());
+    const latestAvailable = async (version) =>
+      (await statusesNow())
+        .filter(
+          (event) => event.status === "available" && event.version === version,
+        )
+        .at(-1);
+    const waitForAvailable = (version, after = 0) =>
+      browser.waitUntil(
+        async () =>
+          (await statusesNow()).filter(
+            (event) =>
+              event.status === "available" && event.version === version,
+          ).length > after,
         {
-          timeout: 10_000,
-          timeoutMsg: "manual updater check did not settle",
+          timeout: 20_000,
+          interval: 100,
+          timeoutMsg: `update ${version} was not offered`,
         },
       );
-      const outcome = await browser.execute(
-        (counts) => ({
-          result: window.auditCheckResults.at(-1),
-          feed: window.auditFeedRecords.slice(counts.feeds),
-          statuses: window.auditUpdaterStatuses.slice(counts.statuses),
-          updaterAdapterInstalled: window.auditUpdaterAdapterInstalled,
-          invokeCommands: window.auditInvokeCommands.slice(),
-        }),
-        before,
-      );
-      assert.equal(
-        outcome.result,
-        null,
-        `controlled updater check returned ${JSON.stringify(outcome)}`,
-      );
-      assert.ok(
-        outcome.feed.length > 0,
-        `controlled feed was not called: ${JSON.stringify(outcome)}`,
-      );
-      assert.equal(
-        outcome.statuses.at(-1)?.status,
-        "available",
-        `controlled updater check did not emit available: ${JSON.stringify(outcome)}`,
-      );
-      await dismissModal("Update Available", "Later");
-      return outcome.feed.at(-1);
-    };
 
     try {
-      const prior = fs.existsSync(backupPath)
+      priorBackup = fs.existsSync(backupPath)
         ? fs.readFileSync(backupPath)
         : null;
-      priorBackup = prior;
+      const probeBefore = await engineProbe();
 
-      const firstIdentity = await checkForAvailableUpdate();
-      assert.equal(firstIdentity.target, "darwin-beta-e2e-app");
-
-      await browser.execute(() => {
-        window.auditFirstDownload = window.api.downloadUpdate();
+      // Generation A is offered and downloaded, then superseded by B.
+      fixture.server.publish({
+        target: betaTarget,
+        version: "9.0.0-beta.1",
+        payload: Buffer.from("generation A payload"),
+        fileName: "ROSI-A.bin",
       });
-      await browser.waitUntil(
-        () => browser.execute(() => window.auditDownloadCalls.length === 1),
-        { timeout: 10_000, timeoutMsg: "first updater download did not start" },
-      );
-      await api("checkForUpdates");
-      assert.equal(
-        await browser.execute(() => window.auditFeedRecords.length),
-        1,
-        "a check started a second feed request during download",
-      );
-      const firstDownloadResult = await resolveDownload(
-        firstIdentity.rid,
-        "auditFirstDownload",
-      );
-      assert.deepEqual(firstDownloadResult, { result: { success: true } });
+      await clickManualCheck();
+      await waitForAvailable("9.0.0-beta.1");
+      const candidateA = await latestAvailable("9.0.0-beta.1");
+      await dismissModal("Update Available", "Later");
+      const downloadA = await engineInvoke("download_update", {
+        candidateId: candidateA.candidateId,
+      });
+      assert.equal(downloadA.data?.success, true, JSON.stringify(downloadA));
       await dismissModal("Update Ready", "Later");
 
-      const staleIdentity = await checkForAvailableUpdate();
-      await browser.execute(() => {
-        window.auditStaleDownload = window.api.downloadUpdate();
+      // Generation B downloads behind a held response.
+      let releaseB;
+      const gateB = new Promise((resolve) => {
+        releaseB = resolve;
       });
-      await browser.waitUntil(
-        () => browser.execute(() => window.auditDownloadCalls.length === 2),
-        {
-          timeout: 10_000,
-          timeoutMsg: "replacement updater download did not start",
-        },
-      );
-      await browser.execute(() => window.api.cancelUpdateDownload());
-      await dismissModal("Download Cancelled", "OK");
-      const feedCountBeforeSettlement = await browser.execute(
-        () => window.auditFeedRecords.length,
-      );
-      await browser.execute(() => {
-        window.auditUpdateChannel = "stable";
+      fixture.server.publish({
+        target: betaTarget,
+        version: "9.0.0-beta.2",
+        payload: Buffer.from("generation B payload"),
+        fileName: "ROSI-B.bin",
+        gate: gateB,
+      });
+      await clickManualCheck();
+      await waitForAvailable("9.0.0-beta.2");
+      const candidateB = await latestAvailable("9.0.0-beta.2");
+      await dismissModal("Update Available", "Later");
+      await browser.execute((id) => {
+        window.auditDownloadBResult = undefined;
+        window.__TAURI__.core
+          .invoke("download_update", { candidateId: id })
+          .then((data) => {
+            window.auditDownloadBResult = data;
+          });
+      }, candidateB.candidateId);
+      await browser.waitUntil(() => artifactRequests() >= 2, {
+        timeout: 20_000,
+        interval: 100,
+        timeoutMsg: "B download did not start",
       });
 
-      const beforeSettlement = await browser.execute(
-        (rid) => ({
-          activeTransfers: window.auditActiveTransfers,
-          downloadCalls: window.auditDownloadCalls.length,
-          updateClosed: window.auditClosedResources.includes(rid),
-          bytesAttached: window.auditAttachedBytes.includes(
-            8000 + (rid - 7000),
-          ),
-        }),
-        staleIdentity.rid,
-      );
-      assert.equal(beforeSettlement.activeTransfers, 1);
-      assert.equal(beforeSettlement.downloadCalls, 2);
-      assert.equal(beforeSettlement.updateClosed, false);
-      assert.equal(beforeSettlement.bytesAttached, false);
-
-      const blockedFeedCheck = await api("checkForUpdates");
-      const blockedDownloadRetry = await api("downloadUpdate");
-      const afterBlockedRequests = await browser.execute(
-        (rid) => ({
-          feedCount: window.auditFeedRecords.length,
-          downloadCalls: window.auditDownloadCalls.length,
-          updateClosed: window.auditClosedResources.includes(rid),
-          activeTransfers: window.auditActiveTransfers,
-        }),
-        staleIdentity.rid,
-      );
-      assert.equal(blockedFeedCheck, null);
+      // While B downloads: a second download is single-flight, and a check is refused.
+      const feedBeforeBlocked = feedRequests();
+      const second = await engineInvoke("download_update", {
+        candidateId: candidateB.candidateId,
+      });
       assert.equal(
-        blockedDownloadRetry.error,
+        second.data?.error,
         "A download is already in progress.",
+        JSON.stringify(second),
       );
-      assert.equal(afterBlockedRequests.feedCount, feedCountBeforeSettlement);
-      assert.equal(afterBlockedRequests.downloadCalls, 2);
-      assert.equal(afterBlockedRequests.updateClosed, false);
-      assert.equal(afterBlockedRequests.activeTransfers, 1);
+      const blockedCheck = await engineInvoke("check_for_updates");
+      assert.equal(blockedCheck.data, null, JSON.stringify(blockedCheck));
+      assert.equal(
+        feedRequests(),
+        feedBeforeBlocked,
+        "a check during download requested a feed",
+      );
 
-      const staleDownloadResult = await resolveDownload(
-        staleIdentity.rid,
-        "auditStaleDownload",
-      );
-      assert.deepEqual(staleDownloadResult, { result: { cancelled: true } });
-      const staleBytesRid = 8000 + (staleIdentity.rid - 7000);
-      await browser.waitUntil(
-        () =>
-          browser.execute(
-            (resources) =>
-              window.auditActiveTransfers === 0 &&
-              window.auditClosedResources.includes(resources.updateRid) &&
-              window.auditClosedResources.includes(resources.bytesRid),
-            { updateRid: staleIdentity.rid, bytesRid: staleBytesRid },
-          ),
-        {
-          timeout: 10_000,
-          timeoutMsg:
-            "settled stale download did not release its update and byte resources",
-        },
-      );
-      const afterSettlement = await browser.execute(
-        (resources) => ({
-          activeTransfers: window.auditActiveTransfers,
-          updateClosed: window.auditClosedResources.includes(
-            resources.updateRid,
-          ),
-          bytesClosed: window.auditClosedResources.includes(resources.bytesRid),
-        }),
-        {
-          updateRid: staleIdentity.rid,
-          bytesRid: staleBytesRid,
-        },
-      );
-      assert.deepEqual(afterSettlement, {
-        activeTransfers: 0,
-        updateClosed: true,
-        bytesClosed: true,
+      // Channel change and cancel while B is in flight; B settles after the cancel.
+      fixture.server.publish({
+        target: stableTarget,
+        route: platformOs,
+        version: "9.0.0",
+        payload: Buffer.from("generation C payload"),
+        fileName: "ROSI-C.bin",
       });
+      await setUpdateChannel("stable");
+      await engineInvoke("cancel_update_download");
+      await dismissModal("Download Cancelled", "OK");
+      assert.equal(
+        await browser.execute(() => window.auditDownloadBResult),
+        undefined,
+        "cancelled download resolved before it settled",
+      );
+      releaseB();
+      await browser.waitUntil(
+        () => browser.execute(() => window.auditDownloadBResult !== undefined),
+        { timeout: 20_000, interval: 100, timeoutMsg: "B did not settle" },
+      );
+      assert.deepEqual(
+        await browser.execute(() => window.auditDownloadBResult),
+        { success: false, cancelled: true, error: null },
+      );
+      assert.ok(
+        !(await statusesNow()).some(
+          (event) =>
+            event.status === "downloaded" &&
+            event.candidateId === candidateB.candidateId,
+        ),
+        "the cancelled candidate was reported as downloaded",
+      );
 
-      const currentIdentity = await checkForAvailableUpdate();
-      assert.equal(currentIdentity.target, null);
-
-      await api("installUpdate");
+      // Generation C (stable target) is offered; install before download is refused.
+      await waitForAvailable("9.0.0");
+      await dismissModal("Update Available", "Later");
+      const countBeforeC = (await statusesNow()).filter(
+        (event) => event.status === "available" && event.version === "9.0.0",
+      ).length;
+      await clickManualCheck();
+      await waitForAvailable("9.0.0", countBeforeC);
+      const candidateC = await latestAvailable("9.0.0");
+      assert.equal(candidateC.isBeta, false);
+      await dismissModal("Update Available", "Later");
+      const installProbeBefore = await engineProbe();
+      await engineInvoke("install_update", {
+        candidateId: candidateC.candidateId,
+      });
       await dismissModal("Update Error", "OK");
       assert.equal(
-        await browser.execute(() => window.auditInstallCalls.length),
+        (await engineProbe()).installs - installProbeBefore.installs,
         0,
-        "replacement update was installable without its own downloaded bytes",
+        "candidate was installed without its downloaded bytes",
       );
 
-      await api("downloadUpdate");
-      const currentBytesRid = 8000 + (currentIdentity.rid - 7000);
-      await api("clearQueue");
+      // Download C, then fault the queue backup so the install's restart is refused.
+      const downloadC = await engineInvoke("download_update", {
+        candidateId: candidateC.candidateId,
+      });
+      assert.equal(downloadC.data?.success, true, JSON.stringify(downloadC));
+      await dismissModal("Update Ready", "Later");
+
+      await engineInvoke("clear_queue");
       fs.rmSync(backupPath, { recursive: true, force: true });
       fs.mkdirSync(backupPath);
-      const queued = await api("addToQueue", [
-        "https://93.184.216.34/updater-install-backup-fault",
-      ]);
-      assert.equal(queued.ok, true, JSON.stringify(queued));
-      const queue = await api("getQueue");
-      const latestQueueId = queue.at(-1)?.id;
+      const queued = await engineInvoke("add_to_queue", {
+        urls: ["https://93.184.216.34/updater-install-backup-fault"],
+        options: null,
+      });
+      assert.equal(queued.data?.added, 1, JSON.stringify(queued));
+      const queue = await engineInvoke("get_queue");
+      const latestQueueId = queue.data.at(-1)?.id;
       assert.ok(latestQueueId);
       await browser.waitUntil(
         () => {
           try {
-            const onDisk = readListFile(queueFile);
-            return onDisk.some((item) => item.id === latestQueueId);
+            return readListFile(queueFile).some(
+              (item) => item.id === latestQueueId,
+            );
           } catch {
             return false;
           }
@@ -1247,73 +1139,44 @@ describe("state and updater repair E2E", () => {
         },
       );
 
-      await browser.execute(() => {
-        const restart = [
-          ...document.querySelectorAll("#modal-buttons button"),
-        ].find((button) => button.textContent.trim() === "Restart Now");
-        if (!restart)
-          throw new Error("Update Ready modal has no Restart Now action");
-        restart.click();
+      const probeBeforeRefusal = await engineProbe();
+      await engineInvoke("install_update", {
+        candidateId: candidateC.candidateId,
       });
       await dismissModal("Update Error", "OK");
-      const firstInstall = await browser.execute(
-        () => window.auditInstallCalls[0],
-      );
-      assert.equal(firstInstall.updateRid, currentIdentity.rid);
-      assert.equal(firstInstall.bytesRid, currentBytesRid);
-      assert.equal(await browser.execute(() => window.auditRestartCalls), 0);
-      const stillRunning = await api("getQueue");
-      assert.ok(stillRunning.some((item) => item.id === latestQueueId));
+      const afterRefusal = await engineProbe();
+      assert.equal(afterRefusal.installs - probeBeforeRefusal.installs, 1);
+      assert.equal(afterRefusal.restarts - probeBeforeRefusal.restarts, 0);
       assert.ok(
         readListFile(queueFile).some((item) => item.id === latestQueueId),
+        "refused restart dropped the queued item",
       );
 
+      // The retry restarts with the verified bytes; it does not install them again.
       fs.rmSync(backupPath, { recursive: true, force: true });
       if (priorBackup) fs.writeFileSync(backupPath, priorBackup);
-      await api("installUpdate");
-      const installCalls = await browser.execute(() =>
-        window.auditInstallCalls.slice(),
-      );
-      assert.equal(installCalls.length, 2);
-      assert.deepEqual(installCalls[1], installCalls[0]);
-      assert.equal(await browser.execute(() => window.auditRestartCalls), 1);
+      const retry = await engineInvoke("install_update", {
+        candidateId: candidateC.candidateId,
+      });
+      assert.ok(retry.ok, JSON.stringify(retry));
+      await browser.pause(800);
+      const afterRetry = await engineProbe();
+      assert.equal(afterRetry.installs - probeBeforeRefusal.installs, 0);
+      assert.equal(afterRetry.restarts - probeBeforeRefusal.restarts, 1);
       record("updater-generation-retry", {
-        feedTargets: await browser.execute(() =>
-          window.auditFeedRecords.map((item) => item.target),
-        ),
-        activeDownloadCheckSuppressed: true,
-        cancelledIdentityRetainedUntilSettlement:
-          !beforeSettlement.updateClosed,
-        singleflightRetainedUntilSettlement:
-          blockedDownloadRetry.error === "A download is already in progress.",
-        staleDownloadResult,
-        staleUpdateReleasedAfterSettlement: afterSettlement.updateClosed,
-        staleBytesReleased: staleBytesRid,
-        stableTargetCheckedAfterSettlement: currentIdentity.target === null,
-        refusedInstallBytesRid: firstInstall.bytesRid,
-        retryInstallBytesRid: installCalls[1].bytesRid,
-        restartCalls: 1,
-        controlledUpdaterBoundary: "VITE_ROSI_E2E adapter",
-        sdkByteResourcesExercised: false,
-        nativeInstallPreflightExercised: true,
-        signedInstallationExercised: false,
+        feedTargets: fixture.server.requests
+          .map((request) => request.path)
+          .filter((item) => item.startsWith("/latest-")),
+        staleDownloadResult: { cancelled: true },
+        singleflightRefused: second.data.error,
+        refusedInstallBytesKept: true,
+        retryRestarts: afterRetry.restarts - probeBeforeRefusal.restarts,
+        installsAfterRefusal: afterRefusal.installs - probeBefore.installs,
       });
     } finally {
       fs.rmSync(backupPath, { recursive: true, force: true });
       if (priorBackup) fs.writeFileSync(backupPath, priorBackup);
       await browser.execute(() => {
-        window.auditUpdaterStatusCleanup?.();
-        if (window.auditOriginalCheckForUpdates) {
-          window.api.checkForUpdates = window.auditOriginalCheckForUpdates;
-        }
-        if (window.__ROSI_E2E__) {
-          if (window.auditOriginalE2eUpdaterAdapter) {
-            window.__ROSI_E2E__.updaterAdapter =
-              window.auditOriginalE2eUpdaterAdapter;
-          } else {
-            delete window.__ROSI_E2E__.updaterAdapter;
-          }
-        }
         if (
           document.getElementById("app-modal")?.classList.contains("active")
         ) {
@@ -1325,12 +1188,11 @@ describe("state and updater repair E2E", () => {
           close?.click();
         }
       });
-      await api("clearQueue");
+      await fixture.close();
+      await engineInvoke("clear_queue");
       await browser.waitUntil(
         () => {
           try {
-            // The backup keeps the previous generation, so it may still hold the
-            // queue that was just cleared; it only has to be a readable list.
             return (
               readListFile(queueFile).length === 0 &&
               Array.isArray(readListFile(backupPath))
@@ -1349,61 +1211,29 @@ describe("state and updater repair E2E", () => {
   });
 
   it("falls back from the 5.1 compact macOS target to the legacy feed", async () => {
-    // A fresh renderer drops updater module state left by the previous scenario.
+    // A fresh renderer drops updater state left by the previous scenario.
     await reloadRenderer();
-    await browser.execute(() => {
-      window.auditOriginalE2eUpdaterAdapter =
-        window.__ROSI_E2E__?.updaterAdapter;
-      window.auditCompactFeedRecords = [];
-      window.auditCompactFailuresLeft = 1;
-      window.auditCompactInvokes = [];
-      window.auditCompactStatuses = [];
-      window.auditCompactWarnings = [];
-      const originalWarn = console.warn;
-      console.warn = (...args) => {
-        window.auditCompactWarnings.push(args.map(String).join(" "));
-        originalWarn.apply(console, args);
-      };
-      window.auditCompactStatusCleanup = window.api.onUpdaterStatus((event) =>
-        window.auditCompactStatuses.push(event),
-      );
-      window.__ROSI_E2E__.updaterAdapter = {
-        invoke: async (command, args = {}) => {
-          window.auditCompactInvokes.push(command);
-          if (command === "get_settings") return { updateChannel: "beta" };
-          if (command === "is_packaged") return true;
-          if (command === "is_flatpak") return false;
-          if (command === "get_compact_updater_target") {
-            return "darwin-beta-aarch64-app-zst";
-          }
-          if (command === "get_beta_updater_target") {
-            return "darwin-beta-aarch64-app";
-          }
-          return window.__TAURI__.core.invoke(command, args);
-        },
-        check: async (target) => {
-          const threw =
-            target === "darwin-beta-aarch64-app-zst" &&
-            window.auditCompactFailuresLeft > 0;
-          if (threw) window.auditCompactFailuresLeft -= 1;
-          window.auditCompactFeedRecords.push({
-            target: target ?? null,
-            threw,
-          });
-          if (threw) throw new Error("controlled compact feed failure");
-          return {
-            version: "5.1.0-beta.9",
-            body: "Controlled compact fallback",
-            async download() {},
-            async install() {},
-            async close() {},
-          };
-        },
-      };
+    // The channel change rechecks in the background. Set it before the feed is
+    // configured and let that recheck finish, so the manual check is the only
+    // feed attempt that is asserted.
+    await setUpdateChannel("beta");
+    await browser.pause(1_500);
+    const fixture = await startUpdaterFixture({
+      compactTarget: "darwin-beta-aarch64-app-zst",
+      betaTarget: "darwin-beta-aarch64-app",
+      disableCompact: false,
     });
-
     try {
-      await api("checkForUpdates");
+      // The compact feed is missing; only the legacy feed publishes an update.
+      fixture.server.respond("darwin-beta-aarch64-app-zst", 404);
+      fixture.server.publish({
+        target: "darwin-beta-aarch64-app",
+        version: "9.0.0-beta.9",
+        payload: Buffer.from("controlled legacy payload"),
+        fileName: "legacy-app.tar.gz",
+      });
+      await captureUpdaterStatuses("auditCompactStatuses");
+      await clickManualCheck();
       await browser.waitUntil(
         () =>
           browser.execute(() =>
@@ -1412,55 +1242,66 @@ describe("state and updater repair E2E", () => {
             ),
           ),
         {
-          timeout: 10_000,
+          timeout: 15_000,
           timeoutMsg: "compact fallback check did not settle",
         },
       );
-      const outcome = await browser.execute(() => ({
-        feeds: window.auditCompactFeedRecords.slice(),
-        statuses: window.auditCompactStatuses.slice(),
-        invokes: window.auditCompactInvokes.slice(),
-        warnings: window.auditCompactWarnings.slice(),
-      }));
-      assert.deepEqual(
-        outcome.feeds.map((item) => [item.target, item.threw]),
-        [
-          ["darwin-beta-aarch64-app-zst", true],
-          ["darwin-beta-aarch64-app", false],
-        ],
-        `compact fallback feed requests were ${JSON.stringify(outcome)}`,
+      const statuses = await browser.execute(() =>
+        window.auditCompactStatuses.slice(),
       );
-      assert.ok(
-        outcome.invokes.includes("get_compact_updater_target"),
-        "compact target was not requested before the feed",
-      );
-      const available = outcome.statuses.find(
-        (event) => event.status === "available",
-      );
+      // A channel change rechecks in the background, so the manual check can
+      // overlap it, and each check makes its own feed attempts. Every attempt
+      // must be the compact feed (404) followed by the legacy feed.
+      const feeds = fixture.server.requests
+        .map((request) => request.path)
+        .filter((item) => item.startsWith("/latest-"));
+      const attempts = [];
+      for (let index = 0; index < feeds.length; index += 2) {
+        attempts.push(feeds.slice(index, index + 2));
+      }
+      assert.ok(attempts.length >= 1, "no compact fallback attempt was made");
+      for (const attempt of attempts) {
+        assert.deepEqual(
+          attempt,
+          [
+            "/latest-darwin-beta-aarch64-app-zst.json",
+            "/latest-darwin-beta-aarch64-app.json",
+          ],
+          `compact fallback feed requests were ${JSON.stringify(feeds)}`,
+        );
+      }
+      assert.equal(feeds.length, attempts.length * 2, "unpaired feed request");
+      const available = statuses.find((event) => event.status === "available");
       assert.ok(
         available,
-        `compact fallback did not emit available: ${JSON.stringify(outcome)}`,
+        `compact fallback did not emit available: ${JSON.stringify(statuses)}`,
       );
-      assert.equal(available.version, "5.1.0-beta.9");
+      assert.equal(available.version, "9.0.0-beta.9");
       assert.equal(available.isBeta, true);
+      const log = fs.readFileSync(
+        path.join(DATA_DIR, "logs", "rosi.log"),
+        "utf8",
+      );
       assert.ok(
-        outcome.warnings.some((line) =>
-          line.includes(
-            "[rosi] updater: darwin-beta-aarch64-app-zst check failed, falling back to darwin-beta-aarch64-app target: controlled compact feed failure",
-          ),
+        log.includes(
+          "updater: darwin-beta-aarch64-app-zst check failed, falling back to darwin-beta-aarch64-app target",
         ),
-        `compact fallback was not logged: ${JSON.stringify(outcome.warnings)}`,
+        "compact fallback was not logged",
       );
       await dismissModal("Update Available", "Later");
       record("updater-compact-target-fallback", {
-        feedTargets: outcome.feeds.map((item) => item.target),
-        compactAttemptThrew: outcome.feeds[0].threw,
-        legacyAttemptReturned: !outcome.feeds[1].threw,
+        feedTargets: feeds.map((item) =>
+          item.replace(/^\/latest-|\.json$/g, ""),
+        ),
+        compactAttemptThrew: true,
+        legacyAttemptReturned: true,
         availableVersion: available.version,
-        controlledBoundary: "VITE_ROSI_E2E adapter",
-        nativeCompactFeedExercised: false,
+        controlledBoundary:
+          "local signed update server (e2e_configure_updater)",
+        nativeCompactFeedExercised: true,
       });
     } finally {
+      await fixture.close();
       await reloadRenderer();
     }
   });

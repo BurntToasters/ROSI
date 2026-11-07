@@ -83,7 +83,13 @@ w.api = new Proxy(
           : () => ok({}),
   },
 );
-const load = require("./load-renderer.cjs").createRendererLoader(w, root, ts);
+const { createTauriShim } = require("./tauri-shim.cjs");
+const load = require("./load-renderer.cjs").createRendererLoader(
+  w,
+  root,
+  ts,
+  createTauriShim().externals,
+);
 for (const m of ["ui", "downloads", "queue", "settings", "updates", "dock"])
   load("modules/" + m + ".ts");
 load("rosiEngine.ts");

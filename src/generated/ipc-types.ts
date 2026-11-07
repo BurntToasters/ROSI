@@ -95,3 +95,19 @@ export type InstallResult = { success?: boolean | null, cancelled?: boolean | nu
 export type NotificationInput = { title?: string, body?: string, filePath?: string, };
 
 export type QueueReorderInput = { id?: string, direction?: "up" | "down", };
+
+export type UpdaterStatusEvent = { "status": "checking" } | { "status": "available", candidateId: number, version: string, releaseNotes: string | null, isBeta: boolean, 
+/**
+ * Flatpak builds read the feed; the update is taken from the release page.
+ */
+manualInstall: boolean, } | { "status": "not-available", version: string, isBeta: boolean, } | { "status": "error", message: string, kind: UpdaterErrorKind, } | { "status": "cancelled" } | { "status": "downloaded", candidateId: number, version: string, };
+
+export type UpdaterErrorKind = "feed" | "download" | "install";
+
+export type UpdaterProgressEvent = { percent: number, bytesPerSecond: number, transferred: number, total: number, };
+
+export type CheckRefusalReason = "dev-mode" | "message";
+
+export type CheckRefusal = { reason: CheckRefusalReason, message: string, };
+
+export type DownloadOutcome = { success: boolean, cancelled: boolean, error: string | null, };

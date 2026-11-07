@@ -36,7 +36,6 @@ import {
   logError,
   queueModule,
   renderStatusText,
-  updatesModule,
 } from './engine/core';
 import { checkDenoInstallation } from './engine/deno';
 import { fetchFormats } from './engine/formats';
@@ -152,11 +151,9 @@ async function initializeRenderer() {
           `https://github.com/BurntToasters/ROSI/releases/tag/v${version}`
         );
       });
-      const isBeta =
-        updatesModule && typeof updatesModule.isPrereleaseVersion === 'function'
-          ? updatesModule.isPrereleaseVersion(version)
-          : /-(beta|alpha|rc)/i.test(version);
-      if (isBeta) {
+      // Same rule as is_beta_version in src-tauri/src/updater.rs; the Rust side
+      // owns the update policy, this only styles the version label.
+      if (/-(beta|alpha|rc)/i.test(version)) {
         versionLink.classList.add('beta-version');
         if (betaBadge) betaBadge.classList.remove('hidden');
       }

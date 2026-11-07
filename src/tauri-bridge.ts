@@ -4,15 +4,6 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import {
-  cancelUpdateDownload,
-  checkForUpdates,
-  downloadUpdate,
-  installUpdate,
-  notifyUpdaterChannelChanged,
-  onUpdaterProgress,
-  onUpdaterStatus,
-} from './updater';
 import { call, fire } from './commands';
 
 const CHANNEL: 'github' | 'msstore' =
@@ -79,14 +70,6 @@ const api: RosiRendererApi = {
   installDeno: () => call('install_deno'),
   detectGpu: () => call('detect_gpu'),
   isPackaged: () => call('is_packaged'),
-  checkForUpdates: () => checkForUpdates(),
-  notifyUpdaterChannelChanged: (channel, save, previousChannel) =>
-    notifyUpdaterChannelChanged(channel, save, previousChannel),
-  downloadUpdate: (candidateId) => downloadUpdate(candidateId),
-  cancelUpdateDownload: () => cancelUpdateDownload(),
-  installUpdate: (candidateId) => installUpdate(candidateId),
-  onUpdaterStatus: (callback) => onUpdaterStatus(callback),
-  onUpdaterProgress: (callback) => onUpdaterProgress(callback),
   onProgress: (callback) => subscribe('progress', callback),
   onJobProgress: (callback) => subscribe('job-progress', callback),
   onMenuAction: (callback) => subscribe('menu-action', callback),

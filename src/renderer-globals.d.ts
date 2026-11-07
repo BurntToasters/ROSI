@@ -6,22 +6,6 @@
 type RosiIpcError = import('./generated/ipc-types').IpcError;
 type RosiIpcResult<T = void> = { ok: true; data: T } | { ok: false; error: RosiIpcError };
 
-interface RosiUpdaterStatusEvent {
-  status: 'checking' | 'available' | 'not-available' | 'error' | 'cancelled' | 'downloaded';
-  kind?: 'feed' | 'download' | 'install';
-  candidateId?: number;
-  version?: string;
-  releaseNotes?: unknown;
-  isBeta?: boolean;
-  manualInstall?: boolean;
-  message?: string;
-}
-interface RosiUpdaterProgressEvent {
-  percent: number;
-  bytesPerSecond: number;
-  transferred: number;
-  total: number;
-}
 // IPC shapes come from the Rust types (src/generated/ipc-types.ts).
 type RosiJobProgressEvent = import('./generated/ipc-types').JobProgressEvent;
 type RosiDownloadStats = import('./generated/ipc-types').DownloadStats;
@@ -60,21 +44,6 @@ interface RosiRendererApi {
   installDeno: () => Promise<import('./generated/ipc-types').InstallResult>;
   detectGpu: () => Promise<{ nvidia: boolean; amd: boolean; intel: boolean }>;
   isPackaged: () => Promise<boolean>;
-  checkForUpdates: () => Promise<{ error: string; message?: string } | null>;
-  notifyUpdaterChannelChanged?: (
-    channel: 'auto' | 'stable' | 'beta',
-    save?: Promise<boolean>,
-    previousChannel?: 'auto' | 'stable' | 'beta'
-  ) => void;
-  downloadUpdate: (candidateId?: number) => Promise<{
-    success?: boolean;
-    cancelled?: boolean;
-    error?: string;
-  }>;
-  cancelUpdateDownload: () => void;
-  installUpdate: (candidateId?: number) => Promise<void>;
-  onUpdaterStatus: (callback: (data: RosiUpdaterStatusEvent) => void) => () => void;
-  onUpdaterProgress: (callback: (data: RosiUpdaterProgressEvent) => void) => () => void;
   onProgress: (callback: (message: string) => void) => () => void;
   onJobProgress: (callback: (data: RosiJobProgressEvent) => void) => () => void;
   onMenuAction: (
@@ -220,7 +189,6 @@ interface RosiUpdatesModule {
     data: { bytesPerSecond: number; transferred: number; total: number; percent: number },
     formatBytes: (bytes: number) => string
   ) => string;
-  isPrereleaseVersion: (version: string) => boolean;
 }
 
 type RosiDockTab = 'queue' | 'activity' | 'console';

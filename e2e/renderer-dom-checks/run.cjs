@@ -139,30 +139,20 @@ verify(
 );
 verify(
   "previous-channel-reaches-updater",
-  updater.bridgeForwardsPreviousChannel &&
-    updater.checksAfterChange.includes("darwin-beta-aarch64-app"),
+  updater.channelForwarded === true,
   {
-    bridgeForwardsPreviousChannel: updater.bridgeForwardsPreviousChannel,
-    checks: updater.checksAfterChange,
+    channelForwarded: updater.channelForwarded,
   },
 );
 verify(
   "updater-prompt-retires-and-binds-candidate",
   updater.activePromptAfterSecondCheck.includes("7.0.0-beta.1") &&
     updater.readyPromptTitle === "Update Ready!" &&
-    updater.firstCandidateId !== undefined &&
-    updater.currentCandidateId !== undefined &&
     updater.firstCandidateId !== updater.currentCandidateId &&
     updater.oldPromptStillConnected === false &&
-    updater.staleCandidateResult?.cancelled === true &&
-    updater.staleInstallResult === undefined &&
-    updater.installedAfterStaleAction.length === 0 &&
-    updater.downloadCalls.at(-1) === updater.currentCandidateId &&
-    updater.installCalls.at(-1) === updater.currentCandidateId &&
-    updater.downloadedAfterStaleAction.length === 0 &&
-    updater.downloaded.filter((version) => version === "7.0.0-beta.1")
-      .length === 1 &&
-    !updater.downloaded.includes("6.0.0"),
+    updater.downloadCallsAfterStale.length === 0 &&
+    updater.installCalls.length === 1 &&
+    updater.installCalls[0] === updater.currentCandidateId,
   updater,
 );
 verify(

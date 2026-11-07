@@ -1,0 +1,88 @@
+# Updater engine: failure modes (written before the Rust engine)
+
+Goal: `src-tauri/src/updater.rs` owns channel and target selection, the
+generation fences, single-flight download and install, the Flatpak feed-only
+rule, and the compact-feed fallback. The renderer only draws. Every guard that
+`src/updater.ts` (572 lines, deleted by this change) encodes today is listed
+below with its source line, the Rust function that replaces it, and the E2E
+scenario that proves it against a real signed manifest server.
+
+Line numbers refer to `src/updater.ts` at the start of this change.
+
+## Status
+
+Written with the Rust engine. Rows marked "(passes)" have a scenario that ran against the
+real engine on macOS: eight in `e2e/v5-fixes/updater-engine/updater-engine.spec.js`
+(dev-mode refusal, retired package, candidate mismatch, restart refusal with retry, download
+cancel, checking order, feed error, download error), `updater-compact-target-fallback` in
+`e2e/state-updater.spec.js`, `updater-channel-and-singleflight` in
+`e2e/renderer-updates.spec.js`, and the four flatpak scenarios in `e2e/v5-fixes/flatpak-updates`.
+`updater-generation-retry` (`e2e/state-updater.spec.js`) is ported but hangs in the run, so its
+guards (G04, G06, G09, G13, G16, G26, G15 via the generation path) are NOT covered yet. Rows marked "not yet" name a planned scenario
+that does not exist. Those guards are not covered by E2E yet, and G33 is not covered at all.
+The generation scenario (`updater-generation-retry`) and the single-flight scenario
+(`updater-channel-and-singleflight`) still drive the removed adapter, so their guards stay
+uncovered until they are ported.
+
+## Guards
+
+| ID | Guard | Source (src/updater.ts) | Rust home | E2E scenario |
+| --- | --- | --- | --- | --- |
+| G01 | Dev-mode refusal: an unpackaged build returns `dev-mode` before any feed request | L282-289 | `check_flow`, `platform::is_packaged` | `updater-engine-dev-mode-refusal` (passes) |
+| G02 | Retired Linux deb/rpm target refuses the check with a fixed message, before any feed request | L195-199, L293-295 | `retired_package_message` | `updater-engine-retired-linux-package` (passes) |
+| G03 | Flatpak builds read the feed but never download or install; the candidate carries `manualInstall: true` | L290-292, L385, L415, L522-525 | `check_flow`, `download_update`, `install_update` | `flatpak-newer-release-prompt` (passes) |
+| G04 | A check result from before a channel change is discarded; the check restarts for the new channel | L169, L274-275, L314-317, L327-333 | `CheckGen` fence in `Command::TargetKnown` and `Command::Decide` | not yet: `updater-engine-stale-check-after-channel-change` (planned) |
+| G05 | Channel save must succeed before revalidation; a failed save refuses the target and reports a feed error, not a silent result | L129-137, L166 | `set_update_channel` saves first; `resolve_target` refuses while `channel_unsaved` | not yet: `updater-engine-channel-save-failure` (planned) |
+| G06 | Channel change during a download cancels it, emits one `cancelled`, and rechecks after the transfer settles | L178-188 | `Command::SetChannel` | not yet: `updater-engine-channel-change-during-download` (planned) |
+| G07 | Channel change during install waits for the install; it releases the identity only before the install started | L170-176 | `Command::SetChannel` (`recheck_after_install`) | not yet: `updater-engine-channel-change-during-install` (planned) |
+| G08 | A download that completes after cancel is discarded; no `downloaded` event, no bytes kept | L440-443, L466-469, L509-519 | `Command::FinishDownload` (`is_current`) | `updater-engine-download-cancel-discards` (passes) |
+| G09 | The effective target is confirmed after the download; a target change releases the candidate and rechecks | L470-478 | `Command::FinishDownload` | not yet: `updater-engine-target-changed-during-download` (planned) |
+| G10 | Single-flight: a second download is refused while one runs; install is refused while a download runs | L421, L536 | `Command::BeginDownload`, `Command::BeginInstall` | `updater-channel-and-singleflight (renderer-updates.spec.js)` (passes) |
+| G11 | A download for a candidate that is not the pending one is cancelled silently | L417-419 | `Command::BeginDownload` | `updater-engine-candidate-mismatch` (passes) |
+| G12 | Install of a candidate that was not downloaded refuses with an error; a stale candidate id is ignored | L527-535 | `Command::BeginInstall` | `updater-engine-candidate-mismatch` (passes) |
+| G13 | Install revalidates the pending identity and target after the await; a stale identity exits without effects | L544, L552 | `Command::ConfirmInstallTarget`, `Command::FinishInstall` | not yet: `updater-engine-candidate-mismatch` (planned) |
+| G14 | Install target changed since download releases the candidate and rechecks | L545-549 | `Command::ConfirmInstallTarget` | `updater-channel-and-singleflight (renderer-updates.spec.js)` (passes) |
+| G15 | Restart refusal keeps the installed identity so the next install only restarts; the user sees an install error | L553, L555-559, L561-563, L542 | `Command::FinishInstall`, `restart_failed` | `updater-engine-restart-refusal-retry` (passes) |
+| G16 | Checks do not start while a download or install runs | L276, L300, L312 | `Command::BeginCheck` | not yet: `updater-engine-single-flight` (planned) |
+| G17 | Compact `-app-zst` target: one check with no in-place retry, then the legacy `-beta-` target without `-zst` | L147-153, L205-216 | `check_feed`, `legacy_target` | `updater-compact-target-fallback` (passes) |
+| G18 | The compact failure is logged; logging never changes the check | L219-228 | `check_feed` (`logging::warn`) | `updater-compact-target-fallback` (passes) |
+| G19 | A feed that answers with no update is retried once when a target was requested (beta manifests are renamed in two steps) | L257-259 | `check_target` | not yet: `updater-engine-feed-empty-retry` (planned) |
+| G20 | A feed error is retried once in place for explicit targets (non-compact) | L246-252 | `check_target` | not yet: `updater-engine-feed-error-retry` (planned) |
+| G21 | A check whose target changed during the feed request is discarded and restarted | L322-333 | `Command::Decide` | not yet: `updater-engine-stale-check-after-channel-change` (planned) |
+| G22 | A feed error re-resolves the target; a changed target restarts the check; a failed resolve ends silently | L388-402 | `Command::CheckFailed` | not yet: `updater-engine-feed-error-recheck` (planned) |
+| G23 | A feed error is emitted only while the check is current | L403-405 | `Command::CheckFailed` | `updater-engine-feed-error` (passes) |
+| G24 | Installed identity still pending: a check reports `downloaded` without touching the feed | L301-308 | `Command::TargetKnown` | not yet: `updater-engine-installed-identity-reported` (planned) |
+| G25 | Same version, same target, already downloaded: the feed result is closed and `downloaded` is reported with the existing candidate id | L357-370 | `Command::Decide` | not yet: `updater-engine-same-candidate-redownload-skipped` (planned) |
+| G26 | No update for the same target while downloaded: `downloaded`; otherwise the pending identity is released and `not-available` is emitted | L335-355 | `Command::Decide` | not yet: `updater-engine-not-available-releases-candidate` (planned) |
+| G27 | `not-available` and `available` carry `isBeta` computed from the version string, not from the renderer | L23, L353, L384 | `is_beta_version` | not yet: `updater-engine-event-variants` (planned) |
+| G28 | Download progress is emitted only for the current download, and at most every 100 ms; percent is clamped to 100 | L38, L447, L454, L458 | `Command::DownloadProgress` | not yet: `updater-engine-event-variants` (planned) |
+| G29 | Check timeout is 30 s; download timeout is 30 min | L35-37, L244, L464 | `check_target`, `download_worker` | not yet: `updater-engine-timeouts`` (planned) |
+| G30 | A download that fails after completing releases the candidate; one that fails before completing keeps it | L486-491 | `Command::FinishDownload` | partial: `updater-engine-download-error` (error emitted; candidate retention not asserted) |
+| G31 | Finally block: a download that held the candidate releases it on cancel or recheck, and clears the single-flight lock | L492-506 | `Command::FinishDownload` | `updater-engine-download-cancel-discards` (passes) |
+| G32 | Install failure keeps the candidate only while it is still pending; the error is an `install` error | L560-563 | `Command::FinishInstall` | `updater-engine-restart-refusal-retry` (passes) |
+| G33 | The plugin's `on_before_exit` flush can refuse before an install; the candidate and its bytes are kept for retry | vendored `updater.rs` (`run_preinstall_flush`), `main.rs` | `install_flow` (plugin `install`) | not yet: `Not covered by E2E. The install probe skips the plugin install, so the flush hook does not run. Covered only by the vendored plugin's own tests.` (planned) |
+
+## Ordering rules that carry over
+
+1. A channel change, a cancel, a check, a download and an install all bump or
+   read the same generations as before (`checks`, `downloads`, `sequence`).
+   Every async step re-checks its generation before it commits.
+2. The state thread never performs I/O. It decides and emits. Workers perform
+   I/O (feed requests, settings reads, downloads, installs) and report back.
+3. Events are emitted from the state thread only, so their order follows the
+   order of decisions.
+
+## Notes on what cannot be exercised as-is
+
+- A real macOS or Linux install replaces the app bundle. E2E builds therefore
+  run with an install probe (`e2e_configure_updater` `installProbe: true`):
+  signature verification is real (`Update::verify` runs on the downloaded
+  bytes), and the replacement step is recorded instead of run.
+- Restart is never performed in an E2E build. The probe answers restart with a
+  configurable number of refusals, then success.
+- The `on_before_exit` flush (G33) is not exercised by the E2E install probe,
+  which verifies the signature and skips the plugin install. It is covered by
+  the vendored plugin's tests only.
+- Signatures come from a minisign key generated at test time into the
+  scenario's temporary directory (`e2e/helpers/updater-signing.js`). No private
+  key is committed.

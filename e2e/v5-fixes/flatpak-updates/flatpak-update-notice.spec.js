@@ -4,13 +4,19 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { browser } from "@wdio/globals";
 import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import {
+  captureUpdaterStatuses,
+  clickManualCheck,
+  setUpdateChannel,
+  startUpdaterFixture,
+} from "../../helpers/updater-engine-fixture.js";
 
 // Flatpak update notice. A Flatpak build checks the feed like other builds.
 // A newer version shows a prompt that opens the GitHub release page, and
-// download and install never run. The E2E updater adapter stands in for the
-// Tauri plugin: it reports is_flatpak, picks the feed result, and returns a
-// fake update whose download and install calls are counted.
+// download and install never run. The Rust updater runs for real; its feed is
+// a local signed server, and the engine probe counts installs and restarts.
 const RELEASE_URL_BASE = "https://github.com/BurntToasters/ROSI/releases/tag/v";
+const BETA_TARGET = "linux-beta-x86_64";
 const EXPECTED_CHECKS = 4;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const runDirectory = path.join(
@@ -22,6 +28,7 @@ const runDirectory = path.join(
   new Date().toISOString().replace(/[:.]/g, "-"),
 );
 const checks = [];
+let fixture = null;
 
 function record(name, details) {
   checks.push({ name, passed: true, ...details });
@@ -42,6 +49,19 @@ function newerVersionThan(current) {
   return `${major}.${minor}.${patch + 1}`;
 }
 
+// Without an explicit target the engine requests latest-{os}.json, then looks
+// up {os}-{arch} inside that manifest.
+function osName() {
+  return { darwin: "darwin", linux: "linux", win32: "windows" }[
+    process.platform
+  ];
+}
+
+function stableTarget() {
+  const arch = { arm64: "aarch64", x64: "x86_64" }[process.arch];
+  return `${osName()}-${arch}`;
+}
+
 async function freshRenderer() {
   await browser.execute(() => {
     window.__ROSI_E2E__.ready = false;
@@ -50,62 +70,58 @@ async function freshRenderer() {
   await waitForAppReady();
 }
 
-async function installScenario(config) {
-  await browser.execute((scenario) => {
-    const probe = {
-      invokes: [],
-      checkTargets: [],
-      downloads: 0,
-      installs: 0,
-      restarts: 0,
-      closes: 0,
-      opened: [],
-    };
-    window.flatpakUpdateProbe = probe;
+async function installScenario({ flatpak, channel, version }) {
+  if (fixture) await fixture.close();
+  // The channel is set before the feed is configured, so no stale check runs.
+  await setUpdateChannel(channel);
+  fixture = await startUpdaterFixture({
+    isPackaged: true,
+    isFlatpak: flatpak,
+    betaTarget: BETA_TARGET,
+  });
+  const route = channel === "beta" ? BETA_TARGET : osName();
+  if (version) {
+    fixture.server.publish({
+      target: channel === "beta" ? BETA_TARGET : stableTarget(),
+      route,
+      version,
+      payload: Buffer.from(`flatpak scenario ${version}`),
+      fileName: `ROSI-${version}.bin`,
+    });
+  } else {
+    // 204 No Content: the feed answers, and there is no newer version.
+    fixture.server.respond(route, 204);
+  }
+  await browser.execute(() => {
+    window.flatpakUpdateProbe = { opened: [] };
     window.api.openExternal = async (url) => {
-      probe.opened.push(url);
+      window.flatpakUpdateProbe.opened.push(url);
       return { ok: true, data: { opened: true } };
     };
-    window.__ROSI_E2E__.updaterAdapter = {
-      invoke: async (command, args = {}) => {
-        probe.invokes.push(command);
-        if (command === "is_packaged") return true;
-        if (command === "is_flatpak") return scenario.flatpak;
-        if (command === "get_settings")
-          return { updateChannel: scenario.channel };
-        if (command === "get_compact_updater_target") return null;
-        if (command === "get_beta_updater_target") return "linux-beta-x86_64";
-        if (command === "restart_app") {
-          probe.restarts += 1;
-          return undefined;
-        }
-        return window.__TAURI__.core.invoke(command, args);
-      },
-      check: async (target) => {
-        probe.checkTargets.push(target ?? null);
-        if (!scenario.version) return null;
-        return {
-          version: scenario.version,
-          body: `Scenario ${scenario.version}`,
-          async download() {
-            probe.downloads += 1;
-          },
-          async install() {
-            probe.installs += 1;
-          },
-          async close() {
-            probe.closes += 1;
-          },
-        };
-      },
-    };
-  }, config);
+  });
+  await captureUpdaterStatuses("flatpakStatuses");
 }
 
 async function readProbe() {
-  return browser.execute(() =>
-    JSON.parse(JSON.stringify(window.flatpakUpdateProbe)),
+  const opened = await browser.execute(() =>
+    window.flatpakUpdateProbe.opened.slice(),
   );
+  const engine = await browser.executeAsync((done) => {
+    window.__TAURI__.core.invoke("e2e_updater_probe").then(
+      (data) => done(data),
+      (error) => done({ error: String(error) }),
+    );
+  });
+  const requests = fixture.server.requests.map((request) => request.path);
+  return {
+    opened,
+    downloads: requests.filter((item) => item.startsWith("/artifacts/")).length,
+    installs: engine.installs,
+    restarts: engine.restarts,
+    checkTargets: requests
+      .filter((item) => item.startsWith("/latest-"))
+      .map((item) => item.slice("/latest-".length, -".json".length)),
+  };
 }
 
 function readModal() {
@@ -145,15 +161,25 @@ async function clickModalButton(label) {
   }, label);
 }
 
-async function runManualCheck() {
-  await browser.execute(() =>
-    document.getElementById("checkUpdateBtn").click(),
+async function invokeEngine(command, args) {
+  return browser.executeAsync(
+    (name, payload, done) => {
+      window.__TAURI__.core.invoke(name, payload).then(
+        (data) => done({ ok: true, data: data ?? null }),
+        (error) => done({ error: String(error) }),
+      );
+    },
+    command,
+    args,
   );
 }
 
 describe("Flatpak update notice E2E", () => {
   before(waitForAppReady);
-  after(writeReport);
+  after(async () => {
+    if (fixture) await fixture.close();
+    writeReport();
+  });
 
   it("prompts with the release page for a newer Flatpak build and never downloads or installs", async () => {
     const current = await api("getAppVersion");
@@ -161,7 +187,7 @@ describe("Flatpak update notice E2E", () => {
     await freshRenderer();
     await installScenario({ flatpak: true, channel: "stable", version });
 
-    await runManualCheck();
+    await clickManualCheck();
     const prompt = await waitForModal("Update Available!");
     assert.ok(prompt.message.includes(`(v${version})`), prompt.message);
     assert.deepEqual(prompt.buttons, ["Open Release Page", "Later"]);
@@ -181,14 +207,20 @@ describe("Flatpak update notice E2E", () => {
     const opened = await readProbe();
     assert.deepEqual(opened.opened, [`${RELEASE_URL_BASE}${version}`]);
     assert.ok(
-      opened.checkTargets.every((target) => target === null),
+      opened.checkTargets.every((target) => target === osName()),
       JSON.stringify(opened),
     );
 
     // Refusals hold even when the UI cannot reach them.
-    const download = await api("downloadUpdate");
-    assert.ok(download?.error, JSON.stringify(download));
-    await api("installUpdate");
+    const candidateId = await browser.execute(
+      () =>
+        window.flatpakStatuses
+          .filter((event) => event.status === "available")
+          .at(-1)?.candidateId,
+    );
+    const download = await invokeEngine("download_update", { candidateId });
+    assert.ok(download.data?.error, JSON.stringify(download));
+    await invokeEngine("install_update", { candidateId });
     const refused = await waitForModal("Update Error");
     assert.ok(refused.message.includes("Flatpak"), refused.message);
     await clickModalButton("OK");
@@ -197,10 +229,6 @@ describe("Flatpak update notice E2E", () => {
     assert.equal(probe.downloads, 0);
     assert.equal(probe.installs, 0);
     assert.equal(probe.restarts, 0);
-    assert.ok(
-      !probe.invokes.includes("restart_app"),
-      JSON.stringify(probe.invokes),
-    );
     record("flatpak-newer-release-prompt", {
       version,
       openedUrl: probe.opened[0],
@@ -216,22 +244,21 @@ describe("Flatpak update notice E2E", () => {
     await freshRenderer();
     await installScenario({ flatpak: true, channel: "beta", version });
 
-    await runManualCheck();
+    await clickManualCheck();
     const prompt = await waitForModal("Update Available!");
     assert.deepEqual(prompt.buttons, ["Open Release Page", "Later"]);
     const probe = await readProbe();
     assert.ok(probe.checkTargets.length > 0, "the feed was not checked");
     assert.ok(
-      probe.checkTargets.every((target) => target === "linux-beta-x86_64"),
+      probe.checkTargets.every((target) => target === BETA_TARGET),
       JSON.stringify(probe.checkTargets),
     );
-    assert.ok(probe.invokes.includes("get_beta_updater_target"));
     await clickModalButton("Later");
     const finalProbe = await readProbe();
     assert.deepEqual(finalProbe.opened, []);
     assert.equal(finalProbe.downloads, 0);
     record("flatpak-beta-feed-target", {
-      target: "linux-beta-x86_64",
+      target: BETA_TARGET,
       version,
     });
   });
@@ -241,7 +268,7 @@ describe("Flatpak update notice E2E", () => {
     await freshRenderer();
     await installScenario({ flatpak: true, channel: "stable", version: null });
 
-    await runManualCheck();
+    await clickManualCheck();
     const modal = await waitForModal("ROSI is up to date!");
     assert.ok(modal.message.includes(`(v${current})`), modal.message);
     assert.deepEqual(modal.buttons, ["OK"]);
@@ -258,12 +285,12 @@ describe("Flatpak update notice E2E", () => {
     await freshRenderer();
     await installScenario({ flatpak: false, channel: "stable", version });
 
-    await runManualCheck();
+    await clickManualCheck();
     const prompt = await waitForModal("Update Available!");
     assert.deepEqual(prompt.buttons, ["Download & Install", "Later"]);
     await clickModalButton("Download & Install");
     await browser.waitUntil(async () => (await readProbe()).downloads === 1, {
-      timeout: 10_000,
+      timeout: 15_000,
       timeoutMsg: "the update download was not started",
     });
     await waitForModal("Update Ready!");

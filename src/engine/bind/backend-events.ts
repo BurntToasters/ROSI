@@ -10,7 +10,7 @@ import { reconcileSettingsInPlace, settingsStore } from '../settings-store';
 import { syncDockFromSettings, updateUIFromSettings } from '../settings-view';
 import { applyTheme } from '../theme';
 import { appendConsoleOutput, toggleSidebar } from '../ui-helpers';
-import { checkForUpdates } from '../updater-ui';
+import { checkForUpdates, notifyUpdateChannelChanged } from '../updater-ui';
 
 /** Backend events: progress, completion, queue, activity, and menu actions. */
 export function bindBackendEvents() {
@@ -115,15 +115,10 @@ export function bindBackendEvents() {
 
   ipcCleanupFunctions.push(
     window.api.onSettingsImported((importedSettings) => {
-      const previousChannel = settingsStore.settings.updateChannel ?? 'auto';
       settingsStore.settingsRevision += 1;
       reconcileSettingsInPlace(importedSettings);
       if (window.api.getChannel() !== 'msstore') {
-        window.api.notifyUpdaterChannelChanged?.(
-          settingsStore.settings.updateChannel ?? 'auto',
-          undefined,
-          previousChannel
-        );
+        notifyUpdateChannelChanged(settingsStore.settings.updateChannel ?? 'auto');
       }
       try {
         updateUIFromSettings();

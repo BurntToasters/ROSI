@@ -583,6 +583,111 @@ pub struct QueueProgress {
     pub queue_item_id: Option<String>,
 }
 
+/// Pushed on `updater-status`. Every variant is produced by `updater.rs`.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(tag = "status", rename_all = "kebab-case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum UpdaterStatusEvent {
+    Checking,
+    #[serde(rename_all = "camelCase")]
+    Available {
+        candidate_id: u64,
+        version: String,
+        release_notes: Option<String>,
+        is_beta: bool,
+        /// Flatpak builds read the feed; the update is taken from the release page.
+        manual_install: bool,
+    },
+    #[serde(rename_all = "camelCase")]
+    NotAvailable {
+        version: String,
+        is_beta: bool,
+    },
+    Error {
+        message: String,
+        kind: UpdaterErrorKind,
+    },
+    Cancelled,
+    #[serde(rename_all = "camelCase")]
+    Downloaded {
+        candidate_id: u64,
+        version: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum UpdaterErrorKind {
+    Feed,
+    Download,
+    Install,
+}
+
+/// Pushed on `updater-progress` while a download runs.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct UpdaterProgressEvent {
+    pub percent: f64,
+    pub bytes_per_second: f64,
+    pub transferred: u64,
+    pub total: u64,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum CheckRefusalReason {
+    DevMode,
+    Message,
+}
+
+/// Why `check_for_updates` did not start a check. `null` means it started.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct CheckRefusal {
+    pub reason: CheckRefusalReason,
+    pub message: String,
+}
+
+/// Result of `download_update`. Failures are reported here and as events.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct DownloadOutcome {
+    pub success: bool,
+    pub cancelled: bool,
+    pub error: Option<String>,
+}
+
+impl DownloadOutcome {
+    pub fn success() -> Self {
+        Self {
+            success: true,
+            cancelled: false,
+            error: None,
+        }
+    }
+
+    pub fn cancelled() -> Self {
+        Self {
+            success: false,
+            cancelled: true,
+            error: None,
+        }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            success: false,
+            cancelled: false,
+            error: Some(message.into()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod ts_bindings {
     //! `src/generated/ipc-types.ts` is generated from these types. Run
@@ -634,6 +739,12 @@ mod ts_bindings {
             crate::deno::InstallResult::decl(&cfg),
             NotificationInput::decl(&cfg),
             QueueReorderInput::decl(&cfg),
+            UpdaterStatusEvent::decl(&cfg),
+            UpdaterErrorKind::decl(&cfg),
+            UpdaterProgressEvent::decl(&cfg),
+            CheckRefusalReason::decl(&cfg),
+            CheckRefusal::decl(&cfg),
+            DownloadOutcome::decl(&cfg),
         ];
         let mut out = String::from(
             "// Generated from src-tauri/src/types.rs by the ts_bindings test. Do not edit.\n",

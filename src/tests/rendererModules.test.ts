@@ -47,7 +47,6 @@ type RosiModules = {
     getModifierKeyName: () => 'Cmd' | 'Ctrl';
   };
   updates?: {
-    isPrereleaseVersion: (version: string) => boolean;
     formatUpdateProgressInfo: (
       data: {
         bytesPerSecond: number;
@@ -439,15 +438,6 @@ describe('renderer modules', () => {
 
   describe('updates module', () => {
     beforeEach(() => loadModule('updates'));
-
-    it('isPrereleaseVersion detects prerelease suffixes', () => {
-      expect(modules().updates!.isPrereleaseVersion('4.0.0-beta.1')).toBe(true);
-      expect(modules().updates!.isPrereleaseVersion('4.0.0-alpha.2')).toBe(true);
-      expect(modules().updates!.isPrereleaseVersion('4.0.0-rc.1')).toBe(true);
-      expect(modules().updates!.isPrereleaseVersion('4.0.0-RC.2')).toBe(true);
-      expect(modules().updates!.isPrereleaseVersion('4.0.0')).toBe(false);
-      expect(modules().updates!.isPrereleaseVersion('4.0.0-dev')).toBe(false);
-    });
 
     it('formatUpdateProgressInfo formats progress with byte helper', () => {
       const formatBytes = (bytes: number) => `${bytes}B`;
