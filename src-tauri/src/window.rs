@@ -619,22 +619,26 @@ pub fn request_quit(app: &AppHandle) {
             if let Err(error) = window.close() {
                 cancel_close();
                 crate::logging::error(&format!("Could not begin a durable quit: {error}"));
-                app.dialog()
-                    .message(format!("ROSI could not begin quitting safely: {error}"))
-                    .title("Could Not Quit ROSI")
-                    .kind(MessageDialogKind::Error)
-                    .show(|_| {});
+                crate::notices::show(
+                    "Could Not Quit ROSI",
+                    &format!("ROSI could not begin quitting safely: {error}"),
+                    crate::notices::NoticeKind::Error,
+                    false,
+                );
             }
         }
         None => match shutdown() {
             Ok(()) => app.exit(0),
             Err(error) => {
                 APP_QUITTING.store(false, Ordering::SeqCst);
-                app.dialog()
-                    .message(format!("ROSI could not save the download queue, so it will remain open.\n\n{error}"))
-                    .title("Could Not Quit ROSI")
-                    .kind(MessageDialogKind::Error)
-                    .show(|_| {});
+                crate::notices::show(
+                    "Could Not Quit ROSI",
+                    &format!(
+                        "ROSI could not save the download queue, so it will remain open.\n\n{error}"
+                    ),
+                    crate::notices::NoticeKind::Error,
+                    false,
+                );
             }
         },
     }

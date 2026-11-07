@@ -18,6 +18,7 @@ mod legacy;
 mod logging;
 mod media_info;
 mod network_security;
+mod notices;
 mod platform;
 mod process_util;
 mod progress;
@@ -250,6 +251,7 @@ fn main() {
             updater::e2e_configure_updater,
             updater::e2e_updater_probe,
             window::e2e_cancel_close_request,
+            notices::e2e_native_notices,
         ]);
     #[cfg(not(feature = "e2e"))]
     let invoke_handler: Box<tauri::ipc::InvokeHandler<tauri::Wry>> =

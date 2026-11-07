@@ -111,6 +111,7 @@ const COMMANDS_WITH_E2E: &[&str] = &[
     "e2e_configure_updater",
     "e2e_updater_probe",
     "e2e_cancel_close_request",
+    "e2e_native_notices",
 ];
 
 fn sha256_file(path: &Path) -> String {

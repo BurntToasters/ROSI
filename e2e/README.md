@@ -145,6 +145,11 @@ hand or from CI. They need network access and do not start the app.
   closes. Specs run inside the gate's pass, so they can use `ROSI_E2E_MEDIA_URL`.
 - Do not run cargo between the E2E build and the gate, since that replaces the
   E2E binary. The gate checks the binary hash in each report.
+- E2E builds never open informational native alerts (profile recovery, refused
+  settings save, newer data, missing FFmpeg, quit failures), since WebDriver
+  cannot dismiss them. `src-tauri/src/notices.rs` logs and records them instead;
+  assert one with the `e2e_native_notices` command. New alerts with only an OK
+  button go through `notices::show`. See `e2e/native-notices.failure-modes.md`.
 
 ## Suites not wired into the gate
 

@@ -1546,8 +1546,20 @@ describe("state and updater repair E2E", () => {
         );
       }
 
+      // The recovery notice is recorded, not shown: WebDriver cannot dismiss a
+      // native alert (e2e/native-notices.failure-modes.md). get_settings reports
+      // it once per process, so it is found anywhere in the record.
+      const notices = await engineInvoke("e2e_native_notices");
+      assert.ok(notices.ok, JSON.stringify(notices));
+      const recovery = notices.data.find(
+        (notice) => notice.title === "ROSI Profile Recovery",
+      );
+      assert.ok(recovery, JSON.stringify(notices.data));
+      assert.equal(recovery.kind, "warning");
+
       record("settings-corrupt-defaults", {
         settingsFile: "settings.json",
+        recoveryNotice: recovery.message,
         defaultsSource: "get_default_settings",
         controlsCompared: SIDEBAR_CONTROLS.map((control) => control.id),
         seededKeysDiffering: differsFromSeed,

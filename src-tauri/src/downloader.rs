@@ -1846,22 +1846,15 @@ fn emit_convert_progress(id: u64, percent: Option<f64>, status: &str) {
 }
 
 fn show_ffmpeg_missing_dialog(ffmpeg: &Path) {
-    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-    let Some(app) = crate::app_state::app() else {
-        return;
-    };
-    let mut dialog = app
-        .dialog()
-        .message(format!(
+    crate::notices::show(
+        "FFmpeg Error",
+        &format!(
             "Failed to start conversion: FFmpeg not found at {}.\n\nROSI uses bundled FFmpeg by default. If you set a custom FFmpeg path, make sure it points to a valid FFmpeg binary.",
             ffmpeg.display()
-        ))
-        .title("FFmpeg Error")
-        .kind(MessageDialogKind::Error);
-    if let Some(window) = crate::app_state::main_window() {
-        dialog = dialog.parent(&window);
-    }
-    dialog.show(|_| {});
+        ),
+        crate::notices::NoticeKind::Error,
+        true,
+    );
 }
 
 #[derive(Debug)]

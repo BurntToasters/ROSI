@@ -563,13 +563,12 @@ pub fn import_legacy(raw: &Value) -> Result<(), String> {
 }
 
 fn show_save_error(message: &str) {
-    if let Some(app) = crate::app_state::app() {
-        app.dialog()
-            .message(format!("Failed to save settings: {message}"))
-            .title("Settings Save Error")
-            .kind(tauri_plugin_dialog::MessageDialogKind::Error)
-            .show(|_| {});
-    }
+    crate::notices::show(
+        "Settings Save Error",
+        &format!("Failed to save settings: {message}"),
+        crate::notices::NoticeKind::Error,
+        false,
+    );
 }
 
 #[tauri::command(async)]
@@ -591,13 +590,12 @@ pub fn get_settings() -> Settings {
     if let Some(message) = problem {
         REPORTED.get_or_init(|| {
             crate::logging::warn(&message);
-            if let Some(app) = crate::app_state::app() {
-                app.dialog()
-                    .message(message)
-                    .title("ROSI Profile Recovery")
-                    .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
-                    .show(|_| {});
-            }
+            crate::notices::show(
+                "ROSI Profile Recovery",
+                &message,
+                crate::notices::NoticeKind::Warning,
+                false,
+            );
         });
     }
     load()

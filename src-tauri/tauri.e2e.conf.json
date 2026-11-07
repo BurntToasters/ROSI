@@ -25,7 +25,8 @@
             "allow-e2e-updater-install-probe",
             "allow-e2e-configure-updater",
             "allow-e2e-updater-probe",
-            "allow-e2e-cancel-close-request"
+            "allow-e2e-cancel-close-request",
+            "allow-e2e-native-notices"
           ]
         }
       ]
