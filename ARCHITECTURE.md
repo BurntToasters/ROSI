@@ -21,6 +21,7 @@ split into focused modules:
 | `legacy.rs`           | First-launch import of ROSI 4 data from `<config dir>/rosi`                        |
 | `downloader.rs`       | Single active download session: yt-dlp, optional FFmpeg conversion, cancellation   |
 | `queue.rs`            | Persistent queue (`download-queue.json` + backup) and its sequential runner        |
+| `coordinator.rs`      | Single owner of queue transitions and session results: one thread applies each change in arrival order and publishes revisioned queue snapshots |
 | `command_builders.rs` | yt-dlp / FFmpeg argument builders and codec probing                                |
 | `progress.rs`         | yt-dlp JSON / FFmpeg `-progress` parsing, phase and queue weighting, throttling    |
 | `media_info.rs`       | Format listing (`-F`) and metadata previews                                        |
@@ -33,6 +34,7 @@ split into focused modules:
 | `app_state.rs`        | Process-wide handles: app handle, resolved user directories, background event sink |
 | `constants.rs`        | Limits and allow-lists shared by validation, settings, and the downloader          |
 | `deno.rs`             | Deno runtime detection and optional install for yt-dlp's JavaScript extractors     |
+| `download_options.rs` | Shared option precedence, validation, and snapshots for manual and queued downloads and the effective-options preview |
 | `ffmpeg_guard.rs`     | Per-operation FFmpeg/ffprobe launchers that restrict yt-dlp to local inputs        |
 | `fs_util.rs`          | Atomic, private file writes and bounded reads for persisted JSON state             |
 | `gpu.rs`              | Hardware encoder detection by probing FFmpeg (cached for five minutes)             |
@@ -40,6 +42,7 @@ split into focused modules:
 | `ipc.rs`              | `{ ok, data } \| { ok: false, error }` envelopes shared with the frontend           |
 | `logging.rs`          | Rolling local diagnostics log (`logs/rosi.log`)                                    |
 | `network_security.rs` | Per-operation outbound proxy that pins each destination to a vetted IP, optionally reached through the user's upstream HTTP proxy |
+| `network_security_async.rs` | Tokio implementation of the proxy's listener and client tasks (256 active, 128 pending); DNS stays in `network_security.rs`'s resolver pool |
 | `staging.rs`          | Startup sweep of stale ROSI scratch entries in the download folder (no symlink following) |
 | `types.rs`            | Shared data model, serialized as camelCase to match the v4 bridge shapes          |
 

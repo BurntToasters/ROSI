@@ -26,6 +26,19 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 - **Updater:** Rosetta-translated processes on Apple Silicon automatically request the native arm64 target to migrate away from emulation.
 - **Packaging:** Per-architecture updater archives are verified for codesigning and notarization stapling prior to packaging.
 - **Packaging:** Native arm64 and x64 DMG/ZIP downloads are available alongside the universal macOS packages.
+- **Updater:** Update checks use only the `latest` release feed URLs. The version-pinned fallback URLs were removed, and update signatures must name the version they were signed for (`requireSignedVersion`).
+- **Queue:** All queue changes now go through one coordinator, so queue updates reach the window in the order they happen. Each update carries a revision, and an older update never replaces a newer one.
+- **Downloads:** Manual downloads, queued downloads, and the effective-options preview share one option-resolution path in the backend, so the options shown before a download match the options it uses.
+- **Downloads:** A summary under the output settings shows the effective options for the current URL, profile, formats, and playlist selection. It explains what is missing (a valid URL, a save location, a format, or a valid playlist selection) and waits while settings are saving.
+- **Formats:** The video and audio format lists are built from structured data returned by the backend, not from parsing yt-dlp's text output. Each entry shows its resolution, frame rate, codecs, and size when yt-dlp reports them.
+- **Network:** The outbound proxy relay runs on the Tokio runtime and serves up to 256 connections at once. Up to 128 more connections wait for a free slot for up to 5 seconds. Connections beyond that, or still waiting after 5 seconds, receive HTTP 503.
+- **Settings:** Settings show whether they are saving, saved, or not saved. A failed save keeps your choices on screen and offers a "Retry save" button. If the backend refuses one setting, the other settings still save, and the refused one returns to its saved value.
+- **Settings:** Each section's reset button asks for confirmation first, and reports whether the restored defaults were saved.
+- **Setup:** The setup wizard shows an inline message when choosing a download folder is cancelled or fails. If the Deno check or install fails, it offers the install instructions.
+- **Deno:** If the Deno check fails, ROSI shows a dialog with the install instructions instead of only writing to the log.
+- **Build:** Building from source now requires Node.js `^24.22.1` or `>=26.13.0` and npm 12.2.1 or later. CI builds with Node.js 26.13.0 LTS.
+- **Build:** The pinned Rust toolchain is 1.99.1, read from `rust-toolchain.toml`. The Flatpak build installs that exact compiler with rustup.
+- **Tests:** End-to-end scenarios are grouped by feature in `e2e/suites.json`. `npm run test:e2e -- --group <names>` runs only the named groups, and reports list each scenario's groups.
 
 ## Changes in `v5.0.2:`
 

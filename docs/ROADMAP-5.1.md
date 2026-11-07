@@ -131,9 +131,13 @@ back to defaults rather than failing the import.
 
 ## 4. Replace the downloader and queue locks with a state thread
 
-**Status (2026-11-06): accepted for ROSI 5.1; implementation not started in
-this workstream.** The existing global mutex and condition-variable design
-remains in `downloader.rs` and `queue.rs`.
+**Status (2026-11-06): implemented with residue, see [IMPLEMENTATION-5.1.md](IMPLEMENTATION-5.1.md).**
+`coordinator.rs` runs one command thread with reply channels and revisioned
+`queue-update`, and the condition variables are gone. Residue:
+
+- `queue.rs:40` still has the global `QUEUE: OnceLock<Mutex<QueueState>>`;
+  `downloader.rs:79-85` still has `ACTIVE`, `STARTUP`, `EVENT_PUBLISH` mutexes.
+  Acceptance said "no global Mutex or Condvar".
 
 **Problem.** The download and queue state uses global locks and condition
 variables. `src-tauri/src/downloader.rs:78` holds `ACTIVE: Mutex<Option<Session>>`
@@ -164,9 +168,15 @@ rather than enforced by types.
 
 ## 5. Async proxy relay on the Tauri runtime
 
-**Status (2026-11-06): accepted for ROSI 5.1; implementation and runtime proof
-remain outstanding.** `network_security.rs` still has the blocking worker pool
-and relay polling described below.
+**Status (2026-11-06): implemented with residue, see [IMPLEMENTATION-5.1.md](IMPLEMENTATION-5.1.md).**
+The Tokio relay in `network_security_async.rs` serves 256 active and 128
+pending clients, and answers 503 on overload. The E2E probe is in place. Residue:
+
+- Polling remains: `network_security_async.rs:37,174-185`
+  (`EXTERNAL_CANCELLATION_POLL` 25 ms per client task), `:686-702` (DNS reply
+  polled with `try_recv` + 25 ms sleep); the DNS pool is still blocking threads
+  with a condvar (`network_security.rs:56,398-440`). Acceptance said "no polling
+  sleep" and "no measurable idle CPU".
 
 **Problem.** `src-tauri/src/network_security.rs` is 1,917 lines. It starts
 `PROXY_WORKERS: usize = 32` blocking workers (`:35`). Each `proxy_worker`
@@ -200,11 +210,12 @@ idle relay still wakes up on its sleep.
 
 ## 6. Regroup E2E suites by feature
 
-**Status (2026-11-06): verification foundation in progress.** The ROSI 5.1
-foundation adds a feature manifest and group selection while retaining every
-scenario and its current file. The full folder move and runner split in this
-section remain deferred; current full-suite and release evidence requirements
-are preserved.
+**Status (2026-11-06): implemented with residue, see [IMPLEMENTATION-5.1.md](IMPLEMENTATION-5.1.md).**
+`e2e/suites.json`, `--group` selection, and `scenarioGroups` in reports are in
+place. Residue:
+
+- 23 files in `e2e/` still named `round*`/`audit*`/`*repair*`;
+  `scripts/test-e2e.js` is 2,430 lines (target < 800).
 
 **Problem.** `e2e/` holds about 95 files and roughly 25,000 lines. 35 of the
 file names refer to audit rounds or repair passes (for example
