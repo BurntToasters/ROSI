@@ -1569,6 +1569,79 @@ describe("state and updater repair E2E", () => {
       await reloadRenderer();
     }
   });
+
+  it("keeps backend values the renderer did not change across a save", async () => {
+    assert.ok(DATA_DIR, "ROSI_E2E_DATA_DIR is not set");
+    const settingsFile = path.join(DATA_DIR, "settings.json");
+    const original = fs.readFileSync(settingsFile);
+    const before = await api("getSettings");
+    const desiredNotifications = !before.notifications;
+    const addedPreset = {
+      id: "e2e-backend-preset",
+      name: "E2E Backend Preset",
+      profile: "best-video",
+    };
+
+    try {
+      // The renderer keeps its loaded copy. The new preset exists only on disk.
+      const stored = JSON.parse(original.toString("utf8"));
+      stored.downloadPresets = [...(stored.downloadPresets ?? []), addedPreset];
+      fs.writeFileSync(settingsFile, JSON.stringify(stored, null, 2));
+
+      await browser.execute(() => {
+        window.auditPatchOriginalSave = window.api.saveSettings;
+        window.auditPatchKeys = [];
+        window.api.saveSettings = async (patch) => {
+          const copy = JSON.parse(JSON.stringify(patch));
+          window.auditPatchKeys.push(Object.keys(copy));
+          return window.auditPatchOriginalSave(copy);
+        };
+      });
+      await browser.execute((value) => {
+        const toggle = document.getElementById("notificationsToggle");
+        toggle.checked = value;
+        toggle.dispatchEvent(new Event("change", { bubbles: true }));
+      }, desiredNotifications);
+      await waitForStoredSetting(
+        "notifications",
+        desiredNotifications,
+        "unrelated notifications change was not saved",
+      );
+
+      const sentKeys = await browser.execute(() => window.auditPatchKeys);
+      const persisted = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+      const presetIds = persisted.downloadPresets.map((preset) => preset.id);
+      const rendererPresetIds = (await api("getSettings")).downloadPresets.map(
+        (preset) => preset.id,
+      );
+      assert.ok(sentKeys.length > 0, "no settings save reached the backend");
+      for (const keys of sentKeys) {
+        assert.deepEqual(keys, ["notifications"], "save sent unchanged keys");
+      }
+      assert.ok(
+        presetIds.includes(addedPreset.id),
+        "backend preset was overwritten by the renderer's stale copy",
+      );
+      assert.ok(rendererPresetIds.includes(addedPreset.id));
+      assert.equal(persisted.notifications, desiredNotifications);
+      record("settings-patch-preserves-backend-values", {
+        addedPresetId: addedPreset.id,
+        changedKey: "notifications",
+        sentKeysPerSave: sentKeys,
+        storedNotifications: persisted.notifications,
+        storedPresetIds: presetIds,
+        rendererPresetIds,
+      });
+    } finally {
+      await browser.execute(() => {
+        if (window.auditPatchOriginalSave) {
+          window.api.saveSettings = window.auditPatchOriginalSave;
+        }
+      });
+      fs.writeFileSync(settingsFile, original);
+      await reloadRenderer();
+    }
+  });
 });
 
 // Sidebar controls and the settings key each one renders. Every value is

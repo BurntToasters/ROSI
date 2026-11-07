@@ -599,6 +599,12 @@
       "allowedSkips": []
     },
     {
+      "name": "settings-patch-preserves-backend-values",
+      "feature": "settings",
+      "owner": "state-repairs",
+      "allowedSkips": []
+    },
+    {
       "name": "guarded-preview-thumbnail",
       "feature": "downloads",
       "owner": "state-repairs",

@@ -6,8 +6,14 @@ import { downloadState } from './progress';
 import { queueController } from './queue-controller';
 import { checkForUpdatesOnStartup, showRestartFailure } from './updater-ui';
 
+// Copy used as the backend-confirmed baseline. Plain JSON, like saved snapshots.
+function cloneSettings(value: unknown): RosiSettings {
+  return JSON.parse(JSON.stringify(value)) as RosiSettings;
+}
+
 export const trackSettings = (value: RosiSettings): RosiSettings => {
   settingsStore.settingsSavedRevision = settingsStore.settingsRevision;
+  settingsStore.backendSettings = cloneSettings(value);
   return new Proxy(value, {
     set(target, property, next, receiver) {
       const previous = Reflect.get(target, property, receiver);
@@ -30,6 +36,8 @@ export const trackSettings = (value: RosiSettings): RosiSettings => {
 export const reconcileSettingsInPlace = (value: RosiSettings) => {
   const current = settingsStore.settings as unknown as Record<string, unknown>;
   const next = value as unknown as Record<string, unknown>;
+  // Reconcile is only used with values the backend confirmed (import, save).
+  settingsStore.backendSettings = cloneSettings(value);
   settingsStore.reconcilingSettings = true;
   try {
     Object.keys(current).forEach((key) => {
@@ -108,24 +116,37 @@ export function settingsValuesMatch(left: unknown, right: unknown): boolean {
   );
 }
 
+// Top-level keys whose values differ from the backend-confirmed state, so the
+// backend keeps every other stored value. Empty when nothing differs, and the
+// save still reaches the backend. With no baseline, the whole snapshot is sent.
+export function changedSettingsPatch(snapshot: RosiSettings): Partial<RosiSettings> {
+  const baseline = settingsStore.backendSettings as unknown as Record<string, unknown> | null;
+  if (!baseline) return snapshot;
+  const patch: Record<string, unknown> = {};
+  Object.entries(snapshot as unknown as Record<string, unknown>).forEach(([key, value]) => {
+    if (!settingsValuesMatch(value, baseline[key])) patch[key] = value;
+  });
+  return patch as Partial<RosiSettings>;
+}
+
 export async function drainSettingsSaves() {
   if (settingsStore.settingsSaveInFlight || settingsStore.settingsSaveWaiters.length === 0) return;
   settingsStore.settingsSaveInFlight = true;
   const snapshotRevision = settingsStore.settingsRevision;
   const snapshot = JSON.parse(JSON.stringify(settingsStore.settings)) as RosiSettings;
+  const patch = changedSettingsPatch(snapshot);
   let saved = false;
   let errorMessage = 'Could not save settings due to an unexpected error.';
 
   let rejectedMessage: string | null = null;
   try {
-    const result = await window.api.saveSettings(
-      snapshot as unknown as Parameters<typeof window.api.saveSettings>[0]
-    );
+    const result = await window.api.saveSettings(patch);
     if (result?.ok === true) {
       saved = true;
       settingsStore.lastSettingsSaveErrorCode = null;
-      // The backend may normalize values. Reconcile only if this immutable
-      // snapshot is still the newest renderer revision.
+      // The backend may normalize values. Its full result is the new baseline.
+      // Reconcile only if this immutable snapshot is still the newest renderer revision.
+      settingsStore.backendSettings = cloneSettings(result.data);
       if (snapshotRevision === settingsStore.settingsRevision) {
         reconcileSettingsInPlace(result.data as RosiSettings);
         settingsStore.settingsSavedRevision = snapshotRevision;
@@ -135,6 +156,8 @@ export async function drainSettingsSaves() {
       // Restore those from disk so they are not sent again on every save.
       const refused = JSON.parse(result.error.details) as string[];
       const stored = (await window.api.getSettings()) as unknown as Record<string, unknown>;
+      // The disk state is what the backend now holds, including the saved fields.
+      settingsStore.backendSettings = cloneSettings(stored);
       const current = settingsStore.settings as unknown as Record<string, unknown>;
       const rejectedSnapshot = snapshot as unknown as Record<string, unknown>;
       settingsStore.reconcilingSettings = true;
@@ -308,6 +331,8 @@ export const settingsStore: {
   settingsSaveInFlight: boolean;
   lastSettingsSaveErrorCode: string | null;
   refreshSettingsControls: (() => void) | null;
+  // Settings as the backend last confirmed them. Null until the load records them.
+  backendSettings: RosiSettings | null;
   settingsSaveWaiters: Array<{
     revision: number;
     immediate: boolean;
@@ -326,6 +351,7 @@ export const settingsStore: {
   settingsSaveInFlight: false,
   lastSettingsSaveErrorCode: null,
   refreshSettingsControls: null,
+  backendSettings: null,
   settingsSaveWaiters: [],
   defaultSettingsCache: null,
   isFlatpakBuild: false,
