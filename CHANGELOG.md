@@ -39,6 +39,17 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 - **Build:** Building from source now requires Node.js `^24.22.1` or `>=26.13.0` and npm 12.2.1 or later. CI builds with Node.js 26.13.0 LTS.
 - **Build:** The pinned Rust toolchain is 1.99.1, read from `rust-toolchain.toml`. The Flatpak build installs that exact compiler with rustup.
 - **Tests:** End-to-end scenarios are grouped by feature in `e2e/suites.json`. `npm run test:e2e -- --group <names>` runs only the named groups, and reports list each scenario's groups.
+- **Downloads:** With "Ask where to save" off and no folder chosen, downloads and the effective-options summary use the system Downloads folder instead of blocking or opening a folder picker.
+- **Downloads:** Presets are resolved only by the backend. Applying a preset shows the backend's values, a later change to the stored preset takes effect, and the format lists always download exactly what they show.
+- **Downloads:** The reason a download cannot start, and what to do next, now appears beside the Download button.
+- **Downloads:** Choosing a folder from the destination strip, or turning off "Ask where to save" without a folder, reports a cancelled or failed folder pick inline.
+- **Formats:** Format option labels are built by the backend.
+- **Settings:** If settings cannot be loaded at startup, the defaults come from the backend instead of a copy kept in the window.
+- **Queue:** When retry, remove, reorder, or open location fails, the message appears on that queue row and the row's other actions stay available.
+- **Activity:** Keyboard focus stays on the same activity action when the list updates, and each new entry is announced once to screen readers.
+- **Accessibility:** Dialogs move focus inside as soon as they open. Long URLs, paths, titles, and errors wrap or truncate instead of widening the window.
+- **Network:** A proxy client turned away with HTTP 503 now receives the full response on macOS instead of a connection reset.
+- **Security:** Every backend command now checks its input against a typed structure. Error messages are unchanged.
 
 ## Changes in `v5.0.2:`
 
