@@ -183,7 +183,10 @@ fn persistence() -> &'static QueuePersistence {
     })
 }
 
-pub(crate) fn revisioned_snapshot(queue: &mut QueueState, increment_revision: bool) -> (u64, Vec<QueueItem>) {
+pub(crate) fn revisioned_snapshot(
+    queue: &mut QueueState,
+    increment_revision: bool,
+) -> (u64, Vec<QueueItem>) {
     if increment_revision {
         queue.revision = queue.revision.saturating_add(1);
     }
@@ -726,7 +729,6 @@ pub(crate) fn run_queue() {
     }
 }
 
-
 #[cfg(test)]
 mod persistence_tests {
     use super::*;
@@ -1246,7 +1248,10 @@ fn clear_queue_blocking() -> IpcResult<()> {
     let Some(was_running) =
         coordinator::request(|reply| Command::Queue(QueueCommand::ClearBegin { reply }))
     else {
-        return ipc::err(crate::ipc::INTERNAL_ERROR, "Queue coordinator is not running.");
+        return ipc::err(
+            crate::ipc::INTERNAL_ERROR,
+            "Queue coordinator is not running.",
+        );
     };
     if was_running {
         // Completes the running session synchronously; its result reaches the
@@ -1255,7 +1260,10 @@ fn clear_queue_blocking() -> IpcResult<()> {
     }
     match coordinator::request(|reply| Command::Queue(QueueCommand::ClearItems { reply })) {
         Some(()) => ipc::ok(()),
-        None => ipc::err(crate::ipc::INTERNAL_ERROR, "Queue coordinator is not running."),
+        None => ipc::err(
+            crate::ipc::INTERNAL_ERROR,
+            "Queue coordinator is not running.",
+        ),
     }
 }
 
@@ -1265,7 +1273,10 @@ fn clear_queue_blocking() -> IpcResult<()> {
 pub fn clear_finished_queue() -> IpcResult<RemovedCount> {
     match coordinator::clear_finished_items() {
         Some(removed) => ipc::ok(RemovedCount { removed }),
-        None => ipc::err(crate::ipc::INTERNAL_ERROR, "Queue coordinator is not running."),
+        None => ipc::err(
+            crate::ipc::INTERNAL_ERROR,
+            "Queue coordinator is not running.",
+        ),
     }
 }
 
@@ -1303,7 +1314,10 @@ fn cancel_queue_blocking() -> IpcResult<()> {
     let Some(active) =
         coordinator::request(|reply| Command::Queue(QueueCommand::CancelBegin { reply }))
     else {
-        return ipc::err(crate::ipc::INTERNAL_ERROR, "Queue coordinator is not running.");
+        return ipc::err(
+            crate::ipc::INTERNAL_ERROR,
+            "Queue coordinator is not running.",
+        );
     };
     if active {
         // Completes the running session synchronously; its result reaches the
@@ -1314,7 +1328,10 @@ fn cancel_queue_blocking() -> IpcResult<()> {
     let Some((_, items)) =
         coordinator::request(|reply| Command::Queue(QueueCommand::Snapshot { bump: false, reply }))
     else {
-        return ipc::err(crate::ipc::INTERNAL_ERROR, "Queue coordinator is not running.");
+        return ipc::err(
+            crate::ipc::INTERNAL_ERROR,
+            "Queue coordinator is not running.",
+        );
     };
     let completions: Vec<(String, DownloadCompletion)> = items
         .iter()
@@ -1332,14 +1349,14 @@ fn cancel_queue_blocking() -> IpcResult<()> {
         .map(|(_, completion)| completion.clone())
         .collect();
     if coordinator::request(|reply| {
-        Command::Queue(QueueCommand::CancelApply {
-            completions,
-            reply,
-        })
+        Command::Queue(QueueCommand::CancelApply { completions, reply })
     })
     .is_none()
     {
-        return ipc::err(crate::ipc::INTERNAL_ERROR, "Queue coordinator is not running.");
+        return ipc::err(
+            crate::ipc::INTERNAL_ERROR,
+            "Queue coordinator is not running.",
+        );
     }
     for completion in &records {
         crate::activity::record(completion);

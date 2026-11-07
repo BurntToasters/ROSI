@@ -296,9 +296,7 @@ impl NetworkSecurityGuard {
             });
         if let Err(error) = spawned {
             shared.stop();
-            return Err(format!(
-                "Could not start the secure network proxy: {error}"
-            ));
+            return Err(format!("Could not start the secure network proxy: {error}"));
         }
         match ready_receiver.recv_timeout(PROXY_START_TIMEOUT) {
             Ok(Ok(())) => Ok(Self { proxy_url, shared }),

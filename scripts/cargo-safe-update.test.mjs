@@ -774,13 +774,13 @@ test("25. dependency update entry points use guarded Cargo resolution", () => {
   const packageJson = JSON.parse(
     readFileSync(new URL("../package.json", import.meta.url), "utf8"),
   );
-  for (const name of ["u", "u2", "deps:rust:update"]) {
+  for (const name of ["u", "deps:rust:update"]) {
     const command = packageJson.scripts?.[name];
     if (!command) continue;
     assert.doesNotMatch(command, /\bcargo update\b/);
     assert.match(command, /cargo-safe-update/);
   }
-  for (const name of ["u", "u2"]) {
+  for (const name of ["u"]) {
     const command = packageJson.scripts[name];
     assert.match(command, /npm-safe-update/);
     assert.match(command, /sync-version\.js/);

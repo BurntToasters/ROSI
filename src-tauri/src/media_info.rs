@@ -130,19 +130,19 @@ fn is_non_media_format(data: &Map<String, Value>) -> bool {
     ext.is_some_and(|ext| ext.eq_ignore_ascii_case("mhtml"))
         || note.is_some_and(|note| {
             let note = note.to_ascii_lowercase();
-            note.contains("storyboard") || note.contains("images only") || note.contains("image only")
+            note.contains("storyboard")
+                || note.contains("images only")
+                || note.contains("image only")
         })
 }
 
 fn fallback_stream_kind(data: &Map<String, Value>) -> Option<StreamKind> {
     let ext = pick_string(data.get("ext"))?.to_ascii_lowercase();
     match ext.as_str() {
-        "aac" | "ac3" | "alac" | "eac3" | "flac" | "m4a" | "m4b" | "mp3" | "opus"
-        | "wav" | "wma" => Some(StreamKind::Audio),
-        "3gp" | "avi" | "flv" | "m2ts" | "m4v" | "mkv" | "mov" | "mp4" | "mpd"
-        | "m3u8" | "mts" | "mxf" | "ts" | "vob" | "webm" | "wmv" => {
-            Some(StreamKind::AudioVideo)
-        }
+        "aac" | "ac3" | "alac" | "eac3" | "flac" | "m4a" | "m4b" | "mp3" | "opus" | "wav"
+        | "wma" => Some(StreamKind::Audio),
+        "3gp" | "avi" | "flv" | "m2ts" | "m4v" | "mkv" | "mov" | "mp4" | "mpd" | "m3u8" | "mts"
+        | "mxf" | "ts" | "vob" | "webm" | "wmv" => Some(StreamKind::AudioVideo),
         _ => None,
     }
 }
@@ -266,7 +266,10 @@ fn error_result<T: serde::Serialize>(message: String) -> IpcResult<T> {
     }
 }
 
-fn fetch_formats(url: String, reservation: TrackedReservation<'static>) -> Result<FormatList, String> {
+fn fetch_formats(
+    url: String,
+    reservation: TrackedReservation<'static>,
+) -> Result<FormatList, String> {
     if reservation.is_cancelled() {
         return Err("Format fetch cancelled.".into());
     }

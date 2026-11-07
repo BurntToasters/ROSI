@@ -21,8 +21,8 @@ use crate::downloader;
 use crate::ipc::{self, IpcResult, INTERNAL_ERROR, NOT_AVAILABLE, VALIDATION_ERROR};
 use crate::queue::{self, AddResult, QueueState, Started};
 use crate::types::{
-    DownloadCompletion, DownloadRequestOptions, Owner, QueueItem, QueueProgress,
-    QueueSnapshot, QueueStatus,
+    DownloadCompletion, DownloadRequestOptions, Owner, QueueItem, QueueProgress, QueueSnapshot,
+    QueueStatus,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -170,7 +170,11 @@ fn commands() -> &'static Sender<Command> {
 fn run(receiver: Receiver<Command>) {
     let mut coordinator = Coordinator::default();
     loop {
-        let next_deadline = coordinator.starts.iter().map(|(_, deadline)| *deadline).min();
+        let next_deadline = coordinator
+            .starts
+            .iter()
+            .map(|(_, deadline)| *deadline)
+            .min();
         let received = match next_deadline {
             Some(deadline) => {
                 receiver.recv_timeout(deadline.saturating_duration_since(Instant::now()))
@@ -195,9 +199,7 @@ pub fn request<T>(build: impl FnOnce(Sender<T>) -> Command) -> Option<T> {
 }
 
 /// `request` for Tauri handlers: a stopped coordinator is an internal error.
-fn request_ipc<T: Serialize>(
-    build: impl FnOnce(Sender<IpcResult<T>>) -> Command,
-) -> IpcResult<T> {
+fn request_ipc<T: Serialize>(build: impl FnOnce(Sender<IpcResult<T>>) -> Command) -> IpcResult<T> {
     request(build).unwrap_or_else(|| ipc::err(INTERNAL_ERROR, "Queue coordinator is not running."))
 }
 

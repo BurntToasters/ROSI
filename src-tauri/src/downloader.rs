@@ -3117,11 +3117,11 @@ pub struct Started {
 #[tauri::command(async)]
 pub fn download_video(options: FalliblePayload<DownloadRequestInput>) -> IpcResult<Started> {
     let settings = crate::settings::load();
-    let resolved = match crate::download_options::resolve_value(&settings, &options.into_value(), None)
-    {
-        Ok(resolved) => resolved,
-        Err(error) => return ipc::from_error(error),
-    };
+    let resolved =
+        match crate::download_options::resolve_value(&settings, &options.into_value(), None) {
+            Ok(resolved) => resolved,
+            Err(error) => return ipc::from_error(error),
+        };
     // The runner briefly holds no session between items, so the session slot
     // alone cannot tell that a queue run owns the downloader.
     if !can_start(Owner::Manual) || crate::queue::is_running() {
@@ -3200,7 +3200,10 @@ mod audit4_tests {
             },
         );
         assert_eq!(
-            rx.recv_timeout(Duration::from_secs(5)).unwrap().error.as_deref(),
+            rx.recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .error
+                .as_deref(),
             Some("Recovery at /tmp/staging")
         );
     }
