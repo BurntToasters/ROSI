@@ -162,9 +162,18 @@ async function waitFor(
   });
 }
 
-/** Reload the page and wait until its controls and bridge are installed. */
+/**
+ * Reload the page and wait until its controls and bridge are installed.
+ * Uses a deferred location.reload, like the other reloading specs. WebDriver
+ * refresh left the next script waiting for the full 30 s script timeout.
+ */
 async function reloadApp() {
-  await browser.refresh();
+  await browser.execute(() => {
+    window.__ROSI_E2E__.ready = false;
+    window.setTimeout(() => window.location.reload(), 50);
+  });
+  // Waits for the new document: the old page still has the bridge until it unloads.
+  await waitForAppReady();
   await browser.waitUntil(
     () =>
       browser.execute(
@@ -180,7 +189,6 @@ async function reloadApp() {
       timeoutMsg: "reloaded page never rendered the main window controls",
     },
   );
-  await waitForAppReady();
 }
 
 /** Save folder-related settings through the API, then reload so the renderer reads them. */
@@ -414,9 +422,6 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
     assert.ok(DOWNLOADS, "ROSI_E2E_DOWNLOADS is required for folder fixtures");
     fs.mkdirSync(FOLDERS, { recursive: true });
     await waitForAppReady();
-    // The only page reload in this spec: later scenarios drive settings through
-    // the controls, because reloads stalled WebDriver scripts in the area pass.
-    await setFolderSettings({ askDownloadLocation: false, downloadFolder: "" });
     report.source = sourceIdentity();
     const binaryPath = e2eBinaryPath();
     report.binary = {
@@ -453,6 +458,10 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
 
   it("uses the Downloads folder without a picker when the folder is empty and ask-each-time is off", async () =>
     scenario("missing-folder-ask-off-uses-default", async () => {
+      await setFolderSettings({
+        askDownloadLocation: false,
+        downloadFolder: "",
+      });
       await setUrl(`${CLIP_BASE}/readiness-default-folder.mp4`);
       await waitForSummaryState("resolved");
       const before = await readHint();
@@ -486,6 +495,10 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
 
   it("explains that a folder is asked for each download and keeps the blocker-free flow", async () =>
     scenario("ask-each-time-hint", async () => {
+      await setFolderSettings({
+        askDownloadLocation: true,
+        downloadFolder: "",
+      });
       await setControl("askDownloadLocationToggle", true);
       await setUrl(`${CLIP_BASE}/readiness-ask-each-time.mp4`);
       await waitForSummaryState("destination");
@@ -525,11 +538,10 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
 
   it("names a blocking format choice next to Download and does not start", async () =>
     scenario("formats-blocker-next-to-download", async () => {
-      // Formats only block with "Ask every time" off. Switching it off with no
-      // folder opens the picker, so cancel it.
-      await setPicker("cancel");
-      await setControl("askDownloadLocationToggle", false);
-      await restorePicker();
+      await setFolderSettings({
+        askDownloadLocation: false,
+        downloadFolder: "",
+      });
       await clickById("profileCustomBtn");
       await waitFor(
         () =>
@@ -570,6 +582,10 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
 
   it("keeps the failed effective-options reason and next action next to Download", async () =>
     scenario("resolve-failure-hint-next-to-download", async () => {
+      await setFolderSettings({
+        askDownloadLocation: false,
+        downloadFolder: "",
+      });
       await browser.execute(() => {
         window.__uiReadinessResolveOriginal = window.api.resolveDownloadOptions;
         window.api.resolveDownloadOptions = async () => ({
@@ -607,7 +623,10 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
 
   it("explains turning ask-each-time off with no folder, including a cancelled pick", async () =>
     scenario("ask-off-cancelled-folder-feedback", async () => {
-      await setControl("askDownloadLocationToggle", true);
+      await setFolderSettings({
+        askDownloadLocation: true,
+        downloadFolder: "",
+      });
       const fixture = path.join(FOLDERS, "switched-folder");
       fs.mkdirSync(fixture, { recursive: true });
       await setPicker("cancel");
@@ -659,7 +678,10 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
 
   it("explains a cancelled or failed Change folder pick and keeps the stale path out", async () =>
     scenario("change-folder-cancelled-and-failed", async () => {
-      await setControl("askDownloadLocationToggle", false);
+      await setFolderSettings({
+        askDownloadLocation: false,
+        downloadFolder: "",
+      });
       const fixture = path.join(FOLDERS, "picked-folder");
       fs.mkdirSync(fixture, { recursive: true });
       await setPicker("cancel");
@@ -766,6 +788,10 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
       assert.ok(longUrl.length >= 400, `URL is ${longUrl.length} characters`);
 
       await browser.setWindowSize(900, 560);
+      await setFolderSettings({
+        askDownloadLocation: false,
+        downloadFolder: longFolder,
+      });
       await setPicker("path", longFolder);
       try {
         await setControl("askDownloadLocationToggle", false);

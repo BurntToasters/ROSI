@@ -201,7 +201,7 @@ settings through the real controls, and the scenarios are ordered so each starts
 from the state the previous one leaves. An in-place alternative (`saveSettings`
 then a `settings-imported` event) was rejected: the renderer stays
 `settings-unsaved` after an imported snapshot (`d1-area-5.log`). The root cause
-of the reload stalls is not confirmed. Evidence that the fix holds: area passes
+of the reload stalls is in the Reload stall section below. Evidence that the fix holds: area passes
 `d1-area-run-b.log`, `d1-area-run-c.log`, and `d1-area-run-d.log` each pass all
 three spec files, 100% completed.
 H2. **`bail: 1` ends the area pass after the first failing spec.** The later
@@ -211,6 +211,39 @@ gate's setting and changing it is out of scope); the fix is H1, not a retry.
 H3. **Retried WebDriver errors look like test failures.** `WebDriverError` WARN
 lines from polling predicates are not failures by themselves. Expected: a
 scenario fails only on its own assertion, not on a retried poll error.
+
+## Reload stall (readiness spec, `reloadApp`)
+
+Cause: `browser.refresh()` is the trigger. The first `execute/sync` after a
+refresh, which runs in the new document, sometimes did not return for the full
+30 s script timeout. WDIO retried it and the retry worked, but in the area pass
+the stall and its retry left later commands without `window.api`, `#url`, or
+the E2E hook. The WebKit reason for the stall is not confirmed.
+
+Evidence: a temporary probe (`ROSI_E2E_ONLY`, deleted after use) alternated
+`browser.refresh()` with a deferred `location.reload()` 25 times in each mode.
+
+- Background: one 30 s stall, in the first execute after `refresh` (cycle 3).
+  No stall in 25 deferred reloads.
+- Foreground: two 30 s stalls, both after `refresh`. No stall in 25 deferred
+  reloads.
+- Probe logs: `oversee2/reload-probe-bg.json` and `reload-probe-fg.json` in the
+  scratchpad. The area diagnostics `d1-area-diag-1.log` and `d1-area-diag-2.log`
+  show the same timeouts and the later `window.api` and `#url` errors.
+- Not the cause: an open `<dialog>` (zero before and after every reload) and
+  the background occlusion (the stall also happened in foreground). The ready
+  flag was true after every reload.
+
+Fix: `reloadApp` sets `__ROSI_E2E__.ready = false` and reloads with
+`window.setTimeout(() => location.reload(), 50)`, the same pattern as
+`state-updater.spec.js` and `updater-engine.spec.js`. It then waits for the
+new document's ready flag before it checks the controls. The seven scenarios
+that reloaded before commit 580d89c reload again. `before()` no longer reloads.
+
+Proof: `npm run test:e2e -- --group ui-polish` passed three times in a row
+(logs `oversee2/reload-group-1.log`, `reload-group-2.log`,
+`reload-group-3.log`). Each run passed all three spec files with no WebDriver
+warnings.
 
 ## E2E evidence requirements
 
