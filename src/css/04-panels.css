@@ -190,6 +190,7 @@
 .history-item-info {
   flex: 1;
   min-width: 0;
+  overflow-wrap: anywhere;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -213,6 +214,7 @@
   font-size: var(--text-xs);
   color: var(--danger);
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .history-item-actions {
@@ -290,6 +292,7 @@
   color: var(--console-text);
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
   background: var(--console-bg);
 }
 

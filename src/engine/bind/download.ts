@@ -106,7 +106,10 @@ export function bindDownloadControls() {
         let savePath = settingsStore.settings.askDownloadLocation
           ? null
           : settingsStore.settings.downloadFolder?.trim() || null;
-        if (!savePath) {
+        // "Ask every time" off with no folder is not a blocker: the backend saves to
+        // the Downloads folder when outputPath is omitted (same as the queue path).
+        const usesDefaultFolder = !settingsStore.settings.askDownloadLocation && !savePath;
+        if (!savePath && !usesDefaultFolder) {
           try {
             savePath = await window.api.selectDownloadLocation();
           } catch (dialogError) {
@@ -121,7 +124,7 @@ export function bindDownloadControls() {
           }
         }
 
-        if (!savePath) {
+        if (!savePath && !usesDefaultFolder) {
           failManualDownloadStart(operation);
           downloadState.isDownloading = false;
           syncPrimaryActionState();
@@ -131,15 +134,17 @@ export function bindDownloadControls() {
           }
           return;
         }
-        settingsStore.settings.downloadFolder = savePath;
-        updateUIFromSettings();
-        const saved = await persistSettings(true, true);
-        if (!saved) {
-          failManualDownloadStart(operation);
-          downloadState.isDownloading = false;
-          syncPrimaryActionState();
-          showToast('Could not save download settings. Please try again.', { type: 'error' });
-          return;
+        if (savePath) {
+          settingsStore.settings.downloadFolder = savePath;
+          updateUIFromSettings();
+          const saved = await persistSettings(true, true);
+          if (!saved) {
+            failManualDownloadStart(operation);
+            downloadState.isDownloading = false;
+            syncPrimaryActionState();
+            showToast('Could not save download settings. Please try again.', { type: 'error' });
+            return;
+          }
         }
         if (outputEl) outputEl.textContent = '';
         downloadState.downloadAbort = () => {
@@ -164,7 +169,7 @@ export function bindDownloadControls() {
         prepareManualDownloadStart(operation);
         const startResult = await window.api.downloadVideo({
           url: url.trim(),
-          outputPath: savePath,
+          ...(savePath ? { outputPath: savePath } : {}),
           ffmpegPath,
           ...requestOverrides,
         });

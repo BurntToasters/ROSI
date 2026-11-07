@@ -1,6 +1,6 @@
 // Deno detection, reminder, and install flow.
 import { RosiSettings, logError } from './core';
-import { UI_MESSAGES } from './messages';
+import { UI_MESSAGES, setRuntimeCheckFailed } from './messages';
 import { showModal } from './overlays';
 import { showRestartFailure } from './updater-ui';
 
@@ -26,6 +26,7 @@ export async function checkDenoInstallation(
 
   try {
     const isInstalled = await window.api.checkDenoInstalled();
+    setRuntimeCheckFailed(false);
 
     if (!isInstalled && isLinuxPlatform()) {
       showModal({
@@ -139,6 +140,7 @@ export async function checkDenoInstallation(
     }
   } catch (error) {
     logError('Error checking Deno installation', error);
+    setRuntimeCheckFailed(true);
     showModal({
       title: UI_MESSAGES.wizard.denoCheckUnavailableTitle,
       message: UI_MESSAGES.wizard.denoCheckFailed,

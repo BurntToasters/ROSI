@@ -306,19 +306,14 @@ async function initializeRenderer() {
   refs.clearQueueBtn = byId<HTMLButtonElement>('clearQueueBtn');
   refs.clearFinishedQueueBtn = byId<HTMLButtonElement>('clearFinishedQueueBtn');
   refs.cancelQueueBtn = byId<HTMLButtonElement>('cancelQueueBtn');
-  const queueStatusMessage = (refs.queueStatusMessage = byId('queueStatusMessage'));
+  // role and aria-live live in index.html on #queueStatusMessage, so no runtime copy here.
+  refs.queueStatusMessage = byId('queueStatusMessage');
   refs.queueList = byId('queueList');
   refs.queueCount = byId('queueCount');
   refs.queueSection =
     (queueModule && typeof queueModule.resolveQueueSectionElement === 'function'
       ? queueModule.resolveQueueSectionElement(document)
       : null) || byId('queueSection');
-
-  if (queueStatusMessage) {
-    queueStatusMessage.setAttribute('role', 'status');
-    queueStatusMessage.setAttribute('aria-live', 'polite');
-    queueStatusMessage.setAttribute('aria-atomic', 'true');
-  }
 
   if (fetchFormatsBtn) fetchFormatsBtn._originalClick = fetchFormats;
   if (downloadBtn) downloadBtn._originalClick = null;

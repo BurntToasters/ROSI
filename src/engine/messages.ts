@@ -70,6 +70,18 @@ export const UI_MESSAGES = {
       `${successes} of ${total} entries completed`,
     filesSaved: (count: number) => `${count} files saved`,
   },
+  readiness: {
+    formats:
+      'Choose a video or audio format before downloading. Check available formats, then select one.',
+    playlist: 'Fix the playlist range before downloading. Choose a valid start and end entry.',
+    askEachTime: 'ROSI will ask where to save this download.',
+    defaultFolder:
+      'No download folder is set, so this download will save to your Downloads folder. Use Change… to pick another folder.',
+    resolveFailed: (reason: string) =>
+      `${UI_MESSAGES.options.failed(reason)} Download still checks these options when it starts.`,
+    runtimeCheckFailed:
+      "Couldn't check for Deno, so some YouTube downloads may fail. Open the install instructions, then restart ROSI to check again.",
+  },
   wizard: {
     folderCancelled: 'No folder was chosen. Choose a folder or ask ROSI before each download.',
     folderFailed: 'ROSI could not open the folder picker. Try again or ask before each download.',
@@ -99,7 +111,7 @@ export type EffectiveOptionsReadiness =
   | { state: 'playlist' }
   | { state: 'settings-saving' }
   | { state: 'settings-unsaved' }
-  | { state: 'ready'; request: Partial<DownloadRequestOptions> };
+  | { state: 'ready'; request: Partial<DownloadRequestOptions>; usesDefaultFolder: boolean };
 
 type EffectiveOptionsRequestBuilder = () => EffectiveOptionsReadiness;
 
@@ -110,6 +122,10 @@ let requestBuilder: EffectiveOptionsRequestBuilder = () => ({
 let requestGeneration = 0;
 let requestTimer: ReturnType<typeof setTimeout> | null = null;
 let lastRequestKey: string | null = null;
+// Readiness that the Download button hint explains, kept beside the summary state.
+let lastReadiness: EffectiveOptionsReadiness | null = null;
+let lastResolveError: string | null = null;
+let runtimeCheckFailed = false;
 
 function describeProfileOutput(profile: DownloadProfile, audioFormat?: string) {
   const description = UI_MESSAGES.options.profileDescriptions[profile];
@@ -120,6 +136,42 @@ function setSummaryState(summary: HTMLElement, state: string, text: string, busy
   summary.dataset.state = state;
   summary.textContent = text;
   summary.setAttribute('aria-busy', String(busy));
+}
+
+type ReadinessHint = { text: string; tone: 'blocked' | 'error' | 'warning' | 'info' };
+
+function currentReadinessHint(): ReadinessHint | null {
+  const state = lastReadiness?.state;
+  if (state === 'formats') return { text: UI_MESSAGES.readiness.formats, tone: 'blocked' };
+  if (state === 'playlist') return { text: UI_MESSAGES.readiness.playlist, tone: 'blocked' };
+  if (lastResolveError) {
+    return { text: UI_MESSAGES.readiness.resolveFailed(lastResolveError), tone: 'error' };
+  }
+  if (runtimeCheckFailed)
+    return { text: UI_MESSAGES.readiness.runtimeCheckFailed, tone: 'warning' };
+  if (state === 'destination') return { text: UI_MESSAGES.readiness.askEachTime, tone: 'info' };
+  if (state === 'ready' && lastReadiness?.usesDefaultFolder) {
+    return { text: UI_MESSAGES.readiness.defaultFolder, tone: 'info' };
+  }
+  return null;
+}
+
+/** Keep the reason and next action next to the Download button, not only in the summary. */
+function renderReadinessHint() {
+  const hint = document.getElementById('downloadReadiness');
+  if (!(hint instanceof HTMLElement)) return;
+  const next = currentReadinessHint();
+  hint.textContent = next?.text ?? '';
+  hint.hidden = !next;
+  if (next) hint.dataset.tone = next.tone;
+  else delete hint.dataset.tone;
+}
+
+/** The Deno check runs once at startup; its outcome feeds the Download hint. */
+export function setRuntimeCheckFailed(failed: boolean) {
+  if (runtimeCheckFailed === failed) return;
+  runtimeCheckFailed = failed;
+  renderReadinessHint();
 }
 
 function formatResolvedOptions(options: DownloadRequestOptions) {
@@ -165,6 +217,9 @@ export function refreshEffectiveOptionsSummary(force = false) {
   if (requestTimer) clearTimeout(requestTimer);
   requestTimer = null;
   delete summary.dataset.profile;
+  lastReadiness = readiness;
+  lastResolveError = null;
+  renderReadinessHint();
 
   if (readiness.state !== 'ready') {
     const messages: Record<
@@ -207,11 +262,10 @@ export function refreshEffectiveOptionsSummary(force = false) {
       (result) => {
         if (generation !== requestGeneration || !summary.isConnected) return;
         if (!result || result.ok !== true) {
-          setSummaryState(
-            summary,
-            'error',
-            UI_MESSAGES.options.failed(result?.error?.message ?? 'Try again before downloading.')
-          );
+          const reason = result?.error?.message ?? 'Try again before downloading.';
+          lastResolveError = reason;
+          renderReadinessHint();
+          setSummaryState(summary, 'error', UI_MESSAGES.options.failed(reason));
           return;
         }
         const resolved = formatResolvedOptions(result.data);
@@ -221,6 +275,8 @@ export function refreshEffectiveOptionsSummary(force = false) {
       (error: unknown) => {
         if (generation !== requestGeneration || !summary.isConnected) return;
         const reason = error instanceof Error ? error.message : 'Try again before downloading.';
+        lastResolveError = reason;
+        renderReadinessHint();
         setSummaryState(summary, 'error', UI_MESSAGES.options.failed(reason));
       }
     );

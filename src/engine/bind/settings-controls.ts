@@ -1,6 +1,7 @@
 // Startup bindings for settings controls.
-import { RosiSettings, isValidSubtitleLangs, isValidUrl } from '../core';
+import { RosiSettings, isValidSubtitleLangs, isValidUrl, logError } from '../core';
 import {
+  UI_MESSAGES,
   configureEffectiveOptionsRequestBuilder,
   refreshEffectiveOptionsSummary,
 } from '../messages';
@@ -57,7 +58,32 @@ function buildEffectiveOptionsReadiness(): EffectiveOptionsReadiness {
       playlist: playlistVisible ? (playlist ?? undefined) : undefined,
     }),
   };
-  return { state: 'ready', request };
+  return { state: 'ready', request, usesDefaultFolder: !outputPath };
+}
+
+function setDownloadFolderFeedback(message: string) {
+  const feedback = document.getElementById('downloadFolderFeedback');
+  if (!feedback) return;
+  feedback.textContent = message;
+  feedback.hidden = message === '';
+}
+
+/**
+ * Open the folder picker for the destination strip. A cancel is explained only
+ * while "Ask every time" is off, as in the wizard: with it on, no folder is needed.
+ */
+async function chooseDownloadFolder(explainCancel: boolean): Promise<string | null> {
+  setDownloadFolderFeedback('');
+  try {
+    const chosen = await window.api.selectDownloadLocation();
+    if (chosen) return chosen;
+    if (explainCancel) setDownloadFolderFeedback(UI_MESSAGES.wizard.folderCancelled);
+    return null;
+  } catch (error) {
+    logError('Download folder selection failed', error);
+    setDownloadFolderFeedback(UI_MESSAGES.wizard.folderFailed);
+    return null;
+  }
 }
 
 function bindEffectiveOptionsSummary() {
@@ -177,16 +203,30 @@ export function bindSettingsControls() {
   }
   if (askDownloadLocationToggle) {
     askDownloadLocationToggle.addEventListener('change', (e) => {
-      settingsStore.settings.askDownloadLocation = (e.target as HTMLInputElement).checked;
+      const askEachTime = (e.target as HTMLInputElement).checked;
+      settingsStore.settings.askDownloadLocation = askEachTime;
+      setDownloadFolderFeedback('');
       void persistSettings();
+      // With no folder and "Ask every time" off, ask for one now, so the next
+      // download does not save somewhere the user never chose.
+      if (!askEachTime && !settingsStore.settings.downloadFolder?.trim()) {
+        void chooseDownloadFolder(true).then((savePath) => {
+          if (!savePath || settingsStore.settings.askDownloadLocation) return;
+          settingsStore.settings.downloadFolder = savePath;
+          updateUIFromSettings();
+          refreshEffectiveOptionsSummary();
+          void persistSettings(true, true);
+        });
+      }
     });
   }
   if (changeDownloadFolderBtn) {
     changeDownloadFolderBtn.addEventListener('click', async () => {
-      const savePath = await window.api.selectDownloadLocation();
+      const savePath = await chooseDownloadFolder(!settingsStore.settings.askDownloadLocation);
       if (!savePath) return;
       settingsStore.settings.downloadFolder = savePath;
       updateUIFromSettings();
+      refreshEffectiveOptionsSummary();
       void persistSettings(true, true);
     });
   }

@@ -661,11 +661,13 @@
                   id="downloadBtn"
                   class="download-btn btn btn--primary btn--lg"
                   data-default-text="Download"
+                  aria-describedby="downloadReadiness"
                 >
                   <span data-icon="download" data-size="20"></span>
                   <span>Download</span>
                 </button>
               </div>
+              <p id="downloadReadiness" class="download-readiness" data-tone="info" hidden></p>
               <p
                 id="urlValidationMessage"
                 class="url-validation-message"
@@ -867,6 +869,13 @@
                   Change…
                 </button>
               </div>
+              <p
+                id="downloadFolderFeedback"
+                class="download-folder-feedback"
+                role="status"
+                aria-live="polite"
+                hidden
+              ></p>
 
               <div
                 id="preview-card"

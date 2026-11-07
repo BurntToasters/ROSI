@@ -773,7 +773,12 @@ describe('rosiEngine DOM wiring', () => {
 
   it('starts a direct download from a valid URL and selected folder', async () => {
     const savePath = '/Users/test/Downloads';
+    // Ask every time keeps the folder picker path. With it off and no folder, the
+    // download saves to the Downloads folder without a picker.
     const api = buildMockApi({
+      getSettings: vi.fn(() =>
+        Promise.resolve({ ...defaultSettings(), askDownloadLocation: true })
+      ),
       selectDownloadLocation: vi.fn(() => Promise.resolve(savePath)),
     });
     await loadEngine(api);

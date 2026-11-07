@@ -423,6 +423,7 @@
   font-size: var(--text-sm);
   line-height: 1.4;
   color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
 
 .download-output-summary[data-state='resolved'] {
@@ -436,6 +437,29 @@
 .download-output-summary[data-state='error'],
 .download-output-summary[data-state='invalid-url'] {
   color: var(--danger);
+}
+
+/* Download readiness hint: the reason and next action beside the Download button. */
+.download-readiness {
+  margin: 0.45rem 0 0 0.2rem;
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.download-readiness[data-tone='blocked'],
+.download-readiness[data-tone='error'] {
+  color: var(--danger);
+}
+
+.download-readiness[data-tone='warning'] {
+  color: var(--warning);
+}
+
+.download-readiness[hidden],
+.download-folder-feedback[hidden] {
+  display: none;
 }
 
 /* ── Saved presets popover ── */
@@ -544,6 +568,14 @@
   background: var(--surface-1);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
+}
+
+.download-folder-feedback {
+  margin: 0.4rem 0 0 0.8rem;
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  color: var(--danger);
+  overflow-wrap: anywhere;
 }
 
 .download-destination-icon {
