@@ -41,6 +41,10 @@ export interface Commands {
     args: { urls: string[]; options: Ipc.DownloadRequestInput | null };
     result: Envelope<Ipc.AddResult>;
   };
+  extract_queue_urls: {
+    args: { input: Ipc.QueueTextInput };
+    result: Envelope<Ipc.ExtractedQueueUrls>;
+  };
   remove_from_queue: { args: { id: string }; result: Envelope<void> };
   retry_queue_item: { args: { id: string }; result: Envelope<void> };
   reorder_queue_item: { args: { request: Ipc.QueueReorderInput }; result: Envelope<void> };

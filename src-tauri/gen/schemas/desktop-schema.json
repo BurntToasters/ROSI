@@ -477,6 +477,12 @@
           "markdownDescription": "Enables the export_settings command without any pre-configured scope."
         },
         {
+          "description": "Enables the extract_queue_urls command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-extract-queue-urls",
+          "markdownDescription": "Enables the extract_queue_urls command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_app_platform command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-app-platform",
@@ -811,6 +817,12 @@
           "type": "string",
           "const": "deny-export-settings",
           "markdownDescription": "Denies the export_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the extract_queue_urls command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-extract-queue-urls",
+          "markdownDescription": "Denies the extract_queue_urls command without any pre-configured scope."
         },
         {
           "description": "Denies the get_app_platform command without any pre-configured scope.",

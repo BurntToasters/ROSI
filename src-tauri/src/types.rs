@@ -688,6 +688,24 @@ impl DownloadOutcome {
     }
 }
 
+/// Payload for `extract_queue_urls`: raw pasted or dropped text.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct QueueTextInput {
+    pub text: String,
+}
+
+/// Result of `extract_queue_urls`. `rejected` lists at most a few refused
+/// link tokens; `rejected_count` is the full number.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ExtractedQueueUrls {
+    pub urls: Vec<String>,
+    pub rejected: Vec<String>,
+    pub rejected_count: usize,
+}
+
 /// Payload for `resolve_preset_options`: a saved preset id and no URL.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -737,6 +755,8 @@ mod ts_bindings {
             crate::ipc::IpcError::decl(&cfg),
             crate::ipc::DownloadRequestInput::decl(&cfg),
             PresetOptionsInput::decl(&cfg),
+            QueueTextInput::decl(&cfg),
+            ExtractedQueueUrls::decl(&cfg),
             crate::downloader::Started::decl(&cfg),
             crate::queue::Started::decl(&cfg),
             crate::queue::AddResult::decl(&cfg),

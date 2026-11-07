@@ -156,6 +156,7 @@ macro_rules! generate_app_handler {
             download_options::resolve_download_options,
             download_options::resolve_preset_options,
             queue::add_to_queue,
+            queue::extract_queue_urls,
             queue::remove_from_queue,
             queue::retry_queue_item,
             queue::reorder_queue_item,

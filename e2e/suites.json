@@ -707,6 +707,12 @@
       "allowedSkips": []
     },
     {
+      "name": "queue-paste-extraction",
+      "feature": "queue",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
       "name": "save-location",
       "feature": "dock-ui",
       "owner": "main",

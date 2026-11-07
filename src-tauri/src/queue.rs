@@ -1,7 +1,9 @@
 //! Persistent download queue (`download-queue.json` + backup) and the runner
 //! that feeds queued items to the downloader one at a time.
 
-use crate::constants::MAX_QUEUE_SIZE;
+use crate::constants::{
+    MAX_EXTRACT_TEXT_BYTES, MAX_QUEUE_SIZE, MAX_QUEUE_URL_BYTES, MAX_REJECTED_REPORTED,
+};
 use crate::coordinator::{self, Command, QueueCommand};
 use crate::downloader;
 use crate::ipc::{
@@ -9,8 +11,8 @@ use crate::ipc::{
     QueueUrlInput, QueueUrlsInput, VALIDATION_ERROR,
 };
 use crate::types::{
-    DownloadCompletion, DownloadRequestOptions, Outcome, Owner, QueueItem, QueueProgress,
-    QueueReorderInput, QueueStatus, Settings,
+    DownloadCompletion, DownloadRequestOptions, ExtractedQueueUrls, Outcome, Owner, QueueItem,
+    QueueProgress, QueueReorderInput, QueueStatus, QueueTextInput, Settings,
 };
 use crate::validation::{
     normalize_queue_url, validate_file_location, validate_queue_item_id, validate_queue_reorder,
@@ -41,7 +43,6 @@ static QUEUE: OnceLock<Mutex<QueueState>> = OnceLock::new();
 const MAX_QUEUE_FILE_BYTES: usize = 32 * 1024 * 1024;
 // Reserve space for completion paths, filenames, and error messages.
 pub(crate) const MAX_QUEUE_ADMISSION_BYTES: usize = 24 * 1024 * 1024;
-const MAX_QUEUE_URL_BYTES: usize = 64 * 1024;
 struct RunnerFinished;
 
 impl Drop for RunnerFinished {
@@ -1130,6 +1131,61 @@ pub fn stop() {
 pub struct AddResult {
     pub(crate) added: usize,
     pub(crate) skipped: usize,
+}
+
+/// True for a token that names a scheme or `www.` host, so refusing it is worth
+/// reporting. Plain words are skipped.
+fn looks_like_link(token: &str) -> bool {
+    token.contains("://") || token.to_ascii_lowercase().starts_with("www.")
+}
+
+/// Splits pasted text into queue links with the same rules `add_to_queue`
+/// applies. Blank and `#` comment lines are skipped.
+#[tauri::command]
+pub fn extract_queue_urls(input: FalliblePayload<QueueTextInput>) -> IpcResult<ExtractedQueueUrls> {
+    let input = match input.into_typed(VALIDATION_ERROR, "Text must be a string.") {
+        Ok(input) => input,
+        Err(error) => return ipc::from_error(error),
+    };
+    if input.text.len() > MAX_EXTRACT_TEXT_BYTES {
+        return ipc::err(VALIDATION_ERROR, "Pasted links must not exceed 256 KiB.");
+    }
+    let mut urls = Vec::new();
+    let mut seen = HashSet::new();
+    let mut rejected = Vec::new();
+    let mut rejected_count = 0;
+    for line in input.text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        for token in line.split_whitespace() {
+            let accepted = if token.len() > MAX_QUEUE_URL_BYTES {
+                None
+            } else {
+                normalize_queue_url(token)
+            };
+            match accepted {
+                Some(url) => {
+                    if seen.insert(url.clone()) {
+                        urls.push(url);
+                    }
+                }
+                None if looks_like_link(token) => {
+                    rejected_count += 1;
+                    if rejected.len() < MAX_REJECTED_REPORTED {
+                        rejected.push(token.to_string());
+                    }
+                }
+                None => {}
+            }
+        }
+    }
+    ipc::ok(ExtractedQueueUrls {
+        urls,
+        rejected,
+        rejected_count,
+    })
 }
 
 #[tauri::command(async)]

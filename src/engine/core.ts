@@ -102,47 +102,6 @@ export function isValidUrl(string: string) {
   }
 }
 
-export interface ExtractedUrlSet {
-  urls: string[];
-  rejected: number;
-}
-
-export function normalizeHttpUrl(value: string): string | null {
-  const trimmed = value.trim();
-  if (!isValidUrl(trimmed)) return null;
-  try {
-    const url = new URL(trimmed);
-    url.hash = '';
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
-
-export function extractHttpUrls(rawValue: string): ExtractedUrlSet {
-  const candidates: string[] = [];
-  rawValue.split(/\r?\n/).forEach((line) => {
-    const trimmedLine = line.trim();
-    if (!trimmedLine || trimmedLine.startsWith('#')) return;
-    candidates.push(...trimmedLine.split(/\s+/).filter(Boolean));
-  });
-
-  const urls: string[] = [];
-  const seen = new Set<string>();
-  let rejected = 0;
-  candidates.forEach((candidate) => {
-    const normalized = normalizeHttpUrl(candidate);
-    if (!normalized) {
-      rejected += 1;
-      return;
-    }
-    if (seen.has(normalized)) return;
-    seen.add(normalized);
-    urls.push(normalized);
-  });
-  return { urls, rejected };
-}
-
 /**
  * Show the save folder with its last segment pinned, so a long path loses its
  * middle to the ellipsis and the folder name stays readable.

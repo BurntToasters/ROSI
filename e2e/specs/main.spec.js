@@ -2077,7 +2077,8 @@ describe("ROSI main window", () => {
 
   it("accepts links dropped onto the download card", async () => {
     const link = `${MEDIA}/clip-two.mp4`;
-    const dropped = await browser.execute((value) => {
+    // The drop reads the backend's link split, so wait for the value to land.
+    const dropped = await browser.executeAsync((value, done) => {
       const card = document.querySelector(".download-card");
       const input = document.getElementById("url");
       input.value = "";
@@ -2097,12 +2098,21 @@ describe("ROSI main window", () => {
           dataTransfer: data,
         }),
       );
-      return {
-        value: input.value,
-        highlighted,
-        overPrevented: over.defaultPrevented,
-        cleared: !card.classList.contains("drag-over"),
+      const cleared = !card.classList.contains("drag-over");
+      const started = Date.now();
+      const settle = () => {
+        if (input.value === value || Date.now() - started > 5000) {
+          done({
+            value: input.value,
+            highlighted,
+            overPrevented: over.defaultPrevented,
+            cleared,
+          });
+          return;
+        }
+        setTimeout(settle, 50);
       };
+      settle();
     }, link);
     await typeUrl("");
     assert.equal(dropped.value, link);
@@ -4222,6 +4232,67 @@ describe("ROSI main window", () => {
       timeoutMsg: "Clear did not empty the queue",
     });
     record("queue-controls", { completed: urls.length, cancelled: 1 });
+  });
+
+  it("splits a mixed paste through the backend and queues only the safe links", async () => {
+    await api("clearQueue");
+    await browser.execute(() => window.rosiModules.dock.selectTab("queue"));
+    const kept = [
+      `${MEDIA}/clip-two.mp4?paste=1`,
+      `${MEDIA}/clip-three.mp4?paste=1`,
+    ];
+    // Private and local hosts and a non-http scheme must be refused.
+    const refused = [
+      "http://192.168.1.10/private.mp4",
+      "http://localhost:8080/local.mp4",
+      "ftp://files.example.com/clip.mp4",
+    ];
+    const mixed = [
+      "# pasted from chat, comment lines are skipped",
+      `${kept[0]} ${refused[0]} please`,
+      `${kept[1]}#t=5 ${kept[0]}`,
+      `${refused[1]}\n${refused[2]}`,
+    ].join("\n");
+
+    const direct = await api("extractQueueUrls", mixed);
+    assert.equal(direct.ok, true, "extract_queue_urls refused the paste");
+    assert.deepEqual(direct.data.urls, kept, "backend urls differ");
+    assert.deepEqual(direct.data.rejected, refused, "backend rejected differ");
+    assert.equal(direct.data.rejectedCount, refused.length);
+    const blank = await api("extractQueueUrls", "# only a note\n   ");
+    assert.deepEqual(blank.data.urls, []);
+    const oversized = await api("extractQueueUrls", "a".repeat(256 * 1024 + 1));
+    assert.equal(oversized.ok, false, "oversized paste was not refused");
+
+    // Paste into the real queue box and press Add.
+    await browser.execute((value) => {
+      const input = document.getElementById("queueUrlInput");
+      input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }, mixed);
+    await clickById("addToQueueBtn");
+    await browser.waitUntil(
+      async () => (await api("getQueue")).length === kept.length,
+      { timeout: 10_000, timeoutMsg: "Add did not queue the safe links" },
+    );
+    const queued = (await api("getQueue")).map((item) => item.url);
+    assert.deepEqual(queued, kept, "queue differs from the safe links");
+    const status = await browser.execute(
+      () => document.getElementById("queueStatusMessage")?.textContent ?? "",
+    );
+    assert.match(status, /3 ignored as invalid\./, `status was: ${status}`);
+    record("queue-paste-extraction", {
+      queued: queued.length,
+      rejectedCount: direct.data.rejectedCount,
+      rejected: direct.data.rejected,
+      command: {
+        ok: direct.ok,
+        urls: direct.data.urls,
+        blank: blank.data.urls,
+      },
+      oversizedRefused: oversized.ok === false,
+    });
+    await api("clearQueue");
   });
 
   it("changes the save folder and asks every time when told to", async () => {

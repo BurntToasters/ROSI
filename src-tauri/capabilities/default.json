@@ -27,6 +27,7 @@
     "allow-resolve-preset-options",
     "allow-cancel-download",
     "allow-add-to-queue",
+    "allow-extract-queue-urls",
     "allow-remove-from-queue",
     "allow-retry-queue-item",
     "allow-reorder-queue-item",

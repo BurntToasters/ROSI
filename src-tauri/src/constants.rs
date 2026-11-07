@@ -28,6 +28,12 @@ pub const ALLOWED_DOWNLOAD_PROFILES: &[&str] = DownloadProfile::NAMES;
 pub const ALLOWED_DOCK_TABS: &[&str] = DockTab::NAMES;
 
 pub const MAX_QUEUE_SIZE: usize = 500;
+/// Longest accepted queue URL, in bytes.
+pub const MAX_QUEUE_URL_BYTES: usize = 64 * 1024;
+/// Largest pasted or dropped text that `extract_queue_urls` will split.
+pub const MAX_EXTRACT_TEXT_BYTES: usize = 256 * 1024;
+/// Most refused link tokens listed back to the renderer.
+pub const MAX_REJECTED_REPORTED: usize = 20;
 pub const MAX_DOWNLOAD_PRESETS: usize = 20;
 pub const MAX_PRESET_NAME_LENGTH: usize = 40;
 pub const MAX_PRESET_ID_LENGTH: usize = 64;

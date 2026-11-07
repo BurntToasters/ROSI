@@ -92,6 +92,14 @@ function buildMockApi(overrides: Partial<MockApi> = {}): MockApi {
     cancelDownload: vi.fn(),
     cancelFormats: vi.fn(),
     addToQueue: vi.fn(() => ok({ added: 1, skipped: 0 })),
+    // Answers like extract_queue_urls for plain http(s) tokens.
+    extractQueueUrls: vi.fn((text: string) => {
+      const urls: string[] = [];
+      for (const token of text.split(/\s+/)) {
+        if (/^https?:\/\//.test(token) && !urls.includes(token)) urls.push(token);
+      }
+      return ok({ urls, rejected: [], rejectedCount: 0 });
+    }),
     removeFromQueue: vi.fn(() => ok(undefined)),
     retryQueueItem: vi.fn(() => ok(undefined)),
     reorderQueueItem: vi.fn(() => ok(undefined)),
@@ -691,6 +699,7 @@ describe('rosiEngine DOM wiring', () => {
     });
 
     queueInput.dispatchEvent(dropEvent);
+    await flush(10);
 
     expect(queueInput.value).toBe('https://example.com/existing\nhttps://example.com/dropped');
   });

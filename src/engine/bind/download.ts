@@ -1,5 +1,5 @@
 // Startup bindings for format fetching and the download button.
-import { applyActiveDownloadProgressPhases, extractHttpUrls, isValidUrl, logError } from '../core';
+import { applyActiveDownloadProgressPhases, isValidUrl, logError } from '../core';
 import { fetchFormats } from '../formats';
 import {
   beginManualDownloadOperation,
@@ -11,7 +11,7 @@ import {
 import { isPlaylistScopeVisible, resolvePlaylistSelection } from '../playlist';
 import { buildRequestOverrides, readAdvancedFormatSelections } from '../presets';
 import { downloadState, hideProgressBar } from '../progress';
-import { addUrlsToQueue } from '../queue-controller';
+import { addUrlsToQueue, extractQueueLinks } from '../queue-controller';
 import { refs } from '../refs';
 import { persistSettings, settingsStore } from '../settings-store';
 import { updateUIFromSettings } from '../settings-view';
@@ -49,11 +49,12 @@ export function bindDownloadControls() {
         }
 
         // Multiple links go to the queue instead of the single-download path.
-        const batch = extractHttpUrls(url);
+        const extracted = await extractQueueLinks(url);
+        const batch = extracted.ok ? extracted.data : { urls: [], rejectedCount: 0 };
         if (batch.urls.length > 1) {
           failManualDownloadStart(operation);
           downloadState.isDownloading = false;
-          const added = await addUrlsToQueue(batch.urls, batch.rejected);
+          const added = await addUrlsToQueue(batch.urls, batch.rejectedCount);
           if (added && urlInput) {
             urlInput.value = '';
             urlActionState.hasUrlValidationIntent = false;

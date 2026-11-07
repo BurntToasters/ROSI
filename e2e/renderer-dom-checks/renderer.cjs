@@ -178,6 +178,15 @@ w.api = new Proxy(
       downloadArgs = a;
       return ok({ started: true, sessionId: 1 });
     },
+    // Same split as extract_queue_urls for plain http(s) tokens.
+    extractQueueUrls: (text) => {
+      const urls = [];
+      for (const token of String(text).split(/\s+/)) {
+        if (/^https?:\/\//.test(token) && !urls.includes(token))
+          urls.push(token);
+      }
+      return ok({ urls, rejected: [], rejectedCount: 0 });
+    },
     addToQueue: (urls, options) => {
       queueArgs = { urls, options };
       return ok({ added: urls.length, skipped: 0 });

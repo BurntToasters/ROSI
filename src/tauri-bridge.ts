@@ -63,6 +63,7 @@ const api: RosiRendererApi = {
   downloadVideo: (options) => call('download_video', { options }),
   resolveDownloadOptions: (options) => call('resolve_download_options', { options }),
   resolvePresetOptions: (presetId) => call('resolve_preset_options', { options: { presetId } }),
+  extractQueueUrls: (text) => call('extract_queue_urls', { input: { text } }),
   cancelDownload: () => fire('cancel_download'),
   cancelFormats: () => fire('cancel_formats'),
   getAppVersion: () => getVersion(),

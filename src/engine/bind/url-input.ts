@@ -1,5 +1,5 @@
 // Startup bindings for the URL field and preview.
-import { extractHttpUrls, getModifierKeyName } from '../core';
+import { getModifierKeyName } from '../core';
 import { clearDownloadResult } from '../manual-download';
 import { hideVideoPreview, previewState } from '../preview';
 import {
@@ -7,6 +7,7 @@ import {
   previewController,
   runManualVideoPreview,
 } from '../preview-controller';
+import { extractQueueLinks } from '../queue-controller';
 import { refs } from '../refs';
 import { showToast } from '../ui-helpers';
 import { syncPrimaryActionState, updateUrlButtons, urlActionState } from '../url-actions';
@@ -57,7 +58,8 @@ export function bindUrlInput() {
       try {
         const text = await navigator.clipboard.readText();
         if (text && text.trim()) {
-          const { urls } = extractHttpUrls(text);
+          const extracted = await extractQueueLinks(text);
+          const urls = extracted.ok ? extracted.data.urls : [];
           // Single-line #url strips newlines; join with spaces so Add N still detects batches.
           urlInput.value = urls.length > 1 ? urls.join(' ') : (urls[0] ?? text.trim());
           urlInput.dispatchEvent(new Event('input'));
@@ -81,13 +83,14 @@ export function bindUrlInput() {
     downloadCard.addEventListener('dragleave', () => {
       downloadCard.classList.remove('drag-over');
     });
-    downloadCard.addEventListener('drop', (e) => {
+    downloadCard.addEventListener('drop', async (e) => {
       const dragEvent = e as DragEvent;
       dragEvent.preventDefault();
       downloadCard.classList.remove('drag-over');
       const dt = dragEvent.dataTransfer;
       const text = dt ? dt.getData('text/uri-list') || dt.getData('text/plain') : '';
-      const { urls } = extractHttpUrls(text);
+      const extracted = await extractQueueLinks(text);
+      const urls = extracted.ok ? extracted.data.urls : [];
       if (urls.length > 0 && urlInput) {
         urlInput.value = urls.length > 1 ? urls.join(' ') : (urls[0] as string);
         urlInput.dispatchEvent(new Event('input'));

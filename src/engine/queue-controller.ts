@@ -118,6 +118,17 @@ export async function addUrlsToQueue(urls: string[], rejected = 0) {
   }
 }
 
+/** Splits pasted or dropped text into queue links with the backend's URL rules. */
+export async function extractQueueLinks(
+  text: string
+): Promise<RosiIpcResult<RosiExtractedQueueUrls>> {
+  try {
+    return await window.api.extractQueueUrls(text);
+  } catch {
+    return { ok: false, error: { code: 'INTERNAL_ERROR', message: 'Could not read the links.' } };
+  }
+}
+
 export function updateQueueButtonStates(queue: RosiQueueItem[]) {
   const hasPending = queue.some((item) => item.status === 'pending');
   const isRunning = queue.some((item) => item.status === 'downloading');

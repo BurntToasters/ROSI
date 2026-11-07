@@ -1,5 +1,5 @@
 // URL field state, primary action buttons, and activity replay.
-import { applyActiveDownloadProgressPhases, extractHttpUrls, isValidUrl, logError } from './core';
+import { applyActiveDownloadProgressPhases, isValidUrl, logError } from './core';
 import { clearAdvancedFormatSelections, invalidateFormatRequest } from './formats';
 import {
   beginManualDownloadOperation,
@@ -85,6 +85,22 @@ export function setDownloadButtonLabel(label: string) {
   }
 }
 
+/**
+ * Links to count while typing. Only `isValidUrl` decides here, so the hint may
+ * show a link the backend refuses. The add path uses the backend result.
+ */
+function batchHintUrls(raw: string): string[] {
+  const seen = new Set<string>();
+  raw.split(/\r?\n/).forEach((line) => {
+    const trimmedLine = line.trim();
+    if (!trimmedLine || trimmedLine.startsWith('#')) return;
+    trimmedLine.split(/\s+/).forEach((token) => {
+      if (isValidUrl(token)) seen.add(token);
+    });
+  });
+  return [...seen];
+}
+
 export function syncPrimaryActionState() {
   const hasInput = !!refs.urlInput;
   const hasPrimaryButton = !!refs.downloadBtn;
@@ -97,8 +113,8 @@ export function syncPrimaryActionState() {
     clearAdvancedFormatSelections();
   }
   const hasValue = trimmed.length > 0;
-  const extracted = extractHttpUrls(raw);
-  urlActionState.pendingBatchUrls = extracted.urls.length > 1 ? extracted.urls : [];
+  const hintUrls = batchHintUrls(raw);
+  urlActionState.pendingBatchUrls = hintUrls.length > 1 ? hintUrls : [];
   const isBatch = urlActionState.pendingBatchUrls.length > 1;
   const validUrl = hasValue && (isBatch || isValidUrl(trimmed));
   const showInvalid = urlActionState.hasUrlValidationIntent && hasValue && !validUrl;

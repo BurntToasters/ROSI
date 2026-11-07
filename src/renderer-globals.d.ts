@@ -13,6 +13,7 @@ type RosiFormatEntry = import('./generated/ipc-types').FormatEntry;
 type RosiDownloadCompletion = import('./generated/ipc-types').DownloadCompletion;
 type RosiDownloadRequestOptions = import('./generated/ipc-types').DownloadRequestOptions;
 type RosiSettings = import('./generated/ipc-types').Settings;
+type RosiExtractedQueueUrls = import('./generated/ipc-types').ExtractedQueueUrls;
 type RosiDownloadActivity = RosiDownloadCompletion;
 
 interface RosiRendererApi {
@@ -37,6 +38,7 @@ interface RosiRendererApi {
     options: Partial<RosiDownloadRequestOptions>
   ) => Promise<RosiIpcResult<RosiDownloadRequestOptions>>;
   resolvePresetOptions: (presetId: string) => Promise<RosiIpcResult<RosiDownloadRequestOptions>>;
+  extractQueueUrls: (text: string) => Promise<RosiIpcResult<RosiExtractedQueueUrls>>;
   cancelDownload: () => void;
   cancelFormats: () => void;
   getAppVersion: () => Promise<string>;

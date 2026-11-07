@@ -76,6 +76,10 @@ export type DownloadRequestInput = { url?: string | null, outputPath?: string | 
 
 export type PresetOptionsInput = { presetId: string, };
 
+export type QueueTextInput = { text: string, };
+
+export type ExtractedQueueUrls = { urls: Array<string>, rejected: Array<string>, rejectedCount: number, };
+
 export type DownloadStarted = { started: boolean, sessionId: number, };
 
 export type QueueStarted = { started: boolean, };

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-extract-queue-urls"
+description = "Enables the extract_queue_urls command without any pre-configured scope."
+commands.allow = ["extract_queue_urls"]
+
+[[permission]]
+identifier = "deny-extract-queue-urls"
+description = "Denies the extract_queue_urls command without any pre-configured scope."
+commands.deny = ["extract_queue_urls"]
