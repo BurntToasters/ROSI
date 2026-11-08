@@ -19,6 +19,21 @@ struct LauncherConfig {
     version: u8,
     ffmpeg: Option<PathBuf>,
     ffprobe: Option<PathBuf>,
+    /// E2E builds only: where each ffprobe call's arguments are appended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    probe_log: Option<PathBuf>,
+}
+
+/// E2E-only study hooks (`ROSI_E2E_FFPROBE`): `absent` hides ffprobe from
+/// yt-dlp, `log:<path>` records every ffprobe call. Production ignores both.
+#[cfg(feature = "e2e")]
+fn e2e_ffprobe_mode() -> Option<String> {
+    std::env::var("ROSI_E2E_FFPROBE").ok()
+}
+
+#[cfg(not(feature = "e2e"))]
+fn e2e_ffprobe_mode() -> Option<String> {
+    None
 }
 
 /// Where per-operation launchers live. Windows uses the app data folder: it
@@ -69,6 +84,16 @@ impl FfmpegToolGuard {
         } else {
             resolve_path_probe()
         };
+        let study = e2e_ffprobe_mode();
+        let ffprobe = if study.as_deref() == Some("absent") {
+            None
+        } else {
+            ffprobe
+        };
+        let probe_log = study
+            .as_deref()
+            .and_then(|mode| mode.strip_prefix("log:"))
+            .map(PathBuf::from);
         let has_tools = ffmpeg.is_some() || ffprobe.is_some();
         let root = if has_tools {
             launcher_root()?
@@ -104,6 +129,7 @@ impl FfmpegToolGuard {
                     version: 1,
                     ffmpeg: ffmpeg.clone(),
                     ffprobe: ffprobe.clone(),
+                    probe_log: probe_log.clone(),
                 };
                 write_private_config(&config_path, &config)?;
 
@@ -230,6 +256,9 @@ fn run_tool(config_path: &Path, directory: &Path, kind: ToolKind, arguments: Vec
                 eprintln!("ROSI media-tool launcher has no configured ffprobe.");
                 return 1;
             };
+            if let Some(log) = config.probe_log.as_deref() {
+                record_probe_call(log, &arguments);
+            }
             (executable, restrict_ffprobe_arguments(arguments))
         }
     };
@@ -257,6 +286,17 @@ fn run_tool(config_path: &Path, directory: &Path, kind: ToolKind, arguments: Vec
             eprintln!("ROSI media-tool launcher could not start the configured tool: {error}");
             1
         }
+    }
+}
+
+/// Appends one JSON line with the call's arguments. Best effort: a failed
+/// write never changes the call.
+fn record_probe_call(log: &Path, arguments: &[OsString]) {
+    let line = serde_json::json!({
+        "args": arguments.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(),
+    });
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log) {
+        let _ = writeln!(file, "{line}");
     }
 }
 
