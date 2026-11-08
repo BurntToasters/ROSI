@@ -2,6 +2,7 @@
 import { isValidUrl, logError } from './core';
 import { showModal } from './overlays';
 import { setButtonLoading } from './ui-helpers';
+import { api } from '../api';
 
 export let isFetchingFormats = false;
 export let fetchFormatsAbort: (() => void) | null = null;
@@ -48,7 +49,7 @@ export function invalidateFormatRequest() {
   formatRequestUrl = null;
   isFetchingFormats = false;
   fetchFormatsAbort = null;
-  window.api.cancelFormats?.();
+  api.cancelFormats?.();
   const btn = document.getElementById('fetchFormatsBtn') as HTMLButtonElement | null;
   if (btn) setButtonLoading(btn, false);
 }
@@ -104,7 +105,7 @@ export async function fetchFormats() {
       btn,
       true,
       () => {
-        window.api.cancelFormats();
+        api.cancelFormats();
         fetchFormatsAbort?.();
       },
       'Cancel format check'
@@ -113,7 +114,7 @@ export async function fetchFormats() {
     setSelectMessage(audioSelect, 'Loading...');
 
     try {
-      const formatResult = await window.api.getFormats(videoUrl);
+      const formatResult = await api.getFormats(videoUrl);
       if (wasCancelled || !isCurrentRequest()) return;
       if (!formatResult || formatResult.ok !== true) {
         if (formatResult?.error?.code === 'NOT_AVAILABLE') {

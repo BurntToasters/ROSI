@@ -19,7 +19,7 @@ split into focused modules:
 | `validation.rs`       | Security boundary: URL safety (no private/loopback hosts), path allow-lists, IPC payloads |
 | `settings.rs`         | Settings model, lenient migration/sanitization, import/export                      |
 | `legacy.rs`           | First-launch import of ROSI 4 data from `<config dir>/rosi`                        |
-| `downloader.rs`       | Single active download session: yt-dlp, optional FFmpeg conversion, cancellation. Child modules `downloader/conversion.rs` (FFmpeg runs) and `downloader/publication.rs` (output installs, captions) |
+| `downloader.rs`       | Single active download session: yt-dlp, optional FFmpeg conversion, cancellation. The session is owned by one thread (`downloader/session_owner.rs`) that runs its tasks in order; callers wait on replies, and the owner never waits on processes or the coordinator. Child modules `downloader/conversion.rs` (FFmpeg runs) and `downloader/publication.rs` (output installs, captions) |
 | `queue.rs`            | Persistent queue (`download-queue.json` + backup), its writer, and its sequential runner. The queue state is owned by the coordinator thread, not held in a global lock |
 | `coordinator.rs`      | Single owner of queue state, queue transitions, and session results: one thread applies each change in arrival order, publishes revisioned queue snapshots, and answers reads over reply channels |
 | `command_builders.rs` | yt-dlp / FFmpeg argument builders and codec probing                                |
@@ -68,19 +68,20 @@ normal loaders validate everything, and the result is recorded in
   argument and result types from `generated/ipc-types.ts`. It is the only place
   that calls `invoke()`; `src/tests/commands.contract.test.ts` checks its names
   against `src-tauri/build.rs` and the main window capability.
-- `tauri-bridge.ts` implements the renderer API (`window.api`) on top of
-  `commands.ts` and Tauri events. `window.api` stays the seam that the vitest
-  DOM tests and the E2E specs drive.
+- `api.ts` exports the renderer API object `api` on top of `commands.ts` and
+  Tauri events. Callers import it and call `api.method(...)` at call time. The
+  vitest DOM tests mock this module. The E2E hook exposes the same object as
+  `window.__ROSI_E2E__.api` in E2E builds only.
 - `engine/updater-ui.ts` draws update state. It calls the updater commands in
   `commands.ts` and renders the `updater-status` and `updater-progress` events;
   it makes no update decisions. The webview has no updater plugin permissions.
-- `main.ts` is the entry point. It imports the bridge first, then the renderer
+- `main.ts` is the entry point. It imports `api.ts` first, then the renderer
   modules, then `rosiEngine.ts`. After the renderer reports startup readiness it
   calls `mark_main_window_ready`, which lets the backend close the splash.
 - `rosiEngine.ts` is the renderer controller's startup: it loads settings,
   looks up the DOM, and calls the `engine/bind/*` functions in order, which bind
-  each feature's controls and the backend events. It calls the same `window.api` contract the v4 Electron preload
-  exposed, which `tauri-bridge.ts` implements.
+  each feature's controls and the backend events. It uses the same API contract
+  the v4 Electron preload exposed, which `api.ts` implements.
 - `engine/*` are ES modules split out of the controller by feature:
   `settings-store.ts` (settings state and serialized saves), `settings-view.ts`,
   `queue-controller.ts`, `manual-download.ts`, `preview-controller.ts`,

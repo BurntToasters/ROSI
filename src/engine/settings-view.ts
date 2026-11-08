@@ -8,6 +8,7 @@ import { refs } from './refs';
 import { persistSettings, settingsStore } from './settings-store';
 import { applyTheme, updateBackgroundAnimation } from './theme';
 import { toggleAdvancedUI, updateConsoleVisibility } from './ui-helpers';
+import { api } from '../api';
 
 // update UI from settings
 export const updateUIFromSettings = () => {
@@ -172,7 +173,7 @@ export const updateUIFromSettings = () => {
     );
   }
 
-  const channel = window.api.getChannel();
+  const channel = api.getChannel();
   if (refs.checkUpdatesOnStartupToggle) {
     refs.checkUpdatesOnStartupToggle.checked = settingsStore.settings.checkUpdatesOnStartup ?? true;
     if (channel === 'msstore' && refs.checkUpdatesOnStartupLabel) {
@@ -227,7 +228,7 @@ export function maybeShowSupportModal() {
         icon: 'heart',
         primary: true,
         action: () => {
-          void window.api.openExternal('https://rosie.run/support');
+          void api.openExternal('https://rosie.run/support');
           settingsStore.settings.hideSupportModal = true;
           void persistSettings();
         },
@@ -245,7 +246,7 @@ export function maybeShowSupportModal() {
 
 export const bindExternalLink = (element: HTMLElement | null, url: string) => {
   // Look the bridge up per click so it is never a stale reference.
-  bindExternalLinkTo(element, url, (target) => window.api.openExternal(target));
+  bindExternalLinkTo(element, url, (target) => api.openExternal(target));
 };
 
 export function applySettingsSearch(rawQuery: string) {

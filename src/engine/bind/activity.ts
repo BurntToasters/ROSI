@@ -2,12 +2,13 @@
 import { showModal } from '../overlays';
 import { refs } from '../refs';
 import { showToast } from '../ui-helpers';
+import { api } from '../../api';
 
 /** Activity loading, history clearing, and the console clear button. */
 export function bindActivityControls() {
   const { activityPanel, clearConsoleBtn, clearHistoryBtn, outputEl } = refs;
-  if (typeof window.api.getDownloadActivity === 'function') {
-    window.api
+  if (typeof api.getDownloadActivity === 'function') {
+    api
       .getDownloadActivity()
       .then((result) => {
         if (result && result.ok) activityPanel?.setEntries(result.data);

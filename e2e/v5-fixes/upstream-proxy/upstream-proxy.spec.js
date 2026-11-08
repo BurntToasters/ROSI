@@ -441,7 +441,7 @@ describe("V5 optional upstream HTTP proxy", () => {
     pageThumbnailUrl = `http://127.0.0.1:${pageServer.address().port}/thumb.png`;
     await browser.execute(() => {
       window.__upstreamProxyProgress = [];
-      window.api.onProgress((message) => {
+      window.__ROSI_E2E__.api.onProgress((message) => {
         window.__upstreamProxyProgress.push(String(message));
       });
     });

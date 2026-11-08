@@ -13,6 +13,7 @@ import {
   syncModalAccessibility,
 } from './overlays';
 import { applyFlatUi, updateBackgroundAnimation } from './theme';
+import { api } from '../api';
 
 /** Settings the setup wizard asks about; Skip resets exactly these. */
 export const WIZARD_SETTING_KEYS = [
@@ -140,7 +141,7 @@ export function launchSetupWizard(
       wizardChooseFolderBtn.setAttribute('aria-busy', 'true');
       clearFolderError();
       try {
-        const chosen = await window.api.selectDownloadLocation();
+        const chosen = await api.selectDownloadLocation();
         if (chosen) {
           wizardChosenFolder = chosen;
           if (wizardAskLocation) wizardAskLocation.checked = false;
@@ -266,7 +267,7 @@ export function launchSetupWizard(
     setDenoStatus('missing', UI_MESSAGES.wizard.denoMissing);
     if (isLinuxPlatform()) {
       setDenoAction(UI_MESSAGES.wizard.installInstructions, () => {
-        void window.api.openExternal(DENO_INSTALL_DOCS);
+        void api.openExternal(DENO_INSTALL_DOCS);
       });
     } else {
       setDenoAction(UI_MESSAGES.wizard.installDeno, () => void installDenoFromWizard());
@@ -277,7 +278,7 @@ export function launchSetupWizard(
     setDenoStatus('installing', UI_MESSAGES.wizard.denoInstalling);
     if (denoAction) denoAction.disabled = true;
     try {
-      const result = await window.api.installDeno();
+      const result = await api.installDeno();
       if (result && result.cancelled) {
         showDenoMissing();
         return;
@@ -293,7 +294,7 @@ export function launchSetupWizard(
         (error instanceof Error ? error.message : 'Unknown error');
       setDenoStatus('error', UI_MESSAGES.wizard.denoInstallFailed(message));
       setDenoAction(UI_MESSAGES.wizard.installInstructions, () => {
-        void window.api.openExternal(DENO_INSTALL_DOCS);
+        void api.openExternal(DENO_INSTALL_DOCS);
       });
     }
   }
@@ -313,7 +314,7 @@ export function launchSetupWizard(
     }
     setDenoStatus('checking', UI_MESSAGES.wizard.denoChecking);
     try {
-      if (await window.api.checkDenoInstalled()) {
+      if (await api.checkDenoInstalled()) {
         setDenoStatus('installed', UI_MESSAGES.wizard.denoInstalled);
       } else {
         showDenoMissing();
@@ -322,7 +323,7 @@ export function launchSetupWizard(
       logError('Wizard Deno check failed', error);
       setDenoStatus('error', UI_MESSAGES.wizard.denoCheckFailed);
       setDenoAction(UI_MESSAGES.wizard.installInstructions, () => {
-        void window.api.openExternal(DENO_INSTALL_DOCS);
+        void api.openExternal(DENO_INSTALL_DOCS);
       });
     }
   }
@@ -424,7 +425,7 @@ export function launchSetupWizard(
   async function applyWizardDefaults() {
     let defaults: Partial<RosiSettings> | null = null;
     try {
-      const result = await window.api.getDefaultSettings();
+      const result = await api.getDefaultSettings();
       if (result && result.ok) defaults = result.data as Partial<RosiSettings>;
     } catch (error) {
       logError('Could not load default settings for setup skip', error);

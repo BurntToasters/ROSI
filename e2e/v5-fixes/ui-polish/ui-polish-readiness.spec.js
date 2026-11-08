@@ -179,8 +179,9 @@ async function reloadApp() {
       browser.execute(
         () =>
           document.readyState === "complete" &&
-          typeof window.api?.resolveDownloadOptions === "function" &&
-          typeof window.api?.addToQueue === "function" &&
+          typeof window.__ROSI_E2E__?.api?.resolveDownloadOptions ===
+            "function" &&
+          typeof window.__ROSI_E2E__?.api?.addToQueue === "function" &&
           Boolean(document.getElementById("profileCustomBtn")) &&
           Boolean(document.getElementById("downloadBtn")),
       ),
@@ -253,8 +254,9 @@ async function waitForSummaryState(state, timeout = 10_000) {
 async function stubDownloadVideo() {
   await browser.execute(() => {
     window.__uiReadinessDownloadCalls = [];
-    window.__uiReadinessOriginalDownloadVideo = window.api.downloadVideo;
-    window.api.downloadVideo = async (options) => {
+    window.__uiReadinessOriginalDownloadVideo =
+      window.__ROSI_E2E__.api.downloadVideo;
+    window.__ROSI_E2E__.api.downloadVideo = async (options) => {
       window.__uiReadinessDownloadCalls.push(
         JSON.parse(JSON.stringify(options)),
       );
@@ -276,7 +278,8 @@ async function downloadCalls() {
 async function restoreDownloadVideo() {
   await browser.execute(() => {
     if (window.__uiReadinessOriginalDownloadVideo) {
-      window.api.downloadVideo = window.__uiReadinessOriginalDownloadVideo;
+      window.__ROSI_E2E__.api.downloadVideo =
+        window.__uiReadinessOriginalDownloadVideo;
     }
     delete window.__uiReadinessOriginalDownloadVideo;
   });
@@ -288,13 +291,13 @@ async function setPicker(mode, fixturePath = "") {
     (nextMode, nextPath) => {
       if (!window.__uiReadinessPicker) {
         const state = {
-          original: window.api.selectDownloadLocation,
+          original: window.__ROSI_E2E__.api.selectDownloadLocation,
           calls: 0,
           mode: "cancel",
           fixturePath: "",
         };
         window.__uiReadinessPicker = state;
-        window.api.selectDownloadLocation = async () => {
+        window.__ROSI_E2E__.api.selectDownloadLocation = async () => {
           state.calls += 1;
           if (state.mode === "fail") throw new Error("stub picker failure");
           if (state.mode === "cancel") return null;
@@ -316,7 +319,8 @@ async function pickerCalls() {
 async function restorePicker() {
   await browser.execute(() => {
     if (window.__uiReadinessPicker) {
-      window.api.selectDownloadLocation = window.__uiReadinessPicker.original;
+      window.__ROSI_E2E__.api.selectDownloadLocation =
+        window.__uiReadinessPicker.original;
       delete window.__uiReadinessPicker;
     }
   });
@@ -587,8 +591,9 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
         downloadFolder: "",
       });
       await browser.execute(() => {
-        window.__uiReadinessResolveOriginal = window.api.resolveDownloadOptions;
-        window.api.resolveDownloadOptions = async () => ({
+        window.__uiReadinessResolveOriginal =
+          window.__ROSI_E2E__.api.resolveDownloadOptions;
+        window.__ROSI_E2E__.api.resolveDownloadOptions = async () => ({
           ok: false,
           error: {
             code: "INTERNAL_ERROR",
@@ -605,7 +610,7 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
         assert.match(failed.text, /still checks these options/);
       } finally {
         await browser.execute(() => {
-          window.api.resolveDownloadOptions =
+          window.__ROSI_E2E__.api.resolveDownloadOptions =
             window.__uiReadinessResolveOriginal;
           delete window.__uiReadinessResolveOriginal;
         });
@@ -868,8 +873,9 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
       );
 
       await browser.execute((longError) => {
-        window.__uiReadinessResolveOriginal = window.api.resolveDownloadOptions;
-        window.api.resolveDownloadOptions = async () => ({
+        window.__uiReadinessResolveOriginal =
+          window.__ROSI_E2E__.api.resolveDownloadOptions;
+        window.__ROSI_E2E__.api.resolveDownloadOptions = async () => ({
           ok: false,
           error: { code: "INTERNAL_ERROR", message: longError },
         });
@@ -879,7 +885,7 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
         await waitForSummaryState("error");
       } finally {
         await browser.execute(() => {
-          window.api.resolveDownloadOptions =
+          window.__ROSI_E2E__.api.resolveDownloadOptions =
             window.__uiReadinessResolveOriginal;
           delete window.__uiReadinessResolveOriginal;
         });

@@ -55,13 +55,12 @@ taking explicit inputs.
 
 **Status (2026-11-06): partial implementation present.**
 `src/generated/ipc-types.ts`, `src/commands.ts`, and the command contract check
-exist. Runtime callers still use `window.api`, and the ambient renderer globals
-remain. The former acceptance criterion that `window.api` disappear is not
-met; removing the compatibility seam is deferred until its callers and harness
-are migrated together.
+exist. The renderer API is now the `api` module in `src/api.ts` (B6 part B),
+not `window.api`. Only the E2E hook exposes it, as `window.__ROSI_E2E__.api`
+in E2E builds. The method list is still hand-written, so this item is not done.
 
-**Problem.** `src/tauri-bridge.ts:132` assigns `window.api`, a shim that copies
-the v4 Electron contract onto Tauri. The renderer also depends on IIFE modules
+**Problem.** The API object (formerly `src/tauri-bridge.ts`, now `src/api.ts`)
+copies the v4 Electron contract onto Tauri. The renderer also depends on IIFE modules
 exposed as window globals. The settings shape is written twice by hand:
 `src-tauri/src/types.rs:59` (`struct Settings`) and the TypeScript copy in
 `src/rosiEngine.ts:39` (`theme: 'system' | 'light' | 'dark' | 'purple'`). They
@@ -74,14 +73,15 @@ can drift without a compile error. Neither `tauri-specta` nor `ts-rs` is in
    Compare their Tauri 2 support and how they fit the build. Choose one.
 2. Generate a TypeScript file from the Rust command and type definitions during
    the build. Commit the generated file and have CI fail if it is stale.
-3. Replace `window.api` with typed wrappers around `invoke` and event listeners.
-   Migrate one command group at a time, and delete each `window.api` member once
-   no caller uses it.
+3. Replace the hand-written API methods with typed wrappers around `invoke` and
+   event listeners. Migrate one command group at a time. The `api` module exists;
+   the wrappers inside it are still per-method.
 4. Replace the IIFE globals with ES module imports, as item 1 does.
 
 **Acceptance criteria.**
 
-- `window.api` and `window.rosiModules` no longer exist in `src/`.
+- `window.api` and `window.rosiModules` no longer exist in `src/` (met: the API
+  is the `api` module, and the E2E seam is `window.__ROSI_E2E__.api`).
 - No hand-written copy of `Settings` or any other IPC type remains in `src/`.
 - A stale generated file fails CI, and a Rust type change without a matching
   TypeScript change fails the type check.
@@ -425,7 +425,8 @@ must be green on every required platform (macOS 15 and newer, Linux x64,
 Windows x64, and Windows arm64) before this change starts. Today it is green
 only on macOS arm64. Before the port, write failure-mode rows for
 `cancel_session`, `complete_session`, `start_download`, and `on_ytdlp_exit`
-(`src-tauri/src/downloader.rs`).
+(`src-tauri/src/downloader.rs`). Part B's rows are in
+`e2e/session-ownership.failure-modes.md`.
 
 **Remaining globals** in `src-tauri/src` at this snapshot:
 
@@ -434,11 +435,11 @@ only on macOS arm64. Before the port, write failure-mode rows for
 | `QUEUE`: `OnceLock<Mutex<QueueState>>`, read by `state()` | `queue.rs:42`, `queue.rs:197` | **Done (B7 part A).** Removed. `QueueState` is a local in `coordinator::run`; reads are `Snapshot` and `IsRunning` requests. |
 | `PERSISTENCE` (inside `persistence()`)                    | `queue.rs:180`                | **Kept.** Configuration only: file paths and the save function. Its `revisions` mutex serializes the writer's `persist` and `flush`, and the writer tests depend on that, so it stays. |
 | `WRITER` (inside `writer()`)                              | `queue.rs:328`                | **Kept.** A `OnceLock` holding the writer's channel sender, not shared state. |
-| `ACTIVE`: `Mutex<Option<Session>>`, read by `lock()`      | `downloader.rs:82`, `:91`     | The session slot.                                                                     |
-| `ACTIVE_PRESENT`: `AtomicBool`                            | `downloader.rs:85`            | Mirror of whether `ACTIVE` holds a session.                                           |
-| `STARTUP`: `Mutex<()>`                                    | `downloader.rs:87`            | Serializes `start_download`. First in the lock chain described at `downloader.rs:18`. |
-| `EVENT_PUBLISH`: `Mutex<()>`                              | `downloader.rs:88`            | Serializes lifecycle event publication.                                               |
-| `COUNTER`: `AtomicU64`                                    | `downloader.rs:89`            | Source of session ids. Not a lock.                                                    |
+| `ACTIVE`: `Mutex<Option<Session>>`, read by `lock()`      | `downloader.rs` (was `:82`) | **Done (B7 part B).** Removed. The session lives on the session owner thread (`downloader/session_owner.rs`). Reads and changes are tasks run in arrival order. |
+| `ACTIVE_PRESENT`: `AtomicBool`                            | `downloader.rs` (was `:85`) | **Done (B7 part B).** Replaced by the owner's read-only `SLOT_OWNER` hint, which `is_busy` and `can_start` read. The install task decides. |
+| `STARTUP`: `Mutex<()>`                                    | `downloader.rs` (was `:87`) | **Done (B7 part B).** Removed. `install` makes the one authoritative check. A same-owner start cancels the occupant by id, awaits it, and retries. |
+| `EVENT_PUBLISH`: `Mutex<()>`                              | `downloader.rs` (was `:88`) | **Done (B7 part B).** Removed. The owner runs every event emit in arrival order, so a replaced session's events are dropped. |
+| `COUNTER`: `AtomicU64`                                    | `downloader.rs:94`          | **Kept with reason.** Mints session ids before install, so no owner round trip is needed. It is an atomic counter, not shared state. |
 
 The `downloader/conversion.rs` and `downloader/publication.rs` modules declare no
 statics. Test-only statics (`SERIAL` at `downloader.rs:1631`) are excluded.
@@ -452,31 +453,27 @@ statics above are listed so the port accounts for them too.
 
 ### B6: Renderer seams (roadmap items 1 and 2)
 
-**Status.** Not a 5.1.0 blocker, as the implementation plan states.
+**Status: done (part A and part B).** Not a 5.1.0 blocker, as the
+implementation plan states.
 
-**Remaining references** in `src/`, excluding `src/generated`, counted by
-occurrence:
+- Part A: `window.rosiModules` is removed. The modules are ES module imports
+  (commit 17d0dea).
+- Part B: `window.api` is removed. The API object is `api` in `src/api.ts`.
+  Renderer callers import it and call `api.method(...)` at call time. The
+  E2E hook sets `window.__ROSI_E2E__.api` to the same object, inside the
+  `VITE_ROSI_E2E` branch only. `src/tauri-bridge.ts` is deleted. The vitest
+  DOM suite mocks `../api`, and the renderer DOM checks pass the module to
+  their loader. Failure modes: `src/api.failure-modes.md`.
 
-- `window.api`: 105 occurrences. 104 are in 27 `.ts` files, including
-  `src/tauri-bridge.ts` (the assignment, 2 occurrences). The other 1 is in
-  `src/tests/commands.contract.failure-modes.md`.
-- `window.rosiModules`: 12 occurrences in 11 `.ts` files: one in each of the
-  eight `src/modules/*.ts` files, one in `src/engine/core.ts`, one in
-  `src/renderer-globals.d.ts`, and two in `src/tests/rosiEngine.dom.test.ts`.
+**Remaining.** The method signatures in `RosiRendererApi` (`src/api.ts`) are
+still written by hand. They use the generated payload types, but the method
+list is not generated from `commands.ts`. That is outside this item and can be
+done later.
 
-**Removal order.**
+**Removal order (done).** Part A converted the modules to ES imports. Part B
+moved the API into `src/api.ts`, switched every caller to `api.method(...)`
+at call time, and removed the old global.
 
-1. Convert each `src/modules/*.ts` IIFE to an ES module that exports a factory
-   taking an explicit dependency object. Go feature by feature in the order of
-   roadmap item 1 (settings, downloads, queue, activity, dock, updates, then the
-   setup wizard, licenses, and splash), then the remaining modules (icons, ui).
-2. When a module no longer needs `window.rosiModules`, remove its entry and its
-   reads in `src/engine/core.ts` and the DOM test. Do not change the test
-   expectations.
-3. Delete unused entries in `src/renderer-globals.d.ts` once no caller uses them.
-4. Replace `window.api` one command group at a time with typed wrappers, and
-   delete each member when no caller uses it. `src/tauri-bridge.ts` stays until
-   the E2E specs that drive `window.api` are migrated.
-
-**Acceptance.** Items 1 and 2 apply: `window.api` and `window.rosiModules` no
-longer exist in `src/`, and no hand-written IPC type copy remains.
+**Acceptance (met, except the hand-written method list under Remaining).**
+`window.api` and `window.rosiModules` no longer exist in `src/`, and the E2E
+specs read `window.__ROSI_E2E__.api`.

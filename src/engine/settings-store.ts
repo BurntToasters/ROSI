@@ -5,6 +5,7 @@ import { showModal } from './overlays';
 import { downloadState } from './progress';
 import { queueController } from './queue-controller';
 import { checkForUpdatesOnStartup, showRestartFailure } from './updater-ui';
+import { api } from '../api';
 
 // Copy used as the backend-confirmed baseline. Plain JSON, like saved snapshots.
 function cloneSettings(value: unknown): RosiSettings {
@@ -140,7 +141,7 @@ export async function drainSettingsSaves() {
 
   let rejectedMessage: string | null = null;
   try {
-    const result = await window.api.saveSettings(patch);
+    const result = await api.saveSettings(patch);
     if (result?.ok === true) {
       saved = true;
       settingsStore.lastSettingsSaveErrorCode = null;
@@ -155,7 +156,7 @@ export async function drainSettingsSaves() {
       // The other fields were saved; only the listed ones were refused.
       // Restore those from disk so they are not sent again on every save.
       const refused = JSON.parse(result.error.details) as string[];
-      const stored = (await window.api.getSettings()) as unknown as Record<string, unknown>;
+      const stored = (await api.getSettings()) as unknown as Record<string, unknown>;
       // The disk state is what the backend now holds, including the saved fields.
       settingsStore.backendSettings = cloneSettings(stored);
       const current = settingsStore.settings as unknown as Record<string, unknown>;
@@ -276,7 +277,7 @@ export async function flushBeforeRestart(action: string) {
 export async function restartAfterSettingsFlush() {
   if (!(await flushBeforeRestart('Restarting ROSI'))) return;
   try {
-    await window.api.restartApp();
+    await api.restartApp();
   } catch (error) {
     showRestartFailure(error);
   }
@@ -290,9 +291,9 @@ export function getPresets(): RosiDownloadPreset[] {
 
 export async function loadDefaultSettings(): Promise<RosiSettings | null> {
   if (settingsStore.defaultSettingsCache) return settingsStore.defaultSettingsCache;
-  if (typeof window.api.getDefaultSettings !== 'function') return null;
+  if (typeof api.getDefaultSettings !== 'function') return null;
   try {
-    const result = await window.api.getDefaultSettings();
+    const result = await api.getDefaultSettings();
     if (result && result.ok) {
       settingsStore.defaultSettingsCache = result.data as RosiSettings;
       return settingsStore.defaultSettingsCache;
@@ -305,12 +306,12 @@ export async function loadDefaultSettings(): Promise<RosiSettings | null> {
 
 // Check for updates on startup
 export async function checkUpdatesOnStartup() {
-  const channel = window.api.getChannel();
+  const channel = api.getChannel();
   if (channel === 'msstore') return;
   if (!settingsStore.settings.checkUpdatesOnStartup) return;
 
   try {
-    const isPackaged = await window.api.isPackaged();
+    const isPackaged = await api.isPackaged();
     if (!isPackaged) return;
 
     await new Promise((resolve) => setTimeout(resolve, 2000));

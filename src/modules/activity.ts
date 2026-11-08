@@ -1,4 +1,5 @@
 import { formatBytes } from './downloads';
+import { api } from '../api';
 
 // window.rosiMessages is published by engine/messages.ts before any render runs.
 const uiMessages = () => window.rosiMessages as NonNullable<Window['rosiMessages']>;
@@ -370,7 +371,7 @@ export function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPane
   }
 
   async function clearActivity(): Promise<boolean> {
-    if (typeof window.api.clearDownloadActivity !== 'function') {
+    if (typeof api.clearDownloadActivity !== 'function') {
       try {
         localStorage.removeItem(HISTORY_KEY);
       } catch {
@@ -380,7 +381,7 @@ export function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPane
       return true;
     }
     try {
-      const result = await window.api.clearDownloadActivity();
+      const result = await api.clearDownloadActivity();
       if (!result || !result.ok) {
         showToast(result?.error?.message || 'Could not clear activity.', { type: 'error' });
         return false;

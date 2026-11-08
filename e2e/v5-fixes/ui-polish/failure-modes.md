@@ -193,7 +193,7 @@ H1. **Page reloads in the readiness spec stall or lose the main UI in a pass.**
 Measured in `d1-area-diag-1.log` and `d1-area-diag-2.log`: at each scenario
 start the session was on its only window (`handles=1`, `tauri://localhost`,
 main UI present). The failures were 30 s WebDriver script timeouts and missing
-`#url` or `window.api` right after `browser.refresh()`, and each failure
+`#url` or `window.__ROSI_E2E__.api` right after `browser.refresh()`, and each failure
 followed a reload. No app process was alive 1 s after a worker's teardown, and
 E2E builds disable the single-instance plugin, so neither is the cause. The
 readiness spec was reduced to one reload, in `before()`; later scenarios drive
@@ -217,7 +217,7 @@ scenario fails only on its own assertion, not on a retried poll error.
 Cause: `browser.refresh()` is the trigger. The first `execute/sync` after a
 refresh, which runs in the new document, sometimes did not return for the full
 30 s script timeout. WDIO retried it and the retry worked, but in the area pass
-the stall and its retry left later commands without `window.api`, `#url`, or
+the stall and its retry left later commands without `window.__ROSI_E2E__.api`, `#url`, or
 the E2E hook. The WebKit reason for the stall is not confirmed.
 
 Evidence: a temporary probe (`ROSI_E2E_ONLY`, deleted after use) alternated
@@ -229,7 +229,7 @@ Evidence: a temporary probe (`ROSI_E2E_ONLY`, deleted after use) alternated
   reloads.
 - Probe logs: `oversee2/reload-probe-bg.json` and `reload-probe-fg.json` in the
   scratchpad. The area diagnostics `d1-area-diag-1.log` and `d1-area-diag-2.log`
-  show the same timeouts and the later `window.api` and `#url` errors.
+  show the same timeouts and the later `window.__ROSI_E2E__.api` and `#url` errors.
 - Not the cause: an open `<dialog>` (zero before and after every reload) and
   the background occlusion (the stall also happened in foreground). The ready
   flag was true after every reload.

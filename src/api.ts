@@ -1,10 +1,87 @@
-// Tauri implementation of the renderer API contract (`window.api`) that the
-// ROSI v4 Electron preload exposed. rosiEngine.ts and the renderer modules
-// keep calling the same methods; each maps to a Rust command or event.
+// The renderer API object. Callers import `api` and call `api.method(...)` at
+// call time, so a replaced method is seen everywhere. Each method maps to a
+// Rust command or a Tauri event. The E2E hook exposes this same object.
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { call, fire } from './commands';
+
+export interface RosiRendererApi {
+  restartApp: () => Promise<void>;
+  getChannel: () => 'github' | 'msstore';
+  getFormats: (url: string) => Promise<RosiIpcResult<import('./generated/ipc-types').FormatList>>;
+  getVideoInfo: (
+    url: string,
+    playlistMode?: 'current' | 'all'
+  ) => Promise<RosiIpcResult<import('./generated/ipc-types').VideoInfo>>;
+  cancelVideoInfo: () => void;
+  selectDownloadLocation: () => Promise<string | null>;
+  getSettings: () => Promise<RosiSettings>;
+  getDefaultSettings: () => Promise<RosiIpcResult<RosiSettings>>;
+  saveSettings: (settings: Partial<RosiSettings>) => Promise<RosiIpcResult<RosiSettings>>;
+  resetSettings: () => Promise<void>;
+  openExternal: (url: string) => Promise<RosiIpcResult<{ opened: boolean }>>;
+  downloadVideo: (
+    options: Partial<RosiDownloadRequestOptions>
+  ) => Promise<RosiIpcResult<import('./generated/ipc-types').DownloadStarted>>;
+  resolveDownloadOptions: (
+    options: Partial<RosiDownloadRequestOptions>
+  ) => Promise<RosiIpcResult<RosiDownloadRequestOptions>>;
+  resolvePresetOptions: (presetId: string) => Promise<RosiIpcResult<RosiDownloadRequestOptions>>;
+  extractQueueUrls: (text: string) => Promise<RosiIpcResult<RosiExtractedQueueUrls>>;
+  cancelDownload: () => void;
+  cancelFormats: () => void;
+  getAppVersion: () => Promise<string>;
+  getAppPlatform: () => Promise<NodeJS.Platform>;
+  checkDenoInstalled: () => Promise<boolean>;
+  installDeno: () => Promise<import('./generated/ipc-types').InstallResult>;
+  detectGpu: () => Promise<{ nvidia: boolean; amd: boolean; intel: boolean }>;
+  isPackaged: () => Promise<boolean>;
+  onProgress: (callback: (message: string) => void) => () => void;
+  onJobProgress: (callback: (data: RosiJobProgressEvent) => void) => () => void;
+  onMenuAction: (
+    callback: (
+      action: 'check-for-updates' | 'open-settings' | 'show-licenses' | 'toggle-sidebar'
+    ) => void
+  ) => () => void;
+  onComplete: (callback: (message: string) => void) => () => void;
+  onDownloadComplete: (callback: (completion: RosiDownloadCompletion) => void) => () => void;
+  openFileLocation: (filePath: string) => Promise<RosiIpcResult<{ opened: boolean }>>;
+  showNotification: (options: {
+    title?: string;
+    body?: string;
+    filePath?: string;
+  }) => Promise<RosiIpcResult<{ shown: boolean }>>;
+  exportSettings: () => Promise<RosiIpcResult<{ exported: boolean }>>;
+  importSettings: () => Promise<RosiIpcResult<{ imported: boolean }>>;
+  getStats: () => Promise<RosiDownloadStats>;
+  resetStats: () => Promise<RosiIpcResult<void>>;
+  getDownloadActivity: () => Promise<RosiIpcResult<RosiDownloadActivity[]>>;
+  clearDownloadActivity: () => Promise<RosiIpcResult<void>>;
+  onDownloadActivityUpdate: (callback: (activity: RosiDownloadActivity[]) => void) => () => void;
+  logError: (message: string) => void;
+  setWindowTheme: (theme: 'light' | 'dark') => void;
+  notifySettingsFlushed: (generation: number) => Promise<void>;
+  addToQueue: (
+    urls: string[],
+    options?: Partial<RosiDownloadRequestOptions>
+  ) => Promise<RosiIpcResult<import('./generated/ipc-types').AddResult>>;
+  removeFromQueue: (id: string) => Promise<RosiIpcResult<void>>;
+  retryQueueItem: (id: string) => Promise<RosiIpcResult<void>>;
+  reorderQueueItem: (request: {
+    id: string;
+    direction: 'up' | 'down';
+  }) => Promise<RosiIpcResult<void>>;
+  clearQueue: () => Promise<RosiIpcResult<void>>;
+  clearFinishedQueue: () => Promise<RosiIpcResult<{ removed: number }>>;
+  isFlatpak: () => Promise<boolean>;
+  getQueue: () => Promise<RosiQueueItem[]>;
+  startQueue: () => Promise<RosiIpcResult<{ started: boolean }>>;
+  cancelQueue: () => Promise<RosiIpcResult<void>>;
+  onPrepareForClose: (callback: (generation: number) => void | Promise<void>) => () => void;
+  onQueueUpdate: (callback: (snapshot: RosiQueueSnapshot | RosiQueueItem[]) => void) => () => void;
+  onSettingsImported: (callback: (settings: RosiSettings) => void) => () => void;
+}
 
 const CHANNEL: 'github' | 'msstore' =
   import.meta.env.VITE_ROSI_CHANNEL === 'msstore' ? 'msstore' : 'github';
@@ -47,7 +124,7 @@ export function waitForPrepareForCloseListener(): Promise<void> {
   return prepareForCloseRegistration;
 }
 
-const api: RosiRendererApi = {
+export const api: RosiRendererApi = {
   restartApp: () => call('restart_app'),
   getChannel: () => CHANNEL,
   getFormats: (url) => call('get_formats', { url }),
@@ -110,5 +187,3 @@ const api: RosiRendererApi = {
   onQueueUpdate: (callback) => subscribe('queue-update', callback),
   onSettingsImported: (callback) => subscribe('settings-imported', callback),
 };
-
-window.api = api;

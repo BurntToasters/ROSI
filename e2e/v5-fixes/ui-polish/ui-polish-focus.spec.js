@@ -152,7 +152,7 @@ function installActivityProbe() {
     characterData: true,
     subtree: true,
   });
-  probe.unsubscribe = window.api.onJobProgress(() => {
+  probe.unsubscribe = window.__ROSI_E2E__.api.onJobProgress(() => {
     probe.ticks += 1;
   });
   window.__uiPolishFocusProbe = probe;
@@ -538,8 +538,9 @@ describe("ROSI UI polish focus and row errors", () => {
 
       // Refuse the native call so the row path runs without a file manager.
       await browser.execute(() => {
-        window.__uiPolishOriginalOpen = window.api.openFileLocation;
-        window.api.openFileLocation = async () => ({
+        window.__uiPolishOriginalOpen =
+          window.__ROSI_E2E__.api.openFileLocation;
+        window.__ROSI_E2E__.api.openFileLocation = async () => ({
           ok: false,
           error: { code: "NOT_AVAILABLE", message: "Test location refusal." },
         });
@@ -564,7 +565,8 @@ describe("ROSI UI polish focus and row errors", () => {
       } finally {
         await browser.execute(() => {
           if (window.__uiPolishOriginalOpen) {
-            window.api.openFileLocation = window.__uiPolishOriginalOpen;
+            window.__ROSI_E2E__.api.openFileLocation =
+              window.__uiPolishOriginalOpen;
             delete window.__uiPolishOriginalOpen;
           }
         });

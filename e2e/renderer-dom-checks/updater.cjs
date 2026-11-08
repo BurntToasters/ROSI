@@ -49,7 +49,7 @@ s.downloadFolder = "/tmp/downloads";
 s.advancedOptions = true;
 let downloadArgs;
 const ok = (data) => Promise.resolve({ ok: true, data });
-w.api = new Proxy(
+const api = new Proxy(
   {
     getChannel: () => "github",
     getSettings: () => Promise.resolve(s),
@@ -90,6 +90,7 @@ const load = require("./load-renderer.cjs").createRendererLoader(
   root,
   ts,
   externals,
+  { "api.ts": { api } },
 );
 for (const m of ["ui", "downloads", "queue", "settings", "updates", "dock"])
   load("modules/" + m + ".ts");

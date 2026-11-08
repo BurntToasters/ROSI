@@ -9,6 +9,7 @@ import {
 import { refs } from './refs';
 import { getPresets, persistSettings, settingsStore } from './settings-store';
 import { updateUIFromSettings } from './settings-view';
+import { api } from '../api';
 
 export function getSelectedPreset(): RosiDownloadPreset | null {
   const id = refs.downloadPresetSelect?.value;
@@ -260,9 +261,9 @@ export function buildRequestOverrides(input: {
 export async function applyPresetToControls(preset: RosiDownloadPreset): Promise<boolean> {
   // Flush first so the resolution reads the controls' current settings from disk.
   if (!(await persistSettings(true, true))) return false;
-  let resolved: Awaited<ReturnType<typeof window.api.resolvePresetOptions>>;
+  let resolved: Awaited<ReturnType<typeof api.resolvePresetOptions>>;
   try {
-    resolved = await window.api.resolvePresetOptions(preset.id);
+    resolved = await api.resolvePresetOptions(preset.id);
   } catch {
     return false;
   }

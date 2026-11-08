@@ -11,6 +11,7 @@ import { syncDockFromSettings, updateUIFromSettings } from '../settings-view';
 import { applyTheme } from '../theme';
 import { appendConsoleOutput, toggleSidebar } from '../ui-helpers';
 import { checkForUpdates, notifyUpdateChannelChanged } from '../updater-ui';
+import { api } from '../../api';
 
 /** Backend events: progress, completion, queue, activity, and menu actions. */
 export function bindBackendEvents() {
@@ -21,14 +22,14 @@ export function bindBackendEvents() {
   // it is applied only if no snapshot arrived while it was in flight.
   let queueSnapshotsSeen = 0;
   ipcCleanupFunctions.push(
-    window.api.onProgress((message) => {
+    api.onProgress((message) => {
       if (!outputEl) return;
       appendConsoleOutput(outputEl, message);
     })
   );
 
   ipcCleanupFunctions.push(
-    window.api.onJobProgress((event) => {
+    api.onJobProgress((event) => {
       if (
         !event.queueItemId &&
         (manualDownload.manualDownloadStartPending ||
@@ -58,7 +59,7 @@ export function bindBackendEvents() {
   );
 
   ipcCleanupFunctions.push(
-    window.api.onMenuAction((action) => {
+    api.onMenuAction((action) => {
       if (action === 'check-for-updates') {
         void checkForUpdates();
         return;
@@ -81,27 +82,27 @@ export function bindBackendEvents() {
   );
 
   ipcCleanupFunctions.push(
-    window.api.onComplete((statusMessage) => {
+    api.onComplete((statusMessage) => {
       if (outputEl) appendConsoleOutput(outputEl, statusMessage);
     })
   );
 
   ipcCleanupFunctions.push(
-    window.api.onDownloadComplete((completion) => {
+    api.onDownloadComplete((completion) => {
       handleManualDownloadCompletion(completion);
     })
   );
 
-  if (typeof window.api.onDownloadActivityUpdate === 'function') {
+  if (typeof api.onDownloadActivityUpdate === 'function') {
     ipcCleanupFunctions.push(
-      window.api.onDownloadActivityUpdate((activity) => {
+      api.onDownloadActivityUpdate((activity) => {
         activityPanel?.setEntries(activity);
       })
     );
   }
 
   ipcCleanupFunctions.push(
-    window.api.onQueueUpdate((payload) => {
+    api.onQueueUpdate((payload) => {
       // Older payloads are bare arrays without a revision; they are always applied.
       const snapshot = Array.isArray(payload) ? { revision: null, items: payload } : payload;
       if (snapshot.revision !== null) {
@@ -114,10 +115,10 @@ export function bindBackendEvents() {
   );
 
   ipcCleanupFunctions.push(
-    window.api.onSettingsImported((importedSettings) => {
+    api.onSettingsImported((importedSettings) => {
       settingsStore.settingsRevision += 1;
       reconcileSettingsInPlace(importedSettings);
-      if (window.api.getChannel() !== 'msstore') {
+      if (api.getChannel() !== 'msstore') {
         notifyUpdateChannelChanged(settingsStore.settings.updateChannel ?? 'auto');
       }
       try {
@@ -133,7 +134,7 @@ export function bindBackendEvents() {
   );
 
   const snapshotsBeforeRead = queueSnapshotsSeen;
-  window.api
+  api
     .getQueue()
     .then((queue) => {
       if (queueSnapshotsSeen === snapshotsBeforeRead) renderQueue(queue);

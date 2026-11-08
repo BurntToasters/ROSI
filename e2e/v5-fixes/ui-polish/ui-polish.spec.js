@@ -582,8 +582,9 @@ describe("ROSI full-app UI polish", () => {
       await setSidebarOpen(true);
       const state = await browser.execute(() => {
         window.__uiPolishSaveCalls = 0;
-        window.__uiPolishOriginalSaveSettings = window.api.saveSettings;
-        window.api.saveSettings = async (settings) => {
+        window.__uiPolishOriginalSaveSettings =
+          window.__ROSI_E2E__.api.saveSettings;
+        window.__ROSI_E2E__.api.saveSettings = async (settings) => {
           window.__uiPolishSaveCalls += 1;
           if (window.__uiPolishSaveCalls === 1) {
             return {
@@ -628,7 +629,8 @@ describe("ROSI full-app UI polish", () => {
       assert.equal(saved.notifications, !state);
       const calls = await browser.execute(() => window.__uiPolishSaveCalls);
       await browser.execute(() => {
-        window.api.saveSettings = window.__uiPolishOriginalSaveSettings;
+        window.__ROSI_E2E__.api.saveSettings =
+          window.__uiPolishOriginalSaveSettings;
         delete window.__uiPolishOriginalSaveSettings;
       });
       return { saveCalls: calls, notifications: saved.notifications };
@@ -726,8 +728,9 @@ describe("ROSI full-app UI polish", () => {
       const outputPath = "C:/rosi-e2e/partial-output.mkv";
       await browser.execute((filePath) => {
         window.__uiPolishOpenedPaths = [];
-        window.__uiPolishOriginalOpenFileLocation = window.api.openFileLocation;
-        window.api.openFileLocation = async (target) => {
+        window.__uiPolishOriginalOpenFileLocation =
+          window.__ROSI_E2E__.api.openFileLocation;
+        window.__ROSI_E2E__.api.openFileLocation = async (target) => {
           window.__uiPolishOpenedPaths.push(target);
           return { ok: true, data: { opened: true } };
         };
@@ -799,7 +802,8 @@ describe("ROSI full-app UI polish", () => {
         },
       );
       const paths = await browser.execute(() => {
-        window.api.openFileLocation = window.__uiPolishOriginalOpenFileLocation;
+        window.__ROSI_E2E__.api.openFileLocation =
+          window.__uiPolishOriginalOpenFileLocation;
         delete window.__uiPolishOriginalOpenFileLocation;
         const captured = window.__uiPolishOpenedPaths;
         delete window.__uiPolishOpenedPaths;

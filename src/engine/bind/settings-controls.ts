@@ -16,6 +16,7 @@ import { applyDownloadProfile, bindExternalLink, updateUIFromSettings } from '..
 import { applyTheme, updateBackgroundAnimation } from '../theme';
 import { notifyUpdateChannelChanged } from '../updater-ui';
 import { showToast, updateConsoleVisibility } from '../ui-helpers';
+import { api } from '../../api';
 
 function buildEffectiveOptionsReadiness(): EffectiveOptionsReadiness {
   const url = refs.urlInput?.value.trim() ?? '';
@@ -76,7 +77,7 @@ function setDownloadFolderFeedback(message: string) {
 async function chooseDownloadFolder(explainCancel: boolean): Promise<string | null> {
   setDownloadFolderFeedback('');
   try {
-    const chosen = await window.api.selectDownloadLocation();
+    const chosen = await api.selectDownloadLocation();
     if (chosen) return chosen;
     if (explainCancel) setDownloadFolderFeedback(UI_MESSAGES.wizard.folderCancelled);
     return null;
@@ -486,7 +487,7 @@ export function bindSettingsActions() {
         logError('Could not save the update channel', error)
       );
       // Rust saves the channel itself and retires the old update identity first.
-      if (window.api.getChannel() !== 'msstore') {
+      if (api.getChannel() !== 'msstore') {
         notifyUpdateChannelChanged(settingsStore.settings.updateChannel);
       }
     });
@@ -507,7 +508,7 @@ export function bindSettingsActions() {
               localStorage.removeItem('rosi-flat-ui');
               localStorage.removeItem('rosi-theme');
               try {
-                await window.api.resetSettings();
+                await api.resetSettings();
               } catch (error) {
                 localStorage.setItem(
                   'rosi-flat-ui',
@@ -533,7 +534,7 @@ export function bindSettingsActions() {
     exportSettingsBtn.addEventListener('click', async () => {
       try {
         if (!(await persistSettings(false, true))) return;
-        const result = await window.api.exportSettings();
+        const result = await api.exportSettings();
         if (result && result.ok) {
           showToast('Settings exported successfully.', { type: 'success' });
         } else if (result && !result.ok) {
@@ -558,7 +559,7 @@ export function bindSettingsActions() {
             action: async () => {
               try {
                 if (!(await persistSettings(false, true))) return;
-                const result = await window.api.importSettings();
+                const result = await api.importSettings();
                 if (result && result.ok) {
                   showToast('Settings imported successfully.', { type: 'success' });
                 } else {
@@ -579,7 +580,7 @@ export function bindSettingsActions() {
   if (viewStatsBtn) {
     viewStatsBtn.addEventListener('click', async () => {
       try {
-        const stats = await window.api.getStats();
+        const stats = await api.getStats();
         const formatList = Object.entries(stats.formatCounts || {})
           .sort((a, b) => b[1] - a[1])
           .slice(0, 5)
@@ -605,7 +606,7 @@ export function bindSettingsActions() {
               label: 'Reset Stats',
               action: async () => {
                 try {
-                  const result = await window.api.resetStats();
+                  const result = await api.resetStats();
                   if (!result.ok) {
                     showToast('Could not reset statistics. Please try again.', { type: 'error' });
                     return;

@@ -110,7 +110,7 @@ function presetRequestFields(preset) {
     sponsorblockRemove: preset.sponsorblockRemove,
   };
 }
-w.api = new Proxy(
+const api = new Proxy(
   {
     getChannel: () => "github",
     getSettings: () => Promise.resolve(s),
@@ -211,6 +211,7 @@ const load = require("./load-renderer.cjs").createRendererLoader(
   root,
   ts,
   tauriShim.externals,
+  { "api.ts": { api } },
 );
 const ui = load("modules/ui.ts");
 for (const m of ["downloads", "queue", "settings", "updates", "dock"])

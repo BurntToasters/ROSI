@@ -84,11 +84,11 @@ function processes(marker) {
     it("records a stale settings response erasing a later UI choice", async () => {
       const initial = await api("getSettings");
       await browser.execute(() => {
-        const original = window.api.saveSettings;
+        const original = window.__ROSI_E2E__.api.saveSettings;
         window.auditOriginalSave = original;
         window.auditSaveCalls = [];
         let held = false;
-        window.api.saveSettings = async (settings) => {
+        window.__ROSI_E2E__.api.saveSettings = async (settings) => {
           window.auditSaveCalls.push(JSON.parse(JSON.stringify(settings)));
           const response = await original(settings);
           if (!held) {
@@ -135,7 +135,7 @@ function processes(marker) {
         invariantPassed: saved.theme === desired,
       });
       await browser.execute(() => {
-        window.api.saveSettings = window.auditOriginalSave;
+        window.__ROSI_E2E__.api.saveSettings = window.auditOriginalSave;
       });
     });
 
@@ -310,7 +310,7 @@ function processes(marker) {
         (baseUrl, output, done) => {
           Promise.all(
             Array.from({ length: 10 }, (_, index) =>
-              window.api.downloadVideo({
+              window.__ROSI_E2E__.api.downloadVideo({
                 url: `${baseUrl}/slow.mp4?audit-race=1&n=${index}`,
                 outputPath: output,
                 convertEnabled: false,
@@ -351,7 +351,7 @@ function processes(marker) {
       await browser.execute((baseUrl) => {
         window.auditPreviewResults = [];
         for (let index = 0; index < 10; index += 1) {
-          window.api
+          window.__ROSI_E2E__.api
             .getVideoInfo(`${baseUrl}/slow.html?audit-preview=1&n=${index}`)
             .then(
               (result) => window.auditPreviewResults.push(result),

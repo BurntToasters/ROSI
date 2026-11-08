@@ -1140,7 +1140,7 @@ describe("ROSI URL boundary and release proof repairs", () => {
         (methodName, target, resultName) => {
           window[resultName] = { done: false, value: null };
           Promise.resolve()
-            .then(() => window.api[methodName](target))
+            .then(() => window.__ROSI_E2E__.api[methodName](target))
             .then(
               (value) => {
                 window[resultName].value = value;
@@ -1210,7 +1210,7 @@ describe("ROSI URL boundary and release proof repairs", () => {
       (target, name) => {
         window[name] = { settled: false, ok: null, error: null, data: null };
         Promise.resolve()
-          .then(() => window.api.getVideoInfo(target))
+          .then(() => window.__ROSI_E2E__.api.getVideoInfo(target))
           .then(
             (value) => {
               window[name] = {
@@ -1317,7 +1317,7 @@ describe("ROSI URL boundary and release proof repairs", () => {
         (methodName, parameters, name) => {
           window[name] = { settled: false, ok: null, error: null };
           Promise.resolve()
-            .then(() => window.api[methodName](...parameters))
+            .then(() => window.__ROSI_E2E__.api[methodName](...parameters))
             .then(
               (value) => {
                 window[name] = {

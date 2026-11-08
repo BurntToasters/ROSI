@@ -26,6 +26,14 @@ const bodyHtml = (() => {
   return inner.replace(/<script[\s\S]*?<\/script>/gi, '');
 })();
 
+// The engine reads the API through its module. Each test swaps in its mock.
+const apiMock = vi.hoisted(() => ({ current: {} as unknown }));
+vi.mock('../api', () => ({
+  get api() {
+    return apiMock.current;
+  },
+}));
+
 interface MockApi {
   [key: string]: ReturnType<typeof vi.fn> | (() => unknown);
 }
@@ -170,7 +178,7 @@ function clearTrackedDocListeners() {
 // DOMContentLoaded the engine waits on.
 async function loadEngine(api: MockApi) {
   document.body.innerHTML = bodyHtml;
-  (window as unknown as { api: MockApi }).api = api;
+  apiMock.current = api;
   // matchMedia is not implemented in jsdom; stub it for theme resolution.
   (window as unknown as { matchMedia: unknown }).matchMedia = (query: string) => ({
     matches: false,

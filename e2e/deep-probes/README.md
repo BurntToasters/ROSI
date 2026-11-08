@@ -31,7 +31,7 @@ feature, and the runner refuses a stale binary.
 the test CA in `e2e/fixtures`, with a 10-minute keep-alive timeout. It
 observes for 120 seconds and then cancels the download.
 
-`close-invalid-folder` replaces only `window.api.selectDownloadLocation`, so it
+`close-invalid-folder` replaces only `window.__ROSI_E2E__.api.selectDownloadLocation`, so it
 returns a real folder outside the profile's HOME. That is what the native
 folder picker returns when a user picks such a folder. Every backend path is
 unchanged.

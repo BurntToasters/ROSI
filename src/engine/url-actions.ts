@@ -15,6 +15,7 @@ import { downloadState, hideProgressBar } from './progress';
 import { refs } from './refs';
 import { settingsStore } from './settings-store';
 import { setButtonLoading, showToast } from './ui-helpers';
+import { api } from '../api';
 
 // ── Activity replay ─────────────────────────────────────────────────────────
 export async function replayActivityDownload(entry: RosiDownloadActivity) {
@@ -27,8 +28,7 @@ export async function replayActivityDownload(entry: RosiDownloadActivity) {
   const outputPath =
     typeof request.outputPath === 'string' && request.outputPath.trim()
       ? request.outputPath
-      : settingsStore.settings.downloadFolder?.trim() ||
-        (await window.api.selectDownloadLocation());
+      : settingsStore.settings.downloadFolder?.trim() || (await api.selectDownloadLocation());
   if (!outputPath) return;
   request.outputPath = outputPath;
 
@@ -42,14 +42,14 @@ export async function replayActivityDownload(entry: RosiDownloadActivity) {
     syncPrimaryActionState();
   };
   setButtonLoading(refs.downloadBtn, true, () => {
-    window.api.cancelDownload();
+    api.cancelDownload();
     downloadState.downloadAbort?.();
     hideProgressBar();
   });
   applyActiveDownloadProgressPhases(settingsStore.settings, 'Starting download...');
   try {
     prepareManualDownloadStart(operation);
-    const result = await window.api.downloadVideo(request);
+    const result = await api.downloadVideo(request);
     if (operation !== manualDownload.manualDownloadOperation) return;
     if (!result || result.ok !== true) {
       failManualDownloadStart(operation);

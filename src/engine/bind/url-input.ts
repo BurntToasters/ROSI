@@ -11,6 +11,7 @@ import { extractQueueLinks } from '../queue-controller';
 import { refs } from '../refs';
 import { showToast } from '../ui-helpers';
 import { syncPrimaryActionState, updateUrlButtons, urlActionState } from '../url-actions';
+import { api } from '../../api';
 
 /** URL field: clear, paste, drop, and preview buttons. */
 export function bindUrlInput() {
@@ -109,7 +110,7 @@ export function bindUrlInput() {
   }
   if (previewCloseBtn) {
     previewCloseBtn.addEventListener('click', () => {
-      if (window.api.cancelVideoInfo) window.api.cancelVideoInfo();
+      if (api.cancelVideoInfo) api.cancelVideoInfo();
       cancelScheduledPreview();
       previewState.previewAbort?.();
       hideVideoPreview();

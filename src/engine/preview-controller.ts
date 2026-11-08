@@ -5,6 +5,7 @@ import { looksLikePlaylistUrl, resetPlaylistScope, showPlaylistScope } from './p
 import { RosiVideoInfo, hideVideoPreview, previewState, renderVideoPreview } from './preview';
 import { refs } from './refs';
 import { setButtonLoading, showToast } from './ui-helpers';
+import { api } from '../api';
 
 export function readPreviewCache(url: string): RosiVideoInfo | null {
   const cached = refs.previewCache.get(url);
@@ -95,7 +96,7 @@ export async function runVideoPreview(auto = false) {
     // Supersede the in-flight lookup so its cleanup cannot clear the loading
     // state we are about to set.
     previewController.pendingPreviewUrl = null;
-    window.api.cancelVideoInfo();
+    api.cancelVideoInfo();
     previewState.previewAbort?.();
   }
   // Stale in-flight replies are ignored via this generation token.
@@ -120,7 +121,7 @@ export async function runVideoPreview(auto = false) {
     refs.previewBtn,
     true,
     () => {
-      if (window.api.cancelVideoInfo) window.api.cancelVideoInfo();
+      if (api.cancelVideoInfo) api.cancelVideoInfo();
       previewController.pendingPreviewUrl = null;
       previewState.previewAbort?.();
       hideVideoPreview();
@@ -129,10 +130,7 @@ export async function runVideoPreview(auto = false) {
   );
 
   try {
-    const result = await window.api.getVideoInfo(
-      url,
-      looksLikePlaylistUrl(url) ? 'all' : 'current'
-    );
+    const result = await api.getVideoInfo(url, looksLikePlaylistUrl(url) ? 'all' : 'current');
     if (wasCancelled || requestToken !== previewController.previewRequestToken) return;
     if (!result || result.ok !== true) {
       const message = result?.error?.message || 'Could not load preview.';

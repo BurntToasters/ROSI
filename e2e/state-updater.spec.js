@@ -109,11 +109,11 @@ describe("state and updater repair E2E", () => {
     const desiredTheme = initial.theme === "dark" ? "light" : "dark";
 
     await browser.execute(() => {
-      window.auditOriginalSave = window.api.saveSettings;
+      window.auditOriginalSave = window.__ROSI_E2E__.api.saveSettings;
       window.auditSaveCalls = [];
       window.auditSaveHeld = false;
       let heldFirstResponse = false;
-      window.api.saveSettings = async (snapshot) => {
+      window.__ROSI_E2E__.api.saveSettings = async (snapshot) => {
         const copy = JSON.parse(JSON.stringify(snapshot));
         const response = await window.auditOriginalSave(copy);
         window.auditSaveCalls.push(copy);
@@ -175,7 +175,7 @@ describe("state and updater repair E2E", () => {
       await browser.execute((settings) => {
         if (window.auditReleaseSave) window.auditReleaseSave();
         if (window.auditOriginalSave)
-          window.api.saveSettings = window.auditOriginalSave;
+          window.__ROSI_E2E__.api.saveSettings = window.auditOriginalSave;
         const theme = document.getElementById("themeSelect");
         theme.value = settings.theme;
         theme.dispatchEvent(new Event("change", { bubbles: true }));
@@ -201,14 +201,14 @@ describe("state and updater repair E2E", () => {
 
     await browser.execute(
       (invalidFfmpegPath, theme) => {
-        window.auditOriginalSettingsSave = window.api.saveSettings;
-        window.auditOriginalSettingsRead = window.api.getSettings;
+        window.auditOriginalSettingsSave = window.__ROSI_E2E__.api.saveSettings;
+        window.auditOriginalSettingsRead = window.__ROSI_E2E__.api.getSettings;
         window.auditInvalidSettingsSaveHeld = false;
         window.auditSettingsReadHeld = false;
         window.auditHoldSettingsRead = false;
         window.auditSettingsSaveSnapshot = null;
         window.auditSettingsSaveResponse = null;
-        window.api.saveSettings = async (settings) => {
+        window.__ROSI_E2E__.api.saveSettings = async (settings) => {
           const snapshot = JSON.parse(JSON.stringify(settings));
           const response = await window.auditOriginalSettingsSave(snapshot);
           if (snapshot.ffmpegPath === invalidFfmpegPath) {
@@ -221,7 +221,7 @@ describe("state and updater repair E2E", () => {
           }
           return response;
         };
-        window.api.getSettings = async (...args) => {
+        window.__ROSI_E2E__.api.getSettings = async (...args) => {
           const settings = await window.auditOriginalSettingsRead(...args);
           if (window.auditHoldSettingsRead) {
             window.auditSettingsReadHeld = true;
@@ -328,10 +328,12 @@ describe("state and updater repair E2E", () => {
         window.auditReleaseInvalidSettingsSave?.();
         window.auditReleaseSettingsRead?.();
         if (window.auditOriginalSettingsSave) {
-          window.api.saveSettings = window.auditOriginalSettingsSave;
+          window.__ROSI_E2E__.api.saveSettings =
+            window.auditOriginalSettingsSave;
         }
         if (window.auditOriginalSettingsRead) {
-          window.api.getSettings = window.auditOriginalSettingsRead;
+          window.__ROSI_E2E__.api.getSettings =
+            window.auditOriginalSettingsRead;
         }
       });
       const restored = await api("saveSettings", original);
@@ -347,14 +349,14 @@ describe("state and updater repair E2E", () => {
     const settingsFile = path.join(DATA_DIR, "settings.json");
 
     await browser.execute(() => {
-      window.auditOriginalSaveSettings = window.api.saveSettings;
+      window.auditOriginalSaveSettings = window.__ROSI_E2E__.api.saveSettings;
       window.auditOriginalNotifySettingsFlushed =
-        window.api.notifySettingsFlushed;
+        window.__ROSI_E2E__.api.notifySettingsFlushed;
       window.auditLifecycleSaveCalls = [];
       window.auditLifecycleAckGenerations = [];
       window.auditSaveAStarted = false;
       window.auditSaveBStarted = false;
-      window.api.saveSettings = async (settings) => {
+      window.__ROSI_E2E__.api.saveSettings = async (settings) => {
         const snapshot = JSON.parse(JSON.stringify(settings));
         window.auditLifecycleSaveCalls.push(snapshot);
         if (window.auditLifecycleSaveCalls.length === 1) {
@@ -373,7 +375,7 @@ describe("state and updater repair E2E", () => {
         }
         return window.auditOriginalSaveSettings(snapshot);
       };
-      window.api.notifySettingsFlushed = async (generation) => {
+      window.__ROSI_E2E__.api.notifySettingsFlushed = async (generation) => {
         window.auditLifecycleAckGenerations.push(generation);
         return window.__TAURI__.core.invoke("e2e_cancel_close_request", {
           generation,
@@ -447,8 +449,8 @@ describe("state and updater repair E2E", () => {
       await browser.execute(() => {
         window.auditReleaseSaveA?.();
         window.auditReleaseSaveB?.();
-        window.api.saveSettings = window.auditOriginalSaveSettings;
-        window.api.notifySettingsFlushed =
+        window.__ROSI_E2E__.api.saveSettings = window.auditOriginalSaveSettings;
+        window.__ROSI_E2E__.api.notifySettingsFlushed =
           window.auditOriginalNotifySettingsFlushed;
       });
       const restored = await api("saveSettings", original);
@@ -479,7 +481,7 @@ describe("state and updater repair E2E", () => {
         { timeout: 10_000, timeoutMsg: "setup wizard did not open" },
       );
       await browser.execute(() => {
-        window.api.checkDenoInstalled = async () => false;
+        window.__ROSI_E2E__.api.checkDenoInstalled = async () => false;
         document.getElementById("wizard-skip").click();
       });
       await browser.waitUntil(
@@ -582,9 +584,9 @@ describe("state and updater repair E2E", () => {
 
     await browser.execute(
       (responses) => {
-        window.auditOriginalGetVideoInfo = window.api.getVideoInfo;
+        window.auditOriginalGetVideoInfo = window.__ROSI_E2E__.api.getVideoInfo;
         window.auditPreviewCalls = [];
-        window.api.getVideoInfo = async (url) => {
+        window.__ROSI_E2E__.api.getVideoInfo = async (url) => {
           window.auditPreviewCalls.push(url);
           const data = url.endsWith("remote-thumb")
             ? responses.remote
@@ -679,7 +681,8 @@ describe("state and updater repair E2E", () => {
     } finally {
       await browser.execute(() => {
         if (window.auditOriginalGetVideoInfo) {
-          window.api.getVideoInfo = window.auditOriginalGetVideoInfo;
+          window.__ROSI_E2E__.api.getVideoInfo =
+            window.auditOriginalGetVideoInfo;
         }
         document.getElementById("url").value = "";
         document
@@ -729,11 +732,12 @@ describe("state and updater repair E2E", () => {
     const slowUrl = `${MEDIA_URL}/slow.mp4?state-session=second`;
 
     await browser.execute(() => {
-      window.auditOriginalDownloadVideo = window.api.downloadVideo;
-      window.auditOriginalOpenFileLocation = window.api.openFileLocation;
+      window.auditOriginalDownloadVideo = window.__ROSI_E2E__.api.downloadVideo;
+      window.auditOriginalOpenFileLocation =
+        window.__ROSI_E2E__.api.openFileLocation;
       window.auditStartedSessionIds = [];
       window.auditStaleEventsDuringPendingStart = false;
-      window.api.downloadVideo = async (options) => {
+      window.__ROSI_E2E__.api.downloadVideo = async (options) => {
         const result = await window.auditOriginalDownloadVideo(options);
         if (result?.ok === true) {
           window.auditStartedSessionIds.push(result.data.sessionId ?? null);
@@ -798,7 +802,7 @@ describe("state and updater repair E2E", () => {
       );
       await browser.execute(() => {
         window.auditOpenedFilePath = null;
-        window.api.openFileLocation = async (filePath) => {
+        window.__ROSI_E2E__.api.openFileLocation = async (filePath) => {
           window.auditOpenedFilePath = filePath;
           return { ok: true, data: { opened: true } };
         };
@@ -915,10 +919,12 @@ describe("state and updater repair E2E", () => {
       await api("cancelDownload");
       await browser.execute(() => {
         if (window.auditOriginalDownloadVideo) {
-          window.api.downloadVideo = window.auditOriginalDownloadVideo;
+          window.__ROSI_E2E__.api.downloadVideo =
+            window.auditOriginalDownloadVideo;
         }
         if (window.auditOriginalOpenFileLocation) {
-          window.api.openFileLocation = window.auditOriginalOpenFileLocation;
+          window.__ROSI_E2E__.api.openFileLocation =
+            window.auditOriginalOpenFileLocation;
         }
       });
     }
@@ -1417,9 +1423,9 @@ describe("state and updater repair E2E", () => {
     assert.ok(DATA_DIR, "ROSI_E2E_DATA_DIR is not set");
     const logFile = path.join(DATA_DIR, "logs", "rosi.log");
     await browser.execute(() => {
-      window.auditOriginalSaveSettings = window.api.saveSettings;
+      window.auditOriginalSaveSettings = window.__ROSI_E2E__.api.saveSettings;
       window.auditSaveRelease = null;
-      window.api.saveSettings = async (settings) => {
+      window.__ROSI_E2E__.api.saveSettings = async (settings) => {
         await new Promise((resolve) => {
           window.auditSaveRelease = resolve;
         });
@@ -1481,7 +1487,7 @@ describe("state and updater repair E2E", () => {
       });
     } finally {
       await browser.execute(() => {
-        window.api.saveSettings = window.auditOriginalSaveSettings;
+        window.__ROSI_E2E__.api.saveSettings = window.auditOriginalSaveSettings;
         const ok = [...document.querySelectorAll("#modal-buttons button")].find(
           (button) => button.textContent.trim() === "OK",
         );
@@ -1590,9 +1596,9 @@ describe("state and updater repair E2E", () => {
       fs.writeFileSync(settingsFile, JSON.stringify(stored, null, 2));
 
       await browser.execute(() => {
-        window.auditPatchOriginalSave = window.api.saveSettings;
+        window.auditPatchOriginalSave = window.__ROSI_E2E__.api.saveSettings;
         window.auditPatchKeys = [];
-        window.api.saveSettings = async (patch) => {
+        window.__ROSI_E2E__.api.saveSettings = async (patch) => {
           const copy = JSON.parse(JSON.stringify(patch));
           window.auditPatchKeys.push(Object.keys(copy));
           return window.auditPatchOriginalSave(copy);
@@ -1636,7 +1642,7 @@ describe("state and updater repair E2E", () => {
     } finally {
       await browser.execute(() => {
         if (window.auditPatchOriginalSave) {
-          window.api.saveSettings = window.auditPatchOriginalSave;
+          window.__ROSI_E2E__.api.saveSettings = window.auditPatchOriginalSave;
         }
       });
       fs.writeFileSync(settingsFile, original);

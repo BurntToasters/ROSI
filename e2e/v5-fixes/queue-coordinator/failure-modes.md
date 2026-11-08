@@ -9,7 +9,7 @@ Written before any Rust change. Current code references: `src-tauri/src/queue.rs
 
 Each row names the failure, the mechanism that could cause it after the
 migration, and the guard that must hold. `queue-coordinator.spec.js` covers
-every row that is observable through `window.api` or the existing E2E hooks.
+every row that is observable through `window.__ROSI_E2E__.api` or the existing E2E hooks.
 Internal rows are guarded by design rules and review.
 
 ## Races between commands
@@ -80,7 +80,7 @@ Internal rows are guarded by design rules and review.
 ## Test strategy
 
 - Observable rows (1-10, 12, 16-17, 22-24, 26, 28-29) are covered by
-  `queue-coordinator.spec.js` through `window.api` and the existing E2E hooks.
+  `queue-coordinator.spec.js` through `window.__ROSI_E2E__.api` and the existing E2E hooks.
 - Internal rows (11, 13-15, 18-21, 25, 27, 30) are guarded by design rules and
   review. AGENTS.md forbids writing unit tests after code, so they are exercised
   through the observable scenarios above, not by isolated tests.

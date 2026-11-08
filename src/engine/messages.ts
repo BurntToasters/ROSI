@@ -1,4 +1,5 @@
 import type { DownloadProfile, DownloadRequestOptions } from '../generated/ipc-types';
+import { api } from '../api';
 
 export const UI_MESSAGES = {
   options: {
@@ -251,14 +252,13 @@ export function refreshEffectiveOptionsSummary(force = false) {
       refreshEffectiveOptionsSummary();
       return;
     }
-    const resolve = window.api.resolveDownloadOptions;
-    if (typeof resolve !== 'function') {
+    if (typeof api.resolveDownloadOptions !== 'function') {
       if (generation === requestGeneration) {
         setSummaryState(summary, 'unavailable', UI_MESSAGES.options.unavailable);
       }
       return;
     }
-    void resolve(readiness.request).then(
+    void api.resolveDownloadOptions(readiness.request).then(
       (result) => {
         if (generation !== requestGeneration || !summary.isConnected) return;
         if (!result || result.ok !== true) {

@@ -10,6 +10,7 @@ import { refs } from './refs';
 import { settingsStore } from './settings-store';
 import { setButtonLoading } from './ui-helpers';
 import { syncPrimaryActionState } from './url-actions';
+import { api } from '../api';
 
 // After a download the button briefly offers the result ("Open File
 // Location" / "Download complete") with its own click handler.
@@ -117,7 +118,7 @@ export function showManualDownloadCompletion(
     updateProgressBar(100, 'Complete!', '');
     showProgressComplete();
     if (settingsStore.settings.notifications) {
-      void window.api.showNotification({
+      void api.showNotification({
         title: 'Download Complete!',
         body: outputPath
           ? `Saved: ${outputPath.split(/[/\\]/).pop()}`
@@ -130,7 +131,7 @@ export function showManualDownloadCompletion(
       setButtonIconLabel(refs.downloadBtn, 'folder-open', 'Open File Location');
       refs.downloadBtn.disabled = false;
       refs.downloadBtn.onclick = () => {
-        void window.api.openFileLocation(outputPath);
+        void api.openFileLocation(outputPath);
       };
       showDownloadResult(8000, operation);
     } else {

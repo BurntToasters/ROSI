@@ -259,7 +259,7 @@ async function metadataCancellation(method, marker) {
       window.repairMetadataResults = [];
       for (let index = 0; index < 10; index += 1) {
         const url = `${baseUrl}/slow.html?${queryMarker}=1&n=${index}`;
-        window.api[methodName](url).then(
+        window.__ROSI_E2E__.api[methodName](url).then(
           (result) =>
             window.repairMetadataResults.push({
               ok: result?.ok ?? null,
@@ -760,12 +760,12 @@ describe("ROSI downloader and process repairs", () => {
       const starts = await browser.executeAsync(
         (url, output, done) => {
           Promise.all([
-            window.api.downloadVideo({
+            window.__ROSI_E2E__.api.downloadVideo({
               url,
               outputPath: output,
               convertEnabled: false,
             }),
-            window.api.startQueue(),
+            window.__ROSI_E2E__.api.startQueue(),
           ]).then(
             (results) => done(JSON.stringify(results)),
             (error) => done(JSON.stringify({ error: String(error) })),
@@ -800,7 +800,7 @@ describe("ROSI downloader and process repairs", () => {
         (baseUrl, output, done) => {
           Promise.all(
             Array.from({ length: 10 }, (_, index) =>
-              window.api.downloadVideo({
+              window.__ROSI_E2E__.api.downloadVideo({
                 url: `${baseUrl}/slow.mp4?repair-manual-fanout=1&n=${index}`,
                 outputPath: output,
                 convertEnabled: false,
@@ -838,8 +838,8 @@ describe("ROSI downloader and process repairs", () => {
     try {
       await browser.execute((baseUrl) => {
         window.repairStartedSessions = [];
-        const original = window.api.downloadVideo;
-        window.api.downloadVideo = async (...args) => {
+        const original = window.__ROSI_E2E__.api.downloadVideo;
+        window.__ROSI_E2E__.api.downloadVideo = async (...args) => {
           const result = await original(...args);
           if (result?.ok === true && result.data?.sessionId) {
             window.repairStartedSessions.push(result.data.sessionId);
@@ -963,7 +963,7 @@ describe("ROSI downloader and process repairs", () => {
           : [];
       await browser.execute((target) => {
         window.repairDelayedFormats = { settled: false, response: null };
-        window.api.getFormats(target).then(
+        window.__ROSI_E2E__.api.getFormats(target).then(
           (response) => {
             window.repairDelayedFormats = { settled: true, response };
           },
@@ -1768,7 +1768,7 @@ describe("ROSI downloader and process repairs", () => {
       assert.equal(savedA.ok, true, JSON.stringify(savedA));
       await browser.execute(() => {
         window.audit3GpuProbeA = { settled: false, result: null };
-        window.api.detectGpu().then(
+        window.__ROSI_E2E__.api.detectGpu().then(
           (result) => {
             window.audit3GpuProbeA = { settled: true, result };
           },

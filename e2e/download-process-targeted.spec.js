@@ -738,7 +738,7 @@ describe("ROSI audit 3 native targeted repairs", () => {
       assert.equal(savedA.ok, true, JSON.stringify(savedA));
       await browser.execute(() => {
         window.audit3GpuProbeA = { settled: false, result: null };
-        window.api.detectGpu().then(
+        window.__ROSI_E2E__.api.detectGpu().then(
           (result) => {
             window.audit3GpuProbeA = { settled: true, result };
           },

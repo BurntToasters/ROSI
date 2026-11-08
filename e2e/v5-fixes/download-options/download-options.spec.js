@@ -27,10 +27,14 @@ async function reloadApp() {
       browser.execute(
         () =>
           document.readyState === "complete" &&
-          typeof window.api?.resolveDownloadOptions === "function" &&
-          typeof window.api?.addToQueue === "function",
+          typeof window.__ROSI_E2E__?.api?.resolveDownloadOptions ===
+            "function" &&
+          typeof window.__ROSI_E2E__?.api?.addToQueue === "function",
       ),
-    { timeout: 60_000, timeoutMsg: "reloaded page never installed window.api" },
+    {
+      timeout: 60_000,
+      timeoutMsg: "reloaded page never installed window.__ROSI_E2E__.api",
+    },
   );
   await waitForAppReady();
 }
@@ -45,8 +49,8 @@ async function armRendererRecorder() {
       "resolvePresetOptions",
       "addToQueue",
     ]) {
-      const original = window.api[name];
-      window.api[name] = (...args) => {
+      const original = window.__ROSI_E2E__.api[name];
+      window.__ROSI_E2E__.api[name] = (...args) => {
         if (window.__b2Armed) {
           window.__b2Calls.push({
             name,

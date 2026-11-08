@@ -51,7 +51,7 @@ validation. When the backend rejects that folder (outside home and the allowed
 volumes), the whole settings snapshot is rejected. Every later save, and the
 close flush, fails until the user picks another folder.
 
-The probe replaces only `window.api.selectDownloadLocation` so it returns a
+The probe replaces only `window.__ROSI_E2E__.api.selectDownloadLocation` so it returns a
 real folder outside the profile's HOME. This is what the native picker returns
 when a user chooses such a folder (for example `/Users/Shared` on macOS or
 `/srv/media` on Linux). The backend path is unchanged.

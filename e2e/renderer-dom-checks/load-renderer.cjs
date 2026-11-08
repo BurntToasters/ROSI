@@ -6,9 +6,14 @@ const path = require("node:path");
  * in the window, with a resolver for its relative imports. Bare specifiers
  * (the Tauri API packages) resolve to the `externals` map.
  */
-function createRendererLoader(w, root, ts, externals = {}) {
+// `provided` maps src paths to ready exports, so those files are never
+// transpiled (the API module imports Tauri packages the loader does not know).
+function createRendererLoader(w, root, ts, externals = {}, provided = {}) {
   const loaded = new Map();
   const srcDir = path.join(root, "src");
+  for (const [rel, exports] of Object.entries(provided)) {
+    loaded.set(path.resolve(srcDir, rel), { exports });
+  }
   function load(p) {
     const file = path.resolve(srcDir, p.endsWith(".ts") ? p : `${p}.ts`);
     if (loaded.has(file)) return loaded.get(file).exports;

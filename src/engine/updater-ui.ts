@@ -9,6 +9,7 @@ import { formatUpdateProgressInfo } from '../modules/updates';
 import { retireModal, showModal } from './overlays';
 import { formatBytes } from './progress';
 import { setButtonLoading } from './ui-helpers';
+import { api } from '../api';
 
 export let isManualUpdateCheck = false;
 export let updateCheckTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -27,7 +28,7 @@ export function finishManualUpdateCheck() {
 }
 
 export async function checkForUpdates() {
-  const channel = window.api.getChannel();
+  const channel = api.getChannel();
 
   if (channel === 'msstore') {
     showModal({
@@ -38,7 +39,7 @@ export async function checkForUpdates() {
         {
           label: 'Open Store',
           primary: true,
-          action: () => window.api.openExternal('ms-windows-store://pdp/?ProductId=9P4Q134B2JW3'),
+          action: () => api.openExternal('ms-windows-store://pdp/?ProductId=9P4Q134B2JW3'),
         },
         { label: 'OK' },
       ],
@@ -219,7 +220,7 @@ export function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boole
                   primary: true,
                   action: () => {
                     if (updaterCandidateId !== candidateId) return;
-                    void window.api
+                    void api
                       .openExternal(releasePageUrl(version))
                       .catch((error: unknown) =>
                         logError('Could not open the release page', error)

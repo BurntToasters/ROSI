@@ -50,7 +50,7 @@ const previewCalls = [];
 let resolvePreview;
 const ok = (data) => Promise.resolve({ ok: true, data });
 const previewResolutions = new Map();
-w.api = new Proxy(
+const api = new Proxy(
   {
     getChannel: () => "github",
     getSettings: () => Promise.resolve(s),
@@ -89,6 +89,7 @@ const load = require("./load-renderer.cjs").createRendererLoader(
   root,
   ts,
   createTauriShim().externals,
+  { "api.ts": { api } },
 );
 for (const m of ["ui", "downloads", "queue", "settings", "updates", "dock"])
   load("modules/" + m + ".ts");

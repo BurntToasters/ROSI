@@ -11,6 +11,7 @@ import { buildRequestOverrides, readAdvancedFormatSelections } from './presets';
 import { refs } from './refs';
 import { persistSettings, settingsStore } from './settings-store';
 import { ToastType, showToast } from './ui-helpers';
+import { api } from '../api';
 
 /**
  * Per-job overrides sent with queue additions, built by the same builder as
@@ -49,7 +50,7 @@ export async function resolveQueueDestination(): Promise<{
 }> {
   if (!settingsStore.settings.askDownloadLocation) return { cancelled: false };
   try {
-    const chosen = await window.api.selectDownloadLocation();
+    const chosen = await api.selectDownloadLocation();
     if (!chosen) return { cancelled: true };
     return { outputPath: chosen, cancelled: false };
   } catch (error) {
@@ -94,8 +95,8 @@ export async function addUrlsToQueue(urls: string[], rejected = 0) {
     }
     // Omit the second argument entirely when there is nothing to override.
     const result = built.overrides
-      ? await window.api.addToQueue(urls, built.overrides)
-      : await window.api.addToQueue(urls);
+      ? await api.addToQueue(urls, built.overrides)
+      : await api.addToQueue(urls);
     if (result && result.ok) {
       const parts = [
         queueMessageForCount(
@@ -129,7 +130,7 @@ export async function extractQueueLinks(
   text: string
 ): Promise<RosiIpcResult<RosiExtractedQueueUrls>> {
   try {
-    return await window.api.extractQueueUrls(text);
+    return await api.extractQueueUrls(text);
   } catch {
     return { ok: false, error: { code: 'INTERNAL_ERROR', message: 'Could not read the links.' } };
   }
@@ -187,11 +188,11 @@ export function renderQueue(queue: RosiQueueItem[]) {
     {
       focusQueueItemId: queueController.focusQueueItemId,
       retryQueueItem: async (id: string) => {
-        if (typeof window.api.retryQueueItem !== 'function') return;
+        if (typeof api.retryQueueItem !== 'function') return;
         queueController.focusQueueItemId = id;
         const endQueueAction = beginQueueAction();
         try {
-          const result = await window.api.retryQueueItem(id);
+          const result = await api.retryQueueItem(id);
           if (!result || !result.ok) {
             queueController.focusQueueItemId = null;
             const message = result?.error?.message || 'Could not retry the queue item.';
@@ -222,11 +223,11 @@ export function renderQueue(queue: RosiQueueItem[]) {
         }
       },
       reorderQueueItem: async (id: string, direction: 'up' | 'down') => {
-        if (typeof window.api.reorderQueueItem !== 'function') return;
+        if (typeof api.reorderQueueItem !== 'function') return;
         queueController.focusQueueItemId = id;
         const endQueueAction = beginQueueAction();
         try {
-          const result = await window.api.reorderQueueItem({ id, direction });
+          const result = await api.reorderQueueItem({ id, direction });
           if (!result || !result.ok) {
             queueController.focusQueueItemId = null;
             const message = result?.error?.message || 'Could not reorder the queue item.';
@@ -263,7 +264,7 @@ export function renderQueue(queue: RosiQueueItem[]) {
       openFileLocation: async (filePath: string, id: string) => {
         const message = 'Could not open that file location.';
         try {
-          const result = await window.api.openFileLocation(filePath);
+          const result = await api.openFileLocation(filePath);
           if (!result || !result.ok) {
             const failure = result?.error?.message || message;
             showToast(failure, { type: 'warning' });
@@ -293,7 +294,7 @@ export function renderQueue(queue: RosiQueueItem[]) {
         queueController.focusQueueItemId = nextFocusId;
         const endQueueAction = beginQueueAction();
         try {
-          const result = await window.api.removeFromQueue(id);
+          const result = await api.removeFromQueue(id);
           if (!result || !result.ok) {
             queueController.focusQueueItemId = null;
             const message = result?.error?.message || 'Could not remove the queue item.';

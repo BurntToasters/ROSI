@@ -1,6 +1,7 @@
 // Download progress bar, phase display, and manual download state.
 import { RosiJobProgressEvent, renderStatusText } from './core';
 import { showToast } from './ui-helpers';
+import { api } from '../api';
 
 export { formatBytes } from '../modules/downloads';
 
@@ -172,7 +173,7 @@ export function formatRelativeTime(timestamp: number) {
 /** Opening a folder can fail (moved file, unmounted volume); surface that. */
 export async function revealFileLocation(filePath: string) {
   try {
-    const result = await window.api.openFileLocation(filePath);
+    const result = await api.openFileLocation(filePath);
     if (!result || !result.ok) {
       showToast(result?.error?.message || 'Could not open that file location.', {
         type: 'warning',

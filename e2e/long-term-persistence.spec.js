@@ -133,14 +133,14 @@ describe("long-term V5 observational audit", () => {
             (_, index) =>
               `https://audit.invalid/video.mp4?item=${index}&padding=${"x".repeat(35000)}`,
           );
-          window.api.addToQueue(urls).then(
+          window.__ROSI_E2E__.api.addToQueue(urls).then(
             (value) => done(JSON.stringify(value)),
             (error) => done(JSON.stringify({ error: String(error) })),
           );
         }),
       );
       observation.queueCount = await browser.executeAsync((done) => {
-        window.api.getQueue().then((queue) => done(queue.length));
+        window.__ROSI_E2E__.api.getQueue().then((queue) => done(queue.length));
       });
       await browser.waitUntil(
         () =>
@@ -211,7 +211,7 @@ describe("long-term V5 observational audit", () => {
             observation.toast.includes("Could not reset statistics");
     } else if (mode === "queue-reload") {
       observation.queueCount = await browser.executeAsync((done) => {
-        window.api.getQueue().then((queue) => done(queue.length));
+        window.__ROSI_E2E__.api.getQueue().then((queue) => done(queue.length));
       });
       observation.invariantPassed =
         observation.queueCount ===

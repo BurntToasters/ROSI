@@ -101,7 +101,7 @@ async function closeInvalidFolder(observation) {
   observation.folderBefore = settingsBefore.downloadFolder;
   // Simulate the native picker returning a folder outside the allowed bases.
   await browser.execute((folder) => {
-    window.api.selectDownloadLocation = async () => folder;
+    window.__ROSI_E2E__.api.selectDownloadLocation = async () => folder;
     document.getElementById("changeDownloadFolderBtn").click();
   }, outside);
   await sleep(1500);
@@ -181,9 +181,9 @@ async function queueOwnerRace(observation) {
     const manualFirst = round % 2 === 0;
     const results = await browser.executeAsync(
       (manual, outputPath, manualFirstOrder, done) => {
-        const queue = () => window.api.startQueue();
+        const queue = () => window.__ROSI_E2E__.api.startQueue();
         const download = () =>
-          window.api.downloadVideo({ url: manual, outputPath });
+          window.__ROSI_E2E__.api.downloadVideo({ url: manual, outputPath });
         const started = manualFirstOrder
           ? [download(), queue()]
           : [queue(), download()];

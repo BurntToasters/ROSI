@@ -84,8 +84,8 @@ describe("typed format discovery", () => {
     await browser.execute(() => {
       const original = window.__typedFormatsOriginalApi;
       if (!original) return;
-      window.api.getFormats = original.getFormats;
-      window.api.cancelFormats = original.cancelFormats;
+      window.__ROSI_E2E__.api.getFormats = original.getFormats;
+      window.__ROSI_E2E__.api.cancelFormats = original.cancelFormats;
       delete window.__typedFormatsOriginalApi;
       delete window.__typedFormatsPending;
     });
@@ -218,11 +218,11 @@ describe("typed format discovery", () => {
   it("clears cancelled and stale replies before they can restore selections", async () => {
     await browser.execute(() => {
       window.__typedFormatsOriginalApi = {
-        getFormats: window.api.getFormats,
-        cancelFormats: window.api.cancelFormats,
+        getFormats: window.__ROSI_E2E__.api.getFormats,
+        cancelFormats: window.__ROSI_E2E__.api.cancelFormats,
       };
       window.__typedFormatsPending = [];
-      window.api.getFormats = () =>
+      window.__ROSI_E2E__.api.getFormats = () =>
         new Promise((resolve) => window.__typedFormatsPending.push(resolve));
     });
 
@@ -309,7 +309,10 @@ describe("typed format discovery", () => {
 
   it("shows explicit empty and failure states without usable selections", async () => {
     await browser.execute(() => {
-      window.api.getFormats = async () => ({ ok: true, data: { formats: [] } });
+      window.__ROSI_E2E__.api.getFormats = async () => ({
+        ok: true,
+        data: { formats: [] },
+      });
     });
     await setUrlAndFetch(`${MEDIA}/clip-one.mp4`);
     await browser.waitUntil(
@@ -327,7 +330,7 @@ describe("typed format discovery", () => {
     assert.equal(pickers.audio[0].text, "No audio formats found");
 
     await browser.execute(() => {
-      window.api.getFormats = async () => ({
+      window.__ROSI_E2E__.api.getFormats = async () => ({
         ok: false,
         error: { code: "INTERNAL_ERROR", message: "fixture failure" },
       });

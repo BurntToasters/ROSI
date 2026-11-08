@@ -18,6 +18,7 @@ import { updateUIFromSettings } from '../settings-view';
 import { appendConsoleOutput, setButtonLoading, showToast } from '../ui-helpers';
 import { checkForUpdates } from '../updater-ui';
 import { syncPrimaryActionState, updateUrlButtons, urlActionState } from '../url-actions';
+import { api } from '../../api';
 
 /** Format fetching, the download button, and manual update checks. */
 export function bindDownloadControls() {
@@ -112,7 +113,7 @@ export function bindDownloadControls() {
         const usesDefaultFolder = !settingsStore.settings.askDownloadLocation && !savePath;
         if (!savePath && !usesDefaultFolder) {
           try {
-            savePath = await window.api.selectDownloadLocation();
+            savePath = await api.selectDownloadLocation();
           } catch (dialogError) {
             failManualDownloadStart(operation);
             logError('Error opening save dialog', dialogError);
@@ -155,7 +156,7 @@ export function bindDownloadControls() {
           syncPrimaryActionState();
         };
         setButtonLoading(downloadBtn, true, () => {
-          window.api.cancelDownload();
+          api.cancelDownload();
           downloadState.downloadAbort?.();
           hideProgressBar();
         });
@@ -168,7 +169,7 @@ export function bindDownloadControls() {
         });
 
         prepareManualDownloadStart(operation);
-        const startResult = await window.api.downloadVideo({
+        const startResult = await api.downloadVideo({
           url: url.trim(),
           ...(savePath ? { outputPath: savePath } : {}),
           ffmpegPath,

@@ -14,6 +14,7 @@ import {
 import { refs } from '../refs';
 import { settingsStore } from '../settings-store';
 import { showToast } from '../ui-helpers';
+import { api } from '../../api';
 
 /** Queue input and queue action buttons. */
 export function bindQueueControls() {
@@ -112,7 +113,7 @@ export function bindQueueControls() {
       if (queueController.queueActionLocks > 0) return;
       const endQueueAction = beginQueueAction();
       try {
-        const result = await window.api.startQueue();
+        const result = await api.startQueue();
         if (result && result.ok) {
           applyActiveDownloadProgressPhases(settingsStore.settings, 'Queue download...');
           announceQueueAction('Queue started processing.');
@@ -145,7 +146,7 @@ export function bindQueueControls() {
             action: async () => {
               const endQueueAction = beginQueueAction();
               try {
-                const result = await window.api.clearQueue();
+                const result = await api.clearQueue();
                 if (result && result.ok) {
                   announceQueueAction('Queue cleared.');
                 } else {
@@ -172,7 +173,7 @@ export function bindQueueControls() {
       if (queueController.queueActionLocks > 0) return;
       const endQueueAction = beginQueueAction();
       try {
-        const result = await window.api.clearFinishedQueue();
+        const result = await api.clearFinishedQueue();
         if (result && result.ok) {
           announceQueueAction(
             queueMessageForCount(
@@ -210,7 +211,7 @@ export function bindQueueControls() {
             action: async () => {
               const endQueueAction = beginQueueAction();
               try {
-                const result = await window.api.cancelQueue();
+                const result = await api.cancelQueue();
                 if (result && result.ok) {
                   announceQueueAction('Queue cancelled.');
                 } else {

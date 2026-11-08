@@ -72,7 +72,9 @@ async function reloadRenderer() {
   await browser.waitUntil(
     async () =>
       browser.execute(
-        () => Boolean(window.__ROSI_E2E__?.ready) && Boolean(window.api),
+        () =>
+          Boolean(window.__ROSI_E2E__?.ready) &&
+          Boolean(window.__ROSI_E2E__?.api),
       ),
     { timeout: 60_000, timeoutMsg: "renderer did not come back after reload" },
   );
@@ -82,7 +84,7 @@ async function reloadRenderer() {
 function stubOpenExternal() {
   return browser.execute(() => {
     window.__rosiDenoInstaller = { external: [] };
-    window.api.openExternal = async (url) => {
+    window.__ROSI_E2E__.api.openExternal = async (url) => {
       window.__rosiDenoInstaller.external.push(url);
     };
   });

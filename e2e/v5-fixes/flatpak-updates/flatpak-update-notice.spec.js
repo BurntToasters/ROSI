@@ -94,7 +94,7 @@ async function installScenario({ flatpak, channel, version }) {
   }
   await browser.execute(() => {
     window.flatpakUpdateProbe = { opened: [] };
-    window.api.openExternal = async (url) => {
+    window.__ROSI_E2E__.api.openExternal = async (url) => {
       window.flatpakUpdateProbe.opened.push(url);
       return { ok: true, data: { opened: true } };
     };

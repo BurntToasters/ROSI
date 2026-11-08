@@ -274,9 +274,11 @@ describe("queue and session coordinator behaviour", () => {
     // Records every revision the renderer's queue-update listener receives.
     await browser.execute(() => {
       window.__rosiQueueRevisions = [];
-      window.__rosiQueueUnsubscribe = window.api.onQueueUpdate((snapshot) => {
-        window.__rosiQueueRevisions.push(snapshot.revision);
-      });
+      window.__rosiQueueUnsubscribe = window.__ROSI_E2E__.api.onQueueUpdate(
+        (snapshot) => {
+          window.__rosiQueueRevisions.push(snapshot.revision);
+        },
+      );
     });
     try {
       const urls = [

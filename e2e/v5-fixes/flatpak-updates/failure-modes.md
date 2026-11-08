@@ -32,7 +32,7 @@ a startup check is silent. Same as other builds.
 P2. Newer version in Flatpak: `available` carries `manualInstall: true`. The
 modal offers "Open Release Page" (primary) and "Later". No "Download &
 Install" button is shown.
-P3. "Open Release Page" calls `window.api.openExternal` with exactly
+P3. "Open Release Page" calls `window.__ROSI_E2E__.api.openExternal` with exactly
 `https://github.com/BurntToasters/ROSI/releases/tag/v<version>`.
 P4. The release URL is built from the feed version with `encodeURIComponent`,
 so a version string cannot change the host or path. Semver versions

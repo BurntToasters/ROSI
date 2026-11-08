@@ -1,5 +1,9 @@
 import { bindActivityControls } from './engine/bind/activity';
-import { bindAppShell, bindLicensesOverlay } from './engine/bind/app-shell';
+import {
+  bindAppShell,
+  bindLicensesExternalLinks,
+  bindLicensesOverlay,
+} from './engine/bind/app-shell';
 import { bindBackendEvents } from './engine/bind/backend-events';
 import { bindDownloadControls } from './engine/bind/download';
 import { initPlaylistScope } from './engine/bind/playlist';
@@ -41,6 +45,7 @@ import { applyTheme } from './engine/theme';
 import { showToast } from './engine/ui-helpers';
 import { cleanupUpdaterListeners, setupAutoUpdater } from './engine/updater-ui';
 import { launchSetupWizard } from './engine/wizard';
+import { api } from './api';
 
 type PrepareForCloseHandler = (generation: number) => Promise<void>;
 
@@ -76,9 +81,7 @@ async function settingsAfterLoadFailure(): Promise<{
 }> {
   try {
     const result =
-      typeof window.api.getDefaultSettings === 'function'
-        ? await window.api.getDefaultSettings()
-        : null;
+      typeof api.getDefaultSettings === 'function' ? await api.getDefaultSettings() : null;
     if (!result?.ok) {
       throw new Error(result?.error?.message ?? 'get_default_settings returned no data');
     }
@@ -98,7 +101,7 @@ async function settingsAfterLoadFailure(): Promise<{
 async function initializeRenderer() {
   const ipcCleanupFunctions: Array<() => void> = (refs.ipcCleanupFunctions = []);
   ipcCleanupFunctions.push(
-    window.api.onPrepareForClose(async (generation) => {
+    api.onPrepareForClose(async (generation) => {
       try {
         const handler = await prepareForCloseHandlerReady;
         await handler(generation);
@@ -115,7 +118,7 @@ async function initializeRenderer() {
   );
   refs.pendingManualCompletions = new Map<number, RosiDownloadCompletion>();
   try {
-    settingsStore.settings = (await window.api.getSettings()) as RosiSettings;
+    settingsStore.settings = (await api.getSettings()) as RosiSettings;
   } catch (error) {
     logError('Failed to load settings', error);
     const fallback = await settingsAfterLoadFailure();
@@ -132,7 +135,7 @@ async function initializeRenderer() {
   applyTheme(settingsStore.settings.theme ?? 'system');
 
   try {
-    const version = await window.api.getAppVersion();
+    const version = await api.getAppVersion();
     const versionLink = document.getElementById('versionLink');
     const betaBadge = document.getElementById('betaBadge');
     if (versionLink && version) {
@@ -143,9 +146,7 @@ async function initializeRenderer() {
       );
       versionLink.addEventListener('click', (event) => {
         event.preventDefault();
-        void window.api.openExternal(
-          `https://github.com/BurntToasters/ROSI/releases/tag/v${version}`
-        );
+        void api.openExternal(`https://github.com/BurntToasters/ROSI/releases/tag/v${version}`);
       });
       // Same rule as is_beta_version in src-tauri/src/updater.rs; the Rust side
       // owns the update policy, this only styles the version label.
@@ -164,7 +165,7 @@ async function initializeRenderer() {
   }
 
   try {
-    const platform = await window.api.getAppPlatform();
+    const platform = await api.getAppPlatform();
     const taskbarSetting = document.getElementById('taskbarProgressSetting');
     const taskbarLinuxNote = document.getElementById('taskbarProgressLinuxNote');
     if (platform === 'linux') {
@@ -179,7 +180,7 @@ async function initializeRenderer() {
     logError('Could not resolve app platform for settings UI', e);
   }
   try {
-    settingsStore.isFlatpakBuild = (await window.api.isFlatpak?.()) === true;
+    settingsStore.isFlatpakBuild = (await api.isFlatpak?.()) === true;
   } catch (e) {
     logError('Could not detect the Flatpak build', e);
   }
@@ -195,7 +196,7 @@ async function initializeRenderer() {
     document.getElementById('browserFlatpakHint')?.classList.remove('hidden');
   }
 
-  if (window.api.getChannel() !== 'msstore') {
+  if (api.getChannel() !== 'msstore') {
     try {
       setupAutoUpdater(() => flushBeforeRestart('Installing the update'));
     } catch (e) {
@@ -209,7 +210,7 @@ async function initializeRenderer() {
       // A settings file from a newer ROSI is preserved on purpose; it must not
       // keep the app from closing.
       if (!saved && settingsStore.lastSettingsSaveErrorCode !== 'NEWER_VERSION') return;
-      await window.api.notifySettingsFlushed(generation);
+      await api.notifySettingsFlushed(generation);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       showModal({
@@ -415,6 +416,7 @@ async function initializeRenderer() {
   }
 
   bindLicensesOverlay();
+  bindLicensesExternalLinks();
 
   bindKeyboardShortcuts();
 }

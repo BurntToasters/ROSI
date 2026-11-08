@@ -1,15 +1,17 @@
 // Licenses view (loaded in an iframe from the main window). External script
-// so it runs under the app CSP; the main window owns window.api.
+// so it runs under the app CSP. Links are opened by the main window, which
+// receives a postMessage and checks the sender and the URL scheme.
 (function () {
   'use strict';
 
   function openExternal(url) {
     try {
-      if (window.parent && window.parent.api && window.parent.api.openExternal) {
-        window.parent.api.openExternal(url);
-      }
+      window.parent.postMessage(
+        { type: 'rosi-open-external', url: url },
+        window.location.origin
+      );
     } catch (_) {
-      /* cross-origin or unavailable parent */
+      /* no parent window */
     }
   }
 

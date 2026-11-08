@@ -376,7 +376,8 @@ describe("renderer round-two repairs", () => {
       },
     ];
     await browser.execute(() => {
-      window.round2OriginalClearActivity = window.api.clearDownloadActivity;
+      window.round2OriginalClearActivity =
+        window.__ROSI_E2E__.api.clearDownloadActivity;
     });
 
     try {
@@ -385,7 +386,7 @@ describe("renderer round-two repairs", () => {
           "rosi-download-history",
           JSON.stringify(entries),
         );
-        window.api.clearDownloadActivity = async () => ({
+        window.__ROSI_E2E__.api.clearDownloadActivity = async () => ({
           ok: false,
           error: {
             code: "controlled-failure",
@@ -426,7 +427,8 @@ describe("renderer round-two repairs", () => {
       );
 
       await browser.execute(() => {
-        window.api.clearDownloadActivity = window.round2OriginalClearActivity;
+        window.__ROSI_E2E__.api.clearDownloadActivity =
+          window.round2OriginalClearActivity;
         document.getElementById("clearHistory").click();
       });
       await dismissModal("Clear Activity", "Clear");
@@ -449,7 +451,8 @@ describe("renderer round-two repairs", () => {
     } finally {
       await browser.execute(() => {
         if (window.round2OriginalClearActivity) {
-          window.api.clearDownloadActivity = window.round2OriginalClearActivity;
+          window.__ROSI_E2E__.api.clearDownloadActivity =
+            window.round2OriginalClearActivity;
         }
         window.localStorage.removeItem("rosi-download-history");
       });

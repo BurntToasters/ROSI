@@ -7,14 +7,15 @@ import type {
 } from '../generated/ipc-types';
 import { configureProgressPhases, showProgressBar } from './progress';
 import { icon, renderStatus } from '../modules/icons';
+import { api } from '../api';
 
 export { getModifierKeyName, isMac, isValidUrl } from '../modules/ui';
 
 export function logError(context: string, error?: unknown) {
   const msg = error instanceof Error ? error.message : String(error || '');
   const text = msg ? `${context}: ${msg}` : context;
-  if (window.api && typeof window.api.logError === 'function') {
-    window.api.logError(text);
+  if (typeof api.logError === 'function') {
+    api.logError(text);
   }
 }
 
