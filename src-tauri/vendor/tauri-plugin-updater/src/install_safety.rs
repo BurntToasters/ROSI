@@ -14,11 +14,13 @@ use std::path::{Component, Path, PathBuf};
 ///
 /// Paths and identity are handler arguments, quoted before reaching the
 /// shell. Every candidate must have the expected bundle identifier,
-/// executable, and Resources directory. A backup is removed only after its
-/// identity has been verified and a complete replacement is live.
+/// executable, and Resources directory. Only `Contents` moves: the outer
+/// `.app` directory keeps its file id, which the Dock item points at. `$BAK`
+/// holds the old `Contents` and is removed only after its identity has been
+/// verified and a complete replacement is live.
 pub const MACOS_PRIVILEGED_INSTALL_SCRIPT: &str = r#"
 on installUpdate(srcPath, newPath, backupPath, bundleIdentifier, executableName)
-  do shell script "NEW=" & quoted form of newPath & "; SRC=" & quoted form of srcPath & "; BAK=" & quoted form of backupPath & "; BID=" & quoted form of bundleIdentifier & "; EXE=" & quoted form of executableName & "; set -e; valid_bundle() { B=\"$1\"; /bin/test ! -L \"$B\" && /bin/test -d \"$B\" && /bin/test ! -L \"$B/Contents\" && /bin/test -d \"$B/Contents\" && /bin/test ! -L \"$B/Contents/Info.plist\" && /bin/test -f \"$B/Contents/Info.plist\" && /bin/test ! -L \"$B/Contents/Resources\" && /bin/test -d \"$B/Contents/Resources\" && /bin/test ! -L \"$B/Contents/MacOS\" && /bin/test -d \"$B/Contents/MacOS\" && /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \"$B/Contents/Info.plist\" 2>/dev/null | /usr/bin/grep -Fqx -- \"$BID\" && /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \"$B/Contents/Info.plist\" 2>/dev/null | /usr/bin/grep -Fqx -- \"$EXE\" && /bin/test ! -L \"$B/Contents/MacOS/$EXE\" && /bin/test -f \"$B/Contents/MacOS/$EXE\" && /bin/test -s \"$B/Contents/MacOS/$EXE\" && /bin/test -x \"$B/Contents/MacOS/$EXE\" && /bin/test ! -L \"$B/Contents/MacOS/rosi-yt-dlp\" && /bin/test -f \"$B/Contents/MacOS/rosi-yt-dlp\" && /bin/test -s \"$B/Contents/MacOS/rosi-yt-dlp\" && /bin/test -x \"$B/Contents/MacOS/rosi-yt-dlp\" && /bin/test ! -L \"$B/Contents/MacOS/rosi-ffmpeg\" && /bin/test -f \"$B/Contents/MacOS/rosi-ffmpeg\" && /bin/test -s \"$B/Contents/MacOS/rosi-ffmpeg\" && /bin/test -x \"$B/Contents/MacOS/rosi-ffmpeg\" && /bin/test ! -L \"$B/Contents/MacOS/rosi-ffprobe\" && /bin/test -f \"$B/Contents/MacOS/rosi-ffprobe\" && /bin/test -s \"$B/Contents/MacOS/rosi-ffprobe\" && /bin/test -x \"$B/Contents/MacOS/rosi-ffprobe\"; }; /bin/test -d \"$NEW/Contents\" || exit 1; valid_bundle \"$NEW\" || exit 1; if ! valid_bundle \"$SRC\"; then if valid_bundle \"$BAK\"; then if /bin/test -e \"$SRC\"; then /bin/rm -rf \"$SRC\"; fi; /bin/mv -f \"$BAK\" \"$SRC\" || exit 1; /bin/test -d \"$SRC/Contents\" || exit 1; else exit 1; fi; fi; if /bin/test -e \"$BAK\" && ! valid_bundle \"$BAK\"; then exit 1; fi; if /bin/test -e \"$BAK\"; then /bin/rm -rf \"$BAK\"; fi; /bin/mv -f \"$SRC\" \"$BAK\" || exit 1; valid_bundle \"$BAK\" || { /bin/mv -f \"$BAK\" \"$SRC\"; exit 1; }; if /bin/mv -f \"$NEW\" \"$SRC\" && valid_bundle \"$SRC\"; then if ! /bin/rm -rf \"$BAK\"; then :; fi; exit 0; fi; if /bin/test -e \"$SRC\"; then /bin/rm -rf \"$SRC\"; fi; /bin/mv -f \"$BAK\" \"$SRC\"; exit 1" with administrator privileges
+  do shell script "NEW=" & quoted form of newPath & "; SRC=" & quoted form of srcPath & "; BAK=" & quoted form of backupPath & "; BID=" & quoted form of bundleIdentifier & "; EXE=" & quoted form of executableName & "; set -e; valid_bundle() { B=\"$1\"; /bin/test ! -L \"$B\" && /bin/test -d \"$B\" && /bin/test ! -L \"$B/Contents\" && /bin/test -d \"$B/Contents\" && /bin/test ! -L \"$B/Contents/Info.plist\" && /bin/test -f \"$B/Contents/Info.plist\" && /bin/test ! -L \"$B/Contents/Resources\" && /bin/test -d \"$B/Contents/Resources\" && /bin/test ! -L \"$B/Contents/MacOS\" && /bin/test -d \"$B/Contents/MacOS\" && /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \"$B/Contents/Info.plist\" 2>/dev/null | /usr/bin/grep -Fqx -- \"$BID\" && /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \"$B/Contents/Info.plist\" 2>/dev/null | /usr/bin/grep -Fqx -- \"$EXE\" && /bin/test ! -L \"$B/Contents/MacOS/$EXE\" && /bin/test -f \"$B/Contents/MacOS/$EXE\" && /bin/test -s \"$B/Contents/MacOS/$EXE\" && /bin/test -x \"$B/Contents/MacOS/$EXE\" && /bin/test ! -L \"$B/Contents/MacOS/rosi-yt-dlp\" && /bin/test -f \"$B/Contents/MacOS/rosi-yt-dlp\" && /bin/test -s \"$B/Contents/MacOS/rosi-yt-dlp\" && /bin/test -x \"$B/Contents/MacOS/rosi-yt-dlp\" && /bin/test ! -L \"$B/Contents/MacOS/rosi-ffmpeg\" && /bin/test -f \"$B/Contents/MacOS/rosi-ffmpeg\" && /bin/test -s \"$B/Contents/MacOS/rosi-ffmpeg\" && /bin/test -x \"$B/Contents/MacOS/rosi-ffmpeg\" && /bin/test ! -L \"$B/Contents/MacOS/rosi-ffprobe\" && /bin/test -f \"$B/Contents/MacOS/rosi-ffprobe\" && /bin/test -s \"$B/Contents/MacOS/rosi-ffprobe\" && /bin/test -x \"$B/Contents/MacOS/rosi-ffprobe\"; }; /bin/test -d \"$NEW/Contents\" || exit 1; valid_bundle \"$NEW\" || exit 1; if ! valid_bundle \"$SRC\"; then if valid_bundle \"$BAK\"; then if /bin/test -L \"$SRC\" || { /bin/test -e \"$SRC\" && /bin/test ! -d \"$SRC\"; }; then /bin/rm -f \"$SRC\" || exit 1; fi; /bin/mkdir -p \"$SRC\" || exit 1; if /bin/test -e \"$SRC/Contents\" || /bin/test -L \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\" || exit 1; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\" || exit 1; valid_bundle \"$SRC\" || exit 1; /bin/rm -rf \"$BAK\" || exit 1; else exit 1; fi; fi; /bin/test -d \"$SRC/Contents\" || exit 1; if /bin/test -e \"$BAK\" && ! valid_bundle \"$BAK\"; then /bin/rmdir \"$BAK\" 2>/dev/null || exit 1; fi; if /bin/test -e \"$BAK\"; then /bin/rm -rf \"$BAK\"; fi; /bin/mkdir \"$BAK\" || exit 1; /bin/mv -f \"$SRC/Contents\" \"$BAK/Contents\" || { /bin/rmdir \"$BAK\"; exit 1; }; valid_bundle \"$BAK\" || { /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\"; /bin/rmdir \"$BAK\"; exit 1; }; if /bin/mv -f \"$NEW/Contents\" \"$SRC/Contents\" && valid_bundle \"$SRC\"; then if ! /bin/rm -rf \"$BAK\"; then :; fi; exit 0; fi; if /bin/test -e \"$SRC/Contents\" || /bin/test -L \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\"; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\" && /bin/rmdir \"$BAK\"; exit 1" with administrator privileges
 end installUpdate
 "#;
 
@@ -764,26 +766,36 @@ mod tests {
         assert!(
             MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/bin/test -s \\\"$B/Contents/MacOS/$EXE\\\"")
         );
-        assert!(MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/bin/mv -f \\\"$BAK\\\" \\\"$SRC\\\""));
+        assert!(MACOS_PRIVILEGED_INSTALL_SCRIPT
+            .contains("/bin/mv -f \\\"$BAK/Contents\\\" \\\"$SRC/Contents\\\""));
         assert!(
-            MACOS_PRIVILEGED_INSTALL_SCRIPT
-                .contains("/bin/rm -rf \\\"$SRC\\\"; fi; /bin/mv -f \\\"$BAK\\\" \\\"$SRC\\\""),
-            "failed swap must remove the incomplete new tree before restoring the backup"
+            MACOS_PRIVILEGED_INSTALL_SCRIPT.contains(concat!(
+                "/bin/rm -rf \\\"$SRC/Contents\\\"; fi; ",
+                "/bin/mv -f \\\"$BAK/Contents\\\" \\\"$SRC/Contents\\\""
+            )),
+            "failed swap must remove the incomplete new Contents before restoring the backup"
+        );
+        assert!(
+            !MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/bin/mv -f \\\"$SRC\\\" \\\"$BAK\\\"")
+                && !MACOS_PRIVILEGED_INSTALL_SCRIPT
+                    .contains("/bin/mv -f \\\"$NEW\\\" \\\"$SRC\\\""),
+            "the outer app directory must never move; the Dock item points at it"
         );
         let swap_at = MACOS_PRIVILEGED_INSTALL_SCRIPT
-            .find("/bin/mv -f \\\"$SRC\\\" \\\"$BAK\\\"")
-            .expect("live bundle must be renamed to the sibling backup first");
+            .find("/bin/mv -f \\\"$SRC/Contents\\\" \\\"$BAK/Contents\\\"")
+            .expect("live Contents must be moved to the sibling backup first");
         let stale_backup_rm = MACOS_PRIVILEGED_INSTALL_SCRIPT
             .find(concat!(
                 "if /bin/test -e \\\"$BAK\\\"; then /bin/rm -rf \\\"$BAK\\\"; fi; ",
-                "/bin/mv -f \\\"$SRC\\\" \\\"$BAK\\\""
+                "/bin/mkdir \\\"$BAK\\\" || exit 1; ",
+                "/bin/mv -f \\\"$SRC/Contents\\\" \\\"$BAK/Contents\\\""
             ))
             .expect(
                 "stale backup may be removed only after live Contents exists and immediately before the swap",
             );
         assert!(
             stale_backup_rm < swap_at,
-            "must not delete the sibling backup before the live bundle is moved"
+            "must not delete the sibling backup before the live Contents is moved"
         );
         assert!(
             !MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("rm -rf \" & quoted form of srcPath"),

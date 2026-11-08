@@ -67,10 +67,14 @@ patch -p1 -d <pristine-2.14.0-dir> -i ROSI.patch
 - macOS: installs go through `install_inner_locked` inside the install lock. The new bundle
   is extracted with the confined extractor (`extract_macos_app_archive`), verified to support
   the host CPU architecture (`macos_bundle_executable_supports_host_arch` for the main executable
-  and bundled sidecars, including Rosetta 2 migration to native Apple Silicon), the live bundle is
-  moved to the sibling backup, the new bundle is moved live, and the backup is removed only
-  after the identity check passes. `restore_macos_live_bundle` and
-  `recover_macos_live_bundle` roll back a partial swap. When the user-owned path is not
+  and bundled sidecars, including Rosetta 2 migration to native Apple Silicon). Then
+  `swap_macos_app_contents` moves the live `Contents` into the sibling backup directory and the
+  new `Contents` into the live `.app`, and removes the backup only after the identity check passes.
+  The outer `.app` directory never moves, so the Dock tile keeps pointing at it (upstream renames
+  the whole bundle, which leaves a second Dock icon after restart; failure modes:
+  `e2e/macos-update-dock.failure-modes.md`). `restore_macos_live_bundle` and
+  `recover_macos_live_bundle` roll back a partial swap by moving `Contents` back, including a
+  whole-bundle backup left by the 5.0.x updater. When the user-owned path is not
   writable, the privileged AppleScript path runs with quoted arguments.
 - macOS archives: `extract_macos_app_archive` picks gzip (Tauri `.app.tar.gz`) or zstd (ROSI
   per-arch `.app.tar.zst`, `scripts/pack-macos-updater-zst.js`) by magic bytes and rejects
