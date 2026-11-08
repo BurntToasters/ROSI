@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { browser } from "@wdio/globals";
 import { waitForAppReady } from "../../helpers/app-bridge.js";
+import { readListFile } from "../../helpers/persisted.js";
 import {
   captureUpdaterStatuses,
   clickManualCheck,
@@ -15,7 +16,7 @@ import {
 // Each scenario runs the Rust engine against a local signed update server. The
 // engine probe counts installs and restarts; scenarios read deltas because the
 // probe belongs to the app process.
-const EXPECTED_CHECKS = 26;
+const EXPECTED_CHECKS = 27;
 const BETA = "darwin-beta-aarch64-app";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const runDirectory = path.join(
@@ -335,6 +336,131 @@ describe("Updater engine failure modes", () => {
       refusedRestarts: afterRetry.refusedRestarts - before.refusedRestarts,
       installsAfterRetry: afterRetry.installs - before.installs,
     });
+  });
+
+  it("keeps the candidate and its bytes when the pre-install flush refuses, and installs on retry", async () => {
+    assert.ok(DATA_DIR, "ROSI_E2E_DATA_DIR is not set");
+    const queueFile = path.join(DATA_DIR, "download-queue.json");
+    const backupPath = path.join(DATA_DIR, "download-queue.backup.json");
+    const priorBackup = fs.existsSync(backupPath)
+      ? fs.readFileSync(backupPath)
+      : null;
+    try {
+      await startScenario({});
+      fixture.server.publish({
+        target: stableTarget(),
+        route: osName(),
+        version: "9.0.3",
+        payload: Buffer.from("pre-install flush payload"),
+        fileName: "ROSI-9.0.3.bin",
+      });
+      const before = await engineProbe();
+      await clickManualCheck();
+      await waitForModal("Update Available!");
+      await clickModal("Download & Install");
+      await waitForModal("Update Ready!");
+      await clickModal("Later");
+      const candidateId = (await statuses("engineStatuses")).find(
+        (event) => event.status === "downloaded",
+      )?.candidateId;
+      assert.ok(candidateId !== undefined, "the download did not finish");
+      const artifactsBefore = artifactRequestCount();
+
+      // Fault: the queue backup path is a directory, so the shutdown flush refuses.
+      await invoke("clear_queue");
+      fs.rmSync(backupPath, { recursive: true, force: true });
+      fs.mkdirSync(backupPath);
+      const queued = await invoke("add_to_queue", {
+        urls: ["https://93.184.216.34/updater-pre-install-flush-fault"],
+        options: null,
+      });
+      assert.equal(queued.data?.data?.added, 1, JSON.stringify(queued));
+      const latestQueueId = (await invoke("get_queue")).data?.at(-1)?.id;
+      assert.ok(latestQueueId);
+      await browser.waitUntil(
+        () => {
+          try {
+            return readListFile(queueFile).some(
+              (item) => item.id === latestQueueId,
+            );
+          } catch {
+            return false;
+          }
+        },
+        {
+          timeout: 10_000,
+          interval: 100,
+          timeoutMsg: "faulted queue item did not reach the primary file",
+        },
+      );
+
+      await invoke("install_update", { candidateId });
+      const refused = await waitForModal("Update Error");
+      assert.ok(
+        refused.message.trim().length > 0,
+        "the refusal had no message",
+      );
+      await clickModal("OK");
+      // The flush runs before the install, so nothing is installed or restarted.
+      const afterRefusal = await engineProbe();
+      assert.equal(afterRefusal.installs - before.installs, 0);
+      assert.equal(afterRefusal.restarts - before.restarts, 0);
+      assert.equal(afterRefusal.refusedRestarts - before.refusedRestarts, 0);
+      assert.equal(artifactRequestCount(), artifactsBefore);
+
+      // Remove the fault. The retry installs the kept bytes without a new download.
+      fs.rmSync(backupPath, { recursive: true, force: true });
+      if (priorBackup) fs.writeFileSync(backupPath, priorBackup);
+      const retry = await invoke("install_update", { candidateId });
+      assert.ok(retry.ok, JSON.stringify(retry));
+      await browser.pause(800);
+      const afterRetry = await engineProbe();
+      assert.equal(afterRetry.installs - before.installs, 1);
+      assert.equal(afterRetry.restarts - before.restarts, 1);
+      assert.equal(afterRetry.refusedRestarts - before.refusedRestarts, 0);
+      assert.equal(artifactRequestCount(), artifactsBefore);
+      record("updater-engine-pre-install-flush-retry", {
+        candidateId,
+        refusal: refused.message,
+        installsAfterRefusal: afterRefusal.installs - before.installs,
+        installsAfterRetry: afterRetry.installs - before.installs,
+        restartsAfterRetry: afterRetry.restarts - before.restarts,
+        downloadsDuringRetry: artifactRequestCount() - artifactsBefore,
+      });
+    } finally {
+      fs.rmSync(backupPath, { recursive: true, force: true });
+      if (priorBackup) fs.writeFileSync(backupPath, priorBackup);
+      await browser.execute(() => {
+        if (
+          document.getElementById("app-modal")?.classList.contains("active")
+        ) {
+          const close = [
+            ...document.querySelectorAll("#modal-buttons button"),
+          ].find((button) =>
+            ["Later", "OK"].includes(button.textContent.trim()),
+          );
+          close?.click();
+        }
+      });
+      await invoke("clear_queue");
+      await browser.waitUntil(
+        () => {
+          try {
+            return (
+              readListFile(queueFile).length === 0 &&
+              Array.isArray(readListFile(backupPath))
+            );
+          } catch {
+            return false;
+          }
+        },
+        {
+          timeout: 10_000,
+          interval: 100,
+          timeoutMsg: "pre-install flush test queue did not clean up",
+        },
+      );
+    }
   });
 
   it("discards a download that completes after cancel", async () => {

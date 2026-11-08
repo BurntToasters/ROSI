@@ -1095,9 +1095,13 @@ fn install_flow(candidate_id: u64) {
 
 fn install_bytes(update: &Update, bytes: &[u8]) -> Result<(), String> {
     if e2e_install_probe_active() {
-        // The signature is checked for real; the replacement is only recorded.
+        // Same order as the plugin's install: verify, then the before-exit
+        // flush (the hook main.rs registers), then the install. The install
+        // itself is only recorded.
+        update.verify(bytes).map_err(|error| error.to_string())?;
+        crate::window::shutdown()?;
         e2e_record_install();
-        return update.verify(bytes).map_err(|error| error.to_string());
+        return Ok(());
     }
     update.install(bytes).map_err(|error| error.to_string())
 }

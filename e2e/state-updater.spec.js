@@ -1149,14 +1149,15 @@ describe("state and updater repair E2E", () => {
       });
       await dismissModal("Update Error", "OK");
       const afterRefusal = await engineProbe();
-      assert.equal(afterRefusal.installs - probeBeforeRefusal.installs, 1);
+      // The flush refuses before the install, so no install is recorded.
+      assert.equal(afterRefusal.installs - probeBeforeRefusal.installs, 0);
       assert.equal(afterRefusal.restarts - probeBeforeRefusal.restarts, 0);
       assert.ok(
         readListFile(queueFile).some((item) => item.id === latestQueueId),
         "refused restart dropped the queued item",
       );
 
-      // The retry restarts with the verified bytes; it does not install them again.
+      // The retry installs the kept bytes once, then restarts.
       fs.rmSync(backupPath, { recursive: true, force: true });
       if (priorBackup) fs.writeFileSync(backupPath, priorBackup);
       const retry = await engineInvoke("install_update", {
@@ -1165,8 +1166,8 @@ describe("state and updater repair E2E", () => {
       assert.ok(retry.ok, JSON.stringify(retry));
       await browser.pause(800);
       const afterRetry = await engineProbe();
-      // Measured from the refusal: the refused attempt already counted its install.
-      assert.equal(afterRetry.installs - afterRefusal.installs, 0);
+      // Measured from the refusal: the refused flush recorded no install.
+      assert.equal(afterRetry.installs - afterRefusal.installs, 1);
       assert.equal(afterRetry.restarts - afterRefusal.restarts, 1);
       record("updater-generation-retry", {
         feedTargets: fixture.server.requests
