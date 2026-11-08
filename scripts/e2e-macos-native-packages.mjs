@@ -325,6 +325,16 @@ function checkRealBuilds() {
           };
         } else {
           runMacTool("xcrun", ["stapler", "validate", packagePath]);
+          // Release DMGs are converted to ULMO (e2e/dmg-ulmo.failure-modes.md).
+          const imageFormat = runMacTool("hdiutil", ["imageinfo", packagePath])
+            .toString()
+            .match(/^Format:\s*(\S+)/m)?.[1];
+          if (imageFormat !== "ULMO") {
+            throw new Error(
+              `${record.name} is ${imageFormat ?? "unknown"}, expected ULMO; run build:mac:dmg:ulmo`,
+            );
+          }
+          record.imageFormat = imageFormat;
           const mountRoot = path.join(
             temporaryRoot ??
               (temporaryRoot = fs.mkdtempSync(
