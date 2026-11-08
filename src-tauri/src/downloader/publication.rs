@@ -362,15 +362,18 @@ pub(super) fn publish_same_extension_for_session(
     // install_conversion_output_for_session.
     match publish_staged_source_with_captions(input, download_dir, stage, write_subtitles) {
         Ok(published) => {
-            with_session(id, |session| {
-                session.conversion_format = Some(target.to_string());
-                session.completed_paths.push(published.clone());
+            let target = target.to_string();
+            let recorded = published.clone();
+            with_session(id, move |session| {
+                session.conversion_format = Some(target);
+                session.completed_paths.push(recorded);
             });
             Ok(published)
         }
         Err(failure) => {
             if let Some(path) = failure.media_path {
-                with_session(id, |session| session.completed_paths.push(path.clone()));
+                let recorded = path.clone();
+                with_session(id, move |session| session.completed_paths.push(recorded));
                 return Err(ConversionFailure::SetupPublished {
                     message: failure.detail,
                     path,

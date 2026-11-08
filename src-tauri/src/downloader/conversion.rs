@@ -67,17 +67,21 @@ fn install_conversion_output_for_session(
     // that lands meanwhile still sees this output in the batch result.
     let output = install_conversion_output(temp, input, target, download_dir)
         .map_err(ConversionFailure::Setup)?;
-    with_session(id, |session| {
-        session.conversion_format = Some(target.to_string());
-        session.completed_paths.push(output.clone());
+    let target = target.to_string();
+    let recorded = output.clone();
+    with_session(id, move |session| {
+        session.conversion_format = Some(target);
+        session.completed_paths.push(recorded);
     });
     Ok(output)
 }
 
 fn record_conversion_failure(id: u64, path: &Path, detail: &str) {
-    with_session(id, |session| {
+    let path = path.to_path_buf();
+    let detail = detail.to_string();
+    with_session(id, move |session| {
         if !session.cancelled {
-            session.failed_paths.push(path.to_path_buf());
+            session.failed_paths.push(path.clone());
             session
                 .conversion_failures
                 .push(format!("{}: {detail}", path.display()));
@@ -188,11 +192,12 @@ fn execute_ffmpeg(
     }
     let mut command = crate::process_util::command(ffmpeg, args, &[], true);
     let child = crate::process_util::spawn(&mut command).map_err(ConversionFailure::Spawn)?;
-    let registered = with_session(id, |session| {
+    let owned_child = Arc::clone(&child);
+    let registered = with_session(id, move |session| {
         if session.cancelled {
             false
         } else {
-            session.ffmpeg = Some(Arc::clone(&child));
+            session.ffmpeg = Some(owned_child);
             true
         }
     })
@@ -263,11 +268,12 @@ fn execute_ffmpeg(
         Ok(Some(status)) => Some(status),
         Ok(None) => {
             timed_out = true;
-            if with_session(id, |session| {
+            let probe = Arc::clone(&child);
+            if with_session(id, move |session| {
                 session
                     .ffmpeg
                     .as_ref()
-                    .is_some_and(|owned| Arc::ptr_eq(owned, &child))
+                    .is_some_and(|owned| Arc::ptr_eq(owned, &probe))
             })
             .unwrap_or(false)
             {
@@ -286,11 +292,12 @@ fn execute_ffmpeg(
     };
     let readers_complete = wait_for_readers([stdout_reader, stderr_reader]);
     timed_out |= !readers_complete;
-    let was_cancelled = with_session(id, |session| {
+    let owned_child = Arc::clone(&child);
+    let was_cancelled = with_session(id, move |session| {
         if session
             .ffmpeg
             .as_ref()
-            .is_some_and(|owned| Arc::ptr_eq(owned, &child))
+            .is_some_and(|owned| Arc::ptr_eq(owned, &owned_child))
         {
             session.ffmpeg = None;
         }
@@ -338,11 +345,12 @@ fn probe_media_codecs_for_session(
             return Err(format!("Could not start the codec probe: {error}"));
         }
     };
-    let registered = with_session(id, |session| {
+    let owned_child = Arc::clone(&child);
+    let registered = with_session(id, move |session| {
         if session.cancelled {
             false
         } else {
-            session.ffmpeg = Some(Arc::clone(&child));
+            session.ffmpeg = Some(owned_child);
             true
         }
     })
@@ -354,11 +362,12 @@ fn probe_media_codecs_for_session(
 
     let output =
         crate::process_util::wait_with_output(&child, CODEC_PROBE_TIMEOUT, 4096, MAX_ERROR_BUFFER);
-    let cancelled = with_session(id, |session| {
+    let owned_child = Arc::clone(&child);
+    let cancelled = with_session(id, move |session| {
         if session
             .ffmpeg
             .as_ref()
-            .is_some_and(|owned| Arc::ptr_eq(owned, &child))
+            .is_some_and(|owned| Arc::ptr_eq(owned, &owned_child))
         {
             session.ffmpeg = None;
         }

@@ -1,27 +1,22 @@
 //! Single active download session: yt-dlp download, optional FFmpeg
 //! conversion, cancellation, structured progress, and completion reporting.
 //!
-//! Lock discipline: the `ACTIVE` session lock is never held while emitting
-//! events, touching windows, or invoking completion callbacks (the queue's
-//! callback takes the queue lock). `EVENT_PUBLISH` serializes lifecycle event
-//! publication with replacing the active session so older terminal events
-//! cannot arrive after a newer session becomes current.
+//! The one `Session` lives on the session owner thread
+//! (`downloader/session_owner.rs`). Every read or change of it is a task the
+//! owner runs in arrival order, so a replaced session's events are dropped.
 //!
-//! Lifecycle waits go through the coordinator (coordinator.rs): a session is
-//! registered in the same critical section that installs it in `ACTIVE`, and
-//! its terminal result acks every `await_finalized` on it. Events for a stale
-//! session are dropped under `EVENT_PUBLISH`, since `with_session` matches only
-//! the current session.
+//! Waits, by caller:
+//! - Caller -> owner: a task and its reply. The owner waits on nothing else.
+//!   Its tasks emit events and make non-blocking submits to the coordinator.
+//! - Caller -> coordinator: `await_finalized`, from caller threads only.
+//! - Process waits, termination, and stats writes run on the caller, after the
+//!   owner returns a plan or a completion.
 //!
-//! Lock order, outermost first:
-//!
-//! - Session chain: `STARTUP` -> `EVENT_PUBLISH` -> `ACTIVE`. `STARTUP` only
-//!   serializes starts; no completion path takes it.
-//! - Queue chain: only the coordinator thread takes `QUEUE` and `ACTIVE` (via
-//!   `can_start`), and it never waits on a process or an ack.
-//! - `PERSIST_SIGNAL` is a leaf.
-//! - Registration and terminal results are non-blocking sends to the
-//!   coordinator.
+//! `install` makes a session current. `cancel_session` returns the session's
+//! children to terminate. `finish_locked` takes the session out, so only the
+//! first finish gets its completion. `COUNTER` stays an atomic id source, since
+//! ids are minted before install. `can_start` and `is_busy` read an atomic hint
+//! that install decides on.
 
 use crate::command_builders::{build_ytdlp_args, YtdlpArgsInput};
 use crate::constants::*;
@@ -38,14 +33,18 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
 
 mod conversion;
 mod publication;
+mod session_owner;
 
 use conversion::run_conversion;
 use publication::{install_download_output, publish_caption_sidecars};
+use session_owner::Installed;
+
+pub use session_owner::{can_start, is_busy};
 
 const CANCELLED_STATUS: &str = "⏹️ Cancelled.";
 const CANCELLED_PROGRESS: &str = "⏹️ Download/Conversion cancelled by user.";
@@ -77,59 +76,41 @@ struct Session {
     reporter: Reporter,
 }
 
-/// The session slot. It holds session data only; lifecycle waits go through
-/// the coordinator's await acks.
-static ACTIVE: Mutex<Option<Session>> = Mutex::new(None);
-/// Mirrors whether ACTIVE holds a session, so the main thread can ask without
-/// waiting on the session lock.
-static ACTIVE_PRESENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-static STARTUP: Mutex<()> = Mutex::new(());
-static EVENT_PUBLISH: Mutex<()> = Mutex::new(());
+/// Session ids. Minted before a session is installed, so a caller needs no
+/// round trip for one. Not owner state.
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn lock() -> MutexGuard<'static, Option<Session>> {
-    ACTIVE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-fn with_session<R>(id: u64, f: impl FnOnce(&mut Session) -> R) -> Option<R> {
-    let mut guard = lock();
-    match guard.as_mut() {
+/// Run `f` on the current session if it has id `id`. `None` when that session
+/// is gone or was replaced. `f` runs on the session owner, in arrival order.
+fn with_session<R: Send + 'static>(
+    id: u64,
+    f: impl FnOnce(&mut Session) -> R + Send + 'static,
+) -> Option<R> {
+    session_owner::run(move |slot| match slot.as_mut() {
         Some(session) if session.id == id => Some(f(session)),
         _ => None,
-    }
+    })
+    .flatten()
 }
 
 fn is_active(id: u64) -> bool {
     with_session(id, |_| ()).is_some()
 }
 
-pub fn is_busy() -> bool {
-    ACTIVE_PRESENT.load(Ordering::SeqCst)
-}
-
-pub fn can_start(owner: Owner) -> bool {
-    lock().as_ref().is_none_or(|session| session.owner == owner)
-}
-
 /// The active session's id when another owner holds the slot. Callers wait on
 /// it with `coordinator::await_finalized` instead of polling.
 pub fn blocking_session(owner: Owner) -> Option<u64> {
-    lock()
-        .as_ref()
-        .filter(|session| session.owner != owner)
-        .map(|session| session.id)
+    session_owner::run(move |slot| {
+        slot.as_ref()
+            .filter(|session| session.owner != owner)
+            .map(|session| session.id)
+    })
+    .flatten()
 }
 
 fn send_progress(id: u64, message: impl Into<String>) {
-    let _publish = EVENT_PUBLISH
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if is_active(id) {
-        crate::app_state::emit("progress", message.into());
-    }
+    let message = message.into();
+    with_session(id, move |_| crate::app_state::emit("progress", message));
 }
 
 fn apply_taskbar(event: &JobProgressEvent) {
@@ -160,22 +141,14 @@ fn apply_taskbar(event: &JobProgressEvent) {
 }
 
 fn emit_job_progress(id: u64, event: JobProgressEvent) {
-    let _publish = EVENT_PUBLISH
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let show_taskbar = with_session(id, |session| {
-        session
-            .reporter
-            .should_emit(&event)
-            .then_some(session.reporter.show_taskbar)
-    })
-    .flatten();
-    if let Some(show_taskbar) = show_taskbar {
-        crate::app_state::emit("job-progress", event.clone());
-        if show_taskbar {
-            apply_taskbar(&event);
+    with_session(id, move |session| {
+        if session.reporter.should_emit(&event) {
+            crate::app_state::emit("job-progress", event.clone());
+            if session.reporter.show_taskbar {
+                apply_taskbar(&event);
+            }
         }
-    }
+    });
 }
 
 fn build_for(
@@ -202,12 +175,13 @@ fn build_for(
 }
 
 fn emit_phase(id: u64, phase: Phase, percent: f64, status: &str, indeterminate: Option<bool>) {
-    let event = with_session(id, |session| {
+    let status = status.to_string();
+    let event = with_session(id, move |session| {
         build_for(
             session,
             phase,
             percent,
-            status,
+            &status,
             None,
             indeterminate,
             Metrics::default(),
@@ -221,7 +195,9 @@ fn emit_phase(id: u64, phase: Phase, percent: f64, status: &str, indeterminate: 
 /// Update phase state from one yt-dlp line. Returns whether the line was
 /// progress output that should not also be echoed to the console.
 fn handle_progress_line(id: u64, line: &str) -> bool {
-    let result = with_session(id, |session| {
+    let owned = line.to_string();
+    let result = with_session(id, move |session| {
+        let line = owned.as_str();
         if let Some(json) = progress::try_parse_json(line) {
             if let Some(postprocessor) = json.postprocessor.as_deref() {
                 // Post-processing reports no byte counts; it occupies the
@@ -397,26 +373,20 @@ fn output_format_from_path(path: &Path) -> Option<String> {
         .filter(|extension| !extension.is_empty())
 }
 
-fn complete_session(id: u64, status_message: &str, outcome: Outcome, meta: CompletionMeta) {
-    let publish = EVENT_PUBLISH
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    // The session stays registered with the coordinator until its terminal
-    // result is routed below, so awaits on it are not released early.
-    let session = {
-        let mut guard = lock();
-        match guard.as_ref() {
-            Some(session) if session.id == id => {
-                let taken = guard.take();
-                ACTIVE_PRESENT.store(false, Ordering::SeqCst);
-                taken
-            }
-            _ => None,
-        }
-    };
-    let Some(mut session) = session else {
-        return;
-    };
+/// Take the session out of the slot and publish its completion events. Runs on
+/// the owner, so these events precede any later session's events. `None` when
+/// the session is no longer current, so its completion was already taken.
+fn finish_locked(
+    slot: &mut Option<Session>,
+    id: u64,
+    status_message: &str,
+    outcome: Outcome,
+    meta: CompletionMeta,
+) -> Option<DownloadCompletion> {
+    if slot.as_ref().is_none_or(|session| session.id != id) {
+        return None;
+    }
+    let mut session = slot.take()?;
     let mut outcome = outcome;
     let mut meta = meta;
     let partial_status;
@@ -493,81 +463,113 @@ fn complete_session(id: u64, status_message: &str, outcome: Outcome, meta: Compl
     if session.reporter.show_taskbar {
         apply_taskbar(&idle);
     }
-    drop(publish);
-    match outcome {
-        Outcome::Success => crate::stats::record(outcome, meta.format.as_deref(), size_bytes),
-        _ => crate::stats::record(outcome, None, None),
+    Some(completion)
+}
+
+/// Finalize a session and route its terminal result. Only the first call for a
+/// session gets its completion, so the coordinator sees each session once.
+fn complete_session(id: u64, status_message: &str, outcome: Outcome, meta: CompletionMeta) {
+    let status_message = status_message.to_string();
+    let finished =
+        session_owner::run(move |slot| finish_locked(slot, id, &status_message, outcome, meta))
+            .flatten();
+    let Some(completion) = finished else {
+        return;
+    };
+    match completion.outcome {
+        Outcome::Success => crate::stats::record(
+            Outcome::Success,
+            completion.format.as_deref(),
+            completion.size_bytes,
+        ),
+        other => crate::stats::record(other, None, None),
     }
-    crate::coordinator::terminal(session.id, completion);
+    crate::coordinator::terminal(id, completion);
+}
+
+/// What a cancel leaves to its caller: the children to terminate, and whether
+/// to wait for the reader thread or finish the session now.
+struct CancelPlan {
+    id: u64,
+    wait: bool,
+    children: Vec<Arc<crate::process_util::ManagedChild>>,
+    meta: CompletionMeta,
 }
 
 /// Cancel the active session. `notify` controls whether the user-facing
 /// cancellation message and legacy `complete` event are sent for queue runs.
 /// Manual sessions always announce their cancellation.
 pub fn cancel_active_session(notify: bool) {
-    cancel_session(notify, true, false);
+    cancel_session(None, notify, true, false);
 }
 
 /// Shutdown and stop path: never announces the cancellation, and kills yt-dlp
 /// before ffmpeg.
 pub fn kill_all_processes() {
-    cancel_session(false, false, true);
+    cancel_session(None, false, false, true);
 }
 
-/// Shared cancel body. `notify` and `notify_manual` decide whether the cancel
-/// is announced (`show`). `ytdlp_first` sets the child termination order:
-/// ffmpeg then yt-dlp for cancels, yt-dlp then ffmpeg for shutdown.
-fn cancel_session(notify: bool, notify_manual: bool, ytdlp_first: bool) {
-    let (id, children, partial, wait_for_ytdlp, show) = {
-        let mut guard = lock();
-        let Some(session) = guard.as_mut() else {
-            // Registration happens in the same critical section that installs a
-            // session, so every session still awaiting finalization is already
-            // registered. A session started after this point is not awaited.
-            drop(guard);
-            crate::coordinator::await_finalized(None);
-            return;
-        };
-        session.cancelled = true;
-        session.network_cancellation.send_replace(true);
-        let show = notify || (notify_manual && session.owner == Owner::Manual);
-        session.cancel_notify = show;
-        let wait_for_ytdlp =
-            session.ytdlp_exit_pending || session.conversion_pending || session.ytdlp.is_some();
-        if wait_for_ytdlp {
-            session.ytdlp_exit_pending = true;
-        }
-        let children = if ytdlp_first {
-            [session.ytdlp.take(), session.ffmpeg.take()]
-        } else {
-            [session.ffmpeg.take(), session.ytdlp.take()]
-        };
-        (
-            session.id,
-            children,
-            partial_completion_meta(session),
-            wait_for_ytdlp,
-            show,
-        )
+/// Shared cancel body. `target` names one session, or the current one when
+/// `None`. `notify` and `notify_manual` decide whether the cancel is announced.
+/// `ytdlp_first` sets the child termination order. Termination and waits run
+/// here, on the caller, never on the owner.
+fn cancel_session(target: Option<u64>, notify: bool, notify_manual: bool, ytdlp_first: bool) {
+    let plan = session_owner::run(move |slot| {
+        cancel_locked(slot, target, notify, notify_manual, ytdlp_first)
+    })
+    .flatten();
+    let Some(plan) = plan else {
+        // Nothing current matched. A named session that was already replaced
+        // or finished is still awaited, so its terminal result is routed first.
+        crate::coordinator::await_finalized(target);
+        return;
     };
-    for child in children.into_iter().flatten() {
+    for child in plan.children {
         crate::process_util::terminate_tree(&child);
     }
-    if wait_for_ytdlp {
+    if plan.wait {
         // The reader thread finalizes the session once yt-dlp has exited.
-        crate::coordinator::await_finalized(Some(id));
+        crate::coordinator::await_finalized(Some(plan.id));
         return;
     }
-    complete_session(
-        id,
-        CANCELLED_STATUS,
-        Outcome::Cancelled,
-        CompletionMeta {
+    complete_session(plan.id, CANCELLED_STATUS, Outcome::Cancelled, plan.meta);
+}
+
+/// Owner side of a cancel: mark the session and hand its children to the caller.
+fn cancel_locked(
+    slot: &mut Option<Session>,
+    target: Option<u64>,
+    notify: bool,
+    notify_manual: bool,
+    ytdlp_first: bool,
+) -> Option<CancelPlan> {
+    let session = slot
+        .as_mut()
+        .filter(|session| target.is_none_or(|id| session.id == id))?;
+    session.cancelled = true;
+    session.network_cancellation.send_replace(true);
+    let show = notify || (notify_manual && session.owner == Owner::Manual);
+    session.cancel_notify = show;
+    let wait = session.ytdlp_exit_pending || session.conversion_pending || session.ytdlp.is_some();
+    if wait {
+        session.ytdlp_exit_pending = true;
+    }
+    let (first, second) = if ytdlp_first {
+        (session.ytdlp.take(), session.ffmpeg.take())
+    } else {
+        (session.ffmpeg.take(), session.ytdlp.take())
+    };
+    let children = [first, second].into_iter().flatten().collect();
+    Some(CancelPlan {
+        id: session.id,
+        wait,
+        children,
+        meta: CompletionMeta {
             progress_message: show.then(|| CANCELLED_PROGRESS.to_string()),
             suppress_legacy_complete: !show,
-            ..partial
+            ..partial_completion_meta(session)
         },
-    );
+    })
 }
 
 /// Stream lines (split on `\n` and `\r`) from a child pipe.
@@ -726,25 +728,9 @@ pub fn start_download(
     let effective = options.effective_settings;
     let snapshot = request.clone();
     let plan = progress::resolve_plan(&effective);
-    let startup = STARTUP
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let existing = lock().as_ref().map(|session| (session.id, session.owner));
-    match existing {
-        Some((session_id, current)) if current != owner => {
-            return Err(OwnerConflict {
-                message: "Download session already active with a different owner.".to_string(),
-                session_id,
-            })
-        }
-        // Waits for the previous session's finalization ack before this one
-        // installs, so the slot is never shared.
-        Some(_) => cancel_active_session(false),
-        None => {}
-    }
     let id = COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
     let (network_cancellation, network_cancel_receiver) = watch::channel(false);
-    let session = Session {
+    let mut session = Box::new(Session {
         id,
         completion_id: crate::fs_util::uuid_v4(),
         started_at: crate::app_state::now_ms(),
@@ -765,20 +751,38 @@ pub fn start_download(
         conversion_failures: Vec::new(),
         partial_error: None,
         reporter: Reporter::new(plan, queue_progress, effective.show_taskbar_progress),
-    };
-    {
-        let _publish = EVENT_PUBLISH
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut guard = lock();
-        // Registration is a non-blocking send made under the same lock that
-        // installs the session. Any cancel that can see the session is
-        // therefore ordered after its registration.
-        crate::coordinator::register(id, completion);
-        *guard = Some(session);
-        ACTIVE_PRESENT.store(true, Ordering::SeqCst);
+    });
+    let mut completion = completion;
+    loop {
+        match session_owner::install(session, completion) {
+            None => {
+                return Err(OwnerConflict {
+                    message: "Download session is unavailable.".to_string(),
+                    session_id: id,
+                })
+            }
+            Some(Installed::Accepted) => break,
+            Some(Installed::Conflict { session_id }) => {
+                return Err(OwnerConflict {
+                    message: "Download session already active with a different owner.".to_string(),
+                    session_id,
+                })
+            }
+            Some(Installed::Occupied {
+                session_id,
+                session: waiting,
+                completion: returned,
+            }) => {
+                // Same owner: cancel the session that holds the slot, wait for
+                // its finalization, then install this one.
+                cancel_session(Some(session_id), false, true, false);
+                crate::coordinator::await_finalized(Some(session_id));
+                session = waiting;
+                session.started_at = crate::app_state::now_ms();
+                completion = returned;
+            }
+        }
     }
-    let mut startup = Some(startup);
 
     let requested_ffmpeg = request
         .ffmpeg_path
@@ -791,7 +795,6 @@ pub fn start_download(
 
     if !is_safe_http_url(&url) {
         send_progress(id, "⚠️ Invalid or missing URL.");
-        drop(startup.take());
         complete_session(
             id,
             "❌ Failed (Invalid URL).",
@@ -802,7 +805,6 @@ pub fn start_download(
     }
     if request.output_path.trim().is_empty() {
         send_progress(id, "⚠️ Invalid or missing download folder.");
-        drop(startup.take());
         complete_session(
             id,
             "❌ Failed (Invalid Folder).",
@@ -816,7 +818,6 @@ pub fn start_download(
             id,
             format!("❌ Error: yt-dlp binary not found at {}", ytdlp.display()),
         );
-        drop(startup.take());
         complete_session(
             id,
             "❌ Failed (Missing Dependency).",
@@ -827,8 +828,9 @@ pub fn start_download(
     }
 
     let download_dir = resolve_path(&request.output_path);
-    with_session(id, |session| {
-        session.request.output_path = download_dir.to_string_lossy().into_owned();
+    let download_path = download_dir.to_string_lossy().into_owned();
+    with_session(id, move |session| {
+        session.request.output_path = download_path;
     });
     if !download_dir.exists() {
         send_progress(
@@ -837,7 +839,6 @@ pub fn start_download(
         );
         if let Err(error) = std::fs::create_dir_all(&download_dir) {
             send_progress(id, format!("❌ Error before starting download: {error}"));
-            drop(startup.take());
             complete_session(
                 id,
                 "❌ Failed (Initial Setup Error).",
@@ -854,7 +855,6 @@ pub fn start_download(
                 download_dir.display()
             ),
         );
-        drop(startup.take());
         complete_session(
             id,
             "❌ Failed (Invalid Folder).",
@@ -871,7 +871,6 @@ pub fn start_download(
                 id,
                 format!("❌ Could not reserve private download staging: {error}"),
             );
-            drop(startup.take());
             complete_session(
                 id,
                 "❌ Failed (Initial Setup Error).",
@@ -891,7 +890,6 @@ pub fn start_download(
                 id,
                 format!("❌ Could not reserve download metadata: {error}"),
             );
-            drop(startup.take());
             complete_session(
                 id,
                 "❌ Failed (Initial Setup Error).",
@@ -917,7 +915,6 @@ pub fn start_download(
         Err(error) => {
             let _ = std::fs::remove_file(&path_output_file);
             send_progress(id, format!("❌ Secure media-tool setup failed: {error}"));
-            drop(startup.take());
             complete_session(
                 id,
                 "❌ Download failed (secure media-tool setup error).",
@@ -940,11 +937,9 @@ pub fn start_download(
             Err(error) => {
                 let _ = std::fs::remove_file(&path_output_file);
                 if !active_not_cancelled(id) {
-                    drop(startup.take());
                     return Ok(id);
                 }
                 send_progress(id, format!("❌ Secure network setup failed: {error}"));
-                drop(startup.take());
                 complete_session(
                     id,
                     "❌ Download failed (secure network setup error).",
@@ -1018,7 +1013,6 @@ pub fn start_download(
         Err(error) => {
             let _ = std::fs::remove_file(&path_output_file);
             send_progress(id, format!("❌ Failed to start download process: {error}"));
-            drop(startup.take());
             complete_session(
                 id,
                 "❌ Download failed (process spawn error).",
@@ -1028,11 +1022,12 @@ pub fn start_download(
             return Ok(id);
         }
     };
-    let registered = with_session(id, |session| {
+    let owned_child = Arc::clone(&child);
+    let registered = with_session(id, move |session| {
         if session.cancelled {
             false
         } else {
-            session.ytdlp = Some(Arc::clone(&child));
+            session.ytdlp = Some(owned_child);
             session.ytdlp_exit_pending = true;
             true
         }
@@ -1041,10 +1036,8 @@ pub fn start_download(
     if !registered {
         crate::process_util::terminate_tree(&child);
         let _ = std::fs::remove_file(&path_output_file);
-        drop(startup.take());
         return Ok(id);
     }
-    drop(startup.take());
 
     let stdout_buffer = Arc::new(Mutex::new(String::new()));
     let stderr_buffer = Arc::new(Mutex::new(String::new()));
@@ -1351,7 +1344,7 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
                 id,
                 format!("⚠️ {message} Continuing with the downloaded entries."),
             );
-            with_session(id, |session| session.partial_error = Some(message));
+            with_session(id, move |session| session.partial_error = Some(message));
             exit.code = Some(0);
         }
     }
@@ -1659,8 +1652,10 @@ mod audit4_tests {
     fn cancellation_retains_explicit_recovery_error() {
         let _serial = SERIAL.lock().unwrap();
         let (tx, rx) = mpsc::channel();
-        crate::coordinator::register(u64::MAX, tx);
-        *lock() = Some(session());
+        assert!(matches!(
+            session_owner::install(Box::new(session()), tx),
+            Some(Installed::Accepted)
+        ));
         complete_session(
             u64::MAX,
             "Cancelled",
