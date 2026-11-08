@@ -44,6 +44,11 @@
   -webkit-app-region: no-drag;
 }
 
+/* `.btn` sets a display value, which would otherwise override `hidden`. */
+.btn[hidden] {
+  display: none;
+}
+
 .btn svg {
   flex-shrink: 0;
 }

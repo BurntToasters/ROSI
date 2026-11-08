@@ -1,6 +1,6 @@
 # E2E suites
 
-`npm run test:e2e` (`scripts/test-e2e.js`) is the only E2E gate. It builds the
+`npm run test:e2e` (`scripts/test-e2e.js`) is the full E2E gate. It builds the
 E2E binary once, runs every suite below against that binary, writes evidence to
 `e2e/artifacts/`, and fails if any suite fails, skips without an allowance in
 `ALLOWED_E2E_SKIPS`, or does not report. CI runs the same command.
@@ -19,6 +19,35 @@ scenarios from other features owned by that same pass. Reports include both the
 requested groups and the expanded scenario list. Group runs set
 `fullSuite: false`, use a fresh E2E binary, and are not release proof. A group
 selection cannot be combined with `ROSI_E2E_ONLY`.
+
+For faster local feedback, `npm run test:e2e:core` runs the `core` profile. It
+uses exact, escaped Mocha full titles to select the existing main scenarios
+listed in `e2e/suites.json`, preserving their source order and the existing
+suite hooks. It also runs the complete state-updater, offline-queue,
+renderer-updates, and renderer DOM suites through their existing profiles.
+Core requires working FFmpeg and FFprobe binaries; conversion and media-probe
+scenarios cannot be silently skipped. It does not run the other main scenarios,
+legacy import, security release checks, native process-repair runners,
+platform probes, or v5-fixes runners.
+
+Core reports are partial evidence with `fullSuite: false` and
+`profile: "core"`. Each invocation keeps its report and screenshots under
+`e2e/artifacts/core/<platform>-<arch>/<run-id>/`; the latest report for that
+host is `e2e/artifacts/core/<platform>-<arch>/latest-report.json`. Older core
+run directories are retained. The report records source and binary identity,
+fixture and screenshot hashes, expected scenarios, and monotonic timings for
+the build, fixtures, every WebdriverIO pass, every runner, and total elapsed
+time. The command prints the slowest stages. Three consecutive warm runs on the
+local Mac arm64 machine took **165.632 s**, **162.064 s**, and **165.769 s**;
+their incremental builds took **7.080–9.530 s**. Each run passed all 42
+expected scenarios and retained 14 hashed screenshots. See the [stability
+summary](artifacts/core/darwin-arm64/stability-2026-11-08T06-20-16-991Z-43959-b2e36bde-1908-498d-baea-8bb007076916/runs/stability-report.json)
+and its [first](artifacts/core/darwin-arm64/stability-2026-11-08T06-20-16-991Z-43959-b2e36bde-1908-498d-baea-8bb007076916/runs/run-1.json),
+[second](artifacts/core/darwin-arm64/stability-2026-11-08T06-20-16-991Z-43959-b2e36bde-1908-498d-baea-8bb007076916/runs/run-2.json),
+and [third](artifacts/core/darwin-arm64/stability-2026-11-08T06-20-16-991Z-43959-b2e36bde-1908-498d-baea-8bb007076916/runs/run-3.json)
+run reports. These measurements reflect that machine and its local caches; they
+do not predict runtimes on other hardware or operating systems. Core reports
+cannot be used as full release proof.
 
 On a local Mac the gate runs ROSI in background mode (`ROSI_E2E_BACKGROUND=1`):
 the E2E app has no Dock icon, never takes focus, and its window stays below

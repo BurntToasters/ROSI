@@ -577,6 +577,99 @@ describe("ROSI full-app UI polish", () => {
       return { trapped, restored };
     }));
 
+  it("shows no save message until a real edit saves, then clears it", async () =>
+    scenario("settings-save-feedback-idle", async () => {
+      await setSidebarOpen(false);
+      // Let saves from earlier scenarios finish and their message clear.
+      await waitFor(
+        () =>
+          document.getElementById("settingsSaveFeedback")?.dataset.state !==
+            "saving" &&
+          document
+            .querySelector("#settingsSaveFeedback .settings-save-message")
+            ?.textContent.trim() === "",
+        "an earlier save message did not clear",
+        10_000,
+      ).catch(async (error) => {
+        const seen = await browser.execute(() => {
+          const feedback = document.getElementById("settingsSaveFeedback");
+          return `${feedback.dataset.state}: ${feedback.querySelector(".settings-save-message").textContent.trim()}`;
+        });
+        throw new Error(`${error.message}; saw ${seen}`);
+      });
+      await browser.execute(() => {
+        window.__idleSaves = [];
+        window.__idleOriginalSaveSettings =
+          window.__ROSI_E2E__.api.saveSettings;
+        window.__ROSI_E2E__.api.saveSettings = async (settings) => {
+          window.__idleSaves.push(Object.keys(settings ?? {}));
+          return window.__idleOriginalSaveSettings(settings);
+        };
+      });
+      await setSidebarOpen(true);
+      // Give any save that opening the sidebar might trigger time to report.
+      await browser.pause(1_000);
+      const openSaves = await browser.execute(() => {
+        window.__ROSI_E2E__.api.saveSettings =
+          window.__idleOriginalSaveSettings;
+        delete window.__idleOriginalSaveSettings;
+        return window.__idleSaves;
+      });
+      const footer = () =>
+        browser.execute(() => {
+          const feedback = document.getElementById("settingsSaveFeedback");
+          const retry = document.getElementById("retrySettingsSave");
+          return {
+            state: feedback.dataset.state,
+            text: feedback
+              .querySelector(".settings-save-message")
+              .textContent.trim(),
+            retryRendered: getComputedStyle(retry).display !== "none",
+          };
+        });
+      const untouched = await footer();
+      assert.deepEqual(openSaves, [], "opening settings saved settings");
+      assert.notEqual(untouched.state, "saved", "footer claims a save on open");
+      assert.equal(untouched.text, "", "footer shows a message on open");
+      assert.equal(untouched.retryRendered, false, "hidden Retry save renders");
+
+      const before = await browser.execute(
+        () => document.getElementById("notificationsToggle").checked,
+      );
+      await setControl("notificationsToggle", !before);
+      await waitFor(
+        () =>
+          document.getElementById("settingsSaveFeedback")?.dataset.state ===
+          "saved",
+        "a real edit did not report Settings saved.",
+        8_000,
+      );
+      const saved = await footer();
+      assert.match(saved.text, /Settings saved\./);
+      assert.equal(
+        saved.retryRendered,
+        false,
+        "Retry save renders after a save",
+      );
+      await waitFor(
+        () =>
+          document
+            .querySelector("#settingsSaveFeedback .settings-save-message")
+            ?.textContent.trim() === "",
+        "Settings saved. did not clear",
+        10_000,
+      );
+      await setControl("notificationsToggle", before);
+      await waitFor(
+        () =>
+          document.getElementById("settingsSaveFeedback")?.dataset.state ===
+          "saved",
+        "restoring the toggle did not save",
+        8_000,
+      );
+      return { untouched, openSaves, saved };
+    }));
+
   it("shows settings save failure and supports a successful retry", async () =>
     scenario("settings-save-retry", async () => {
       await setSidebarOpen(true);

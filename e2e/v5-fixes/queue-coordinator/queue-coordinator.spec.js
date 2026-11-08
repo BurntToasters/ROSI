@@ -341,4 +341,80 @@ describe("queue and session coordinator behaviour", () => {
       });
     }
   });
+
+  it("cancels every pending item with one Cancelled row each and one activity update", async () => {
+    // Five pending items are never started, so cancel records them from the
+    // handler rather than from a runner. The batch must write one update event.
+    const urls = [1, 2, 3, 4, 5].map(
+      (n) => `${MEDIA}/clip-${n}.mp4?coord=cancelbatch`,
+    );
+    assert.equal((await api("addToQueue", urls)).data.added, 5);
+    const pending = await api("getQueue");
+    assert.equal(pending.length, 5);
+    for (const item of pending) {
+      assert.equal(item.status, "pending", item.url);
+    }
+
+    await browser.execute(() => {
+      window.__rosiActivityUpdates = [];
+      window.__rosiActivityUnsubscribe =
+        window.__ROSI_E2E__.api.onDownloadActivityUpdate((snapshot) => {
+          window.__rosiActivityUpdates.push(
+            snapshot
+              .map((entry) => entry.url)
+              .filter((url) => url.includes("coord=cancelbatch")),
+          );
+        });
+    });
+    try {
+      assert.equal((await api("cancelQueue")).ok, true);
+      await browser.waitUntil(
+        () => browser.execute(() => window.__rosiActivityUpdates.length >= 1),
+        {
+          timeout: 10_000,
+          interval: 100,
+          timeoutMsg: "cancel produced no activity update",
+        },
+      );
+      // A second event would arrive shortly after the first one.
+      await browser.pause(1000);
+      const updates = await browser.execute(() =>
+        window.__rosiActivityUpdates.slice(),
+      );
+      assert.equal(
+        updates.length,
+        1,
+        `cancel emitted ${updates.length} activity updates`,
+      );
+      assert.deepEqual(
+        updates[0],
+        [...urls].reverse(),
+        "the update snapshot is not newest first",
+      );
+    } finally {
+      await browser.execute(() => {
+        window.__rosiActivityUnsubscribe?.();
+        delete window.__rosiActivityUnsubscribe;
+        delete window.__rosiActivityUpdates;
+      });
+    }
+
+    assert.deepEqual(
+      (await api("getQueue")).map((item) => item.status),
+      ["cancelled", "cancelled", "cancelled", "cancelled", "cancelled"],
+    );
+    const rows = (await api("getDownloadActivity")).data.filter((entry) =>
+      entry.url.includes("coord=cancelbatch"),
+    );
+    for (const url of urls) {
+      const matches = rows.filter((entry) => entry.url === url);
+      assert.equal(matches.length, 1, `${url} recorded ${matches.length} rows`);
+      assert.equal(matches[0].outcome, "cancelled");
+    }
+    assert.deepEqual(
+      rows.map((entry) => entry.url),
+      [...urls].reverse(),
+      "activity rows are not newest first",
+    );
+  });
 });

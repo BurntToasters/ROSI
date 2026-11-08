@@ -4,11 +4,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { REPO_ROOT } from "../../../e2e/helpers/profile.js";
+import { sha256 } from "../../../e2e/helpers/media-server.js";
 import { ARTIFACT_DIR, e2eChildEnv, relativeToRepo } from "../common.js";
 
 const ROUND3_CHECK_COUNT = 15;
 
-export function runRound3Renderer() {
+export function runRound3Renderer({ snapshotPath = null } = {}) {
   const scenario = { name: "round3-renderer-repairs", status: "failed" };
   const artifact = path.join(
     ARTIFACT_DIR,
@@ -30,7 +31,7 @@ export function runRound3Renderer() {
     },
   );
   if (result.stderr) process.stderr.write(result.stderr);
-  scenario.reportPath = relativeToRepo(artifact);
+  scenario.reportPath = relativeToRepo(snapshotPath ?? artifact);
   const problems = [];
   if (result.error || result.status !== 0) {
     problems.push(
@@ -47,6 +48,11 @@ export function runRound3Renderer() {
     }
     for (const check of checks) {
       if (check.status !== "passed") problems.push(`${check.name} failed`);
+    }
+    if (snapshotPath) {
+      fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
+      fs.copyFileSync(artifact, snapshotPath);
+      scenario.reportSha256 = sha256(fs.readFileSync(snapshotPath));
     }
   } catch (error) {
     problems.push(

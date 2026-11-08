@@ -86,3 +86,47 @@ checks that the controls show the preset values, that the URL-less preview
 equals the URL-validated resolution for the same preset, that an unknown id
 and a malformed payload return the `VALIDATION_ERROR` envelope, and that no
 queue item was added.
+
+## Manual download start: stored FFmpeg path and pending settings save
+
+Round 5.1 renderer findings F4 to F5 (`src/engine/bind/download.ts`).
+
+| #   | Failure mode                                                                                                  | Required behavior                                                                                                                                                                          |
+| --- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | The manual Download request sends the stored `ffmpegPath` after that file was removed. Rust refuses it with `ffmpegPath does not exist.` and nothing starts. | The manual request omits `ffmpegPath`. Rust falls back to the stored setting, then to the bundled FFmpeg, and the download starts.                                                    |
+| 2   | Removing `ffmpegPath` from the request drops other request fields (`outputPath`, resolved overrides).         | The request still carries `url`, `outputPath` when a folder is set, and the same resolved overrides as before.                                                                              |
+| 3   | The fix clears the stored `ffmpegPath` to make the request pass.                                              | The stored value is untouched. The settings loader keeps a stale path on purpose (`settings.rs`), so the value on disk is unchanged after a start.                                          |
+| 4   | With "Ask where to save" off and no folder, a toggle changed just before Download is still in the 300 ms debounce when `download_video` reads settings from disk. | Settings are flushed to disk before `api.downloadVideo`, even when no save folder was chosen. The started request uses the changed value.                                 |
+| 5   | The flush runs only inside `if (savePath)`, or a failed flush is ignored and the download starts anyway.      | The flush runs on every path. A failed flush calls `failManualDownloadStart`, clears `isDownloading`, calls `syncPrimaryActionState`, and shows the existing error toast. No download starts. |
+| 6   | The flush moves ahead of the folder dialog, so a cancelled dialog still persists settings.                    | The folder dialog and its cancel path run first, as before. Only the flush before `downloadVideo` is unconditional.                                                                         |
+| 7   | `downloadFolder` is assigned, or `updateUIFromSettings` runs, when no folder was chosen.                      | `downloadFolder` assignment and `updateUIFromSettings` run only when `savePath` is set.                                                                                                    |
+
+E2E acceptance:
+
+- `manual download starts with a stored FFmpeg path that no longer exists`
+  saves a real FFmpeg-named file as `ffmpegPath`, reloads so the renderer holds
+  it, deletes the file, and starts a manual download. The recorded
+  `downloadVideo` request has no `ffmpegPath` key, the start result is `ok`, and
+  the saved `ffmpegPath` is still the stored value.
+- `manual download flushes a pending toggle with no save folder` sets
+  `askDownloadLocation` off and `downloadFolder` empty, turns `convertEnabled`
+  on and clicks Download in the same script turn. The recorded
+  `downloadVideo` call sees `convertEnabled: true` through `getSettings` before
+  it is forwarded, so the debounced save had reached the backend.
+
+## Update Ready modal copy
+
+Round 5.1 renderer finding F6 (`src/engine/updater-ui.ts`).
+
+| #   | Failure mode                                                                                              | Required behavior                                                                                                                                                         |
+| --- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | The modal says the update installs on restart. Only Restart Now installs it, so quitting discards the bytes. | The message says that Restart Now installs the version, and that quitting makes ROSI download it again next time.                                                         |
+| 2   | The version is missing or wrong in the message.                                                           | The message names `data.version`.                                                                                                                                          |
+| 3   | The title or the button labels change.                                                                    | `Update Ready!`, `Restart Now`, and `Later` stay as they are. E2E and `renderer-dom-checks` match them.                                                                     |
+| 4   | The modal key or the candidate guard changes.                                                             | `key: 'updater-downloaded'` and the `candidateId` check in Restart Now stay as they are.                                                                                  |
+
+E2E acceptance: no scenario in this spec covers F6. It is a copy change in
+`updater-ui.ts`, and `e2e/renderer-dom-checks/updater.cjs` is outside this
+change set. The manager may add a check there that the modal message contains
+the version and "Restart Now", and does not contain "will be installed when you
+restart".

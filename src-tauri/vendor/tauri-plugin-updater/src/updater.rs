@@ -1754,50 +1754,19 @@ impl Update {
                 "validated app recovery requires a privileged bundle transition",
             ))
         } else {
-            (|| -> std::io::Result<()> {
-                std::fs::rename(&self.extract_path, &backup_path)?;
-                match move_dir_replacing(tmp_extract_dir.path(), &self.extract_path) {
-                    Ok(()) => {
-                        if !macos_bundle_matches(&self.extract_path, &expected_identity) {
-                            restore_macos_live_bundle(
-                                &self.extract_path,
-                                &backup_path,
-                                &expected_identity,
-                            )?;
-                            return Err(std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                "installed app bundle failed identity validation",
-                            ));
-                        }
-                        // The backup was validated before the swap and remains a
-                        // complete recovery point until the new live bundle passes
-                        // the same identity check.
-                        if let Err(error) =
-                            remove_validated_macos_backup(&backup_path, &expected_identity)
-                        {
-                            // The new live bundle is already complete. Keep
-                            // installation successful and leave the validated
-                            // rollback entry for the next recovery pass.
-                            log::warn!("could not remove validated updater backup: {error}");
-                        }
-                        Ok(())
-                    }
-                    Err(err) => {
-                        restore_macos_live_bundle(
-                            &self.extract_path,
-                            &backup_path,
-                            &expected_identity,
-                        )?;
-                        Err(err)
-                    }
-                }
-            })()
+            swap_macos_app_contents(
+                tmp_extract_dir.path(),
+                &self.extract_path,
+                &backup_path,
+                &expected_identity,
+                move_dir_replacing,
+            )
         };
 
+        // Only `Contents` moved out of the staging directory, so dropping
+        // `tmp_extract_dir` removes what is left of it.
         match unprivileged {
-            Ok(()) => {
-                let _ = tmp_extract_dir.keep();
-            }
+            Ok(()) => {}
             Err(err)
                 if err.kind() == std::io::ErrorKind::PermissionDenied || is_cross_device(&err) =>
             {
@@ -1859,7 +1828,6 @@ impl Update {
                 if let Err(error) = remove_macos_bundle_entry(&backup_path) {
                     log::warn!("could not remove validated updater backup: {error}");
                 }
-                let _ = tmp_extract_dir.keep();
             }
             Err(err) => return Err(err.into()),
         }
@@ -1969,6 +1937,62 @@ fn remove_validated_macos_backup(
     Ok(())
 }
 
+/// Swap the installed app's `Contents` for the staged one. The outer `.app`
+/// directory stays in place: a Dock item is a file bookmark, which follows the
+/// directory's file id, so moving the outer directory to the backup made the
+/// Dock keep a second, stale icon after restart. `backup` holds the old
+/// `Contents`, so it passes the same identity checks as a whole bundle.
+/// Failure modes: e2e/macos-update-dock.failure-modes.md.
+#[cfg(target_os = "macos")]
+fn swap_macos_app_contents(
+    staged: &Path,
+    live: &Path,
+    backup: &Path,
+    expected: &crate::install_safety::MacosBundleIdentity,
+    move_contents: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    // Recovery has already removed any earlier backup; create_dir refuses to
+    // overwrite one that appeared since.
+    std::fs::create_dir(backup)?;
+    if let Err(error) = std::fs::rename(live.join("Contents"), backup.join("Contents")) {
+        let _ = std::fs::remove_dir(backup);
+        return Err(error);
+    }
+    let installed = move_contents(&staged.join("Contents"), &live.join("Contents")).and_then(|()| {
+        if macos_bundle_matches(live, expected) {
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "installed app bundle failed identity validation",
+            ))
+        }
+    });
+    if let Err(error) = installed {
+        if let Err(restore_error) = restore_macos_live_bundle(live, backup, expected) {
+            return Err(std::io::Error::new(
+                restore_error.kind(),
+                format!(
+                    "{error}; could not restore the app Contents: {restore_error}; the backup is kept at {}",
+                    backup.display()
+                ),
+            ));
+        }
+        return Err(error);
+    }
+    // The backup was validated before the swap and stays a complete recovery
+    // point until the new live bundle has passed the same identity check.
+    if let Err(error) = remove_validated_macos_backup(backup, expected) {
+        // The new live bundle is complete. Keep the install successful and
+        // leave the validated backup for the next recovery pass.
+        log::warn!("could not remove validated updater backup: {error}");
+    }
+    Ok(())
+}
+
+/// Move the backup's `Contents` back into the installed directory, keeping
+/// the installed directory (and its Dock identity) when it is a real one.
+/// Also restores a whole-bundle backup left by an older updater.
 #[cfg(target_os = "macos")]
 fn restore_macos_live_bundle(
     live: &Path,
@@ -1981,15 +2005,39 @@ fn restore_macos_live_bundle(
             "refusing to restore an incomplete or identity-mismatched updater backup",
         ));
     }
-    remove_macos_bundle_entry(live)?;
-    std::fs::rename(backup, live)?;
+    match std::fs::symlink_metadata(live) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+            remove_macos_bundle_entry(&live.join("Contents"))?;
+        }
+        Ok(_) => {
+            remove_macos_bundle_entry(live)?;
+            std::fs::create_dir(live)?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => std::fs::create_dir(live)?,
+        Err(error) => return Err(error),
+    }
+    std::fs::rename(backup.join("Contents"), live.join("Contents"))?;
     if !macos_bundle_matches(live, expected) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "restored updater backup failed identity validation",
         ));
     }
+    // What is left of the backup has no `Contents`, so it is no longer a
+    // recovery point. Recovery removes an empty one if this fails.
+    if let Err(error) = remove_macos_bundle_entry(backup) {
+        log::warn!("could not remove the emptied updater backup: {error}");
+    }
     Ok(())
+}
+
+/// An empty real directory at the backup path is what an update leaves when
+/// it stops between creating the backup and moving `Contents` into it.
+#[cfg(target_os = "macos")]
+fn macos_backup_is_empty_dir(backup: &Path) -> bool {
+    std::fs::symlink_metadata(backup)
+        .is_ok_and(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+        && std::fs::read_dir(backup).is_ok_and(|mut entries| entries.next().is_none())
 }
 
 #[cfg(target_os = "macos")]
@@ -2007,11 +2055,20 @@ fn recover_macos_live_bundle(
 ) -> Result<MacosRecoveryDisposition> {
     let live_complete = macos_bundle_matches(live, expected);
     let backup_complete = macos_bundle_matches(backup, expected);
-    let backup_exists = match std::fs::symlink_metadata(backup) {
+    let mut backup_exists = match std::fs::symlink_metadata(backup) {
         Ok(_) => true,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
         Err(error) => return Err(error.into()),
     };
+    if backup_exists && !backup_complete && macos_backup_is_empty_dir(backup) {
+        match std::fs::remove_dir(backup) {
+            Ok(()) => backup_exists = false,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied && live_complete => {
+                return Ok(MacosRecoveryDisposition::RequiresPrivilegedSwap);
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
     if live_complete {
         if backup_exists {
             if !backup_complete {
@@ -3313,5 +3370,380 @@ mod macos_archive_tests {
                 started.elapsed().as_millis()
             );
         }
+    }
+}
+
+/// Failure modes: e2e/macos-update-dock.failure-modes.md (rows by number).
+#[cfg(all(test, target_os = "macos"))]
+mod macos_dock_identity_tests {
+    use super::*;
+    use crate::install_safety::{MacosBundleIdentity, MACOS_PRIVILEGED_INSTALL_SCRIPT};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::sync::Arc;
+
+    const EXECUTABLES: [&str; 4] = ["rosi", "rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"];
+
+    fn identity() -> MacosBundleIdentity {
+        MacosBundleIdentity {
+            bundle_identifier: "run.rosie.rosi".into(),
+            executable: "rosi".into(),
+        }
+    }
+
+    /// A bundle the identity, completeness and host-architecture checks
+    /// accept: each executable is the Mach-O header of this test binary.
+    fn write_bundle(bundle: &Path, version: &str) {
+        let header = {
+            use std::io::Read;
+            let mut bytes = vec![0u8; 4096];
+            let mut file = std::fs::File::open(std::env::current_exe().unwrap()).unwrap();
+            let read = file.read(&mut bytes).unwrap();
+            bytes.truncate(read);
+            bytes
+        };
+        let contents = bundle.join("Contents");
+        std::fs::create_dir_all(contents.join("Resources")).unwrap();
+        std::fs::create_dir_all(contents.join("MacOS")).unwrap();
+        std::fs::write(
+            contents.join("Info.plist"),
+            "<plist><dict><key>CFBundleIdentifier</key><string>run.rosie.rosi</string><key>CFBundleExecutable</key><string>rosi</string></dict></plist>",
+        )
+        .unwrap();
+        std::fs::write(contents.join("Resources/version"), version).unwrap();
+        for name in EXECUTABLES {
+            let path = contents.join("MacOS").join(name);
+            std::fs::write(&path, &header).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    fn version(bundle: &Path) -> String {
+        std::fs::read_to_string(bundle.join("Contents/Resources/version")).unwrap()
+    }
+
+    fn inode(path: &Path) -> u64 {
+        std::fs::metadata(path).unwrap().ino()
+    }
+
+    fn update_archive(version: &str) -> Vec<u8> {
+        let stage = tempfile::tempdir().unwrap();
+        write_bundle(&stage.path().join("ROSI.app"), version);
+        let mut builder = tar::Builder::new(Vec::new());
+        builder
+            .append_dir_all("ROSI.app", stage.path().join("ROSI.app"))
+            .unwrap();
+        let raw = builder.into_inner().unwrap();
+        let mut encoder =
+            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut encoder, &raw).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    fn update_for(installed: &Path) -> Update {
+        Update {
+            body: None,
+            current_version: "1.0.0".to_string(),
+            version: "2.0.0".to_string(),
+            date: None,
+            target: "test".to_string(),
+            download_url: url::Url::parse("https://example.invalid/update").unwrap(),
+            signature: String::new(),
+            raw_json: serde_json::Value::Null,
+            timeout: None,
+            proxy: None,
+            no_proxy: false,
+            headers: Default::default(),
+            extract_path: installed.to_path_buf(),
+            executable_name: Some("rosi".to_string()),
+            context: UpdaterContext {
+                run_on_main_thread: Arc::new(Box::new(|_| Ok(()))),
+                config: Config::default(),
+                bundle_identifier: "run.rosie.rosi".to_string(),
+                on_before_exit: None,
+                configure_client: None,
+            },
+        }
+    }
+
+    fn jxa(source: &str, args: &[&str]) -> String {
+        let output = std::process::Command::new("/usr/bin/osascript")
+            .args(["-l", "JavaScript", "-e", source])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "osascript failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    }
+
+    /// A file reference URL names the directory by file id, the identity a
+    /// running app's Dock tile follows when its bundle is renamed. A path
+    /// bookmark is not used: it resolves by path while the path exists.
+    fn file_reference(path: &Path) -> String {
+        jxa(
+            "ObjC.import('Foundation'); function run(argv) { const url = $.NSURL.fileURLWithPath(argv[0]).fileReferenceURL; if (url.isNil()) throw new Error('no file reference'); return ObjC.unwrap(url.absoluteString); }",
+            &[path.to_str().unwrap()],
+        )
+    }
+
+    /// The path the file id names now, or empty when the file is gone.
+    fn resolve(reference: &str) -> PathBuf {
+        PathBuf::from(jxa(
+            "ObjC.import('Foundation'); function run(argv) { const url = $.NSURL.URLWithString(argv[0]).filePathURL; return url.isNil() ? '' : ObjC.unwrap(url.path); }",
+            &[reference],
+        ))
+    }
+
+    fn canonical(path: &Path) -> PathBuf {
+        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    }
+
+    fn installed_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let root = tempfile::tempdir().unwrap();
+        let app = root.path().join("ROSI.app");
+        write_bundle(&app, "old");
+        let backup = crate::install_safety::macos_update_backup_path(&app).unwrap();
+        (root, app, backup)
+    }
+
+    fn leftovers(root: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name != "ROSI.app")
+            .collect();
+        names.sort();
+        names
+    }
+
+    // Rows 1, 9, 10, plus a control proving the probe sees the old bug.
+    #[test]
+    fn macos_update_keeps_dock_identity() {
+        // Control: after the old whole-bundle rename the file id is the backup.
+        let (_control_root, control_app, control_backup) = installed_fixture();
+        let control_mark = file_reference(&control_app);
+        std::fs::rename(&control_app, &control_backup).unwrap();
+        write_bundle(&control_app, "new");
+        let control_resolved = resolve(&control_mark);
+        assert_eq!(
+            canonical(&control_resolved),
+            canonical(&control_backup),
+            "probe must detect the identity following a renamed bundle"
+        );
+
+        let (root, app, backup) = installed_fixture();
+        let mark = file_reference(&app);
+        let inode_before = inode(&app);
+        let touched_before = std::fs::metadata(&app).unwrap().modified().unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+
+        update_for(&app).install_inner(&update_archive("new")).unwrap();
+
+        let resolved = resolve(&mark);
+        let inode_after = inode(&app);
+        let touched_after = std::fs::metadata(&app).unwrap().modified().unwrap();
+        let left = leftovers(root.path());
+        assert_eq!(version(&app), "new");
+        assert_eq!(inode_after, inode_before, "outer app directory must keep its file id");
+        assert_eq!(canonical(&resolved), canonical(&app), "file id must still name the installed app");
+        assert!(!backup.exists(), "backup must be removed after success");
+        assert!(left.is_empty(), "staging or backup left next to the app: {left:?}");
+        assert!(touched_after > touched_before, "installed app must be touched for LaunchServices");
+
+        if let Ok(report) = std::env::var("ROSI_MACOS_DOCK_REPORT") {
+            let json = serde_json::json!({
+                "ok": true,
+                "generatedAt": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                "control": {
+                    "oldWholeBundleRenameFileIdResolvedTo": "backup",
+                },
+                "contentsSwap": {
+                    "outerInodeBefore": inode_before,
+                    "outerInodeAfter": inode_after,
+                    "fileIdResolvesToInstalledApp": true,
+                    "installedVersion": version(&app),
+                    "leftoversNextToApp": left,
+                },
+            });
+            std::fs::write(report, format!("{}\n", serde_json::to_string_pretty(&json).unwrap()))
+                .unwrap();
+        }
+    }
+
+    // Row 2.
+    #[test]
+    fn macos_bad_staged_bundle_leaves_install_untouched() {
+        let (root, app, _) = installed_fixture();
+        let inode_before = inode(&app);
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Directory);
+        header.set_mode(0o755);
+        header.set_size(0);
+        header.set_cksum();
+        builder.append_data(&mut header, "ROSI.app/", &[][..]).unwrap();
+        let mut encoder =
+            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut encoder, &builder.into_inner().unwrap()).unwrap();
+        assert!(update_for(&app).install_inner(&encoder.finish().unwrap()).is_err());
+        assert_eq!(version(&app), "old");
+        assert_eq!(inode(&app), inode_before);
+        assert!(leftovers(root.path()).is_empty());
+    }
+
+    // Row 3.
+    #[test]
+    fn macos_failed_contents_move_restores_old_contents() {
+        let (root, app, backup) = installed_fixture();
+        let stage = tempfile::tempdir().unwrap();
+        write_bundle(stage.path(), "new");
+        let inode_before = inode(&app);
+        let error = swap_macos_app_contents(stage.path(), &app, &backup, &identity(), |_, dest| {
+            std::fs::create_dir(dest)?;
+            std::fs::write(dest.join("partial"), "incomplete")?;
+            Err(std::io::Error::other("injected copy failure"))
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("injected copy failure"), "{error}");
+        assert_eq!(version(&app), "old");
+        assert!(!app.join("Contents/partial").exists());
+        assert!(!app.join("Contents/Contents").exists());
+        assert_eq!(inode(&app), inode_before);
+        assert!(!backup.exists());
+        assert!(leftovers(root.path()).is_empty());
+    }
+
+    // Row 4.
+    #[test]
+    fn macos_failed_rollback_keeps_backup() {
+        let (_root, app, backup) = installed_fixture();
+        let stage = tempfile::tempdir().unwrap();
+        write_bundle(stage.path(), "new");
+        let app_for_lock = app.clone();
+        let error = swap_macos_app_contents(stage.path(), &app, &backup, &identity(), move |_, _| {
+            std::fs::set_permissions(&app_for_lock, std::fs::Permissions::from_mode(0o555))?;
+            Err(std::io::Error::other("injected move failure"))
+        })
+        .unwrap_err();
+        std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let message = error.to_string();
+        assert!(message.contains("injected move failure") && message.contains("backup is kept"), "{message}");
+        assert_eq!(version(&backup), "old");
+        assert!(macos_bundle_matches(&backup, &identity()));
+    }
+
+    // Row 5.
+    #[test]
+    fn macos_update_retires_a_valid_earlier_backup() {
+        let (root, app, backup) = installed_fixture();
+        write_bundle(&backup, "older");
+        update_for(&app).install_inner(&update_archive("new")).unwrap();
+        assert_eq!(version(&app), "new");
+        assert!(leftovers(root.path()).is_empty());
+    }
+
+    // Row 6, including a whole-bundle backup from the 5.0.x updater.
+    #[test]
+    fn macos_recovery_moves_backup_contents_into_installed_directory() {
+        let (root, app, backup) = installed_fixture();
+        let inode_before = inode(&app);
+        std::fs::rename(app.join("Contents"), {
+            std::fs::create_dir(&backup).unwrap();
+            backup.join("Contents")
+        })
+        .unwrap();
+        let disposition = recover_macos_live_bundle(&app, &backup, &identity()).unwrap();
+        assert_eq!(disposition, MacosRecoveryDisposition::ReadyForUnprivilegedSwap);
+        assert_eq!(version(&app), "old");
+        assert_eq!(inode(&app), inode_before);
+        assert!(leftovers(root.path()).is_empty());
+    }
+
+    // Row 7.
+    #[test]
+    fn macos_recovery_replaces_a_file_or_symlink_at_the_installed_path() {
+        for kind in ["file", "symlink", "missing"] {
+            let (root, app, backup) = installed_fixture();
+            std::fs::rename(&app, &backup).unwrap();
+            match kind {
+                "file" => std::fs::write(&app, "not an app").unwrap(),
+                "symlink" => std::os::unix::fs::symlink(&backup, &app).unwrap(),
+                _ => {}
+            }
+            recover_macos_live_bundle(&app, &backup, &identity()).unwrap();
+            let metadata = std::fs::symlink_metadata(&app).unwrap();
+            assert!(metadata.is_dir() && !metadata.file_type().is_symlink(), "{kind}");
+            assert_eq!(version(&app), "old", "{kind}");
+            assert!(leftovers(root.path()).is_empty(), "{kind}");
+        }
+    }
+
+    // Interrupted between creating the backup and moving Contents into it.
+    #[test]
+    fn macos_recovery_removes_an_empty_backup_shell() {
+        let (root, app, backup) = installed_fixture();
+        std::fs::create_dir(&backup).unwrap();
+        update_for(&app).install_inner(&update_archive("new")).unwrap();
+        assert_eq!(version(&app), "new");
+        assert!(leftovers(root.path()).is_empty());
+    }
+
+    fn run_admin_script(script: &str, app: &Path, stage: &Path, backup: &Path) -> bool {
+        let body = script.replace(" with administrator privileges", "")
+            + "\non run argv\nreturn installUpdate(item 1 of argv, item 2 of argv, item 3 of argv, item 4 of argv, item 5 of argv)\nend run\n";
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), body).unwrap();
+        std::process::Command::new("/usr/bin/osascript")
+            .arg(file.path())
+            .args([app, stage, backup])
+            .args(["run.rosie.rosi", "rosi"])
+            .status()
+            .unwrap()
+            .success()
+    }
+
+    // Row 8: the real admin script, run as the current user.
+    #[test]
+    fn macos_admin_script_swaps_contents_and_rolls_back() {
+        let (root, app, backup) = installed_fixture();
+        let mark = file_reference(&app);
+        let inode_before = inode(&app);
+
+        let stage = tempfile::tempdir().unwrap();
+        write_bundle(stage.path(), "new");
+        assert!(run_admin_script(MACOS_PRIVILEGED_INSTALL_SCRIPT, &app, stage.path(), &backup));
+        assert_eq!(version(&app), "new");
+        assert_eq!(inode(&app), inode_before);
+        assert!(!backup.exists());
+        assert_eq!(canonical(&resolve(&mark)), canonical(&app));
+
+        let failing = MACOS_PRIVILEGED_INSTALL_SCRIPT.replace(
+            "/bin/mv -f \\\"$NEW/Contents\\\" \\\"$SRC/Contents\\\"",
+            "/usr/bin/false",
+        );
+        assert_ne!(failing, MACOS_PRIVILEGED_INSTALL_SCRIPT, "fault injection must match");
+        let stage = tempfile::tempdir().unwrap();
+        write_bundle(stage.path(), "newer");
+        assert!(!run_admin_script(&failing, &app, stage.path(), &backup));
+        assert_eq!(version(&app), "new", "rollback must restore the live Contents");
+        assert!(!app.join("Contents/Contents").exists());
+        assert_eq!(inode(&app), inode_before);
+        assert!(leftovers(root.path()).is_empty());
+
+        // Recovery inside the script: installed Contents missing, backup complete.
+        std::fs::create_dir(&backup).unwrap();
+        std::fs::rename(app.join("Contents"), backup.join("Contents")).unwrap();
+        let stage = tempfile::tempdir().unwrap();
+        write_bundle(stage.path(), "newest");
+        assert!(run_admin_script(MACOS_PRIVILEGED_INSTALL_SCRIPT, &app, stage.path(), &backup));
+        assert_eq!(version(&app), "newest");
+        assert_eq!(inode(&app), inode_before);
+        assert!(leftovers(root.path()).is_empty());
     }
 }

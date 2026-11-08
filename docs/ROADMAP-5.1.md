@@ -16,10 +16,11 @@ roadmap does not add one.
 
 ## 1. Split the renderer engine into feature modules
 
-**Status (2026-11-06): partial implementation present.** Feature logic lives in
+**Status (2026-11-07): partial implementation present.** Feature logic lives in
 `src/engine/`, and per-feature event binding in `src/engine/bind/`.
-`src/rosiEngine.ts` is about 440 lines and still defines `initializeRenderer`;
-`window.rosiModules` remains in use. The extraction is useful existing work, but
+`src/rosiEngine.ts` is 439 lines and still defines `initializeRenderer`
+(line 101). No `window.rosiModules` reference remains in `src/`; the modules are
+ES imports (see B6). The extraction is useful existing work, but
 the acceptance criteria below are not all met. No completion is claimed here.
 
 **Problem.** `src/rosiEngine.ts` is 5,943 lines. `initializeRenderer` starts at
@@ -27,8 +28,8 @@ the acceptance criteria below are not all met. No completion is claimed here.
 functions and 153 closure locals, so almost every feature reads and writes the
 same shared state. `src/modules/` already has `settings.ts`, `downloads.ts`,
 `queue.ts`, `dock.ts`, `activity.ts`, `icons.ts`, `ui.ts`, and `updates.ts`, but
-they attach to `window.rosiModules` (`src/renderer-globals.d.ts`) rather than
-taking explicit inputs.
+before B6 part A they attached to `window.rosiModules` rather than taking
+explicit inputs. The problem statement describes that earlier state.
 
 **Plan.**
 
@@ -131,13 +132,14 @@ back to defaults rather than failing the import.
 
 ## 4. Replace the downloader and queue locks with a state thread
 
-**Status (2026-11-06): implemented with residue, see [IMPLEMENTATION-5.1.md](IMPLEMENTATION-5.1.md).**
-`coordinator.rs` runs one command thread with reply channels and revisioned
-`queue-update`, and the condition variables are gone. Residue:
-
-- `queue.rs:40` still has the global `QUEUE: OnceLock<Mutex<QueueState>>`;
-  `downloader.rs:79-85` still has `ACTIVE`, `STARTUP`, `EVENT_PUBLISH` mutexes.
-  Acceptance said "no global Mutex or Condvar".
+**Status (2026-11-07): implemented, see [IMPLEMENTATION-5.1.md](IMPLEMENTATION-5.1.md).**
+`coordinator.rs` owns queue state and transitions: one command thread with reply
+channels and revisioned `queue-update`. Session state lives on the session owner
+thread (`downloader/session_owner.rs`). The `QUEUE`, `ACTIVE`, `STARTUP`, and
+`EVENT_PUBLISH` globals are gone, and `queue.rs` and `downloader.rs` have no
+global `Mutex` or `Condvar` outside tests. The remaining statics are
+configuration, a channel sender, or an atomic id counter (see B7). Full-gate
+proof at HEAD is still outstanding.
 
 **Problem.** The download and queue state uses global locks and condition
 variables. `src-tauri/src/downloader.rs:78` holds `ACTIVE: Mutex<Option<Session>>`
@@ -168,17 +170,25 @@ rather than enforced by types.
 
 ## 5. Async proxy relay on the Tauri runtime
 
-**Status (2026-11-06): implemented with residue, see [IMPLEMENTATION-5.1.md](IMPLEMENTATION-5.1.md).**
+**Status (2026-11-07): implemented with residue, see [IMPLEMENTATION-5.1.md](IMPLEMENTATION-5.1.md).**
 The Tokio relay in `network_security_async.rs` serves 256 active and 128
-pending clients, and answers 503 on overload. The E2E probe is in place. Residue:
+pending clients, and answers 503 on overload. Client cancellation uses a
+`tokio::sync::watch` channel, and DNS replies arrive over oneshot channels, so
+the relay has no polling sleep. The E2E probe is in place. Residue:
 
-- Polling remains: `network_security_async.rs:37,174-185`
-  (`EXTERNAL_CANCELLATION_POLL` 25 ms per client task), `:686-702` (DNS reply
-  polled with `try_recv` + 25 ms sleep); the DNS pool is still blocking threads
-  with a condvar (`network_security.rs:56,398-440`). Acceptance said "no polling
-  sleep" and "no measurable idle CPU".
+- The DNS pool is still blocking threads with a condvar (`DnsResolverPool` in
+  `network_security.rs`, 4 workers).
+- Its blocking caller, `resolve_system_dns_with_cancel`
+  (`network_security.rs:808-845`), checks the reply every 25 ms
+  (`DNS_RESOLUTION_POLL_INTERVAL`, `:843`). The relay's own lookups await the
+  reply and do not poll.
+- Acceptance (no blocking worker pool and no polling sleep in the relay, no
+  measurable idle CPU) is not met while the DNS pool and its 25 ms reply check
+  remain.
 
-**Problem.** `src-tauri/src/network_security.rs` is 1,917 lines. It starts
+**Problem.** The text below describes the 5.0 relay, before the 5.1 migration.
+Its constants and workers (`PROXY_WORKERS`, `RELAY_MAX_IDLE_SLEEP`, `proxy_worker`)
+no longer exist. `src-tauri/src/network_security.rs` was 1,917 lines in 5.0. It starts
 `PROXY_WORKERS: usize = 32` blocking workers (`:35`). Each `proxy_worker`
 (`:604`) takes one client at a time, so the worker count caps concurrent
 tunnels. Its relay polls: the idle
@@ -210,12 +220,14 @@ idle relay still wakes up on its sleep.
 
 ## 6. Regroup E2E suites by feature
 
-**Status (2026-11-06): implemented with residue, see [IMPLEMENTATION-5.1.md](IMPLEMENTATION-5.1.md).**
+**Status (2026-11-07): implemented with residue, see [IMPLEMENTATION-5.1.md](IMPLEMENTATION-5.1.md).**
 `e2e/suites.json`, `--group` selection, and `scenarioGroups` in reports are in
-place. Residue:
+place. No file name under `e2e/` contains `round`, `audit`, or `repair`. Residue:
 
-- 23 files in `e2e/` still named `round*`/`audit*`/`*repair*`;
-  `scripts/test-e2e.js` is 2,430 lines (target < 800).
+- No residue in the file layout or suite list: `scripts/test-e2e.js` is 764
+  lines (target < 800), reads `e2e/suites.json` through `scripts/e2e/manifest.js`,
+  and runs the runners from `scripts/e2e/runners/`. Whether the gate still
+  produces the same results after the move is not re-proved at HEAD.
 
 **Problem.** `e2e/` holds about 95 files and roughly 25,000 lines. 35 of the
 file names refer to audit rounds or repair passes (for example
@@ -418,6 +430,43 @@ These items are not required for 5.1.0. They are planned for 5.1.x and have not
 started. The proof gaps for the accepted milestones are in
 [IMPLEMENTATION-5.1.md](IMPLEMENTATION-5.1.md).
 
+### Open follow-ups from the 5.1 audit plan
+
+These items came from the audit plan that previously lived in `plan.md`. Each
+was checked against source at HEAD `8e32e90`. Items already done in source were
+dropped, and no results from these checks are claimed as passing evidence.
+
+- **Full-gate evidence at HEAD.** Run `npm run test:all -- --require-clean-proof`
+  on macOS arm64, Windows x64, Windows arm64, and Linux x64. Each required
+  platform needs a passing `fullSuite` report whose `commit` equals HEAD, and the
+  report belongs in the ledger. The recorded macOS pass (`9e60f97`) predates HEAD.
+  The updater specs' expectations against the 5.1 target selection have not been
+  re-proved at HEAD. The macOS `download-process-repairs` scenario flakes on
+  execute/async timeouts, so re-run it once before debugging a failure.
+- **macOS window mode for release evidence.** `e2e/README.md` still makes
+  background mode (`ROSI_E2E_BACKGROUND=1`) the local macOS default. In that
+  mode the Reset-All modal click and the close-flow scenario in `main.spec.js`
+  have failed. Either make background mode reliable, or require
+  `ROSI_E2E_FOREGROUND=1` for release evidence and state that in `e2e/README.md`
+  and `docs/RELEASE-STABLE.md`.
+- **ui-polish triage (workstream D0).** The audit recorded 4 of 8 failing
+  assertions in background mode and 5 of 8 in foreground mode on `6f244bd`
+  (`e2e/v5-fixes/ui-polish/ui-polish.spec.js`). Classify each as a spec
+  assumption or a product defect before fixing either. Workstream D1 to D7 depend
+  on that triage and have not been re-verified.
+- **DNS resolver pool (roadmap item 5 residue).** The DNS pool in
+  `network_security.rs` uses blocking threads with a condvar, and
+  `resolve_system_dns_with_cancel` checks its reply every 25 ms
+  (`DNS_RESOLUTION_POLL_INTERVAL`). Replace both with a wait that does not poll,
+  then measure idle CPU over a 60-second window.
+- **Renderer fallback settings (workstream B3).** `src/rosiEngine.ts`
+  (`MINIMAL_SETTINGS_VERSION` and the object beside it) keeps a hand-written
+  settings object used only when `get_default_settings` fails. Keep it as a
+  documented fallback or remove it.
+- **Downloader split (workstream B10).** `src-tauri/src/downloader.rs` is 1,676
+  lines, down from 3,207. Conversion, publication, and session ownership already
+  live in `downloader/`. The rest of the split is not a 5.1.0 blocker.
+
 ### B7: Finish coordinator ownership (roadmap item 4)
 
 **Precondition.** The full gate, `npm run test:all -- --require-clean-proof`,
@@ -430,16 +479,16 @@ only on macOS arm64. Before the port, write failure-mode rows for
 
 **Remaining globals** in `src-tauri/src` at this snapshot:
 
-| Symbol                                                    | File and line                 | Role                                                                                  |
-| --------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------- |
-| `QUEUE`: `OnceLock<Mutex<QueueState>>`, read by `state()` | `queue.rs:42`, `queue.rs:197` | **Done (B7 part A).** Removed. `QueueState` is a local in `coordinator::run`; reads are `Snapshot` and `IsRunning` requests. |
-| `PERSISTENCE` (inside `persistence()`)                    | `queue.rs:180`                | **Kept.** Configuration only: file paths and the save function. Its `revisions` mutex serializes the writer's `persist` and `flush`, and the writer tests depend on that, so it stays. |
-| `WRITER` (inside `writer()`)                              | `queue.rs:328`                | **Kept.** A `OnceLock` holding the writer's channel sender, not shared state. |
-| `ACTIVE`: `Mutex<Option<Session>>`, read by `lock()`      | `downloader.rs` (was `:82`) | **Done (B7 part B).** Removed. The session lives on the session owner thread (`downloader/session_owner.rs`). Reads and changes are tasks run in arrival order. |
-| `ACTIVE_PRESENT`: `AtomicBool`                            | `downloader.rs` (was `:85`) | **Done (B7 part B).** Replaced by the owner's read-only `SLOT_OWNER` hint, which `is_busy` and `can_start` read. The install task decides. |
-| `STARTUP`: `Mutex<()>`                                    | `downloader.rs` (was `:87`) | **Done (B7 part B).** Removed. `install` makes the one authoritative check. A same-owner start cancels the occupant by id, awaits it, and retries. |
-| `EVENT_PUBLISH`: `Mutex<()>`                              | `downloader.rs` (was `:88`) | **Done (B7 part B).** Removed. The owner runs every event emit in arrival order, so a replaced session's events are dropped. |
-| `COUNTER`: `AtomicU64`                                    | `downloader.rs:94`          | **Kept with reason.** Mints session ids before install, so no owner round trip is needed. It is an atomic counter, not shared state. |
+| Symbol                                                    | File and line                 | Role                                                                                                                                                            |
+| --------------------------------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `QUEUE`: `OnceLock<Mutex<QueueState>>`, read by `state()` | `queue.rs:42`, `queue.rs:197` | **Done (B7 part A).** Removed. `QueueState` is a local in `coordinator::run`; reads are `Snapshot` and `IsRunning` requests.                                    |
+| `PERSISTENCE` (inside `persistence()`)                    | `queue.rs:188`                | **Kept.** Configuration only: file paths and the writer's channel. Revision state lives on the writer thread, not behind a lock.                                |
+| `WRITER` (inside `writer()`)                              | `queue.rs:328`                | **Kept.** A `OnceLock` holding the writer's channel sender, not shared state.                                                                                   |
+| `ACTIVE`: `Mutex<Option<Session>>`, read by `lock()`      | `downloader.rs` (was `:82`)   | **Done (B7 part B).** Removed. The session lives on the session owner thread (`downloader/session_owner.rs`). Reads and changes are tasks run in arrival order. |
+| `ACTIVE_PRESENT`: `AtomicBool`                            | `downloader.rs` (was `:85`)   | **Done (B7 part B).** Replaced by the owner's read-only `SLOT_OWNER` hint, which `is_busy` and `can_start` read. The install task decides.                      |
+| `STARTUP`: `Mutex<()>`                                    | `downloader.rs` (was `:87`)   | **Done (B7 part B).** Removed. `install` makes the one authoritative check. A same-owner start cancels the occupant by id, awaits it, and retries.              |
+| `EVENT_PUBLISH`: `Mutex<()>`                              | `downloader.rs` (was `:88`)   | **Done (B7 part B).** Removed. The owner runs every event emit in arrival order, so a replaced session's events are dropped.                                    |
+| `COUNTER`: `AtomicU64`                                    | `downloader.rs:94`            | **Kept with reason.** Mints session ids before install, so no owner round trip is needed. It is an atomic counter, not shared state.                            |
 
 The `downloader/conversion.rs` and `downloader/publication.rs` modules declare no
 statics. Test-only statics (`SERIAL` at `downloader.rs:1631`) are excluded.

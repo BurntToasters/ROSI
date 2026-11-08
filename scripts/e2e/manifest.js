@@ -123,6 +123,59 @@ function validateSuiteManifest(manifest) {
       );
     }
   }
+  const profileNames = new Set();
+  for (const [profileId, profile] of Object.entries(manifest.profiles ?? {})) {
+    if (!profileId || profileNames.has(profileId)) {
+      throw new Error(
+        `e2e/suites.json has an invalid profile id: ${profileId}`,
+      );
+    }
+    profileNames.add(profileId);
+    const mainIds = profile.mainScenarioIds;
+    const titles = profile.mainMochaTitles;
+    if (
+      !Array.isArray(mainIds) ||
+      mainIds.length === 0 ||
+      new Set(mainIds).size !== mainIds.length ||
+      !titles ||
+      typeof titles !== "object" ||
+      Array.isArray(titles)
+    ) {
+      throw new Error(`e2e/suites.json profile ${profileId} is invalid`);
+    }
+    if (
+      Object.keys(titles).length !== mainIds.length ||
+      mainIds.some(
+        (name) =>
+          !names.has(name) ||
+          manifest.scenarios.find((scenario) => scenario.name === name)
+            ?.owner !== "main" ||
+          typeof titles[name] !== "string" ||
+          !titles[name].trim(),
+      ) ||
+      new Set(mainIds.map((name) => titles[name])).size !== mainIds.length
+    ) {
+      throw new Error(
+        `e2e/suites.json profile ${profileId} has invalid main scenario/title mappings`,
+      );
+    }
+    if (
+      !Array.isArray(profile.completeOwners) ||
+      profile.completeOwners.length === 0 ||
+      new Set(profile.completeOwners).size !== profile.completeOwners.length ||
+      profile.completeOwners.some(
+        (owner) => owner === "main" || !ownerIds.has(owner),
+      ) ||
+      !Array.isArray(profile.requiredTools) ||
+      profile.requiredTools.some(
+        (tool) => typeof tool !== "string" || !tool.trim(),
+      )
+    ) {
+      throw new Error(
+        `e2e/suites.json profile ${profileId} has invalid owners or required tools`,
+      );
+    }
+  }
 }
 
 validateSuiteManifest(E2E_SUITE_MANIFEST);

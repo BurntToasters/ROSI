@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { browser } from "@wdio/globals";
 import { api, waitForAppReady } from "../../helpers/app-bridge.js";
 
@@ -158,6 +160,65 @@ async function waitForSettingOnDisk(key, value) {
     async () => (await api("getSettings"))[key] === value,
     { timeout: 10_000, timeoutMsg: `${key} was not saved as ${value}` },
   );
+}
+
+/**
+ * Record the renderer's own downloadVideo call: the request it sent, the settings
+ * the backend held when the call was made, and the start result it received.
+ */
+async function armDownloadStartRecorder() {
+  await browser.execute(() => {
+    const hook = window.__ROSI_E2E__.api;
+    const original = hook.downloadVideo;
+    window.__e2eDownloadStart = null;
+    hook.downloadVideo = async (...args) => {
+      const snapshot = {
+        args: JSON.parse(JSON.stringify(args)),
+        settingsAtStart: JSON.parse(JSON.stringify(await hook.getSettings())),
+      };
+      try {
+        const result = await original(...args);
+        window.__e2eDownloadStart = {
+          ...snapshot,
+          result: JSON.parse(JSON.stringify(result ?? null)),
+        };
+        return result;
+      } catch (error) {
+        window.__e2eDownloadStart = { ...snapshot, error: String(error) };
+        throw error;
+      }
+    };
+  });
+}
+
+/** Click the manual Download button after the URL field has enabled it. */
+async function clickManualDownload(url) {
+  await setUrlField(url);
+  await browser.waitUntil(
+    () =>
+      browser.execute(() => {
+        const button = document.getElementById("downloadBtn");
+        return Boolean(button) && !button.disabled;
+      }),
+    {
+      timeout: 20_000,
+      timeoutMsg: "Download button never enabled for the URL",
+    },
+  );
+  await browser.execute(() => {
+    document.getElementById("downloadBtn").click();
+  });
+}
+
+async function waitForDownloadStart() {
+  await browser.waitUntil(
+    () => browser.execute(() => window.__e2eDownloadStart !== null),
+    {
+      timeout: 30_000,
+      timeoutMsg: "manual download never reached downloadVideo",
+    },
+  );
+  return browser.execute(() => window.__e2eDownloadStart);
 }
 
 describe("shared download option resolution", () => {
@@ -644,5 +705,108 @@ describe("shared download option resolution", () => {
     // Preview only resolves values: no queue item was added.
     const queue = await api("getQueue");
     assert.equal(queue.length, 0, "preset preview added a queue item");
+  });
+
+  it("manual download starts with a stored FFmpeg path that no longer exists", async () => {
+    await api("clearQueue");
+    const staleDir = fs.mkdtempSync(path.join(DOWNLOADS, "stale-ffmpeg-"));
+    const staleFfmpeg = path.join(
+      staleDir,
+      process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg",
+    );
+    fs.writeFileSync(staleFfmpeg, "");
+    fs.chmodSync(staleFfmpeg, 0o755);
+    try {
+      const saved = await api("saveSettings", {
+        askDownloadLocation: false,
+        downloadFolder: DOWNLOADS,
+        ffmpegPath: staleFfmpeg,
+      });
+      assert.equal(saved.ok, true, saved.error?.message);
+      await reloadApp();
+      // The renderer now holds the stored path. Remove the file so it is stale.
+      fs.rmSync(staleDir, { recursive: true, force: true });
+      assert.equal(
+        fs.existsSync(staleFfmpeg),
+        false,
+        "stale FFmpeg still exists",
+      );
+
+      await armDownloadStartRecorder();
+      await clickManualDownload(`${MEDIA}/clip-one.mp4?f4=${Date.now()}`);
+      const start = await waitForDownloadStart();
+      try {
+        assert.equal(start.error, undefined, start.error);
+        assert.equal(
+          Object.prototype.hasOwnProperty.call(start.args[0], "ffmpegPath"),
+          false,
+          "manual request still sent the stored ffmpegPath",
+        );
+        assert.doesNotMatch(
+          String(start.result?.error?.message ?? ""),
+          /ffmpegPath does not exist\./,
+          "manual download was refused for the stale ffmpegPath",
+        );
+        assert.equal(start.result?.ok, true, start.result?.error?.message);
+        const after = await api("getSettings");
+        assert.equal(
+          after.ffmpegPath,
+          staleFfmpeg,
+          "the stored ffmpegPath was cleared instead of kept",
+        );
+      } finally {
+        await api("cancelDownload");
+      }
+    } finally {
+      fs.rmSync(staleDir, { recursive: true, force: true });
+      await api("saveSettings", { ffmpegPath: "" });
+    }
+  });
+
+  it("manual download flushes a pending toggle with no save folder", async () => {
+    await api("clearQueue");
+    const saved = await api("saveSettings", {
+      askDownloadLocation: false,
+      downloadFolder: "",
+      convertEnabled: false,
+      keepOriginalAfterConvert: true,
+    });
+    assert.equal(saved.ok, true, saved.error?.message);
+    await reloadApp();
+    await armDownloadStartRecorder();
+
+    // Toggle and start in one script turn, so the 300 ms debounce is still pending.
+    await setUrlField(`${MEDIA}/clip-one.mp4?flush=${Date.now()}`);
+    await browser.waitUntil(
+      () =>
+        browser.execute(() => !document.getElementById("downloadBtn").disabled),
+      {
+        timeout: 20_000,
+        timeoutMsg: "Download button never enabled for the URL",
+      },
+    );
+    await browser.execute(() => {
+      const toggle = document.getElementById("convertToggle");
+      toggle.checked = true;
+      toggle.dispatchEvent(new Event("change", { bubbles: true }));
+      document.getElementById("downloadBtn").click();
+    });
+    const start = await waitForDownloadStart();
+    try {
+      assert.equal(start.error, undefined, start.error);
+      assert.equal(
+        start.settingsAtStart?.convertEnabled,
+        true,
+        "backend held convertEnabled=false when the download started",
+      );
+      assert.equal(
+        start.args[0].outputPath,
+        undefined,
+        "no folder was chosen, so the request must not carry outputPath",
+      );
+      assert.equal(start.result?.ok, true, start.result?.error?.message);
+    } finally {
+      await api("cancelDownload");
+    }
   });
 });

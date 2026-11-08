@@ -286,3 +286,55 @@ may remain unprotected.
 
 If any publish-time verification fails, stop distribution work and repair the
 release metadata or assets. Do not create a second same-version stable release.
+
+## 10. Recovering an interrupted macOS update
+
+The macOS in-app updater replaces only the `Contents` directory of the installed
+app, so the outer `ROSI.app` directory and its Dock identity stay in place. The
+swap is two renames (`swap_macos_app_contents` in
+`src-tauri/vendor/tauri-plugin-updater/src/updater.rs`):
+
+1. `ROSI.app/Contents` moves into a hidden sibling backup directory named
+   `.ROSI-app.rosi-update-backup-<hash>`, where `<hash>` is 16 lowercase hex
+   digits. The app name's `.` becomes `-` in that name, so the old `Contents` is
+   at `/Applications/.ROSI-app.rosi-update-backup-<hash>/Contents`.
+2. The staged `Contents` moves into `ROSI.app/Contents`, and the bundle identity
+   is checked.
+
+A crash or power loss between the two renames leaves `ROSI.app` with no
+`Contents`. macOS cannot launch that bundle, and the updater's recovery
+(`recover_macos_live_bundle`) runs inside an update install, so ROSI cannot
+start to trigger it. Restore the app by hand. The paths below assume
+`/Applications`; substitute the folder that contains `ROSI.app`.
+
+1. Quit ROSI if it is running.
+2. Check the state. `ls -la /Applications/ROSI.app` must show no `Contents`
+   directory. If `ROSI.app/Contents` exists, stop: this is not the state
+   described here. Do not move anything, and keep the backup.
+3. Find the backup and confirm it holds `Contents`:
+   `ls -la /Applications | grep rosi-update-backup` and then
+   `ls /Applications/.ROSI-app.rosi-update-backup-*/Contents`. A backup with no
+   `Contents` is empty, which means the first rename never happened and
+   `ROSI.app` still has its `Contents`, so this case does not apply.
+4. Move the backup's `Contents` back into the app, using the exact backup name
+   from step 3:
+
+   ```sh
+   mv "/Applications/.ROSI-app.rosi-update-backup-<hash>/Contents" "/Applications/ROSI.app/Contents"
+   ```
+
+   If `/Applications` is owned by an administrator and `mv` is denied, run the
+   same command with `sudo`.
+
+5. Remove the emptied backup directory. `rmdir` refuses to remove a directory
+   that still has files, which is a safe check:
+
+   ```sh
+   rmdir "/Applications/.ROSI-app.rosi-update-backup-<hash>"
+   ```
+
+6. Launch ROSI. The restored `Contents` is the pre-update build. The next update
+   check offers the update again.
+
+Record any case that does not match these steps, with the output of the `ls`
+commands, before retrying the update.

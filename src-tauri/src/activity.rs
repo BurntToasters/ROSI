@@ -295,25 +295,47 @@ fn persist(entries: &[DownloadCompletion]) -> Result<Vec<DownloadCompletion>, St
 }
 
 pub fn record(completion: &DownloadCompletion) {
+    record_batch(std::slice::from_ref(completion));
+}
+
+/// Records several completions with one persist and one update event. The
+/// result matches calling `record` for each entry in order: a completion whose
+/// id is already stored or appeared earlier in the batch is skipped, invalid
+/// entries are logged and skipped, and accepted entries end up newest first.
+pub fn record_batch(completions: &[DownloadCompletion]) {
     let snapshot = {
         let mut entries = state().lock().unwrap_or_else(|p| p.into_inner());
-        if entries.iter().any(|entry| entry.id == completion.id) {
+        let mut accepted: Vec<DownloadCompletion> = Vec::new();
+        let mut accepted_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for completion in completions {
+            if entries.iter().any(|entry| entry.id == completion.id)
+                || accepted_ids.contains(completion.id.as_str())
+            {
+                continue;
+            }
+            let Some(normalized) = serde_json::to_value(completion)
+                .ok()
+                .as_ref()
+                .and_then(normalize_record)
+            else {
+                crate::logging::warn("Ignoring invalid structured download completion metadata.");
+                continue;
+            };
+            accepted_ids.insert(completion.id.as_str());
+            accepted.push(normalized);
+        }
+        if accepted.is_empty() {
             return;
         }
-        let Some(normalized) = serde_json::to_value(completion)
-            .ok()
-            .as_ref()
-            .and_then(normalize_record)
-        else {
-            crate::logging::warn("Ignoring invalid structured download completion metadata.");
-            return;
-        };
-        entries.insert(0, normalized);
-        entries.truncate(MAX_DOWNLOAD_ACTIVITY);
-        match persist(&entries) {
+        // Sequential inserts at the front leave the last accepted entry first.
+        let mut next: Vec<DownloadCompletion> = accepted.into_iter().rev().collect();
+        next.extend(entries.drain(..));
+        next.truncate(MAX_DOWNLOAD_ACTIVITY);
+        match persist(&next) {
             Ok(persisted) => *entries = persisted,
             Err(error) => {
-                crate::logging::error(&format!("Failed to persist download activity: {error}"))
+                crate::logging::error(&format!("Failed to persist download activity: {error}"));
+                *entries = next;
             }
         }
         entries.clone()

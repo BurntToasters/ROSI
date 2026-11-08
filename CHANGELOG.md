@@ -2,8 +2,8 @@
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                  | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS                                                                                                                                                                                                              | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux    |
 | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------- |
-| **EXE: [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-Windows-arm64.exe)** | **DMG: [arm64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-MacOS-arm64.dmg) / [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-MacOS-x64.dmg) / [universal](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-MacOS-universal.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-Linux-x64.AppImage) |
-| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div>                    | **ZIP: [arm64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-MacOS-arm64.zip) / [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-MacOS-x64.zip) / [universal](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-MacOS-universal.zip)** | **Flatpak:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.1/ROSI-Linux-x64.flatpak)   |
+| **EXE: [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.2/ROSI-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.2/ROSI-Windows-arm64.exe)** | **DMG: [arm64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.2/ROSI-MacOS-arm64.dmg) / [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.2/ROSI-MacOS-x64.dmg) / [universal](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.2/ROSI-MacOS-universal.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.2/ROSI-Linux-x64.AppImage) |
+| <div align="center"><a href="https://apps.microsoft.com/detail/9p4q134b2jw3?referrer=appbadge&mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="150"/></a></div>                    | **ZIP: [arm64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.2/ROSI-MacOS-arm64.zip) / [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.2/ROSI-MacOS-x64.zip) / [universal](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.2/ROSI-MacOS-universal.zip)** | **Flatpak:** [x64](https://github.com/BurntToasters/ROSI/releases/download/v5.1.0-beta.2/ROSI-Linux-x64.flatpak)   |
 
 > macOS downloads require macOS 15 or later.
 > Native arm64 builds run on Apple silicon; native x64 builds run on Intel and
@@ -17,6 +17,17 @@
 ### ℹ️ Enjoying ROSI? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
 
 ROSI! A cross platform yt-dlp GUI built on Tauri V2!
+
+## Changes in `v5.1.0-beta.2:`
+
+- **Updater:** macOS in-app updates keep ROSI pinned in the Dock. The updater now replaces only the app's contents instead of moving the whole `ROSI.app` bundle, so the Dock icon no longer points at the deleted backup. Recovery and the administrator install path work the same way, including backups made by 5.0.x.
+- **Updater:** The "Update Ready" dialog now says to select Restart Now to install the update. If you quit instead, ROSI downloads the update again next time.
+- **Settings:** Opening settings no longer shows "Settings saved." and the "Retry save" button before anything is saved. The saved message now appears only after a real save and clears after 4 seconds.
+- **Downloads:** Starting a manual download now saves pending settings changes first, so a setting changed just before you click Download is always used.
+- **Downloads:** Manual downloads no longer send a stale FFmpeg path from the window. The backend chooses the FFmpeg path.
+- **Queue:** Cancelling the queue records all cancelled downloads in Activity with one save and one update, instead of one per download.
+- **Tests:** New `npm run test:e2e:core` profile gives faster local end-to-end feedback with its own reports, screenshots, and per-stage timings. `--repeat` runs it several times with separate evidence for each run.
+- **Tests:** New end-to-end coverage for the macOS update Dock fix, the settings save message, download settings flushing, and queue cancellation.
 
 ## Changes in `v5.1.0-beta.1:`
 
