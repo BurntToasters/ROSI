@@ -104,7 +104,6 @@ export function bindDownloadControls() {
           formats: formatSelections,
           playlist: scopeVisible ? (playlist ?? undefined) : undefined,
         });
-        const ffmpegPath = settingsStore.settings.ffmpegPath;
         let savePath = settingsStore.settings.askDownloadLocation
           ? null
           : settingsStore.settings.downloadFolder?.trim() || null;
@@ -139,14 +138,16 @@ export function bindDownloadControls() {
         if (savePath) {
           settingsStore.settings.downloadFolder = savePath;
           updateUIFromSettings();
-          const saved = await persistSettings(true, true);
-          if (!saved) {
-            failManualDownloadStart(operation);
-            downloadState.isDownloading = false;
-            syncPrimaryActionState();
-            showToast('Could not save download settings. Please try again.', { type: 'error' });
-            return;
-          }
+        }
+        // Rust reads settings from disk when the download starts, so flush the
+        // 300ms debounce on every path, not only when a folder was chosen.
+        const saved = await persistSettings(true, true);
+        if (!saved) {
+          failManualDownloadStart(operation);
+          downloadState.isDownloading = false;
+          syncPrimaryActionState();
+          showToast('Could not save download settings. Please try again.', { type: 'error' });
+          return;
         }
         if (outputEl) outputEl.textContent = '';
         downloadState.downloadAbort = () => {
@@ -172,7 +173,6 @@ export function bindDownloadControls() {
         const startResult = await api.downloadVideo({
           url: url.trim(),
           ...(savePath ? { outputPath: savePath } : {}),
-          ffmpegPath,
           ...requestOverrides,
         });
         if (operation !== manualDownload.manualDownloadOperation) return;

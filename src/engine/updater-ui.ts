@@ -307,7 +307,7 @@ export function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boole
           showModal({
             title: 'Update Ready!',
             key: 'updater-downloaded',
-            message: `Version ${data.version} has been downloaded.\n\nThe update will be installed when you restart ROSI.`,
+            message: `Version ${data.version} has been downloaded.\n\nSelect Restart Now to install it. If you quit instead, ROSI downloads it again next time.`,
             buttons: [
               {
                 label: 'Restart Now',

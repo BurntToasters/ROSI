@@ -123,3 +123,26 @@ lifecycle group), 27, 28, 30.
 - Covered by the spec scenario "publishes strictly increasing revisions and
   never renders a stale snapshot", which injects a revision 0 snapshot through
   the e2e-only `e2e_emit_stale_download_events` probe.
+
+## Stage 3: batched cancel activity (F7)
+
+Written before the `activity::record_batch` change. `cancel_queue_blocking`
+records one synthetic Cancelled row per pending item. Before the change each row
+was a separate persist (encode plus fsync of `download-activity.json`) and a
+separate `download-activity-update` emit with the full list.
+
+| # | Failure mode | Mechanism | Guard |
+| --- | --- | --- | --- |
+| F7-1 | Batch is partly persisted: some rows on disk, others only in memory. | Persist called per row, or persist of a partial list. | One persist of the full resulting list after all rows are applied. E2E: after cancel, every pending item has exactly one Cancelled row from `getDownloadActivity`. |
+| F7-2 | Batch order differs from sequential `record()` calls, so newest-first is wrong. | Rows appended instead of prepended, or batch reversed incorrectly. | Accepted rows are prepended in reverse batch order, which equals inserting each at the front. E2E: the cancelled rows for the five URLs, filtered from `getDownloadActivity`, are in the reverse of queue order. |
+| F7-3 | The same completion id is recorded twice inside one batch. | Duplicate check only looks at the stored list. | Ids accepted earlier in the batch are also skipped. Matches the per-record duplicate rule. |
+| F7-4 | One invalid completion aborts the whole batch. | Early return on normalize failure. | Invalid rows warn and are skipped; the rest of the batch is still applied. Matches the per-record warn-and-skip rule. |
+| F7-5 | Truncation keeps a different set of rows than sequential calls. | Truncate once versus after each insert. | Both keep the newest `MAX_DOWNLOAD_ACTIVITY` rows of the same sequence, so the kept set is identical. |
+| F7-6 | Persist failure drops the batch from memory, or leaves a stale list. | Error path keeps the old list. | On persist error the in-memory list still gets the accepted rows, as `record()` does today. The error is logged. |
+| F7-7 | Cancel emits more than one `download-activity-update` (one per row again). | Emit inside the loop. | One emit after the lock is released, and none when no row was accepted. E2E: a listener on `onDownloadActivityUpdate` (reachable via `window.__ROSI_E2E__.api`) counts exactly one event during the cancel. |
+| F7-8 | Disk writes or emits move onto the coordinator thread. | Batch call placed inside `CancelApply`. | `record_batch` stays in `cancel_queue_blocking` after the coordinator reply, so the coordinator thread does no disk work. Review rule. |
+| F7-9 | Persist count (fsync count) is not observable from E2E. | No hook counts fsyncs. | Not covered by E2E. The one-persist rule is guarded by code review of `record_batch` only. No new hook was added. |
+
+Scenario: "cancels every pending item with one Cancelled row each and one activity update".
+Covers F7-1, F7-2, F7-7. F7-3 to F7-6 are covered by review of the shared rule
+path (`record()` delegates to `record_batch`), not by a separate scenario.

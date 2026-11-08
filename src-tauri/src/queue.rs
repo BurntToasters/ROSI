@@ -1439,9 +1439,7 @@ fn cancel_queue_blocking() -> IpcResult<()> {
             "Queue coordinator is not running.",
         );
     }
-    for completion in &records {
-        crate::activity::record(completion);
-    }
+    crate::activity::record_batch(&records);
     ipc::ok(())
 }
 

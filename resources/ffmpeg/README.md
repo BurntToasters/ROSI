@@ -51,11 +51,21 @@ resources/ffmpeg/
 ## Notes
 
 - Use **GPL builds** (not LGPL) for x264/x265 support
-- Use **static builds** (not shared) for easier bundling on Windows and macOS.
-  The **Linux x64** binaries are the exception: they are **dynamically linked**
-  against glibc (`/lib64/ld-linux-x86-64.so.2`, per `file`). Keep them that way
-  in a future bump; do not treat the dynamic link as a defect to fix.
-  `scripts/check-linux-glibc.js` guards the glibc floor: the Linux release fails
+- Use builds that compile their third-party libraries in, so the Windows and
+  macOS binaries need no bundled DLLs or dylibs. Linkage in the current binaries
+  (checked by inspection with `file`, `objdump -p`, and `otool -L`; the repository
+  has no automated linkage check):
+  - **Windows x64 and arm64:** the PE import tables list only Windows system DLLs
+    and API sets.
+  - **macOS x64 and arm64:** the Mach-O binaries load only system frameworks and
+    `libc++`.
+  - **Linux x64 and arm64:** the binaries are **dynamically linked** against glibc
+    and `libgcc_s` (interpreter `/lib64/ld-linux-x86-64.so.2` on x64,
+    `/lib/ld-linux-aarch64.so.1` on arm64). Keep them that way in a future bump;
+    do not treat the dynamic link as a defect to fix.
+  - Only the FFmpeg binaries were inspected on each platform. The ffprobe
+    binaries were checked on Windows x64 and Linux x64 only.
+- `scripts/check-linux-glibc.js` guards the glibc floor: the Linux release fails
   if a shipped binary needs a glibc newer than the documented floor (Ubuntu 24.04,
   glibc 2.39). Any new FFmpeg build must pass that check.
 - Ensure binaries have execute permissions on macOS/Linux (`chmod +x`)
