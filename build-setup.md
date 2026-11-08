@@ -110,8 +110,10 @@ the bundled license file, the Tauri resource path, and the notices.
 
 A yt-dlp bump needs a patch release because the binaries ship inside the
 installers. Target turnaround: merge the watch PR and ship the patch release
-within five business days of it opening. Manual bump: run the `--update` command
-above, then `npm run ytdlp:fetch:all` and `npm run ytdlp:check`.
+within five business days of it opening. To bump manually to the latest
+release, run `npm run ytdlp:update`; for a specific tag, run
+`node scripts/fetch-ytdlp.cjs --update <version>`, then
+`npm run ytdlp:fetch:all` and `npm run ytdlp:check`.
 
 `scripts/copy-bundled-licenses.js` reads the yt-dlp version and license file
 from `assets/ytdlp-checksums.json`, so a bump needs no script edit.
