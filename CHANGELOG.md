@@ -34,6 +34,7 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 - **Network:** The outbound proxy relay runs on the Tokio runtime and serves up to 256 connections at once. Up to 128 more connections wait for a free slot for up to 5 seconds. Connections beyond that, or still waiting after 5 seconds, receive HTTP 503.
 - **Settings:** Settings show whether they are saving, saved, or not saved. A failed save keeps your choices on screen and offers a "Retry save" button. If the backend refuses one setting, the other settings still save, and the refused one returns to its saved value.
 - **Settings:** Each section's reset button asks for confirmation first, and reports whether the restored defaults were saved.
+- **Settings:** Saving settings no longer overwrites changes made elsewhere, such as presets, with stale values.
 - **Setup:** The setup wizard shows an inline message when choosing a download folder is cancelled or fails. If the Deno check or install fails, it offers the install instructions.
 - **Deno:** If the Deno check fails, ROSI shows a dialog with the install instructions instead of only writing to the log.
 - **Build:** Building from source now requires Node.js `^24.22.1` or `>=26.13.0` and npm 12.2.1 or later. CI builds with Node.js 26.13.0 LTS.
@@ -46,6 +47,7 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 - **Formats:** Format option labels are built by the backend.
 - **Settings:** If settings cannot be loaded at startup, the defaults come from the backend instead of a copy kept in the window.
 - **Queue:** When retry, remove, reorder, or open location fails, the message appears on that queue row and the row's other actions stay available.
+- **Queue:** Pasted links are checked by the backend with the same rules as adding links to the queue.
 - **Activity:** Keyboard focus stays on the same activity action when the list updates, and each new entry is announced once to screen readers.
 - **Accessibility:** Dialogs move focus inside as soon as they open. Long URLs, paths, titles, and errors wrap or truncate instead of widening the window.
 - **Network:** A proxy client turned away with HTTP 503 now receives the full response on macOS instead of a connection reset.

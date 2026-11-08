@@ -411,3 +411,72 @@ updater gate requires a manual reinstall for the same reason.
 - The release pipeline fails if the repository is not updated for a stable
   release.
 - The runbook's Flatpak updater step is replaced by a `flatpak update` check.
+
+## Deferred to 5.1.x
+
+These items are not required for 5.1.0. They are planned for 5.1.x and have not
+started. The proof gaps for the accepted milestones are in
+[IMPLEMENTATION-5.1.md](IMPLEMENTATION-5.1.md).
+
+### B7: Finish coordinator ownership (roadmap item 4)
+
+**Precondition.** The full gate, `npm run test:all -- --require-clean-proof`,
+must be green on every required platform (macOS 15 and newer, Linux x64,
+Windows x64, and Windows arm64) before this change starts. Today it is green
+only on macOS arm64. Before the port, write failure-mode rows for
+`cancel_session`, `complete_session`, `start_download`, and `on_ytdlp_exit`
+(`src-tauri/src/downloader.rs`).
+
+**Remaining globals** in `src-tauri/src` at this snapshot:
+
+| Symbol                                                    | File and line                 | Role                                                                                  |
+| --------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------- |
+| `QUEUE`: `OnceLock<Mutex<QueueState>>`, read by `state()` | `queue.rs:42`, `queue.rs:197` | Queue items and revision.                                                             |
+| `PERSISTENCE` (inside `persistence()`)                    | `queue.rs:180`                | Queue and backup file paths and the save function.                                    |
+| `WRITER` (inside `writer()`)                              | `queue.rs:328`                | Sender to the one thread that writes queue files.                                     |
+| `ACTIVE`: `Mutex<Option<Session>>`, read by `lock()`      | `downloader.rs:82`, `:91`     | The session slot.                                                                     |
+| `ACTIVE_PRESENT`: `AtomicBool`                            | `downloader.rs:85`            | Mirror of whether `ACTIVE` holds a session.                                           |
+| `STARTUP`: `Mutex<()>`                                    | `downloader.rs:87`            | Serializes `start_download`. First in the lock chain described at `downloader.rs:18`. |
+| `EVENT_PUBLISH`: `Mutex<()>`                              | `downloader.rs:88`            | Serializes lifecycle event publication.                                               |
+| `COUNTER`: `AtomicU64`                                    | `downloader.rs:89`            | Source of session ids. Not a lock.                                                    |
+
+The `downloader/conversion.rs` and `downloader/publication.rs` modules declare no
+statics. Test-only statics (`SERIAL` at `downloader.rs:1631`) are excluded.
+Outside this list: `coordinator.rs` `COORDINATOR` holds a channel sender, not
+state, and `activity.rs` `state()` is outside the queue and downloader scope.
+
+**Acceptance.** Item 4's criteria apply: no global `Mutex` or `Condvar` in
+`downloader.rs` or `queue.rs`, queue updates keep their order, and the cancel,
+start, and restart E2E scenarios pass repeatedly. The `OnceLock` and atomic
+statics above are listed so the port accounts for them too.
+
+### B6: Renderer seams (roadmap items 1 and 2)
+
+**Status.** Not a 5.1.0 blocker, as the implementation plan states.
+
+**Remaining references** in `src/`, excluding `src/generated`, counted by
+occurrence:
+
+- `window.api`: 105 occurrences. 104 are in 27 `.ts` files, including
+  `src/tauri-bridge.ts` (the assignment, 2 occurrences). The other 1 is in
+  `src/tests/commands.contract.failure-modes.md`.
+- `window.rosiModules`: 12 occurrences in 11 `.ts` files: one in each of the
+  eight `src/modules/*.ts` files, one in `src/engine/core.ts`, one in
+  `src/renderer-globals.d.ts`, and two in `src/tests/rosiEngine.dom.test.ts`.
+
+**Removal order.**
+
+1. Convert each `src/modules/*.ts` IIFE to an ES module that exports a factory
+   taking an explicit dependency object. Go feature by feature in the order of
+   roadmap item 1 (settings, downloads, queue, activity, dock, updates, then the
+   setup wizard, licenses, and splash), then the remaining modules (icons, ui).
+2. When a module no longer needs `window.rosiModules`, remove its entry and its
+   reads in `src/engine/core.ts` and the DOM test. Do not change the test
+   expectations.
+3. Delete unused entries in `src/renderer-globals.d.ts` once no caller uses them.
+4. Replace `window.api` one command group at a time with typed wrappers, and
+   delete each member when no caller uses it. `src/tauri-bridge.ts` stays until
+   the E2E specs that drive `window.api` are migrated.
+
+**Acceptance.** Items 1 and 2 apply: `window.api` and `window.rosiModules` no
+longer exist in `src/`, and no hand-written IPC type copy remains.
