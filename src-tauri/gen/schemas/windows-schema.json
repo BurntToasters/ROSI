@@ -369,6 +369,12 @@
           "markdownDescription": "Enables the cancel_queue command without any pre-configured scope."
         },
         {
+          "description": "Enables the cancel_update_download command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-cancel-update-download",
+          "markdownDescription": "Enables the cancel_update_download command without any pre-configured scope."
+        },
+        {
           "description": "Enables the cancel_video_info command without any pre-configured scope.",
           "type": "string",
           "const": "allow-cancel-video-info",
@@ -379,6 +385,12 @@
           "type": "string",
           "const": "allow-check-deno-installed",
           "markdownDescription": "Enables the check_deno_installed command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the check_for_updates command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-check-for-updates",
+          "markdownDescription": "Enables the check_for_updates command without any pre-configured scope."
         },
         {
           "description": "Enables the clear_download_activity command without any pre-configured scope.",
@@ -405,6 +417,12 @@
           "markdownDescription": "Enables the detect_gpu command without any pre-configured scope."
         },
         {
+          "description": "Enables the download_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-download-update",
+          "markdownDescription": "Enables the download_update command without any pre-configured scope."
+        },
+        {
           "description": "Enables the download_video command without any pre-configured scope.",
           "type": "string",
           "const": "allow-download-video",
@@ -417,10 +435,22 @@
           "markdownDescription": "Enables the e2e_cancel_close_request command without any pre-configured scope."
         },
         {
+          "description": "Enables the e2e_configure_updater command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-e2e-configure-updater",
+          "markdownDescription": "Enables the e2e_configure_updater command without any pre-configured scope."
+        },
+        {
           "description": "Enables the e2e_emit_stale_download_events command without any pre-configured scope.",
           "type": "string",
           "const": "allow-e2e-emit-stale-download-events",
           "markdownDescription": "Enables the e2e_emit_stale_download_events command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the e2e_native_notices command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-e2e-native-notices",
+          "markdownDescription": "Enables the e2e_native_notices command without any pre-configured scope."
         },
         {
           "description": "Enables the e2e_network_pipelining_probe command without any pre-configured scope.",
@@ -435,10 +465,22 @@
           "markdownDescription": "Enables the e2e_updater_install_probe command without any pre-configured scope."
         },
         {
+          "description": "Enables the e2e_updater_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-e2e-updater-probe",
+          "markdownDescription": "Enables the e2e_updater_probe command without any pre-configured scope."
+        },
+        {
           "description": "Enables the export_settings command without any pre-configured scope.",
           "type": "string",
           "const": "allow-export-settings",
           "markdownDescription": "Enables the export_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the extract_queue_urls command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-extract-queue-urls",
+          "markdownDescription": "Enables the extract_queue_urls command without any pre-configured scope."
         },
         {
           "description": "Enables the get_app_platform command without any pre-configured scope.",
@@ -519,6 +561,12 @@
           "markdownDescription": "Enables the install_deno command without any pre-configured scope."
         },
         {
+          "description": "Enables the install_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-install-update",
+          "markdownDescription": "Enables the install_update command without any pre-configured scope."
+        },
+        {
           "description": "Enables the is_flatpak command without any pre-configured scope.",
           "type": "string",
           "const": "allow-is-flatpak",
@@ -591,6 +639,12 @@
           "markdownDescription": "Enables the resolve_download_options command without any pre-configured scope."
         },
         {
+          "description": "Enables the resolve_preset_options command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-resolve-preset-options",
+          "markdownDescription": "Enables the resolve_preset_options command without any pre-configured scope."
+        },
+        {
           "description": "Enables the restart_app command without any pre-configured scope.",
           "type": "string",
           "const": "allow-restart-app",
@@ -613,6 +667,12 @@
           "type": "string",
           "const": "allow-select-download-location",
           "markdownDescription": "Enables the select_download_location command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_update_channel command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-update-channel",
+          "markdownDescription": "Enables the set_update_channel command without any pre-configured scope."
         },
         {
           "description": "Enables the show_notification command without any pre-configured scope.",
@@ -651,6 +711,12 @@
           "markdownDescription": "Denies the cancel_queue command without any pre-configured scope."
         },
         {
+          "description": "Denies the cancel_update_download command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-cancel-update-download",
+          "markdownDescription": "Denies the cancel_update_download command without any pre-configured scope."
+        },
+        {
           "description": "Denies the cancel_video_info command without any pre-configured scope.",
           "type": "string",
           "const": "deny-cancel-video-info",
@@ -661,6 +727,12 @@
           "type": "string",
           "const": "deny-check-deno-installed",
           "markdownDescription": "Denies the check_deno_installed command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_for_updates command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-check-for-updates",
+          "markdownDescription": "Denies the check_for_updates command without any pre-configured scope."
         },
         {
           "description": "Denies the clear_download_activity command without any pre-configured scope.",
@@ -687,6 +759,12 @@
           "markdownDescription": "Denies the detect_gpu command without any pre-configured scope."
         },
         {
+          "description": "Denies the download_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-download-update",
+          "markdownDescription": "Denies the download_update command without any pre-configured scope."
+        },
+        {
           "description": "Denies the download_video command without any pre-configured scope.",
           "type": "string",
           "const": "deny-download-video",
@@ -699,10 +777,22 @@
           "markdownDescription": "Denies the e2e_cancel_close_request command without any pre-configured scope."
         },
         {
+          "description": "Denies the e2e_configure_updater command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-e2e-configure-updater",
+          "markdownDescription": "Denies the e2e_configure_updater command without any pre-configured scope."
+        },
+        {
           "description": "Denies the e2e_emit_stale_download_events command without any pre-configured scope.",
           "type": "string",
           "const": "deny-e2e-emit-stale-download-events",
           "markdownDescription": "Denies the e2e_emit_stale_download_events command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the e2e_native_notices command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-e2e-native-notices",
+          "markdownDescription": "Denies the e2e_native_notices command without any pre-configured scope."
         },
         {
           "description": "Denies the e2e_network_pipelining_probe command without any pre-configured scope.",
@@ -717,10 +807,22 @@
           "markdownDescription": "Denies the e2e_updater_install_probe command without any pre-configured scope."
         },
         {
+          "description": "Denies the e2e_updater_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-e2e-updater-probe",
+          "markdownDescription": "Denies the e2e_updater_probe command without any pre-configured scope."
+        },
+        {
           "description": "Denies the export_settings command without any pre-configured scope.",
           "type": "string",
           "const": "deny-export-settings",
           "markdownDescription": "Denies the export_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the extract_queue_urls command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-extract-queue-urls",
+          "markdownDescription": "Denies the extract_queue_urls command without any pre-configured scope."
         },
         {
           "description": "Denies the get_app_platform command without any pre-configured scope.",
@@ -801,6 +903,12 @@
           "markdownDescription": "Denies the install_deno command without any pre-configured scope."
         },
         {
+          "description": "Denies the install_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-install-update",
+          "markdownDescription": "Denies the install_update command without any pre-configured scope."
+        },
+        {
           "description": "Denies the is_flatpak command without any pre-configured scope.",
           "type": "string",
           "const": "deny-is-flatpak",
@@ -873,6 +981,12 @@
           "markdownDescription": "Denies the resolve_download_options command without any pre-configured scope."
         },
         {
+          "description": "Denies the resolve_preset_options command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-resolve-preset-options",
+          "markdownDescription": "Denies the resolve_preset_options command without any pre-configured scope."
+        },
+        {
           "description": "Denies the restart_app command without any pre-configured scope.",
           "type": "string",
           "const": "deny-restart-app",
@@ -895,6 +1009,12 @@
           "type": "string",
           "const": "deny-select-download-location",
           "markdownDescription": "Denies the select_download_location command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_update_channel command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-update-channel",
+          "markdownDescription": "Denies the set_update_channel command without any pre-configured scope."
         },
         {
           "description": "Denies the show_notification command without any pre-configured scope.",

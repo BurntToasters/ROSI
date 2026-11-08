@@ -48,6 +48,7 @@ function run({
   packagePath = pkgPath,
   metadataPath = xmlPath,
   check = false,
+  redate = false,
 } = {}) {
   if (!fs.existsSync(packagePath)) {
     throw new Error(`package.json not found at ${packagePath}`);
@@ -101,8 +102,8 @@ function run({
 
   let updatedSection = releasesSectionMatch[0];
   if (existingReleaseMatch) {
-    // The current version's date follows the day the script last ran, so it
-    // ends up as the release day. Older entries are never re-dated.
+    // Builds never re-date an existing entry; only --redate does, so a
+    // release machine on a later day leaves the file unchanged.
     // See update-metainfo.failure-modes.md.
     const currentDateMatch = existingReleaseMatch[0].match(/\bdate="([^"]+)"/);
     if (currentDateMatch) {
@@ -115,17 +116,17 @@ function run({
         }
         return { updated: false, version, date: currentDateMatch[1] };
       }
-      const redated = existingReleaseMatch[0].replace(
-        /\bdate="[^"]+"/,
-        `date="${dateStr}"`,
-      );
+      const redated = redate
+        ? existingReleaseMatch[0].replace(/\bdate="[^"]+"/, `date="${dateStr}"`)
+        : existingReleaseMatch[0];
       updatedSection = pruned.replace(existingReleaseMatch[0], redated);
+      const date = redate ? dateStr : currentDateMatch[1];
       if (updatedSection === releasesSectionMatch[0]) {
-        return { updated: false, version, date: dateStr };
+        return { updated: false, version, date };
       }
       const updatedXml = xml.replace(releasesSectionRegex, updatedSection);
       fs.writeFileSync(metadataPath, updatedXml, "utf8");
-      return { updated: true, version, date: dateStr };
+      return { updated: true, version, date };
     }
     if (check) {
       throw new Error(
@@ -178,7 +179,11 @@ function isDirectExecution(
 
 if (isDirectExecution()) {
   try {
-    const result = run({ check: process.argv.slice(2).includes("--check") });
+    const args = process.argv.slice(2);
+    const result = run({
+      check: args.includes("--check"),
+      redate: args.includes("--redate"),
+    });
     if (result.updated) {
       console.log(
         `Updated AppStream release to ${result.version} (${result.date})`,
