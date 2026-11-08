@@ -20,7 +20,14 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 
 ## Changes in `v5.1.0-beta.2:`
 
-- **Fix:** (add release notes)
+- **Updater:** macOS in-app updates keep ROSI pinned in the Dock. The updater now replaces only the app's contents instead of moving the whole `ROSI.app` bundle, so the Dock icon no longer points at the deleted backup. Recovery and the administrator install path work the same way, including backups made by 5.0.x.
+- **Updater:** The "Update Ready" dialog now says to select Restart Now to install the update. If you quit instead, ROSI downloads the update again next time.
+- **Settings:** Opening settings no longer shows "Settings saved." and the "Retry save" button before anything is saved. The saved message now appears only after a real save and clears after 4 seconds.
+- **Downloads:** Starting a manual download now saves pending settings changes first, so a setting changed just before you click Download is always used.
+- **Downloads:** Manual downloads no longer send a stale FFmpeg path from the window. The backend chooses the FFmpeg path.
+- **Queue:** Cancelling the queue records all cancelled downloads in Activity with one save and one update, instead of one per download.
+- **Tests:** New `npm run test:e2e:core` profile gives faster local end-to-end feedback with its own reports, screenshots, and per-stage timings. `--repeat` runs it several times with separate evidence for each run.
+- **Tests:** New end-to-end coverage for the macOS update Dock fix, the settings save message, download settings flushing, and queue cancellation.
 
 ## Changes in `v5.1.0-beta.1:`
 
