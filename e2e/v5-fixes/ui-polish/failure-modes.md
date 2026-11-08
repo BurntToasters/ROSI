@@ -67,6 +67,13 @@ recorded. A static renderer helper passing is not full-app acceptance.
 17. **Modal/wizard exit loses keyboard control.** Escape confirmation, cancel,
     save failure, and completion must keep focus trapped while open and restore
     focus to the invoking control on close.
+    17a. **Save feedback claims a save that did not happen.** Opening settings
+    without changing anything must show no save message: the footer must not
+    start in the saved state, and opening the sidebar must not report a save.
+    `Retry save` must not render while it is hidden (a `.btn` display rule
+    must not override `hidden`). After a real edit the footer reports
+    `Settings saved.` and then clears itself, so the message stays tied to
+    the edit that caused it. Scenario `settings-save-feedback-idle`.
 
 ## Viewport, theme, and accessibility matrix
 

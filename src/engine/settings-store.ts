@@ -50,9 +50,26 @@ export const reconcileSettingsInPlace = (value: RosiSettings) => {
   }
 };
 
-export function setSettingsSaveFeedback(state: 'saving' | 'saved' | 'error', message: string) {
+const SAVED_FEEDBACK_MS = 4_000;
+let savedFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function setSettingsSaveFeedback(
+  state: 'idle' | 'saving' | 'saved' | 'error',
+  message: string
+) {
   const feedback = document.getElementById('settingsSaveFeedback');
   if (!(feedback instanceof HTMLElement)) return;
+  if (savedFeedbackTimer) {
+    clearTimeout(savedFeedbackTimer);
+    savedFeedbackTimer = null;
+  }
+  // "Settings saved." belongs to the edit that caused it, so it clears itself.
+  if (state === 'saved') {
+    savedFeedbackTimer = setTimeout(() => {
+      savedFeedbackTimer = null;
+      setSettingsSaveFeedback('idle', '');
+    }, SAVED_FEEDBACK_MS);
+  }
   feedback.dataset.state = state;
   const messageElement = feedback.querySelector<HTMLElement>('.settings-save-message');
   if (messageElement) messageElement.textContent = message;
