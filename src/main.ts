@@ -1,14 +1,8 @@
 // Main window entry. Order matters: the bridge must define window.api before
-// the renderer modules and engine evaluate.
+// the engine evaluates. Icons swap the markup placeholders when they load, so
+// they are imported before the engine.
 import { waitForPrepareForCloseListener } from './tauri-bridge';
 import './modules/icons';
-import './modules/ui';
-import './modules/downloads';
-import './modules/activity';
-import './modules/queue';
-import './modules/settings';
-import './modules/updates';
-import './modules/dock';
 import './rosiEngine';
 import { call } from './commands';
 import { installE2eHookIfEnabled } from './e2e-hook';

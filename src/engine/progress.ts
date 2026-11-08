@@ -1,6 +1,8 @@
 // Download progress bar, phase display, and manual download state.
-import { RosiJobProgressEvent, downloadsModule, renderStatusText } from './core';
+import { RosiJobProgressEvent, renderStatusText } from './core';
 import { showToast } from './ui-helpers';
+
+export { formatBytes } from '../modules/downloads';
 
 export function setProgressPhase(phase: string) {
   const phases = document.querySelectorAll<HTMLElement>('.progress-phase');
@@ -152,13 +154,6 @@ export function hideProgressBar() {
     barWrapper.setAttribute('aria-valuenow', '0');
   }
   hideProgressComplete();
-}
-
-export function formatBytes(bytes: number) {
-  if (downloadsModule && typeof downloadsModule.formatBytes === 'function') {
-    return downloadsModule.formatBytes(bytes);
-  }
-  return String(bytes);
 }
 
 export function formatRelativeTime(timestamp: number) {

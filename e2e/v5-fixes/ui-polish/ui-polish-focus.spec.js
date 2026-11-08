@@ -107,7 +107,10 @@ async function waitFor(
 }
 
 async function selectDock(tab) {
-  await browser.execute((name) => window.rosiModules.dock.selectTab(name), tab);
+  await browser.execute(
+    (name) => window.__ROSI_E2E__.modules.dock.selectTab(name),
+    tab,
+  );
 }
 
 async function waitForQueueItemStatus(url, status, message, timeout = 60_000) {

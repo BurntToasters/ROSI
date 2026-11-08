@@ -1,11 +1,6 @@
 // First-run setup wizard.
-import {
-  RosiSettings,
-  iconsModule,
-  isValidSubtitleLangs,
-  logError,
-  renderFolderSummary,
-} from './core';
+import { icon } from '../modules/icons';
+import { RosiSettings, isValidSubtitleLangs, logError, renderFolderSummary } from './core';
 import { DENO_INSTALL_DOCS, isLinuxPlatform } from './deno';
 import { UI_MESSAGES } from './messages';
 import {
@@ -254,7 +249,7 @@ export function launchSetupWizard(
     }[state];
     const iconSlot = denoStatus.querySelector<HTMLElement>('.wizard-status-icon');
     const textSlot = denoStatus.querySelector<HTMLElement>('.wizard-status-text');
-    const svg = iconsModule?.icon(iconName, 18) ?? null;
+    const svg = icon(iconName, 18);
     if (iconSlot) iconSlot.replaceChildren(...(svg ? [svg] : []));
     if (textSlot) textSlot.textContent = text;
   }

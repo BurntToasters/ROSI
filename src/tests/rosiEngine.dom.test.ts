@@ -3,20 +3,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 
+// This suite has never rendered Lucide icons: the icons module was not loaded
+// here, so icon-only buttons kept their text labels. The stub keeps that fixture.
+vi.mock('../modules/icons', () => ({
+  icon: () => null,
+  initializeIcons: () => {},
+  parseStatus: (text: string) => ({ icon: null, tone: null, text }),
+  renderStatus: (target: HTMLElement, text: string) => {
+    target.textContent = text;
+  },
+}));
+
 const REPO = path.resolve(__dirname, '..', '..');
 const RENDERER = path.join(REPO, 'src');
 const INDEX_HTML = path.join(RENDERER, 'index.html');
-// Renderer modules attach to window.rosiModules when imported, in index.html order.
-const loadRendererModules = async () => {
-  await import('../modules/ui');
-  await import('../modules/downloads');
-  await import('../modules/activity');
-  await import('../modules/queue');
-  await import('../modules/settings');
-  await import('../modules/updates');
-  await import('../modules/dock');
-};
-
 // Extract the <body> markup from the real index.html (minus its <script> tags,
 // which we run ourselves) so the engine binds against the shipping DOM.
 const bodyHtml = (() => {
@@ -180,12 +180,9 @@ async function loadEngine(api: MockApi) {
     addListener: () => {},
     removeListener: () => {},
   });
-  // Load the renderer modules first (they attach to window.rosiModules), then
-  // the engine, mirroring index.html's script order.
-  // Fresh module instances per test, so engine state never leaks between tests.
+  // Fresh module instances per test, so engine and module state never leak
+  // between tests. The engine imports the renderer modules directly.
   vi.resetModules();
-  delete (window as unknown as { rosiModules?: unknown }).rosiModules;
-  await loadRendererModules();
   await import('../rosiEngine');
   document.dispatchEvent(new Event('DOMContentLoaded'));
   await flush(50);

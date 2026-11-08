@@ -1,29 +1,7 @@
-(function initRosiDownloadsModule(global: Window & typeof globalThis) {
-  interface DownloadsModule {
-    formatBytes: (bytes: number) => string;
-  }
-
-  type DownloadsModules = {
-    downloads?: DownloadsModule;
-  };
-
-  type RosiWindow = Window & typeof globalThis & { rosiModules?: DownloadsModules };
-
-  function formatBytes(bytes: number) {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
-    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  }
-
-  const windowRef = global as RosiWindow;
-  const moduleTarget = (windowRef.rosiModules ?? {}) as DownloadsModules;
-  moduleTarget.downloads = {
-    formatBytes,
-  };
-  windowRef.rosiModules = moduleTarget;
-})(window);
-
-// Imported for its side effect of attaching to window.rosiModules.
-export {};
+export function formatBytes(bytes: number) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}

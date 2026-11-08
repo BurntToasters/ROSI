@@ -1942,7 +1942,9 @@ describe("ROSI main window", () => {
   });
 
   it("switches Queue, Activity, and Console in one dock and remembers the tab", async () => {
-    await browser.execute(() => window.rosiModules.dock.selectTab("queue"));
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("queue"),
+    );
     let state = await dockState();
     assert.deepEqual(state.selected, ["queue"]);
     assert.deepEqual(state.visiblePanels, ["queueSection"]);
@@ -2005,7 +2007,9 @@ describe("ROSI main window", () => {
       "2",
     );
     await api("clearQueue");
-    await browser.execute(() => window.rosiModules.dock.selectTab("activity"));
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("activity"),
+    );
     await waitForSavedSetting("dockTab", "activity", "dock tab was not saved");
 
     await reloadRenderer();
@@ -2015,7 +2019,9 @@ describe("ROSI main window", () => {
     );
     state = await dockState();
     assert.deepEqual(state.visiblePanels, ["download-history"]);
-    await browser.execute(() => window.rosiModules.dock.selectTab("queue"));
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("queue"),
+    );
     await waitForSavedSetting(
       "dockTab",
       "queue",
@@ -2185,7 +2191,7 @@ describe("ROSI main window", () => {
 
   it("shrinks the dock to its empty message and grows it for content", async () => {
     const originalTab = await browser.execute(
-      () => window.rosiModules.dock.getState().tab,
+      () => window.__ROSI_E2E__.modules.dock.getState().tab,
     );
     const measure = () =>
       browser.execute(() => {
@@ -2209,7 +2215,9 @@ describe("ROSI main window", () => {
     };
 
     await api("clearQueue");
-    await browser.execute(() => window.rosiModules.dock.selectTab("queue"));
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("queue"),
+    );
     const empty = await waitForEmpty(
       true,
       "empty queue did not shrink the dock",
@@ -2230,10 +2238,12 @@ describe("ROSI main window", () => {
 
     await api("clearQueue");
     await waitForEmpty(true, "cleared queue did not shrink the dock again");
-    await browser.execute(() => window.rosiModules.dock.selectTab("activity"));
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("activity"),
+    );
     const activity = await waitForEmpty(false, "activity with rows is empty");
     await browser.execute(
-      (tab) => window.rosiModules.dock.selectTab(tab),
+      (tab) => window.__ROSI_E2E__.modules.dock.selectTab(tab),
       originalTab,
     );
     record("dock-empty", {
@@ -2315,7 +2325,9 @@ describe("ROSI main window", () => {
 
   it("draws every icon from the bundled Lucide set", async () => {
     const icons = await browser.execute(() => {
-      window.rosiModules.ui.showToast("Lucide check", { type: "success" });
+      window.__ROSI_E2E__.modules.ui.showToast("Lucide check", {
+        type: "success",
+      });
       const svgs = [...document.querySelectorAll("svg")];
       return {
         placeholders: document.querySelectorAll("span[data-icon]").length,
@@ -2412,7 +2424,10 @@ describe("ROSI main window", () => {
     const result = await browser.execute(() => {
       const pictographic = /\p{Extended_Pictographic}/u;
       const probe = document.createElement("span");
-      window.rosiModules.icons.renderStatus(probe, "\u274C Download failed.");
+      window.__ROSI_E2E__.modules.icons.renderStatus(
+        probe,
+        "\u274C Download failed.",
+      );
       const output = document.getElementById("output");
       return {
         probeIcon: probe.querySelector("svg")?.dataset.icon ?? null,
@@ -2447,9 +2462,11 @@ describe("ROSI main window", () => {
 
   it("keeps console lines copyable, capped, and clearable", async () => {
     const originalTab = await browser.execute(
-      () => window.rosiModules.dock.getState().tab,
+      () => window.__ROSI_E2E__.modules.dock.getState().tab,
     );
-    await browser.execute(() => window.rosiModules.dock.selectTab("console"));
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("console"),
+    );
     const result = await browser.execute(() => {
       const output = document.getElementById("output");
       const lines = () =>
@@ -2460,7 +2477,10 @@ describe("ROSI main window", () => {
       const copied = output.textContent.split("\n").slice(0, -1);
       const before = { lines: lines(), copied };
       const bulk = Array.from({ length: 4100 }, (_, i) => `bulk line ${i}`);
-      window.rosiModules.ui.appendConsoleOutput(output, bulk.join("\n"));
+      window.__ROSI_E2E__.modules.ui.appendConsoleOutput(
+        output,
+        bulk.join("\n"),
+      );
       const after = lines();
       return {
         before,
@@ -2501,7 +2521,7 @@ describe("ROSI main window", () => {
       "cleared console did not shrink the dock",
     );
     await browser.execute(
-      (tab) => window.rosiModules.dock.selectTab(tab),
+      (tab) => window.__ROSI_E2E__.modules.dock.selectTab(tab),
       originalTab,
     );
     record("console-log", { capped: result.count, firstKept: result.first });
@@ -2509,7 +2529,7 @@ describe("ROSI main window", () => {
 
   it("keeps Activity row actions as quiet icon buttons", async () => {
     await browser.execute(() => {
-      window.rosiModules.dock.selectTab("activity");
+      window.__ROSI_E2E__.modules.dock.selectTab("activity");
       document.activeElement?.blur();
     });
     await settle();
@@ -2582,7 +2602,9 @@ describe("ROSI main window", () => {
   });
 
   it("runs each Activity row action", async () => {
-    await browser.execute(() => window.rosiModules.dock.selectTab("activity"));
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("activity"),
+    );
     await settle();
     const activity = (await api("getDownloadActivity")).data;
     const target = activity.find(
@@ -3316,7 +3338,10 @@ describe("ROSI main window", () => {
       });
     };
     const selectDock = (tab) =>
-      browser.execute((name) => window.rosiModules.dock.selectTab(name), tab);
+      browser.execute(
+        (name) => window.__ROSI_E2E__.modules.dock.selectTab(name),
+        tab,
+      );
 
     await resizeWindow(1200, 900);
     await typeUrl("");
@@ -4142,7 +4167,9 @@ describe("ROSI main window", () => {
 
   it("runs the queue entirely from its controls", async () => {
     await api("clearQueue");
-    await browser.execute(() => window.rosiModules.dock.selectTab("queue"));
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("queue"),
+    );
     const urls = [`${MEDIA}/clip-two.mp4?ui=1`, `${MEDIA}/clip-three.mp4?ui=1`];
     const fillQueueInput = (text) =>
       browser.execute((value) => {
@@ -4236,7 +4263,9 @@ describe("ROSI main window", () => {
 
   it("splits a mixed paste through the backend and queues only the safe links", async () => {
     await api("clearQueue");
-    await browser.execute(() => window.rosiModules.dock.selectTab("queue"));
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("queue"),
+    );
     const kept = [
       `${MEDIA}/clip-two.mp4?paste=1`,
       `${MEDIA}/clip-three.mp4?paste=1`,

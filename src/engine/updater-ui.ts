@@ -4,7 +4,8 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { call, fire } from '../commands';
 import type { UpdaterProgressEvent, UpdaterStatusEvent } from '../generated/ipc-types';
-import { logError, updatesModule } from './core';
+import { logError } from './core';
+import { formatUpdateProgressInfo } from '../modules/updates';
 import { retireModal, showModal } from './overlays';
 import { formatBytes } from './progress';
 import { setButtonLoading } from './ui-helpers';
@@ -341,14 +342,7 @@ export function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boole
       }
 
       if (progressInfo) {
-        if (updatesModule && typeof updatesModule.formatUpdateProgressInfo === 'function') {
-          progressInfo.textContent = updatesModule.formatUpdateProgressInfo(data, formatBytes);
-        } else {
-          const speed = formatBytes(data.bytesPerSecond) + '/s';
-          const downloaded = formatBytes(data.transferred);
-          const total = formatBytes(data.total);
-          progressInfo.textContent = `${downloaded} / ${total} (${speed}) - ${Math.round(data.percent)}%`;
-        }
+        progressInfo.textContent = formatUpdateProgressInfo(data, formatBytes);
       }
     })
   );

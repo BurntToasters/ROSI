@@ -266,7 +266,7 @@ function processes(marker) {
       }
       await browser.execute(() => {
         document.documentElement.dataset.flatUi = "false";
-        window.rosiModules.dock.selectTab("activity");
+        window.__ROSI_E2E__.modules.dock.selectTab("activity");
         document
           .querySelector("#history-list .history-item-actions button")
           .focus();
@@ -522,7 +522,7 @@ function processes(marker) {
       }
     }
     await browser.execute(() => {
-      window.rosiModules.dock.selectTab("activity");
+      window.__ROSI_E2E__.modules.dock.selectTab("activity");
       document
         .querySelector("#history-list .history-item-actions button")
         .focus();

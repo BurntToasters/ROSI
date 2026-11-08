@@ -28,15 +28,11 @@ import {
   updateUIFromSettings,
 } from './engine/settings-view';
 import { replayActivityDownload } from './engine/url-actions';
-import {
-  RosiSettings,
-  activityModule,
-  dockModule,
-  iconsModule,
-  logError,
-  queueModule,
-  renderStatusText,
-} from './engine/core';
+import { RosiSettings, logError, renderStatusText } from './engine/core';
+import { initActivityPanel } from './modules/activity';
+import { icon } from './modules/icons';
+import { markUnseen } from './modules/dock';
+import { resolveQueueSectionElement } from './modules/queue';
 import { checkDenoInstallation } from './engine/deno';
 import { fetchFormats } from './engine/formats';
 import { showModal } from './engine/overlays';
@@ -307,10 +303,7 @@ async function initializeRenderer() {
   refs.queueStatusMessage = byId('queueStatusMessage');
   refs.queueList = byId('queueList');
   refs.queueCount = byId('queueCount');
-  refs.queueSection =
-    (queueModule && typeof queueModule.resolveQueueSectionElement === 'function'
-      ? queueModule.resolveQueueSectionElement(document)
-      : null) || byId('queueSection');
+  refs.queueSection = resolveQueueSectionElement(document) || byId('queueSection');
 
   if (fetchFormatsBtn) fetchFormatsBtn._originalClick = fetchFormats;
   if (downloadBtn) downloadBtn._originalClick = null;
@@ -353,18 +346,17 @@ async function initializeRenderer() {
   bindUrlInput();
 
   // Renders the empty or legacy state and binds the activity filter buttons.
-  refs.activityPanel =
-    activityModule?.initActivityPanel({
-      showToast,
-      renderStatusText,
-      formatRelativeTime,
-      revealFileLocation,
-      icon: (name, size) => iconsModule?.icon(name, size) ?? null,
-      markUnseen: (tab) => dockModule?.markUnseen(tab),
-      onReplay: (entry) => {
-        void replayActivityDownload(entry);
-      },
-    }) ?? null;
+  refs.activityPanel = initActivityPanel({
+    showToast,
+    renderStatusText,
+    formatRelativeTime,
+    revealFileLocation,
+    icon,
+    markUnseen,
+    onReplay: (entry) => {
+      void replayActivityDownload(entry);
+    },
+  });
 
   bindActivityControls();
 

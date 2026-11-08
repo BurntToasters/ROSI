@@ -27,9 +27,19 @@ function createRendererLoader(w, root, ts, externals = {}) {
         if (!spec.startsWith(".")) {
           // Packages the renderer reaches through Tauri: supplied by the caller.
           if (Object.hasOwn(externals, spec)) return externals[spec];
+          // Icon SVGs imported as text (Vite `?raw`), read from node_modules.
+          if (spec.endsWith("?raw")) {
+            const text = fs.readFileSync(
+              path.join(root, "node_modules", spec.slice(0, -"?raw".length)),
+              "utf8",
+            );
+            return { default: text };
+          }
           throw new Error(`renderer loader has no module for ${spec}`);
         }
-        return load(path.relative(srcDir, path.resolve(path.dirname(file), spec)));
+        return load(
+          path.relative(srcDir, path.resolve(path.dirname(file), spec)),
+        );
       },
       module,
     );

@@ -1,31 +1,23 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as ts from 'typescript';
-// Publishes window.rosiMessages, which the eval-loaded modules read at render time.
+// Publishes window.rosiMessages, which the modules read at render time.
 import '../engine/messages';
 
-const REPO = path.resolve(__dirname, '..', '..');
-const RENDERER = path.join(REPO, 'src');
+const MODULE_LOADERS: Record<string, () => Promise<Record<string, unknown>>> = {
+  downloads: () => import('../modules/downloads'),
+  settings: () => import('../modules/settings'),
+  ui: () => import('../modules/ui'),
+  queue: () => import('../modules/queue'),
+  updates: () => import('../modules/updates'),
+  dock: () => import('../modules/dock'),
+};
 
-function transpile(tsSource: string): string {
-  return ts.transpileModule(tsSource, {
-    compilerOptions: {
-      target: ts.ScriptTarget.ES2020,
-      module: ts.ModuleKind.None,
-    },
-  }).outputText;
-}
+// Each load gets fresh module instances, so module state never leaks between cases.
+const loaded: Record<string, unknown> = {};
 
-function loadModule(name: string) {
-  (window as unknown as { rosiModules?: Record<string, unknown> }).rosiModules = {};
-  // Each module ends with `export {};`; evaluate it as the plain script it wraps.
-  const moduleSource = fs
-    .readFileSync(path.join(RENDERER, 'modules', `${name}.ts`), 'utf-8')
-    .replace(/^export \{\};$/m, '');
-  const source = transpile(moduleSource);
-  (0, eval)(source);
+async function loadModule(name: string) {
+  vi.resetModules();
+  loaded[name] = await MODULE_LOADERS[name]!();
 }
 
 type RosiModules = {
@@ -109,14 +101,10 @@ type RosiModules = {
 };
 
 function modules(): RosiModules {
-  return (window as unknown as { rosiModules?: RosiModules }).rosiModules ?? {};
+  return loaded as RosiModules;
 }
 
 describe('renderer modules', () => {
-  beforeEach(() => {
-    (window as unknown as { rosiModules?: Record<string, unknown> }).rosiModules = {};
-  });
-
   describe('downloads module', () => {
     beforeEach(() => loadModule('downloads'));
 
@@ -129,10 +117,10 @@ describe('renderer modules', () => {
   });
 
   describe('ui module', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       document.body.innerHTML =
         '<div id="toast-container"></div><section id="console-section"></section><div id="advanced-options" hidden></div>';
-      loadModule('ui');
+      await loadModule('ui');
     });
 
     it('isValidUrl accepts http and https URLs', () => {
@@ -220,10 +208,10 @@ describe('renderer modules', () => {
       ...overrides,
     });
 
-    beforeEach(() => {
+    beforeEach(async () => {
       document.body.innerHTML =
         '<section id="queueSection"><div id="queue-list"></div><span id="queue-count"></span></section>';
-      loadModule('queue');
+      await loadModule('queue');
     });
 
     it('resolveQueueSectionElement finds queueSection and legacy queue-section ids', () => {

@@ -212,7 +212,8 @@ const load = require("./load-renderer.cjs").createRendererLoader(
   ts,
   tauriShim.externals,
 );
-for (const m of ["ui", "downloads", "queue", "settings", "updates", "dock"])
+const ui = load("modules/ui.ts");
+for (const m of ["downloads", "queue", "settings", "updates", "dock"])
   load("modules/" + m + ".ts");
 load("rosiEngine.ts");
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -250,7 +251,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
       .getAttribute("aria-hidden"),
     mainInert: w.document.getElementById("main-content").inert,
   };
-  w.rosiModules.ui.closeSidebar();
+  ui.closeSidebar();
 
   w.document.getElementById("licensesLink").click();
   await wait(30);

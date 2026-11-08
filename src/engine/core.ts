@@ -1,4 +1,4 @@
-// Shared renderer types, module handles, and small helpers used across the engine.
+// Shared renderer types and small helpers used across the engine.
 import type {
   DownloadPreset,
   JobProgressEvent,
@@ -6,6 +6,9 @@ import type {
   Settings,
 } from '../generated/ipc-types';
 import { configureProgressPhases, showProgressBar } from './progress';
+import { icon, renderStatus } from '../modules/icons';
+
+export { getModifierKeyName, isMac, isValidUrl } from '../modules/ui';
 
 export function logError(context: string, error?: unknown) {
   const msg = error instanceof Error ? error.message : String(error || '');
@@ -47,20 +50,9 @@ export function applyActiveDownloadProgressPhases(
   showProgressBar(status);
 }
 
-export const rosiModules = window.rosiModules || {};
-export const uiModule = rosiModules.ui || null;
-export const downloadsModule = rosiModules.downloads || null;
-export const activityModule = rosiModules.activity || null;
-export const queueModule = rosiModules.queue || null;
-export const settingsModule = rosiModules.settings || null;
-export const updatesModule = rosiModules.updates || null;
-export const dockModule = rosiModules.dock || null;
-export const iconsModule = rosiModules.icons || null;
-
 /** Write a status line, showing a leading Rust status emoji as an icon. */
 export function renderStatusText(target: HTMLElement, text: string) {
-  if (iconsModule) iconsModule.renderStatus(target, text);
-  else target.textContent = text;
+  renderStatus(target, text);
 }
 
 /** Replace a button's content with a Lucide icon and a text label. */
@@ -70,36 +62,10 @@ export function setButtonIconLabel(
   label: string,
   size = 18
 ) {
-  const svg = iconsModule?.icon(iconName, size) ?? null;
+  const svg = icon(iconName, size);
   const text = document.createElement('span');
   text.textContent = label;
   button.replaceChildren(...(svg ? [svg] : []), text);
-}
-
-export function isMac() {
-  if (uiModule && typeof uiModule.isMac === 'function') {
-    return uiModule.isMac();
-  }
-  return navigator.platform.toLowerCase().includes('mac');
-}
-
-export function getModifierKeyName() {
-  if (uiModule && typeof uiModule.getModifierKeyName === 'function') {
-    return uiModule.getModifierKeyName();
-  }
-  return isMac() ? 'Cmd' : 'Ctrl';
-}
-
-export function isValidUrl(string: string) {
-  if (uiModule && typeof uiModule.isValidUrl === 'function') {
-    return uiModule.isValidUrl(string);
-  }
-  try {
-    const url = new URL(string);
-    return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch {
-    return false;
-  }
 }
 
 /**

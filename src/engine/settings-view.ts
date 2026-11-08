@@ -1,5 +1,7 @@
 // Settings controls: rendering from settings, search, and section collapse.
-import { RosiSettings, dockModule, renderFolderSummary, settingsModule } from './core';
+import { RosiSettings, renderFolderSummary } from './core';
+import { initDock } from '../modules/dock';
+import { bindExternalLink as bindExternalLinkTo } from '../modules/settings';
 import { refreshEffectiveOptionsSummary, UI_MESSAGES } from './messages';
 import { isModalActive, modalQueue, showModal } from './overlays';
 import { refs } from './refs';
@@ -198,7 +200,7 @@ export const applyDownloadProfile = (mode: RosiSettings['downloadMode']) => {
 
 // Runs after a settings pass, so the Console tab is already offered or not.
 export function syncDockFromSettings() {
-  dockModule?.initDock({
+  initDock({
     initialTab: settingsStore.settings.dockTab,
     collapsed: settingsStore.settings.dockCollapsed,
     onChange: ({ tab, collapsed }) => {
@@ -242,18 +244,8 @@ export function maybeShowSupportModal() {
 }
 
 export const bindExternalLink = (element: HTMLElement | null, url: string) => {
-  if (settingsModule && typeof settingsModule.bindExternalLink === 'function') {
-    // Look the bridge up per click so it is never a stale reference.
-    settingsModule.bindExternalLink(element, url, (target) => window.api.openExternal(target));
-    return;
-  }
-  if (element) {
-    element.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      void window.api.openExternal(url);
-    });
-  }
+  // Look the bridge up per click so it is never a stale reference.
+  bindExternalLinkTo(element, url, (target) => window.api.openExternal(target));
 };
 
 export function applySettingsSearch(rawQuery: string) {

@@ -1,7 +1,6 @@
-// Ambient global declarations for the renderer. The window.api and
-// window.rosiModules contracts are declared here so the IIFE renderer modules
-// can use them without imports. IPC payload shapes come from
-// src/generated/ipc-types.ts, and command names from src/commands.ts.
+// Ambient global declarations for the renderer. The window.api contract is
+// declared here. IPC payload shapes come from src/generated/ipc-types.ts, and
+// command names from src/commands.ts.
 
 type RosiIpcError = import('./generated/ipc-types').IpcError;
 type RosiIpcResult<T = void> = { ok: true; data: T } | { ok: false; error: RosiIpcError };
@@ -93,28 +92,6 @@ interface RosiRendererApi {
   onSettingsImported: (callback: (settings: RosiSettings) => void) => () => void;
 }
 
-interface RosiUiModule {
-  appendConsoleOutput: (outputEl: HTMLElement | null, text: string) => void;
-  closeSidebar: () => void;
-  getModifierKey: () => 'metaKey' | 'ctrlKey';
-  getModifierKeyName: () => 'Cmd' | 'Ctrl';
-  isMac: () => boolean;
-  isValidUrl: (value: string) => boolean;
-  setButtonLoading: (
-    button: HTMLButtonElement | null,
-    isLoading: boolean,
-    onCancel?: (() => void) | null,
-    cancelLabel?: string
-  ) => void;
-  showToast: (
-    message: unknown,
-    options?: { type?: 'warning' | 'error' | 'success' | 'info'; duration?: number }
-  ) => void;
-  toggleAdvancedUI: (show: boolean) => void;
-  toggleSidebar: () => void;
-  updateConsoleVisibility: (show: boolean) => void;
-}
-
 interface RosiActivityPanelDeps {
   showToast: (
     message: unknown,
@@ -133,14 +110,6 @@ interface RosiActivityPanel {
   clear: () => Promise<boolean>;
 }
 
-interface RosiDownloadsModule {
-  formatBytes: (bytes: number) => string;
-}
-
-interface RosiActivityModule {
-  initActivityPanel: (deps: RosiActivityPanelDeps) => RosiActivityPanel;
-}
-
 // `progress` is attached by the renderer, not sent by the backend.
 type RosiQueueItem = import('./generated/ipc-types').QueueItem & {
   progress?: RosiJobProgressEvent;
@@ -149,92 +118,9 @@ type RosiQueueItem = import('./generated/ipc-types').QueueItem & {
 // `queue-update` payload. A bare array is accepted for payloads without a revision.
 type RosiQueueSnapshot = import('./generated/ipc-types').QueueSnapshot;
 
-interface RosiQueueModule {
-  renderQueue: (
-    queue: RosiQueueItem[],
-    elements: {
-      queueList: HTMLElement | null;
-      queueSection: HTMLElement | null;
-      queueCount: HTMLElement | null;
-    },
-    deps: {
-      removeFromQueue: (id: string) => Promise<unknown> | unknown;
-      retryQueueItem: (id: string) => Promise<unknown> | unknown;
-      reorderQueueItem: (id: string, direction: 'up' | 'down') => Promise<unknown> | unknown;
-      copyDiagnostics: (item: RosiQueueItem) => Promise<unknown> | unknown;
-      openFileLocation?: (filePath: string, queueItemId: string) => Promise<unknown> | unknown;
-      focusQueueItemId?: string | null;
-      rowErrorFor?: (item: RosiQueueItem) => string | null;
-    }
-  ) => void;
-  updateQueueItemProgress: (
-    item: RosiQueueItem,
-    elements: {
-      queueList: HTMLElement | null;
-      queueSection: HTMLElement | null;
-      queueCount: HTMLElement | null;
-    }
-  ) => boolean;
-  setQueueItemError: (queueList: HTMLElement, id: string, message: string | null) => boolean;
-  resolveQueueSectionElement: (root?: Document) => HTMLElement | null;
-}
-
-interface RosiSettingsModule {
-  bindExternalLink: (
-    element: HTMLElement | null,
-    url: string,
-    openExternal: (url: string) => unknown
-  ) => void;
-}
-
-interface RosiUpdatesModule {
-  formatUpdateProgressInfo: (
-    data: { bytesPerSecond: number; transferred: number; total: number; percent: number },
-    formatBytes: (bytes: number) => string
-  ) => string;
-}
-
-type RosiDockTab = 'queue' | 'activity' | 'console';
-
-interface RosiDockModule {
-  initDock: (options?: {
-    initialTab?: string;
-    collapsed?: boolean;
-    onChange?: (state: { tab: RosiDockTab; collapsed: boolean }) => void;
-  }) => void;
-  selectTab: (tab: string, options?: { focus?: boolean }) => void;
-  markUnseen: (tab: string) => void;
-  setTabAvailable: (tab: string, available: boolean) => void;
-  setCollapsed: (collapsed: boolean) => void;
-  getState: () => { tab: RosiDockTab; collapsed: boolean };
-}
-
-interface RosiIconsModule {
-  icon: (name: string, size?: number, className?: string) => SVGSVGElement | null;
-  initializeIcons: (root?: ParentNode) => void;
-  parseStatus: (text: string) => {
-    icon: string | null;
-    tone: 'danger' | 'success' | 'warning' | null;
-    text: string;
-  };
-  renderStatus: (target: HTMLElement, text: string) => void;
-}
-
-interface RosiModules {
-  icons?: RosiIconsModule;
-  ui?: RosiUiModule;
-  dock?: RosiDockModule;
-  downloads?: RosiDownloadsModule;
-  activity?: RosiActivityModule;
-  queue?: RosiQueueModule;
-  settings?: RosiSettingsModule;
-  updates?: RosiUpdatesModule;
-}
-
 interface Window {
   __ROSI_RENDERER_STARTUP_READY__: Promise<void>;
   api: RosiRendererApi;
-  rosiModules?: RosiModules;
 }
 
 interface HTMLButtonElement {
