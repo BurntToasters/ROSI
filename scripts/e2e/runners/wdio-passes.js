@@ -53,7 +53,7 @@ export function round2RendererScenario(pass, runnerFailure = null) {
  * The environment every WebdriverIO pass shares: media server, fixture hashes,
  * TLS fixtures, and DNS maps for the security scenarios.
  */
-export function buildSharedWdioEnv({ ffmpeg, server, fixtures }) {
+export function buildSharedWdioEnv({ ffmpeg, ffprobe, server, fixtures }) {
   return {
     // Hardening check: point only the app at a temp dir such as a noexec
     // tmpfs, while the profile stays on an exec-capable filesystem.
@@ -96,7 +96,9 @@ export function buildSharedWdioEnv({ ffmpeg, server, fixtures }) {
       "security-untrusted-server-key.pem",
     ),
     ROSI_E2E_ALLOW_LOOPBACK: "1",
-    ROSI_E2E_FFPROBE: ffmpeg ? (companionFfprobe(ffmpeg.binary) ?? "") : "",
+    ROSI_E2E_FFPROBE: ffmpeg
+      ? (ffprobe ?? companionFfprobe(ffmpeg.binary) ?? "")
+      : "",
     // Resolve this deterministic E2E-only alias to loopback. The Rust
     // override is compiled only with the `e2e` feature and is never present
     // in production builds.

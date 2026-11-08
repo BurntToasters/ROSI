@@ -23,6 +23,7 @@ import {
   e2eBackgroundValue,
   gitCommit,
   gitSourceTree,
+  relativeToRepo,
   which,
 } from "./e2e/common.js";
 import {
@@ -30,7 +31,17 @@ import {
   e2eBinaryIsFresh,
   mayReuseE2eBinary,
 } from "./e2e/build.js";
-import { buildMediaRoutes, resolveTestFfmpeg } from "./e2e/fixtures.js";
+import {
+  buildMediaRoutes,
+  companionFfprobe,
+  resolveTestFfmpeg,
+} from "./e2e/fixtures.js";
+import {
+  buildCoreRunPlan,
+  coreArtifactPaths,
+  createE2eRunId,
+  parseE2eProfile,
+} from "./e2e/core.js";
 import {
   e2eOnlySpec,
   e2eRunPlan,
@@ -117,24 +128,103 @@ function reexecUnderXvfb() {
   process.exit(result.status ?? 1);
 }
 
-function writeEvidence(report) {
-  fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
+function writeEvidence(report, { corePaths = null } = {}) {
+  fs.mkdirSync(corePaths?.hostDirectory ?? ARTIFACT_DIR, { recursive: true });
   const body = { ...report };
   const canonical = JSON.stringify(body, null, 2);
   body.reportSha256 = crypto
     .createHash("sha256")
     .update(canonical)
     .digest("hex");
-  const file = path.join(
-    ARTIFACT_DIR,
-    `e2e-report-${process.platform}-${process.arch}.json`,
-  );
-  fs.writeFileSync(file, `${JSON.stringify(body, null, 2)}\n`);
-  console.log(`E2E evidence written to ${path.relative(REPO_ROOT, file)}`);
+  const file = corePaths
+    ? corePaths.reportPath
+    : path.join(
+        ARTIFACT_DIR,
+        `e2e-report-${process.platform}-${process.arch}.json`,
+      );
+  const contents = `${JSON.stringify(body, null, 2)}\n`;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, contents);
+  if (corePaths) {
+    const temporaryLatest = `${corePaths.latestReportPath}.${body.runId}.tmp`;
+    fs.writeFileSync(temporaryLatest, contents);
+    fs.rmSync(corePaths.latestReportPath, { force: true });
+    fs.renameSync(temporaryLatest, corePaths.latestReportPath);
+    console.log(
+      `Core E2E evidence written to ${path.relative(REPO_ROOT, file)} (latest: ${path.relative(REPO_ROOT, corePaths.latestReportPath)})`,
+    );
+  } else {
+    console.log(`E2E evidence written to ${path.relative(REPO_ROOT, file)}`);
+  }
   return file;
 }
 
-async function main() {
+function createTimingState() {
+  return { started: process.hrtime.bigint(), stages: [], printed: false };
+}
+
+function timingFailed(value) {
+  if (Array.isArray(value)) return value.some(timingFailed);
+  return value?.status === "failed";
+}
+
+async function timedStage(timing, name, action) {
+  const started = process.hrtime.bigint();
+  let status = "passed";
+  try {
+    const value = await action();
+    if (timingFailed(value)) status = "failed";
+    return value;
+  } catch (error) {
+    status = "failed";
+    throw error;
+  } finally {
+    timing.stages.push({
+      name,
+      durationMs: Number(process.hrtime.bigint() - started) / 1_000_000,
+      status,
+    });
+  }
+}
+
+function timingReport(timing) {
+  return {
+    totalMs: Number(process.hrtime.bigint() - timing.started) / 1_000_000,
+    stages: timing.stages.map((stage) => ({
+      ...stage,
+      durationMs: Math.round(stage.durationMs * 10) / 10,
+    })),
+  };
+}
+
+function printTimingSummary(timing, error = null) {
+  if (timing.printed) return;
+  const report = timingReport(timing);
+  const slowest = [...report.stages]
+    .sort((left, right) => right.durationMs - left.durationMs)
+    .slice(0, 5)
+    .map(
+      ({ name, durationMs, status }) =>
+        `${name}=${(durationMs / 1000).toFixed(1)}s${status === "failed" ? " (failed)" : ""}`,
+    );
+  console.log(
+    `E2E timing: total ${(report.totalMs / 1000).toFixed(1)}s; slowest stages: ${slowest.join(", ") || "none completed"}${error ? "; invocation failed" : ""}`,
+  );
+  timing.printed = true;
+}
+
+async function main(options = {}) {
+  const timing = createTimingState();
+  try {
+    return await runE2e(timing, options);
+  } catch (error) {
+    printTimingSummary(timing, error);
+    throw error;
+  }
+}
+
+async function runE2e(timing, options = {}) {
+  const profileName = parseE2eProfile(process.argv.slice(2), process.env);
   if (process.env.SKIP_E2E === "1") {
     throw new Error(
       "SKIP_E2E=1 is not allowed. Unset it and run the unpackaged WebdriverIO suite.",
@@ -142,12 +232,17 @@ async function main() {
   }
   const onlySpec = e2eOnlySpec(process.env.ROSI_E2E_ONLY);
   const selectedGroups = parseE2eGroups(process.argv.slice(2), process.env);
-  const availableV5Areas = onlySpec ? [] : discoverV5Fixes();
-  const runPlan = e2eRunPlan({
-    onlySpec,
-    selectedGroups,
-    v5AreaNames: availableV5Areas.map((area) => area.area),
-  });
+  const runId =
+    options.runId ?? (process.env.ROSI_E2E_RUN_ID?.trim() || createE2eRunId());
+  const corePaths = profileName ? coreArtifactPaths({ runId }) : null;
+  const availableV5Areas = onlySpec || profileName ? [] : discoverV5Fixes();
+  const runPlan = profileName
+    ? buildCoreRunPlan()
+    : e2eRunPlan({
+        onlySpec,
+        selectedGroups,
+        v5AreaNames: availableV5Areas.map((area) => area.area),
+      });
   const v5Areas = availableV5Areas.filter((area) =>
     runPlan.v5AreaNames.includes(area.area),
   );
@@ -160,45 +255,90 @@ async function main() {
   });
   if (background !== null) process.env.ROSI_E2E_BACKGROUND = background;
   reexecUnderXvfb();
+  const startedAt = new Date().toISOString();
   // The full suite is release evidence and must always run against a freshly
   // compiled binary. Reuse is limited to an explicitly selected ad-hoc spec.
   const reuseRequested = process.env.ROSI_E2E_REUSE === "1";
-  if (
-    !mayReuseE2eBinary({
+  await timedStage(timing, "build", () => {
+    const reuse = mayReuseE2eBinary({
       onlySpec: Boolean(onlySpec) && selectedGroups.length === 0,
       reuseRequested,
       binaryFresh: !reuseRequested || e2eBinaryIsFresh(),
-    })
-  ) {
-    buildE2eBinary();
-  }
+    });
+    if (!reuse) buildE2eBinary();
+    return { reusedBinary: reuse };
+  });
 
-  const ffmpeg = resolveTestFfmpeg();
-  if (!ffmpeg && process.env.ROSI_E2E_REQUIRE_FFMPEG === "1") {
-    // CI sets this so conversion/merge scenarios cannot silently turn into
-    // skips on a platform whose runner lacks FFmpeg.
-    console.error(
-      "ROSI_E2E_REQUIRE_FFMPEG=1 but no FFmpeg was found (bundled, ROSI_E2E_FFMPEG, or PATH).",
-    );
-    process.exit(1);
+  let ffmpeg;
+  let ffprobe;
+  let fixtures;
+  let profile;
+  let server;
+  let screenshotDir;
+  let sharedEnv;
+  try {
+    await timedStage(timing, "fixtures", async () => {
+      ffmpeg = resolveTestFfmpeg();
+      if (!ffmpeg && runPlan.requiredTools?.includes("ffmpeg")) {
+        throw new Error("Core E2E requires a working FFmpeg executable");
+      }
+      if (runPlan.requiredTools?.includes("ffprobe")) {
+        ffprobe = companionFfprobe(ffmpeg.binary) ?? which("ffprobe");
+        if (!ffprobe || !fs.existsSync(ffprobe)) {
+          throw new Error("Core E2E requires a working FFprobe executable");
+        }
+        const probe = spawnSync(ffprobe, ["-version"], {
+          encoding: "utf8",
+          windowsHide: true,
+        });
+        if (probe.status !== 0) {
+          throw new Error(
+            `Core E2E could not run FFprobe: ${probe.stderr || probe.error?.message || "unknown error"}`,
+          );
+        }
+      } else {
+        ffprobe = ffmpeg
+          ? (companionFfprobe(ffmpeg.binary) ?? undefined)
+          : undefined;
+      }
+      if (!ffmpeg && process.env.ROSI_E2E_REQUIRE_FFMPEG === "1") {
+        throw new Error(
+          "ROSI_E2E_REQUIRE_FFMPEG=1 but no FFmpeg was found (bundled, ROSI_E2E_FFMPEG, or PATH).",
+        );
+      }
+      screenshotDir = corePaths
+        ? corePaths.screenshotDir
+        : path.join(
+            ARTIFACT_DIR,
+            "screenshots",
+            `${process.platform}-${process.arch}`,
+          );
+      // Full-run screenshots start empty; core paths are unique per invocation.
+      if (!corePaths) {
+        fs.rmSync(screenshotDir, { recursive: true, force: true });
+      }
+      fs.mkdirSync(screenshotDir, { recursive: true });
+      profile = createE2eProfile({ ffmpegPath: ffmpeg?.customPath ?? "" });
+      const fixtureDir = path.join(profile.profileDir, "fixtures");
+      fs.mkdirSync(fixtureDir, { recursive: true });
+      const builtFixtures = buildMediaRoutes({ ffmpeg, fixtureDir });
+      fixtures = builtFixtures.fixtures;
+      server = await startMediaServer(builtFixtures.routes);
+      sharedEnv = buildSharedWdioEnv({ ffmpeg, ffprobe, server, fixtures });
+      if (ownerEnabled("security")) {
+        fs.rmSync(sharedEnv.ROSI_E2E_PROXY_TRACE, { force: true });
+      }
+      return { fixtureCount: Object.keys(fixtures).length };
+    });
+  } catch (error) {
+    await server?.close();
+    throw error;
   }
-  const screenshotDir = path.join(
-    ARTIFACT_DIR,
-    "screenshots",
-    `${process.platform}-${process.arch}`,
-  );
-  // Start empty so the report never lists a PNG left over from an older run.
-  fs.rmSync(screenshotDir, { recursive: true, force: true });
-  const profile = createE2eProfile({ ffmpegPath: ffmpeg?.customPath ?? "" });
-  const fixtureDir = path.join(profile.profileDir, "fixtures");
-  fs.mkdirSync(fixtureDir, { recursive: true });
-  const { fixtures, routes } = buildMediaRoutes({ ffmpeg, fixtureDir });
-  const server = await startMediaServer(routes);
-  const startedAt = new Date().toISOString();
-  const sharedEnv = buildSharedWdioEnv({ ffmpeg, server, fixtures });
-  fs.rmSync(sharedEnv.ROSI_E2E_PROXY_TRACE, { force: true });
   const runRecordedPass = (pass, env) =>
-    runRecordedWdioPass(pass, env, sharedEnv);
+    timedStage(timing, `wdio:${pass.name}`, async () => {
+      await runRecordedWdioPass(pass, env, sharedEnv);
+      return pass;
+    });
 
   const mainPass = {
     name: "main",
@@ -287,13 +427,20 @@ async function main() {
         ROSI_STATE_REPAIR_RESULTS: mainPass.stateRepairResultsPath,
         ROSI_E2E_LEGACY_V4: JSON.stringify(mainPass.seed),
         ROSI_E2E_SCREENSHOTS: screenshotDir,
+        ...(runPlan.mainMochaTitles
+          ? {
+              ROSI_E2E_MOCHA_TITLES: JSON.stringify(
+                runPlan.mainMochaTitles.map((entry) => entry.title),
+              ),
+            }
+          : {}),
       });
     }
   } catch (error) {
     // Only an error outside the pass runs reaches here.
     failure = error instanceof Error ? error.message : String(error);
   } finally {
-    await server.close();
+    await server?.close();
   }
   // Every WebdriverIO pass that failed is part of the gate failure. Round2 and
   // v5-fixes passes are not listed here: their failed scenarios below carry
@@ -325,28 +472,34 @@ async function main() {
     onlySpec || !ownerEnabled("process-repairs")
       ? []
       : [
-          runDownloadProcessRepairs({
-            ffmpeg,
-            binary: e2eBinaryPath(),
-            suiteStartedAt: startedAt,
-          }),
-          runDownloadProcessRepairs({
-            ffmpeg,
-            binary: e2eBinaryPath(),
-            suiteStartedAt: startedAt,
-            name: "audit3-native-targeted",
-            spec: "./download-process-targeted.spec.js",
-          }),
+          await timedStage(timing, "runner:download-process-repairs", () =>
+            runDownloadProcessRepairs({
+              ffmpeg,
+              binary: e2eBinaryPath(),
+              suiteStartedAt: startedAt,
+            }),
+          ),
+          await timedStage(timing, "runner:audit3-native-targeted", () =>
+            runDownloadProcessRepairs({
+              ffmpeg,
+              binary: e2eBinaryPath(),
+              suiteStartedAt: startedAt,
+              name: "audit3-native-targeted",
+              spec: "./download-process-targeted.spec.js",
+            }),
+          ),
         ];
   const round2NativeScenarios =
     onlySpec || !ownerEnabled("round2-native")
       ? []
       : [
-          runRound2NativeRepairs({
-            ffmpeg,
-            binary: e2eBinaryPath(),
-            suiteStartedAt: startedAt,
-          }),
+          await timedStage(timing, "runner:round2-native", () =>
+            runRound2NativeRepairs({
+              ffmpeg,
+              binary: e2eBinaryPath(),
+              suiteStartedAt: startedAt,
+            }),
+          ),
         ];
   const round2RendererScenarios = round2RendererPass
     ? [round2RendererScenario(round2RendererPass, round2RendererFailure)]
@@ -354,31 +507,55 @@ async function main() {
   const persistenceScenarios =
     onlySpec || !ownerEnabled("persistence")
       ? []
-      : [runLongTermPersistenceRepairs()];
+      : [
+          await timedStage(timing, "runner:long-term-persistence", () =>
+            runLongTermPersistenceRepairs(),
+          ),
+        ];
   const binary = e2eBinaryPath();
-  const auditScenarios = onlySpec
-    ? []
-    : [
-        ...(ownerEnabled("audit4-repairs")
-          ? [runAudit4Repairs({ ffmpeg, binary, suiteStartedAt: startedAt })]
-          : []),
-        ...(ownerEnabled("audit-v5-beta2")
-          ? [runAuditV5Probes({ ffmpeg, binary, suiteStartedAt: startedAt })]
-          : []),
-        ...(ownerEnabled("round3-renderer") ? [runRound3Renderer()] : []),
-        ...(ownerEnabled("v5-fixes") ? v5Areas : []).map((area) => {
-          const pass = v5Passes.find((candidate) => candidate.area === area);
-          const runnerResult = area.runner
-            ? runV5FixesRunner(area, binary, ffmpeg)
-            : null;
-          return v5AreaScenario(
-            area,
-            pass,
-            runnerResult,
-            Date.parse(startedAt),
-          );
+  const auditScenarios = [];
+  if (!onlySpec && ownerEnabled("audit4-repairs")) {
+    auditScenarios.push(
+      await timedStage(timing, "runner:audit4-repairs", () =>
+        runAudit4Repairs({ ffmpeg, binary, suiteStartedAt: startedAt }),
+      ),
+    );
+  }
+  if (!onlySpec && ownerEnabled("audit-v5-beta2")) {
+    auditScenarios.push(
+      await timedStage(timing, "runner:audit-v5-beta2", () =>
+        runAuditV5Probes({ ffmpeg, binary, suiteStartedAt: startedAt }),
+      ),
+    );
+  }
+  if (!onlySpec && ownerEnabled("round3-renderer")) {
+    auditScenarios.push(
+      await timedStage(timing, "runner:round3-renderer", () =>
+        runRound3Renderer({
+          snapshotPath: corePaths
+            ? path.join(corePaths.runDir, "renderer-dom-checks.json")
+            : null,
         }),
-      ];
+      ),
+    );
+  }
+  if (!onlySpec && ownerEnabled("v5-fixes")) {
+    for (const area of v5Areas) {
+      const pass = v5Passes.find((candidate) => candidate.area === area);
+      const scenario = area.runner
+        ? await timedStage(timing, `runner:v5-fixes/${area.area}`, () => {
+            const runnerResult = runV5FixesRunner(area, binary, ffmpeg);
+            return v5AreaScenario(
+              area,
+              pass,
+              runnerResult,
+              Date.parse(startedAt),
+            );
+          })
+        : v5AreaScenario(area, pass, null, Date.parse(startedAt));
+      auditScenarios.push(scenario);
+    }
+  }
   const gateScenarios = [
     ...round2RendererScenarios,
     ...processRepairScenarios,
@@ -445,75 +622,108 @@ async function main() {
     fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
   );
   const scenarioProblems =
-    fullSuite || selectedGroups.length > 0
+    fullSuite || selectedGroups.length > 0 || profileName !== null
       ? scenarioOutcomeProblems(scenarios, process.platform, expectedScenarios)
       : onlyRunScenarioProblems({
           onlySpec,
           scenarios,
           platform: process.platform,
         });
-  const evidence = writeEvidence({
-    app: "ROSI",
-    fullSuite,
-    // Present only on partial runs, so full-gate evidence keeps its shape.
-    ...(onlySpec ? { onlySpec } : {}),
-    ...(selectedGroups.length > 0
-      ? {
-          selectedGroups,
-          selectedOwners: runPlan.enabledOwners,
-        }
-      : {}),
-    expectedScenarios,
-    version: packageJson.version,
-    commit: gitCommit(),
-    sourceTree: gitSourceTree(),
-    packageLockSha256: sha256(
-      fs.readFileSync(path.join(REPO_ROOT, "package-lock.json")),
-    ),
-    cargoLockSha256: sha256(
-      fs.readFileSync(path.join(REPO_ROOT, "src-tauri", "Cargo.lock")),
-    ),
-    platform: process.platform,
-    arch: process.arch,
-    node: process.version,
-    binarySha256: sha256(fs.readFileSync(e2eBinaryPath())),
-    startedAt,
-    finishedAt: new Date().toISOString(),
-    ffmpeg: ffmpeg
-      ? { source: ffmpeg.source, binary: path.basename(ffmpeg.binary) }
-      : null,
-    appTmpdir: process.env.ROSI_E2E_APP_TMPDIR || null,
-    fixtures,
-    scenarios,
-    // Each WebdriverIO pass that ran, with its own outcome. Scenario results
-    // above come from the pass results files, so a failed pass still reports
-    // whatever scenarios it wrote.
-    wdioPasses: wdioPasses
-      .filter((pass) => pass.status !== "pending")
-      .map(({ name, status, reason }) => ({ name, status, reason })),
-    scenarioGroups: groupedScenarioResults(scenarios, expectedScenarios),
-    missingScenarios: missing,
-    scenarioProblems,
-    legacyImportCoverage,
-    uncoveredLegacyImportFailureModes: uncovered,
-    screenshots,
-    screenshotProblems,
-    failure,
-    passed:
-      !failure &&
-      missing.length === 0 &&
-      scenarioProblems.length === 0 &&
-      uncovered.length === 0 &&
-      screenshotProblems.length === 0,
-    mediaRequests: server.requests.length,
-    legacyPassLogTails: Object.fromEntries(
-      legacyPasses.map((pass) => [pass.legacyCase, readLogTail(pass, 15)]),
-    ),
-    appLogTail: readLogTail(mainPass, 40),
+  const legacyPassLogTails = Object.fromEntries(
+    legacyPasses.map((pass) => [pass.legacyCase, readLogTail(pass, 15)]),
+  );
+  const appLogTail = readLogTail(mainPass, 40);
+  await timedStage(timing, "cleanup:profiles", () => {
+    for (const pass of wdioPasses) {
+      cleanupProfile(pass.profile.profileDir);
+    }
+    return {};
   });
-  for (const pass of wdioPasses) {
-    cleanupProfile(pass.profile.profileDir);
-  }
+  const evidence = writeEvidence(
+    {
+      app: "ROSI",
+      fullSuite,
+      runId,
+      ...(profileName ? { profile: profileName } : {}),
+      ...(corePaths
+        ? {
+            runDirectory: relativeToRepo(corePaths.runDir),
+            reportPath: relativeToRepo(corePaths.reportPath),
+          }
+        : {}),
+      // Present only on partial runs, so full-gate evidence keeps its shape.
+      ...(onlySpec ? { onlySpec } : {}),
+      ...(selectedGroups.length > 0
+        ? {
+            selectedGroups,
+            selectedOwners: runPlan.enabledOwners,
+          }
+        : {}),
+      expectedScenarios,
+      version: packageJson.version,
+      commit: gitCommit(),
+      sourceTree: gitSourceTree(),
+      packageLockSha256: sha256(
+        fs.readFileSync(path.join(REPO_ROOT, "package-lock.json")),
+      ),
+      cargoLockSha256: sha256(
+        fs.readFileSync(path.join(REPO_ROOT, "src-tauri", "Cargo.lock")),
+      ),
+      platform: process.platform,
+      arch: process.arch,
+      node: process.version,
+      binarySha256: sha256(fs.readFileSync(e2eBinaryPath())),
+      startedAt,
+      ...(runPlan.requiredTools
+        ? { requiredTools: runPlan.requiredTools }
+        : {}),
+      ffmpeg: ffmpeg
+        ? { source: ffmpeg.source, binary: path.basename(ffmpeg.binary) }
+        : null,
+      ...(profileName === "core"
+        ? { ffprobe: { binary: path.basename(ffprobe) } }
+        : {}),
+      appTmpdir: process.env.ROSI_E2E_APP_TMPDIR || null,
+      fixtures,
+      scenarios,
+      // Each WebdriverIO pass that ran, with its own outcome. Scenario results
+      // above come from the pass results files, so a failed pass still reports
+      // whatever scenarios it wrote.
+      wdioPasses: wdioPasses
+        .filter((pass) => pass.status !== "pending")
+        .map(({ name, status, reason }) => ({ name, status, reason })),
+      scenarioGroups: groupedScenarioResults(scenarios, expectedScenarios),
+      missingScenarios: missing,
+      scenarioProblems,
+      legacyImportCoverage,
+      uncoveredLegacyImportFailureModes: uncovered,
+      screenshots,
+      screenshotProblems,
+      failure,
+      passed:
+        !failure &&
+        missing.length === 0 &&
+        scenarioProblems.length === 0 &&
+        uncovered.length === 0 &&
+        screenshotProblems.length === 0,
+      mediaRequests: server.requests.length,
+      legacyPassLogTails,
+      appLogTail,
+      finishedAt: new Date().toISOString(),
+      timings: timingReport(timing),
+    },
+    { corePaths },
+  );
+  printTimingSummary(
+    timing,
+    failure ||
+      missing.length > 0 ||
+      scenarioProblems.length > 0 ||
+      uncovered.length > 0 ||
+      screenshotProblems.length > 0
+      ? new Error("E2E validation failed")
+      : null,
+  );
   if (failure) throw new Error(`${failure} (evidence: ${evidence})`);
   if (missing.length > 0) {
     throw new Error(
@@ -544,7 +754,8 @@ if (
   Promise.resolve()
     .then(() => {
       const times = parseRepeat(process.argv.slice(2));
-      return times > 1 ? runStability(times, main) : main();
+      const profile = parseE2eProfile(process.argv.slice(2), process.env);
+      return times > 1 ? runStability(times, main, { profile }) : main();
     })
     .catch((error) => {
       console.error(error instanceof Error ? error.message : String(error));

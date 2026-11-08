@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { exactMochaTitlePattern } from "../scripts/e2e/core.js";
 
 const binary = process.env.ROSI_E2E_BINARY;
 if (!binary) {
@@ -38,6 +39,9 @@ const processRepairRun =
   process.env.ROSI_E2E_PROCESS_REPAIRS === "1" &&
   specs.length === 1 &&
   LONG_PROCESS_SPECS.has(specs[0]);
+const selectedMochaTitles = process.env.ROSI_E2E_MOCHA_TITLES
+  ? JSON.parse(process.env.ROSI_E2E_MOCHA_TITLES)
+  : null;
 
 async function requestGracefulAppShutdown() {
   const activeBrowser = globalThis.browser;
@@ -121,6 +125,9 @@ export const config = {
   reporters: ["spec"],
   mochaOpts: {
     ui: "bdd",
+    ...(selectedMochaTitles
+      ? { grep: new RegExp(exactMochaTitlePattern(selectedMochaTitles)) }
+      : {}),
     // Give the isolated process-repair specs a bounded six-minute ceiling
     // without changing the timeout for the rest of the GUI suite.
     timeout: processRepairRun ? 360_000 : 180_000,

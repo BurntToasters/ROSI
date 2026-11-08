@@ -791,6 +791,71 @@
       "allowedSkips": []
     }
   ],
+  "profiles": {
+    "core": {
+      "mainScenarioIds": [
+        "launch",
+        "settings-sidebar",
+        "settings-persistence",
+        "download-profiles",
+        "url-safety",
+        "manual-download",
+        "unicode-download",
+        "queue",
+        "cancel",
+        "conversion",
+        "audio-extract",
+        "preview",
+        "formats",
+        "merge-download",
+        "queue-management",
+        "queue-cancel",
+        "dock-tabs",
+        "small-window",
+        "browser-choice",
+        "ui-screenshots",
+        "settings-controls",
+        "queue-controls",
+        "download-again-quickly",
+        "activity-clear",
+        "close-flow"
+      ],
+      "mainMochaTitles": {
+        "launch": "launches with the backend bridge and skips first-run setup",
+        "settings-sidebar": "opens and closes the settings sidebar",
+        "settings-persistence": "validates and persists settings through the Rust backend",
+        "download-profiles": "shows download profiles on the card and migrates beta settings",
+        "url-safety": "rejects private-network and non-http URLs in the backend",
+        "manual-download": "downloads a file through the UI with the bundled yt-dlp sidecar",
+        "unicode-download": "downloads a file with a non-ASCII title",
+        "queue": "runs the queue to completion and persists it",
+        "cancel": "cancels an in-flight download and stops the yt-dlp process",
+        "conversion": "converts a download with FFmpeg",
+        "audio-extract": "extracts audio through yt-dlp with the configured FFmpeg",
+        "preview": "previews media metadata through the UI",
+        "formats": "lists available formats",
+        "merge-download": "downloads separate video and audio and merges them",
+        "queue-management": "reorders, retries, and removes queue items",
+        "queue-cancel": "cancels a running queue with one outcome per item",
+        "dock-tabs": "switches Queue, Activity, and Console in one dock and remembers the tab",
+        "small-window": "keeps the UI reachable in a small window",
+        "browser-choice": "keeps the cookie browser choice across a reload",
+        "ui-screenshots": "captures the key UI states as screenshots",
+        "settings-controls": "saves every settings control through the real UI",
+        "queue-controls": "runs the queue entirely from its controls",
+        "download-again-quickly": "starts a new download right after one finishes",
+        "activity-clear": "clears download activity",
+        "close-flow": "flushes pending settings and closes the window"
+      },
+      "completeOwners": [
+        "state-repairs",
+        "round2-renderer",
+        "offline-queue",
+        "round3-renderer"
+      ],
+      "requiredTools": ["ffmpeg", "ffprobe"]
+    }
+  },
   "dynamicV5Fixes": {
     "owner": "v5-fixes",
     "groupAreas": {
