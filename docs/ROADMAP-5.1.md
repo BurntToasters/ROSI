@@ -431,9 +431,9 @@ only on macOS arm64. Before the port, write failure-mode rows for
 
 | Symbol                                                    | File and line                 | Role                                                                                  |
 | --------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------- |
-| `QUEUE`: `OnceLock<Mutex<QueueState>>`, read by `state()` | `queue.rs:42`, `queue.rs:197` | Queue items and revision.                                                             |
-| `PERSISTENCE` (inside `persistence()`)                    | `queue.rs:180`                | Queue and backup file paths and the save function.                                    |
-| `WRITER` (inside `writer()`)                              | `queue.rs:328`                | Sender to the one thread that writes queue files.                                     |
+| `QUEUE`: `OnceLock<Mutex<QueueState>>`, read by `state()` | `queue.rs:42`, `queue.rs:197` | **Done (B7 part A).** Removed. `QueueState` is a local in `coordinator::run`; reads are `Snapshot` and `IsRunning` requests. |
+| `PERSISTENCE` (inside `persistence()`)                    | `queue.rs:180`                | **Kept.** Configuration only: file paths and the save function. Its `revisions` mutex serializes the writer's `persist` and `flush`, and the writer tests depend on that, so it stays. |
+| `WRITER` (inside `writer()`)                              | `queue.rs:328`                | **Kept.** A `OnceLock` holding the writer's channel sender, not shared state. |
 | `ACTIVE`: `Mutex<Option<Session>>`, read by `lock()`      | `downloader.rs:82`, `:91`     | The session slot.                                                                     |
 | `ACTIVE_PRESENT`: `AtomicBool`                            | `downloader.rs:85`            | Mirror of whether `ACTIVE` holds a session.                                           |
 | `STARTUP`: `Mutex<()>`                                    | `downloader.rs:87`            | Serializes `start_download`. First in the lock chain described at `downloader.rs:18`. |

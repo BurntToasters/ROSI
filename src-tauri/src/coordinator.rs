@@ -1,10 +1,10 @@
 //! Single owner of queue transitions and of session result routing.
 //!
-//! One thread receives every command in arrival order. It applies each queue
-//! transition (admission, start, stop, cancel, clear, item results, claims)
-//! to the queue state, publishes the queue, and answers the caller over a
-//! reply channel. It also routes each session's terminal result to the sink
-//! registered for that session id, at most once.
+//! One thread receives every command in arrival order. It owns the queue
+//! state, applies each queue transition (admission, start, stop, cancel,
+//! clear, item results, claims) to it, publishes the queue, and answers the
+//! caller over a reply channel. It also routes each session's terminal result
+//! to the sink registered for that session id, at most once.
 //!
 //! The thread never waits on child processes, disk, settings, or another
 //! thread's reply. Work that needs those stays with the caller:
@@ -14,7 +14,9 @@
 //!   Tauri handlers and the runner thread;
 //! - durable writes stay with the queue writer, which asks for snapshots here.
 //!
-//! Only this thread mutates `QueueState`. Readers take its lock briefly.
+//! Only this thread touches `QueueState`. Other threads read it with a
+//! `Snapshot` or `IsRunning` request. Code on this thread takes
+//! `&mut QueueState` directly and never sends a request to itself.
 
 use crate::constants::MAX_QUEUE_SIZE;
 use crate::downloader;
@@ -27,7 +29,7 @@ use crate::types::{
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
-use std::sync::{MutexGuard, OnceLock};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 /// Longest a start waits for the previous runner to exit after its run drained.
@@ -104,9 +106,15 @@ pub enum QueueCommand {
     ClearItems {
         reply: Sender<()>,
     },
+    /// Replies with the revision and a copy of the items. `bump` also advances
+    /// the revision, which only the writer's flush asks for.
     Snapshot {
         bump: bool,
         reply: Sender<(u64, Vec<QueueItem>)>,
+    },
+    /// Whether a queue run is in progress.
+    IsRunning {
+        reply: Sender<bool>,
     },
     /// The runner's next item, or `None` when the run is over.
     ClaimNext {
@@ -162,12 +170,24 @@ fn commands() -> &'static Sender<Command> {
     static COORDINATOR: OnceLock<Sender<Command>> = OnceLock::new();
     COORDINATOR.get_or_init(|| {
         let (sender, receiver) = channel();
-        std::thread::spawn(move || run(receiver));
+        // The persisted queue is read here, on the first caller, before the
+        // thread takes ownership of it.
+        let items = queue::load_persisted();
+        std::thread::spawn(move || run(receiver, items));
         sender
     })
 }
 
-fn run(receiver: Receiver<Command>) {
+/// Start the coordinator and load the persisted queue. Called at startup.
+pub fn init() {
+    let _ = commands();
+}
+
+fn run(receiver: Receiver<Command>, items: Vec<QueueItem>) {
+    let mut queue = QueueState {
+        items,
+        ..QueueState::default()
+    };
     let mut coordinator = Coordinator::default();
     loop {
         let next_deadline = coordinator
@@ -182,11 +202,11 @@ fn run(receiver: Receiver<Command>) {
             None => receiver.recv().map_err(|_| RecvTimeoutError::Disconnected),
         };
         match received {
-            Ok(command) => coordinator.handle(command),
+            Ok(command) => coordinator.handle(command, &mut queue),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
         }
-        coordinator.settle_starts(Instant::now());
+        coordinator.settle_starts(&mut queue, Instant::now());
     }
 }
 
@@ -229,11 +249,24 @@ pub fn await_finalized(session_id: Option<u64>) {
     let _ = request(|reply| Command::AwaitFinalized { session_id, reply });
 }
 
-/// Publish the queue after a transition. The guard is released before the
-/// event is emitted, so the emit never runs under the state lock.
-fn commit(mut queue: MutexGuard<'_, QueueState>) {
-    let (revision, items) = queue::revisioned_snapshot(&mut queue, true);
-    drop(queue);
+/// Copy of the queue items in queue order. Empty when the coordinator is not
+/// running.
+pub fn items() -> Vec<QueueItem> {
+    request(|reply| Command::Queue(QueueCommand::Snapshot { bump: false, reply }))
+        .map(|(_, items)| items)
+        .unwrap_or_default()
+}
+
+/// Whether a queue run is in progress. False when the coordinator is not
+/// running.
+pub fn is_running() -> bool {
+    request(|reply| Command::Queue(QueueCommand::IsRunning { reply })).unwrap_or(false)
+}
+
+/// Publish the queue after a transition. Only this thread commits, so the
+/// emit runs without any lock held.
+fn commit(queue: &mut QueueState) {
+    let (revision, items) = queue::revisioned_snapshot(queue, true);
     publish(revision, items);
 }
 
@@ -288,8 +321,11 @@ fn evaluate_start(queue: &mut QueueState, timed_out: bool) -> Option<IpcResult<S
     Some(ipc::ok(Started { started: true }))
 }
 
-fn admit(pending: Vec<QueueItem>, mut skipped: usize) -> IpcResult<AddResult> {
-    let mut queue = queue::state();
+fn admit(
+    queue: &mut QueueState,
+    pending: Vec<QueueItem>,
+    mut skipped: usize,
+) -> IpcResult<AddResult> {
     let nonterminal: HashSet<String> = queue
         .items
         .iter()
@@ -336,8 +372,7 @@ fn admit(pending: Vec<QueueItem>, mut skipped: usize) -> IpcResult<AddResult> {
     ipc::ok(AddResult { added, skipped })
 }
 
-fn remove(id: &str) -> IpcResult<()> {
-    let mut queue = queue::state();
+fn remove(queue: &mut QueueState, id: &str) -> IpcResult<()> {
     let Some(index) = queue.items.iter().position(|item| item.id == id) else {
         return ipc::err(NOT_AVAILABLE, "Queue item not found.");
     };
@@ -352,8 +387,7 @@ fn remove(id: &str) -> IpcResult<()> {
     ipc::ok(())
 }
 
-fn retry(id: &str) -> IpcResult<()> {
-    let mut queue = queue::state();
+fn retry(queue: &mut QueueState, id: &str) -> IpcResult<()> {
     let Some(item) = queue.items.iter_mut().find(|item| item.id == id) else {
         return ipc::err(NOT_AVAILABLE, "Queue item not found.");
     };
@@ -369,8 +403,7 @@ fn retry(id: &str) -> IpcResult<()> {
     ipc::ok(())
 }
 
-fn reorder(id: &str, up: bool) -> IpcResult<()> {
-    let mut queue = queue::state();
+fn reorder(queue: &mut QueueState, id: &str, up: bool) -> IpcResult<()> {
     let Some(index) = queue.items.iter().position(|item| item.id == id) else {
         return ipc::err(NOT_AVAILABLE, "Queue item not found.");
     };
@@ -408,8 +441,7 @@ fn reorder(id: &str, up: bool) -> IpcResult<()> {
     ipc::ok(())
 }
 
-fn clear_finished() -> usize {
-    let mut queue = queue::state();
+fn clear_finished(queue: &mut QueueState) -> usize {
     let before = queue.items.len();
     queue
         .items
@@ -422,7 +454,7 @@ fn clear_finished() -> usize {
 }
 
 impl Coordinator {
-    fn handle(&mut self, command: Command) {
+    fn handle(&mut self, command: Command, queue: &mut QueueState) {
         match command {
             Command::Register { session_id, sink } => {
                 self.sinks.insert(session_id, sink);
@@ -453,7 +485,7 @@ impl Coordinator {
                     self.awaits.push((pending, reply));
                 }
             }
-            Command::Queue(command) => self.handle_queue(command),
+            Command::Queue(command) => self.handle_queue(command, queue),
         }
     }
 
@@ -472,29 +504,29 @@ impl Coordinator {
         self.awaits = waiting;
     }
 
-    fn handle_queue(&mut self, command: QueueCommand) {
+    fn handle_queue(&mut self, command: QueueCommand, queue: &mut QueueState) {
         match command {
             QueueCommand::Admit {
                 pending,
                 skipped,
                 reply,
             } => {
-                let _ = reply.send(admit(pending, skipped));
+                let _ = reply.send(admit(queue, pending, skipped));
             }
             QueueCommand::Remove { id, reply } => {
-                let _ = reply.send(remove(&id));
+                let _ = reply.send(remove(queue, &id));
             }
             QueueCommand::Retry { id, reply } => {
-                let _ = reply.send(retry(&id));
+                let _ = reply.send(retry(queue, &id));
             }
             QueueCommand::Reorder { id, up, reply } => {
-                let _ = reply.send(reorder(&id, up));
+                let _ = reply.send(reorder(queue, &id, up));
             }
             QueueCommand::ClearFinished { reply } => {
-                let _ = reply.send(clear_finished());
+                let _ = reply.send(clear_finished(queue));
             }
             QueueCommand::Start { reply } => {
-                let answer = evaluate_start(&mut queue::state(), false);
+                let answer = evaluate_start(queue, false);
                 match answer {
                     Some(result) => {
                         let _ = reply.send(result);
@@ -502,21 +534,18 @@ impl Coordinator {
                     None => self.starts.push((reply, Instant::now() + RUNNER_EXIT_WAIT)),
                 }
             }
-            QueueCommand::Stop { reply } => self.stop(reply),
+            QueueCommand::Stop { reply } => self.stop(queue, reply),
             QueueCommand::StopCancelSettled => {
                 self.stop.cancels_outstanding = self.stop.cancels_outstanding.saturating_sub(1);
-                self.finish_stop_if_ready();
+                self.finish_stop_if_ready(queue);
             }
             QueueCommand::CancelBegin { reply } => {
-                let mut queue = queue::state();
                 queue.cancelled = true;
                 queue.running = false;
                 let active = queue.active_item_id.is_some();
-                drop(queue);
                 let _ = reply.send(active);
             }
             QueueCommand::CancelApply { completions, reply } => {
-                let mut queue = queue::state();
                 for (id, completion) in &completions {
                     if let Some(item) = queue
                         .items
@@ -531,31 +560,28 @@ impl Coordinator {
                 let _ = reply.send(());
             }
             QueueCommand::ClearBegin { reply } => {
-                let mut queue = queue::state();
                 let running = queue.running;
                 if running {
                     queue.cancelled = true;
                     queue.running = false;
                     queue.active_item_id = None;
                 }
-                drop(queue);
                 let _ = reply.send(running);
             }
             QueueCommand::ClearItems { reply } => {
-                let mut queue = queue::state();
                 queue.items.clear();
                 commit(queue);
                 let _ = reply.send(());
             }
             QueueCommand::Snapshot { bump, reply } => {
-                let mut queue = queue::state();
-                let snapshot = queue::revisioned_snapshot(&mut queue, bump);
-                drop(queue);
+                let snapshot = queue::revisioned_snapshot(queue, bump);
                 let _ = reply.send(snapshot);
             }
+            QueueCommand::IsRunning { reply } => {
+                let _ = reply.send(queue.running);
+            }
             QueueCommand::ClaimNext { reply } => {
-                let mut queue = queue::state();
-                let next = queue::claim_next_in_state(&mut queue);
+                let next = queue::claim_next_in_state(queue);
                 commit(queue);
                 let _ = reply.send(next);
             }
@@ -564,28 +590,22 @@ impl Coordinator {
                 request,
                 reply,
             } => {
-                let mut queue = queue::state();
                 if let Some(current) = queue.items.iter_mut().find(|entry| entry.id == item_id) {
                     current.request = Some(*request);
                 }
-                let progress = queue::progress_for(&queue, &item_id);
-                drop(queue);
+                let progress = queue::progress_for(queue, &item_id);
                 let _ = reply.send(progress);
             }
             QueueCommand::Attempt { item_id, reply } => {
-                let queue = queue::state();
                 let wanted = queue.running
                     && !queue.cancelled
                     && queue.items.iter().any(|entry| {
                         entry.id == item_id && entry.status == QueueStatus::Downloading
                     });
-                drop(queue);
                 let _ = reply.send(wanted);
             }
             QueueCommand::SessionStarted { reply } => {
-                let queue = queue::state();
                 let cancel = queue.cancelled.then_some(!queue.stopping);
-                drop(queue);
                 let _ = reply.send(cancel);
             }
             QueueCommand::ItemFinished {
@@ -593,8 +613,7 @@ impl Coordinator {
                 completion,
                 reply,
             } => {
-                let mut queue = queue::state();
-                queue::apply_completion_in_state(&mut queue, &item_id, &completion);
+                queue::apply_completion_in_state(queue, &item_id, &completion);
                 commit(queue);
                 let _ = reply.send(());
             }
@@ -603,24 +622,21 @@ impl Coordinator {
                 completion,
                 reply,
             } => {
-                let recorded = item_unstarted(&item_id, &completion);
+                let recorded = item_unstarted(queue, &item_id, &completion);
                 let _ = reply.send(recorded);
             }
             QueueCommand::RunnerExited => {
-                queue::state().runner_alive = false;
-                self.finish_stop_if_ready();
+                queue.runner_alive = false;
+                self.finish_stop_if_ready(queue);
             }
         }
     }
 
-    fn stop(&mut self, reply: Sender<()>) {
-        let interrupted = {
-            let mut queue = queue::state();
-            queue.cancelled = true;
-            queue.running = false;
-            queue.stopping = true;
-            queue.active_item_id.take()
-        };
+    fn stop(&mut self, queue: &mut QueueState, reply: Sender<()>) {
+        queue.cancelled = true;
+        queue.running = false;
+        queue.stopping = true;
+        let interrupted = queue.active_item_id.take();
         if interrupted.is_some() {
             self.stop.interrupted = interrupted;
         }
@@ -633,16 +649,15 @@ impl Coordinator {
             downloader::kill_all_processes();
             submit(Command::Queue(QueueCommand::StopCancelSettled));
         });
-        self.finish_stop_if_ready();
+        self.finish_stop_if_ready(queue);
     }
 
     /// A stop is acknowledged once its cancel has settled and the runner has
     /// exited. The interrupted item then goes back to pending.
-    fn finish_stop_if_ready(&mut self) {
+    fn finish_stop_if_ready(&mut self, queue: &mut QueueState) {
         if self.stop.waiters.is_empty() || self.stop.cancels_outstanding > 0 {
             return;
         }
-        let mut queue = queue::state();
         if queue.runner_alive {
             return;
         }
@@ -661,8 +676,6 @@ impl Coordinator {
         queue.stopping = false;
         if requeued {
             commit(queue);
-        } else {
-            drop(queue);
         }
         for waiter in self.stop.waiters.drain(..) {
             let _ = waiter.send(());
@@ -670,13 +683,13 @@ impl Coordinator {
     }
 
     /// Answer deferred starts whose runner has exited, or whose wait timed out.
-    fn settle_starts(&mut self, now: Instant) {
+    fn settle_starts(&mut self, queue: &mut QueueState, now: Instant) {
         if self.starts.is_empty() {
             return;
         }
         let mut still_waiting = Vec::new();
         for (reply, deadline) in std::mem::take(&mut self.starts) {
-            let answer = evaluate_start(&mut queue::state(), now >= deadline);
+            let answer = evaluate_start(queue, now >= deadline);
             match answer {
                 Some(result) => {
                     let _ = reply.send(result);
@@ -691,8 +704,7 @@ impl Coordinator {
 /// Record a cancelled outcome for an item the runner claimed but never
 /// started. Only an item still downloading takes it; a cleared queue records
 /// nothing. Returns whether it was applied.
-fn item_unstarted(item_id: &str, completion: &DownloadCompletion) -> bool {
-    let mut queue = queue::state();
+fn item_unstarted(queue: &mut QueueState, item_id: &str, completion: &DownloadCompletion) -> bool {
     if queue.active_item_id.as_deref() == Some(item_id) {
         queue.active_item_id = None;
     }
@@ -704,7 +716,7 @@ fn item_unstarted(item_id: &str, completion: &DownloadCompletion) -> bool {
         return false;
     };
     queue::apply_completion(entry, completion);
-    queue::end_run_if_drained(&mut queue);
+    queue::end_run_if_drained(queue);
     commit(queue);
     true
 }

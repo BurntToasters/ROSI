@@ -20,9 +20,11 @@ use crate::validation::{
 use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::OnceLock;
 use std::time::Duration;
 
+/// Queue state. The coordinator thread owns the only copy; other threads read
+/// it through coordinator requests.
 #[derive(Default)]
 pub(crate) struct QueueState {
     pub(crate) items: Vec<QueueItem>,
@@ -39,7 +41,6 @@ pub(crate) struct QueueState {
     pub(crate) stopping: bool,
 }
 
-static QUEUE: OnceLock<Mutex<QueueState>> = OnceLock::new();
 const MAX_QUEUE_FILE_BYTES: usize = 32 * 1024 * 1024;
 // Reserve space for completion paths, filenames, and error messages.
 pub(crate) const MAX_QUEUE_ADMISSION_BYTES: usize = 24 * 1024 * 1024;
@@ -61,13 +62,15 @@ fn backup_path() -> std::path::PathBuf {
 
 type QueueWriter = dyn Fn(&Path, &Path, &[QueueItem]) -> Result<(), String> + Send + Sync;
 
+/// File locations and the save function. Holds no mutable state.
 struct QueuePersistence {
     primary: PathBuf,
     backup: PathBuf,
     writer: Box<QueueWriter>,
-    revisions: Mutex<QueueWriteRevisions>,
 }
 
+/// Revision bookkeeping for the writer. The writer thread owns the only copy,
+/// so writes and flushes are serialized by that thread, not by a lock.
 #[derive(Default)]
 struct QueueWriteRevisions {
     highest_attempted: u64,
@@ -83,19 +86,18 @@ impl QueuePersistence {
             primary,
             backup,
             writer: Box::new(writer),
-            revisions: Mutex::new(QueueWriteRevisions::default()),
         }
     }
 
-    /// One mutex serializes background writes and explicit flushes. A delayed
-    /// older snapshot is skipped after a newer revision was attempted, even
-    /// if that write failed. A skipped flush is acknowledged only if an equal
-    /// or newer revision was durably committed.
-    fn persist(&self, revision: u64, snapshot: Vec<QueueItem>) -> Result<(), String> {
-        let mut revisions = self
-            .revisions
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+    /// A delayed older snapshot is skipped after a newer revision was attempted,
+    /// even if that write failed. A skipped flush is acknowledged only if an
+    /// equal or newer revision was durably committed.
+    fn persist(
+        &self,
+        revisions: &mut QueueWriteRevisions,
+        revision: u64,
+        snapshot: Vec<QueueItem>,
+    ) -> Result<(), String> {
         if revision <= revisions.last_persisted {
             return Ok(());
         }
@@ -111,8 +113,13 @@ impl QueuePersistence {
         Ok(())
     }
 
-    fn flush(&self, revision: u64, snapshot: Vec<QueueItem>) -> Result<(), String> {
-        self.persist(revision, snapshot)
+    fn flush(
+        &self,
+        revisions: &mut QueueWriteRevisions,
+        revision: u64,
+        snapshot: Vec<QueueItem>,
+    ) -> Result<(), String> {
+        self.persist(revisions, revision, snapshot)
     }
 }
 
@@ -192,18 +199,6 @@ pub(crate) fn revisioned_snapshot(
         queue.revision = queue.revision.saturating_add(1);
     }
     (queue.revision, queue.items.clone())
-}
-
-pub(crate) fn state() -> MutexGuard<'static, QueueState> {
-    QUEUE
-        .get_or_init(|| {
-            Mutex::new(QueueState {
-                items: load_persisted(),
-                ..QueueState::default()
-            })
-        })
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn generate_id() -> String {
@@ -303,7 +298,9 @@ fn read_queue(path: &std::path::Path) -> Option<Vec<QueueItem>> {
     Some(items)
 }
 
-fn load_persisted() -> Vec<QueueItem> {
+/// Read the persisted queue. Called once, by the first caller that starts the
+/// coordinator, so the coordinator thread itself never reads disk.
+pub(crate) fn load_persisted() -> Vec<QueueItem> {
     if let Some(items) = read_queue(&queue_path()) {
         return items;
     }
@@ -335,6 +332,7 @@ fn writer() -> &'static std::sync::mpsc::Sender<WriteRequest> {
 }
 
 fn writer_loop(receiver: std::sync::mpsc::Receiver<WriteRequest>) {
+    let mut revisions = QueueWriteRevisions::default();
     while let Ok(first) = receiver.recv() {
         let mut flushes = Vec::new();
         match first {
@@ -366,7 +364,7 @@ fn writer_loop(receiver: std::sync::mpsc::Receiver<WriteRequest>) {
             }) else {
                 continue;
             };
-            if let Err(error) = persistence().persist(revision, snapshot) {
+            if let Err(error) = persistence().persist(&mut revisions, revision, snapshot) {
                 crate::logging::error(&format!(
                     "Failed to persist queue revision {revision}: {error}"
                 ));
@@ -381,7 +379,9 @@ fn writer_loop(receiver: std::sync::mpsc::Receiver<WriteRequest>) {
             }
             continue;
         };
-        let result = persistence().flush(revision, snapshot).map(|()| revision);
+        let result = persistence()
+            .flush(&mut revisions, revision, snapshot)
+            .map(|()| revision);
         for ack in flushes {
             let _ = ack.send(result.clone());
         }
@@ -419,8 +419,7 @@ pub fn flush() -> Result<(), String> {
 
 /// Folders queued requests target, for the startup staging sweep.
 pub fn queued_output_folders() -> Vec<PathBuf> {
-    state()
-        .items
+    coordinator::items()
         .iter()
         .filter_map(|item| item.request.as_ref())
         .map(|request| PathBuf::from(&request.output_path))
@@ -429,7 +428,7 @@ pub fn queued_output_folders() -> Vec<PathBuf> {
 
 /// Load the persisted queue eagerly at startup.
 pub fn init() {
-    drop(state());
+    coordinator::init();
 }
 
 fn build_request(
@@ -627,8 +626,7 @@ pub(crate) fn progress_for(queue: &QueueState, item_id: &str) -> QueueProgress {
 /// Non-terminal URLs, checked before building requests so duplicates are
 /// skipped without reading settings. The coordinator checks again at admission.
 fn nonterminal_urls() -> HashSet<String> {
-    state()
-        .items
+    coordinator::items()
         .iter()
         .filter(|item| matches!(item.status, QueueStatus::Pending | QueueStatus::Downloading))
         .map(|item| item.url.clone())
@@ -735,7 +733,7 @@ mod persistence_tests {
     use super::*;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{mpsc, Arc};
+    use std::sync::{mpsc, Mutex};
 
     struct TestDirectory(std::path::PathBuf);
 
@@ -777,19 +775,18 @@ mod persistence_tests {
         let directory = TestDirectory::new();
         let primary = directory.0.join("download-queue.json");
         let backup = directory.0.join("download-queue.backup.json");
-        let calls = Arc::new(AtomicUsize::new(0));
+        let calls = AtomicUsize::new(0);
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
-        let release_rx = Arc::new(Mutex::new(release_rx));
-        let writer_calls = Arc::clone(&calls);
-        let writer_release = Arc::clone(&release_rx);
-        let persistence = Arc::new(QueuePersistence::with_writer(
+        // The writer closure must be Sync, and a Receiver is not, so it is wrapped.
+        let release_rx = Mutex::new(release_rx);
+        let persistence = QueuePersistence::with_writer(
             primary.clone(),
             backup.clone(),
             move |primary, backup, snapshot| {
-                if writer_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                if calls.fetch_add(1, Ordering::SeqCst) == 0 {
                     started_tx.send(()).expect("notify first write start");
-                    writer_release
+                    release_rx
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
                         .recv()
@@ -797,11 +794,21 @@ mod persistence_tests {
                 }
                 persist_queue_files(primary, backup, snapshot)
             },
-        ));
+        );
 
-        let first_writer = Arc::clone(&persistence);
-        std::thread::spawn(move || {
-            let _ = first_writer.persist(1, vec![item("old", "https://queue.invalid/old")]);
+        // One owner thread runs every write and flush in order, as the writer does.
+        type Job = (u64, Vec<QueueItem>, mpsc::Sender<Result<(), String>>);
+        let (jobs_tx, jobs_rx) = mpsc::channel::<Job>();
+        let owner = std::thread::spawn(move || {
+            let mut revisions = QueueWriteRevisions::default();
+            let _ = persistence.persist(
+                &mut revisions,
+                1,
+                vec![item("old", "https://queue.invalid/old")],
+            );
+            while let Ok((revision, snapshot, ack)) = jobs_rx.recv() {
+                let _ = ack.send(persistence.flush(&mut revisions, revision, snapshot));
+            }
         });
         started_rx
             .recv_timeout(Duration::from_secs(2))
@@ -809,10 +816,9 @@ mod persistence_tests {
 
         let (ack_tx, ack_rx) = mpsc::channel();
         let latest = item("latest", "https://queue.invalid/latest");
-        let flush_owner = Arc::clone(&persistence);
-        std::thread::spawn(move || {
-            let _ = ack_tx.send(flush_owner.flush(2, vec![latest]));
-        });
+        jobs_tx
+            .send((2, vec![latest], ack_tx))
+            .expect("queue the latest flush behind the first write");
         assert!(ack_rx.recv_timeout(Duration::from_millis(50)).is_err());
 
         release_tx.send(()).expect("release older serialized write");
@@ -820,6 +826,8 @@ mod persistence_tests {
             .recv_timeout(Duration::from_secs(5))
             .expect("flush acknowledges the latest write")
             .expect("latest primary and backup writes succeed");
+        drop(jobs_tx);
+        owner.join().expect("owner thread exits after its jobs end");
 
         let ids = |path: &Path| -> Vec<String> {
             let saved: Value = serde_json::from_slice(
@@ -843,21 +851,29 @@ mod persistence_tests {
         let directory = TestDirectory::new();
         let primary = directory.0.join("download-queue.json");
         let backup = directory.0.join("download-queue.backup.json");
-        let calls = Arc::new(AtomicUsize::new(0));
-        let writer_calls = Arc::clone(&calls);
+        let calls = AtomicUsize::new(0);
         let persistence =
             QueuePersistence::with_writer(primary, backup, move |primary, backup, snapshot| {
-                if writer_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                if calls.fetch_add(1, Ordering::SeqCst) == 0 {
                     return Err("controlled disk-full failure".into());
                 }
                 persist_queue_files(primary, backup, snapshot)
             });
+        let mut revisions = QueueWriteRevisions::default();
 
         assert!(persistence
-            .flush(1, vec![item("failed", "https://queue.invalid/failed")])
+            .flush(
+                &mut revisions,
+                1,
+                vec![item("failed", "https://queue.invalid/failed")],
+            )
             .is_err());
         persistence
-            .flush(2, vec![item("saved", "https://queue.invalid/saved")])
+            .flush(
+                &mut revisions,
+                2,
+                vec![item("saved", "https://queue.invalid/saved")],
+            )
             .expect("a later successful flush can be acknowledged");
     }
 
@@ -1116,7 +1132,7 @@ mod persistence_tests {
 }
 
 pub fn is_running() -> bool {
-    state().running
+    coordinator::is_running()
 }
 
 /// Stop the runner and any active download (window close / quit / restart).
@@ -1353,7 +1369,7 @@ pub struct RemovedCount {
 
 #[tauri::command(async)]
 pub fn get_queue() -> Vec<QueueItem> {
-    state().items.clone()
+    coordinator::items()
 }
 
 #[tauri::command(async)]

@@ -20,8 +20,8 @@ split into focused modules:
 | `settings.rs`         | Settings model, lenient migration/sanitization, import/export                      |
 | `legacy.rs`           | First-launch import of ROSI 4 data from `<config dir>/rosi`                        |
 | `downloader.rs`       | Single active download session: yt-dlp, optional FFmpeg conversion, cancellation. Child modules `downloader/conversion.rs` (FFmpeg runs) and `downloader/publication.rs` (output installs, captions) |
-| `queue.rs`            | Persistent queue (`download-queue.json` + backup) and its sequential runner        |
-| `coordinator.rs`      | Single owner of queue transitions and session results: one thread applies each change in arrival order and publishes revisioned queue snapshots |
+| `queue.rs`            | Persistent queue (`download-queue.json` + backup), its writer, and its sequential runner. The queue state is owned by the coordinator thread, not held in a global lock |
+| `coordinator.rs`      | Single owner of queue state, queue transitions, and session results: one thread applies each change in arrival order, publishes revisioned queue snapshots, and answers reads over reply channels |
 | `command_builders.rs` | yt-dlp / FFmpeg argument builders and codec probing                                |
 | `progress.rs`         | yt-dlp JSON / FFmpeg `-progress` parsing, phase and queue weighting, throttling    |
 | `media_info.rs`       | Format listing (`-F`) and metadata previews                                        |
