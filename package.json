@@ -66,6 +66,7 @@
     "ytdlp:check": "node scripts/check-ytdlp.cjs",
     "ytdlp:fetch": "node scripts/fetch-ytdlp.cjs --missing-only",
     "ytdlp:fetch:all": "node scripts/fetch-ytdlp.cjs --all --missing-only",
+    "ytdlp:update": "node scripts/fetch-ytdlp.cjs --update latest && npm run ytdlp:fetch:all && npm run ytdlp:check",
     "get:ffmpeg": "dotenv -e .env -- node scripts/get-ffmpeg.cjs",
     "get:ffmpeg:all": "dotenv -e .env -- node scripts/get-ffmpeg.cjs --all && node scripts/check-ffmpeg.cjs --all --generate-checksums",
     "ffmpeg:ensure": "dotenv -e .env -- node scripts/get-ffmpeg.cjs --missing-only",

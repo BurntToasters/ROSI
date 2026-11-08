@@ -65,7 +65,7 @@
     ],
     "resources": {
       "../assets/YT-DLP-NOTICES.txt": "yt-dlp/YT-DLP-NOTICES.txt",
-      "../assets/yt-dlp-2026.10.21-THIRD_PARTY_LICENSES.txt": "yt-dlp/THIRD_PARTY_LICENSES.txt",
+      "../assets/yt-dlp-2026.10.26-THIRD_PARTY_LICENSES.txt": "yt-dlp/THIRD_PARTY_LICENSES.txt",
       "../resources/ffmpeg/NOTICE.txt": "ffmpeg/NOTICE.txt",
       "../resources/ffmpeg/ffmpeg_license.txt": "ffmpeg/LICENSE.txt",
       "../resources/ffmpeg/SOURCE_OFFER.txt": "ffmpeg/SOURCE_OFFER.txt"

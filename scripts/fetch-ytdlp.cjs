@@ -16,8 +16,9 @@
  *   node scripts/fetch-ytdlp.cjs --missing-only        skip files already valid
  *   node scripts/fetch-ytdlp.cjs --all                 every tracked binary
  *   node scripts/fetch-ytdlp.cjs --target <triple>     explicit Rust triple(s)
- *   node scripts/fetch-ytdlp.cjs --update <version>    bump the manifest from
- *       the signed upstream sums and fetch the matching license file
+ *   node scripts/fetch-ytdlp.cjs --update <version|latest>
+ *       bump the manifest from the signed upstream sums and fetch the matching
+ *       license file; `latest` is GitHub's newest release (npm run ytdlp:update)
  *   node scripts/fetch-ytdlp.cjs --allow-unsigned-sums
  *       Only when gpg is unavailable outside CI. Refused when CI or
  *       ROSI_RELEASE is set, and refused with --update.
@@ -427,9 +428,9 @@ function parseArgs(argv, env = process.env) {
       index += 1;
     } else if (arg === "--update") {
       const value = argv[index + 1];
-      if (!value || !VERSION_PATTERN.test(value)) {
+      if (!value || (value !== "latest" && !VERSION_PATTERN.test(value))) {
         fail(
-          "--update requires a yt-dlp version such as 2026.08.19 (invalid version)",
+          "--update requires a yt-dlp version such as 2026.08.19 or 'latest'",
         );
       }
       options.update = value;
@@ -466,6 +467,32 @@ function verifySignedSums(options, sumsPath, sigPath) {
 
 function releaseBase(version) {
   return `https://github.com/${REPO}/releases/download/${version}/`;
+}
+
+/** Resolves GitHub's latest non-prerelease release to its validated tag. */
+async function resolveLatestVersion() {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ytdlp-latest-"));
+  const releasePath = path.join(tempDir, "latest-release.json");
+  try {
+    await downloadFile(
+      `https://api.github.com/repos/${REPO}/releases/latest`,
+      releasePath,
+    );
+    let release;
+    try {
+      release = JSON.parse(fs.readFileSync(releasePath, "utf8"));
+    } catch {
+      fail("GitHub returned invalid JSON for the latest yt-dlp release");
+    }
+    const version = release?.tag_name;
+    if (typeof version !== "string" || !VERSION_PATTERN.test(version)) {
+      fail(`Unexpected latest yt-dlp release tag: ${String(version)}`);
+    }
+    log(`Latest yt-dlp GitHub release: ${version}`);
+    return version;
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 }
 
 function localMatches(name, manifest) {
@@ -612,7 +639,7 @@ async function updateManifest(version) {
       _comment:
         "Pinned yt-dlp release. Hashes are copied from the GPG-verified upstream " +
         "SHA2-256SUMS; scripts/fetch-ytdlp.cjs refuses any download that disagrees. " +
-        "Bump with: node scripts/fetch-ytdlp.cjs --update <version>",
+        "Bump with: npm run ytdlp:update or node scripts/fetch-ytdlp.cjs --update <version>",
       version,
       source: `https://github.com/${REPO}/releases/tag/${version}`,
       files,
@@ -653,7 +680,11 @@ function replaceOnce(filePath, from, to) {
 async function main(argv) {
   const options = parseArgs(argv);
   if (options.update) {
-    await updateManifest(options.update);
+    const version =
+      options.update === "latest"
+        ? await resolveLatestVersion()
+        : options.update;
+    await updateManifest(version);
     return;
   }
   await fetchBinaries(options);
