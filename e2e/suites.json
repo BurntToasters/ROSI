@@ -1,0 +1,808 @@
+{
+  "schemaVersion": 1,
+  "selectionBoundary": "existing runner owner; selected groups expand to every scenario owned by selected passes",
+  "groups": [
+    {
+      "id": "conversion",
+      "owners": ["main", "v5-fixes"],
+      "v5FixAreas": ["download-options", "typed-formats"]
+    },
+    {
+      "id": "dock-ui",
+      "owners": ["main", "round2-renderer", "round3-renderer"],
+      "v5FixAreas": []
+    },
+    {
+      "id": "downloads",
+      "owners": [
+        "audit4-repairs",
+        "main",
+        "process-repairs",
+        "round2-native",
+        "state-repairs",
+        "v5-fixes"
+      ],
+      "v5FixAreas": ["downloader"]
+    },
+    {
+      "id": "legacy-import",
+      "owners": ["legacy-import"],
+      "v5FixAreas": []
+    },
+    {
+      "id": "lifecycle",
+      "owners": ["state-repairs", "v5-fixes"],
+      "v5FixAreas": ["queue-coordinator"]
+    },
+    {
+      "id": "network-policy",
+      "owners": ["main", "security", "v5-fixes"],
+      "v5FixAreas": ["async-proxy", "network", "upstream-proxy"]
+    },
+    {
+      "id": "onboarding",
+      "owners": ["main"],
+      "v5FixAreas": []
+    },
+    {
+      "id": "packaging",
+      "owners": ["main", "v5-fixes"],
+      "v5FixAreas": ["flatpak-updates"]
+    },
+    {
+      "id": "persistence",
+      "owners": ["persistence", "v5-fixes"],
+      "v5FixAreas": ["persistence"]
+    },
+    {
+      "id": "platform-verification",
+      "owners": ["audit-v5-beta2", "v5-fixes"],
+      "v5FixAreas": ["platform"]
+    },
+    {
+      "id": "queue",
+      "owners": ["main", "offline-queue", "state-repairs", "v5-fixes"],
+      "v5FixAreas": ["queue-coordinator"]
+    },
+    {
+      "id": "settings",
+      "owners": ["main", "state-repairs"],
+      "v5FixAreas": []
+    },
+    {
+      "id": "updater",
+      "owners": ["main", "state-repairs", "v5-fixes"],
+      "v5FixAreas": ["deno-installer", "updater-engine"]
+    },
+    {
+      "id": "ui-polish",
+      "owners": ["v5-fixes"],
+      "v5FixAreas": ["ui-polish"]
+    }
+  ],
+  "owners": {
+    "legacy-import": {
+      "id": "legacy-import",
+      "kind": "webdriverio",
+      "entrypoint": "e2e/specs/legacy-import.spec.js"
+    },
+    "main": {
+      "id": "main",
+      "kind": "webdriverio",
+      "entrypoint": "e2e/specs/main.spec.js"
+    },
+    "offline-queue": {
+      "id": "offline-queue",
+      "kind": "webdriverio",
+      "entrypoint": "e2e/specs/security-release-offline-queue.spec.js"
+    },
+    "security": {
+      "id": "security",
+      "kind": "webdriverio",
+      "entrypoint": "e2e/specs/security-release-checks.spec.js"
+    },
+    "state-repairs": {
+      "id": "state-repairs",
+      "kind": "webdriverio",
+      "entrypoint": "e2e/state-updater.spec.js"
+    },
+    "round2-renderer": {
+      "id": "round2-renderer",
+      "kind": "webdriverio",
+      "entrypoint": "e2e/renderer-updates.spec.js"
+    },
+    "process-repairs": {
+      "id": "process-repairs",
+      "kind": "runner",
+      "entrypoint": "e2e/run-download-process.mjs"
+    },
+    "round2-native": {
+      "id": "round2-native",
+      "kind": "runner",
+      "entrypoint": "e2e/native-downloads-run.mjs"
+    },
+    "persistence": {
+      "id": "persistence",
+      "kind": "runner",
+      "entrypoint": "e2e/long-term-persistence-run.mjs"
+    },
+    "audit4-repairs": {
+      "id": "audit4-repairs",
+      "kind": "runner",
+      "entrypoint": "e2e/download-session-run.mjs"
+    },
+    "audit-v5-beta2": {
+      "id": "audit-v5-beta2",
+      "kind": "runner",
+      "entrypoint": "e2e/platform-probes/run-probes.mjs"
+    },
+    "round3-renderer": {
+      "id": "round3-renderer",
+      "kind": "node-runner",
+      "entrypoint": "e2e/renderer-dom-checks/run.cjs"
+    },
+    "v5-fixes": {
+      "id": "v5-fixes",
+      "kind": "dynamic-runner",
+      "entrypoint": "e2e/v5-fixes/<area>/run.mjs or WebdriverIO"
+    }
+  },
+  "scenarios": [
+    {
+      "name": "legacy-v4-import",
+      "feature": "legacy-import",
+      "owner": "legacy-import",
+      "allowedSkips": []
+    },
+    {
+      "name": "legacy-v4-corrupt-settings",
+      "feature": "legacy-import",
+      "owner": "legacy-import",
+      "allowedSkips": []
+    },
+    {
+      "name": "launch",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "legacy-v4-preserve",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "settings-sidebar",
+      "feature": "settings",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "settings-persistence",
+      "feature": "settings",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "download-profiles",
+      "feature": "settings",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "settings-layout",
+      "feature": "settings",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "flat-ui-tokens",
+      "feature": "settings",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "window-theme",
+      "feature": "settings",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "no-overscroll",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "sidebar-glass",
+      "feature": "settings",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "url-safety",
+      "feature": "network-policy",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "loopback-exception-and-thumbnail-data",
+      "feature": "network-policy",
+      "owner": "security",
+      "allowedSkips": []
+    },
+    {
+      "name": "loopback-download",
+      "feature": "network-policy",
+      "owner": "security",
+      "allowedSkips": []
+    },
+    {
+      "name": "proxy-delayed-http-response",
+      "feature": "network-policy",
+      "owner": "security",
+      "allowedSkips": []
+    },
+    {
+      "name": "proxy-cancels-streamed-response",
+      "feature": "network-policy",
+      "owner": "security",
+      "allowedSkips": []
+    },
+    {
+      "name": "private-dns-alias",
+      "feature": "network-policy",
+      "owner": "security",
+      "allowedSkips": []
+    },
+    {
+      "name": "dns-rebinding-connection-time",
+      "feature": "network-policy",
+      "owner": "security",
+      "allowedSkips": []
+    },
+    {
+      "name": "redirect-and-extractor-handoffs",
+      "feature": "network-policy",
+      "owner": "security",
+      "allowedSkips": []
+    },
+    {
+      "name": "verified-https-connect-proxy",
+      "feature": "network-policy",
+      "owner": "security",
+      "allowedSkips": []
+    },
+    {
+      "name": "untrusted-https-certificate-rejected",
+      "feature": "network-policy",
+      "owner": "security",
+      "allowedSkips": []
+    },
+    {
+      "name": "credential-bearing-urls",
+      "feature": "network-policy",
+      "owner": "security",
+      "allowedSkips": []
+    },
+    {
+      "name": "guarded-hls-fragments",
+      "feature": "network-policy",
+      "owner": "security",
+      "allowedSkips": []
+    },
+    {
+      "name": "bracketed-ipv6-classification",
+      "feature": "network-policy",
+      "owner": "security",
+      "allowedSkips": []
+    },
+    {
+      "name": "proxy-cancellation-closes-active-sockets",
+      "feature": "network-policy",
+      "owner": "security",
+      "allowedSkips": []
+    },
+    {
+      "name": "thumbnail-fetch-cancellation",
+      "feature": "network-policy",
+      "owner": "security",
+      "allowedSkips": []
+    },
+    {
+      "name": "dns-cancellation-reserved-ipc",
+      "feature": "network-policy",
+      "owner": "security",
+      "allowedSkips": []
+    },
+    {
+      "name": "proxy-rejects-unreviewed-pipelined-destination",
+      "feature": "network-policy",
+      "owner": "security",
+      "allowedSkips": []
+    },
+    {
+      "name": "bounded-dns-cancellation",
+      "feature": "network-policy",
+      "owner": "security",
+      "allowedSkips": []
+    },
+    {
+      "name": "persisted-offline-queue",
+      "feature": "queue",
+      "owner": "offline-queue",
+      "allowedSkips": []
+    },
+    {
+      "name": "manual-download",
+      "feature": "downloads",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "unicode-download",
+      "feature": "downloads",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "queue",
+      "feature": "queue",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "cancel",
+      "feature": "queue",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "conversion",
+      "feature": "conversion",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "audio-extract",
+      "feature": "conversion",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "gpu-detect",
+      "feature": "conversion",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "licenses",
+      "feature": "packaging",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "navigation-guard",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "preview",
+      "feature": "downloads",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "formats",
+      "feature": "conversion",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "merge-download",
+      "feature": "conversion",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "queue-management",
+      "feature": "queue",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "queue-cancel",
+      "feature": "queue",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "dock-tabs",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "webview-guard",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "link-drop",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "small-window",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "dock-empty",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "save-path",
+      "feature": "settings",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "lucide-icons",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "status-icons",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "console-log",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "activity-actions",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "activity-action-clicks",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "theme-contrast",
+      "feature": "settings",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "setup-wizard",
+      "feature": "onboarding",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "setup-wizard-skip",
+      "feature": "onboarding",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "setup-wizard-escape",
+      "feature": "onboarding",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "setup-wizard-small",
+      "feature": "onboarding",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "setup-wizard-deno",
+      "feature": "onboarding",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "browser-choice",
+      "feature": "onboarding",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "xdg-download-dir",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": ["darwin", "win32"]
+    },
+    {
+      "name": "ui-screenshots",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "stats",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "settings-search-reset",
+      "feature": "settings",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "settings-controls",
+      "feature": "settings",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "settings-reset-all",
+      "feature": "settings",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "settings-response-revision",
+      "feature": "settings",
+      "owner": "state-repairs",
+      "allowedSkips": []
+    },
+    {
+      "name": "settings-rejection-preserves-newer-field",
+      "feature": "settings",
+      "owner": "state-repairs",
+      "allowedSkips": []
+    },
+    {
+      "name": "settings-lifecycle-latest-revision",
+      "feature": "settings",
+      "owner": "state-repairs",
+      "allowedSkips": []
+    },
+    {
+      "name": "settings-captured-wizard-deno",
+      "feature": "settings",
+      "owner": "state-repairs",
+      "allowedSkips": []
+    },
+    {
+      "name": "compatible-profile-wording",
+      "feature": "settings",
+      "owner": "state-repairs",
+      "allowedSkips": []
+    },
+    {
+      "name": "settings-corrupt-defaults",
+      "feature": "settings",
+      "owner": "state-repairs",
+      "allowedSkips": []
+    },
+    {
+      "name": "settings-patch-preserves-backend-values",
+      "feature": "settings",
+      "owner": "state-repairs",
+      "allowedSkips": []
+    },
+    {
+      "name": "guarded-preview-thumbnail",
+      "feature": "downloads",
+      "owner": "state-repairs",
+      "allowedSkips": []
+    },
+    {
+      "name": "queue-latest-snapshot",
+      "feature": "queue",
+      "owner": "state-repairs",
+      "allowedSkips": []
+    },
+    {
+      "name": "updater-generation-retry",
+      "feature": "updater",
+      "owner": "state-repairs",
+      "allowedSkips": []
+    },
+    {
+      "name": "updater-compact-target-fallback",
+      "feature": "updater",
+      "owner": "state-repairs",
+      "allowedSkips": []
+    },
+    {
+      "name": "queue-flush-backup-failure",
+      "feature": "queue",
+      "owner": "state-repairs",
+      "allowedSkips": []
+    },
+    {
+      "name": "close-pending-timeout",
+      "feature": "lifecycle",
+      "owner": "state-repairs",
+      "allowedSkips": []
+    },
+    {
+      "name": "download-session-isolation",
+      "feature": "downloads",
+      "owner": "state-repairs",
+      "allowedSkips": []
+    },
+    {
+      "name": "external-links",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "menu-actions",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "update-check",
+      "feature": "updater",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "dialogs",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "download-card-input",
+      "feature": "downloads",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "presets",
+      "feature": "downloads",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "custom-formats",
+      "feature": "downloads",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "playlist-range",
+      "feature": "downloads",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "embed-extras",
+      "feature": "downloads",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "queue-controls",
+      "feature": "queue",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "queue-paste-extraction",
+      "feature": "queue",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "save-location",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "notifications",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "download-again-quickly",
+      "feature": "queue",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "download-process-repairs",
+      "feature": "downloads",
+      "owner": "process-repairs",
+      "allowedSkips": ["win32"]
+    },
+    {
+      "name": "activity-clear",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "close-flow",
+      "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "round2-renderer",
+      "feature": "dock-ui",
+      "owner": "round2-renderer",
+      "allowedSkips": []
+    },
+    {
+      "name": "round2-native",
+      "feature": "downloads",
+      "owner": "round2-native",
+      "allowedSkips": []
+    },
+    {
+      "name": "long-term-persistence",
+      "feature": "persistence",
+      "owner": "persistence",
+      "allowedSkips": []
+    },
+    {
+      "name": "audit3-native-targeted",
+      "feature": "downloads",
+      "owner": "process-repairs",
+      "allowedSkips": ["win32"]
+    },
+    {
+      "name": "audit4-repairs",
+      "feature": "downloads",
+      "owner": "audit4-repairs",
+      "allowedSkips": []
+    },
+    {
+      "name": "audit-v5-beta2",
+      "feature": "platform-verification",
+      "owner": "audit-v5-beta2",
+      "allowedSkips": ["linux", "win32"]
+    },
+    {
+      "name": "round3-renderer-repairs",
+      "feature": "dock-ui",
+      "owner": "round3-renderer",
+      "allowedSkips": []
+    }
+  ],
+  "dynamicV5Fixes": {
+    "owner": "v5-fixes",
+    "groupAreas": {
+      "downloads": ["downloader"],
+      "queue": ["queue-coordinator"],
+      "conversion": ["download-options", "typed-formats"],
+      "network-policy": ["async-proxy", "network", "upstream-proxy"],
+      "persistence": ["persistence"],
+      "updater": ["deno-installer", "updater-engine"],
+      "packaging": ["flatpak-updates"],
+      "platform-verification": ["platform"],
+      "ui-polish": ["ui-polish"]
+    }
+  }
+}

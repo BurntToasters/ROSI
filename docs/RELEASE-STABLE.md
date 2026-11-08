@@ -113,6 +113,12 @@ finds a runtime change, stop: that runtime must be beta-tested before stable
 promotion. Download the `e2e-*` evidence artifacts from that CI run and confirm each
 report lists every scenario as passed.
 
+On a Mac, the local E2E gate runs ROSI in background mode by default
+(`ROSI_E2E_BACKGROUND=1`, see `e2e/README.md`). CI runs in the foreground. The
+gate report does not record the window mode, so the release record for any
+macOS evidence must state the mode that produced it: background (the default)
+or foreground (`ROSI_E2E_FOREGROUND=1`).
+
 If the accepted beta still needs to be published, use the normal beta release
 flow first and complete beta smoke testing before the stable version change.
 
@@ -174,6 +180,21 @@ Also confirm:
 - `npm run audit:dev-reviewed` passes (fails only if an advisory is production-reachable).
 - `cargo audit` reports no unignored vulnerability.
 - The stable version is `X.Y.Z` everywhere and contains no `-beta.N` suffix.
+
+On the macOS release machine, also run the E2E stability run on the exact
+stable commit, after the gate above has passed:
+
+```sh
+npm run test:e2e:stability
+```
+
+It repeats the full E2E gate five times (`scripts/test-e2e.js --repeat 5`), so
+expect several hours. It writes `e2e/artifacts/e2e-stability-darwin-arm64.json`,
+and the release record must cite that file. Known flake: the macOS
+`download-process-repairs` scenario (spec `e2e/download-process.spec.js`, runner
+`e2e/run-download-process.mjs`) can fail on execute or async timeouts. Re-run
+the failing pass once before debugging, and record both the first result and
+the re-run result in the release record.
 
 ## 5. Build and sign on isolated platform VMs
 

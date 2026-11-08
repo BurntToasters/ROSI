@@ -9,5 +9,5 @@ ways it can drift from the backend; `commands.contract.test.ts` checks each.
    cannot call it with types (or calls it through an untyped path).
 3. An E2E-only command enters the production map.
 4. Renderer code calls `invoke()` directly with a string name, bypassing the map.
-5. `window.api` forwards to a command name that is not in the map.
+5. `src/api.ts` forwards to a command name that is not in the map.
 6. The capability file grants a command the map omits, or omits one it lists.

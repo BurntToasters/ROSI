@@ -1,40 +1,28 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as ts from 'typescript';
+// Publishes window.rosiMessages, which the modules read at render time.
+import '../engine/messages';
 
-const REPO = path.resolve(__dirname, '..', '..');
-const RENDERER = path.join(REPO, 'src');
+const MODULE_LOADERS: Record<string, () => Promise<Record<string, unknown>>> = {
+  downloads: () => import('../modules/downloads'),
+  settings: () => import('../modules/settings'),
+  ui: () => import('../modules/ui'),
+  queue: () => import('../modules/queue'),
+  updates: () => import('../modules/updates'),
+  dock: () => import('../modules/dock'),
+};
 
-function transpile(tsSource: string): string {
-  return ts.transpileModule(tsSource, {
-    compilerOptions: {
-      target: ts.ScriptTarget.ES2020,
-      module: ts.ModuleKind.None,
-    },
-  }).outputText;
-}
+// Each load gets fresh module instances, so module state never leaks between cases.
+const loaded: Record<string, unknown> = {};
 
-function loadModule(name: string) {
-  (window as unknown as { rosiModules?: Record<string, unknown> }).rosiModules = {};
-  // Each module ends with `export {};`; evaluate it as the plain script it wraps.
-  const moduleSource = fs
-    .readFileSync(path.join(RENDERER, 'modules', `${name}.ts`), 'utf-8')
-    .replace(/^export \{\};$/m, '');
-  const source = transpile(moduleSource);
-  (0, eval)(source);
+async function loadModule(name: string) {
+  vi.resetModules();
+  loaded[name] = await MODULE_LOADERS[name]!();
 }
 
 type RosiModules = {
   downloads?: {
     formatBytes: (bytes: number) => string;
-    parseYtdlpProgress: (message: string) => {
-      percent: number;
-      totalSize: string;
-      speed: string | null;
-      eta: string | null;
-    } | null;
   };
   ui?: {
     isValidUrl: (value: string) => boolean;
@@ -51,7 +39,6 @@ type RosiModules = {
     getModifierKeyName: () => 'Cmd' | 'Ctrl';
   };
   updates?: {
-    isPrereleaseVersion: (version: string) => boolean;
     formatUpdateProgressInfo: (
       data: {
         bytesPerSecond: number;
@@ -114,42 +101,12 @@ type RosiModules = {
 };
 
 function modules(): RosiModules {
-  return (window as unknown as { rosiModules?: RosiModules }).rosiModules ?? {};
+  return loaded as RosiModules;
 }
 
 describe('renderer modules', () => {
-  beforeEach(() => {
-    (window as unknown as { rosiModules?: Record<string, unknown> }).rosiModules = {};
-  });
-
   describe('downloads module', () => {
     beforeEach(() => loadModule('downloads'));
-
-    it('parseYtdlpProgress parses full progress line', () => {
-      const result = modules().downloads!.parseYtdlpProgress(
-        '[download]  45.2% of ~10.5MiB at  1.2MiB/s ETA 00:08'
-      );
-      expect(result).toEqual({
-        percent: 45.2,
-        totalSize: '10.5MiB',
-        speed: '1.2MiB/s',
-        eta: '00:08',
-      });
-    });
-
-    it('parseYtdlpProgress parses simple progress line', () => {
-      const result = modules().downloads!.parseYtdlpProgress('[download]  10.0% of ~5.00MiB');
-      expect(result).toEqual({
-        percent: 10,
-        totalSize: '5.00MiB',
-        speed: null,
-        eta: null,
-      });
-    });
-
-    it('parseYtdlpProgress returns null for non-progress lines', () => {
-      expect(modules().downloads!.parseYtdlpProgress('random output')).toBeNull();
-    });
 
     it('formatBytes formats byte sizes', () => {
       expect(modules().downloads!.formatBytes(0)).toBe('0 B');
@@ -160,10 +117,10 @@ describe('renderer modules', () => {
   });
 
   describe('ui module', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       document.body.innerHTML =
         '<div id="toast-container"></div><section id="console-section"></section><div id="advanced-options" hidden></div>';
-      loadModule('ui');
+      await loadModule('ui');
     });
 
     it('isValidUrl accepts http and https URLs', () => {
@@ -251,10 +208,10 @@ describe('renderer modules', () => {
       ...overrides,
     });
 
-    beforeEach(() => {
+    beforeEach(async () => {
       document.body.innerHTML =
         '<section id="queueSection"><div id="queue-list"></div><span id="queue-count"></span></section>';
-      loadModule('queue');
+      await loadModule('queue');
     });
 
     it('resolveQueueSectionElement finds queueSection and legacy queue-section ids', () => {
@@ -469,15 +426,6 @@ describe('renderer modules', () => {
 
   describe('updates module', () => {
     beforeEach(() => loadModule('updates'));
-
-    it('isPrereleaseVersion detects prerelease suffixes', () => {
-      expect(modules().updates!.isPrereleaseVersion('4.0.0-beta.1')).toBe(true);
-      expect(modules().updates!.isPrereleaseVersion('4.0.0-alpha.2')).toBe(true);
-      expect(modules().updates!.isPrereleaseVersion('4.0.0-rc.1')).toBe(true);
-      expect(modules().updates!.isPrereleaseVersion('4.0.0-RC.2')).toBe(true);
-      expect(modules().updates!.isPrereleaseVersion('4.0.0')).toBe(false);
-      expect(modules().updates!.isPrereleaseVersion('4.0.0-dev')).toBe(false);
-    });
 
     it('formatUpdateProgressInfo formats progress with byte helper', () => {
       const formatBytes = (bytes: number) => `${bytes}B`;

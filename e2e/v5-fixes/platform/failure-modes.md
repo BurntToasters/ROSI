@@ -56,7 +56,7 @@ listed below are why a partial change is unsafe.
 2. Other agents may add modules after this list is taken. Mitigation: re-list
    before reporting.
 3. The frontend paragraph is wrong. Mitigation: read `src/main.ts`,
-   `src/tauri-bridge.ts`, and `src/modules` before rewriting it.
+   `src/api.ts`, and `src/modules` before rewriting it.
 4. The PATCHES.md file may not exist yet (another agent writes it). The link
    must point to the real path `src-tauri/vendor/tauri-plugin-updater/PATCHES.md`
    and be checked for existence at the end.

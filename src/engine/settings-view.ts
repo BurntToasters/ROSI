@@ -1,10 +1,14 @@
 // Settings controls: rendering from settings, search, and section collapse.
-import { RosiSettings, dockModule, renderFolderSummary, settingsModule } from './core';
+import { RosiSettings, renderFolderSummary } from './core';
+import { initDock } from '../modules/dock';
+import { bindExternalLink as bindExternalLinkTo } from '../modules/settings';
+import { refreshEffectiveOptionsSummary, UI_MESSAGES } from './messages';
 import { isModalActive, modalQueue, showModal } from './overlays';
 import { refs } from './refs';
 import { persistSettings, settingsStore } from './settings-store';
 import { applyTheme, updateBackgroundAnimation } from './theme';
 import { toggleAdvancedUI, updateConsoleVisibility } from './ui-helpers';
+import { api } from '../api';
 
 // update UI from settings
 export const updateUIFromSettings = () => {
@@ -124,29 +128,21 @@ export const updateUIFromSettings = () => {
   if (refs.downloadFolderSummary) {
     renderFolderSummary(refs.downloadFolderSummary, settingsStore.settings.downloadFolder);
   }
-  if (refs.downloadOutputSummary) {
-    if (settingsStore.settings.downloadMode === 'best-video') {
-      refs.downloadOutputSummary.textContent =
-        'Highest available video and audio quality, merged into one file';
-    } else if (settingsStore.settings.downloadMode === 'audio') {
-      refs.downloadOutputSummary.textContent = `Audio only, saved as ${(settingsStore.settings.audioFormat || 'mp3').toUpperCase()}`;
-    } else if (settingsStore.settings.downloadMode === 'custom') {
-      refs.downloadOutputSummary.textContent = 'Pick exact video and audio formats below';
-    } else {
-      refs.downloadOutputSummary.textContent =
-        'Prefer MP4 when available; otherwise use the best available format. Often low resolution';
-    }
-  }
   // disable convert when audio-only is enabled
   if (refs.convertToggle) {
-    refs.convertToggle.disabled = settingsStore.settings.audioOnly ?? false;
-    if (settingsStore.settings.audioOnly) {
+    const conversionUnavailable = settingsStore.settings.audioOnly ?? false;
+    refs.convertToggle.disabled = conversionUnavailable;
+    const conversionHint = document.getElementById('convertDisabledHint');
+    if (conversionUnavailable) {
       refs.convertToggle.parentElement!.classList.add('disabled');
-      refs.convertToggle.parentElement!.title = 'Disabled when Audio-only mode is enabled';
+      refs.convertToggle.parentElement!.title = UI_MESSAGES.controls.convertAudioOnly;
+      refs.convertToggle.setAttribute('aria-describedby', 'convertDisabledHint');
     } else {
       refs.convertToggle.parentElement!.classList.remove('disabled');
       refs.convertToggle.parentElement!.title = '';
+      refs.convertToggle.removeAttribute('aria-describedby');
     }
+    if (conversionHint instanceof HTMLElement) conversionHint.hidden = !conversionUnavailable;
   }
   if (refs.notificationsToggle) {
     refs.notificationsToggle.checked = settingsStore.settings.notifications ?? true;
@@ -177,7 +173,7 @@ export const updateUIFromSettings = () => {
     );
   }
 
-  const channel = window.api.getChannel();
+  const channel = api.getChannel();
   if (refs.checkUpdatesOnStartupToggle) {
     refs.checkUpdatesOnStartupToggle.checked = settingsStore.settings.checkUpdatesOnStartup ?? true;
     if (channel === 'msstore' && refs.checkUpdatesOnStartupLabel) {
@@ -192,6 +188,7 @@ export const updateUIFromSettings = () => {
       if (refs.showUpdateChannelBtn) refs.showUpdateChannelBtn.classList.add('hidden');
     }
   }
+  refreshEffectiveOptionsSummary();
 };
 
 export const applyDownloadProfile = (mode: RosiSettings['downloadMode']) => {
@@ -204,7 +201,7 @@ export const applyDownloadProfile = (mode: RosiSettings['downloadMode']) => {
 
 // Runs after a settings pass, so the Console tab is already offered or not.
 export function syncDockFromSettings() {
-  dockModule?.initDock({
+  initDock({
     initialTab: settingsStore.settings.dockTab,
     collapsed: settingsStore.settings.dockCollapsed,
     onChange: ({ tab, collapsed }) => {
@@ -231,7 +228,7 @@ export function maybeShowSupportModal() {
         icon: 'heart',
         primary: true,
         action: () => {
-          void window.api.openExternal('https://rosie.run/support');
+          void api.openExternal('https://rosie.run/support');
           settingsStore.settings.hideSupportModal = true;
           void persistSettings();
         },
@@ -248,18 +245,8 @@ export function maybeShowSupportModal() {
 }
 
 export const bindExternalLink = (element: HTMLElement | null, url: string) => {
-  if (settingsModule && typeof settingsModule.bindExternalLink === 'function') {
-    // Look the bridge up per click so it is never a stale reference.
-    settingsModule.bindExternalLink(element, url, (target) => window.api.openExternal(target));
-    return;
-  }
-  if (element) {
-    element.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      void window.api.openExternal(url);
-    });
-  }
+  // Look the bridge up per click so it is never a stale reference.
+  bindExternalLinkTo(element, url, (target) => api.openExternal(target));
 };
 
 export function applySettingsSearch(rawQuery: string) {

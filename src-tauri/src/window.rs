@@ -164,7 +164,13 @@ fn build_main(app: &AppHandle) -> Result<WebviewWindow, String> {
         })
         .build()
         .map_err(|error| error.to_string())
-        .inspect(fit_to_work_area)
+        .inspect(|window| {
+            #[cfg(all(feature = "e2e", target_os = "macos"))]
+            if e2e_background() {
+                e2e_occlusion::keep_rendering(window);
+            }
+            fit_to_work_area(window);
+        })
 }
 
 /// The configured 1200x900 (logical) window is taller than the work area of
@@ -203,6 +209,83 @@ fn fit_to_work_area(window: &WebviewWindow) {
 #[cfg(feature = "e2e")]
 pub fn e2e_background() -> bool {
     cfg!(target_os = "macos") && std::env::var("ROSI_E2E_BACKGROUND").as_deref() == Ok("1")
+}
+
+/// E2E background runs keep the main page rendering while the window sits
+/// behind other apps. WebKit treats a covered window as occluded and marks the
+/// page hidden, which stops animation frames and CSS transitions. Turning
+/// WebKit's occlusion detection off for the main webview leaves the window's
+/// level, focus and visibility alone. The selector is private, so every call
+/// goes through `respondsToSelector:` first and a missing selector is only
+/// logged.
+#[cfg(all(feature = "e2e", target_os = "macos"))]
+mod e2e_occlusion {
+    use std::ffi::{c_char, c_void};
+    use tauri::WebviewWindow;
+
+    type Id = *mut c_void;
+    type Sel = *mut c_void;
+
+    #[link(name = "objc", kind = "dylib")]
+    extern "C" {
+        fn sel_registerName(name: *const c_char) -> Sel;
+        // Never called through this declaration. Each call casts its address to
+        // the exact signature it uses, which arm64 requires.
+        fn objc_msgSend();
+    }
+
+    /// Stops WebKit from reporting the main webview as occluded. `with_webview`
+    /// runs the closure on the main thread (WKWebView access requires it) and
+    /// does nothing if the webview is already gone.
+    pub fn keep_rendering(window: &WebviewWindow) {
+        let result = window.with_webview(|webview| {
+            // SAFETY: called on the main thread by `with_webview`; the pointer
+            // is the live WKWebView that wry owns for this webview.
+            let outcome = unsafe { disable_occlusion_detection(webview.inner()) };
+            match outcome {
+                Ok(previous) => crate::logging::info(&format!(
+                    "E2E background: WebKit occlusion detection off for the main webview (was {}).",
+                    if previous { "on" } else { "off" }
+                )),
+                Err(reason) => crate::logging::warn(&format!(
+                    "E2E background: occlusion detection not changed ({reason}); the page may pause while hidden."
+                )),
+            }
+        });
+        if let Err(error) = result {
+            crate::logging::warn(&format!(
+                "E2E background: could not reach the main webview ({error})."
+            ));
+        }
+    }
+
+    /// Returns the previous setting when the private accessors exist.
+    ///
+    /// # Safety
+    /// `view` must be null or a valid WKWebView pointer, and the caller must be
+    /// on the main thread.
+    unsafe fn disable_occlusion_detection(view: *mut c_void) -> Result<bool, &'static str> {
+        if view.is_null() {
+            return Err("no WKWebView");
+        }
+        let send_responds: unsafe extern "C" fn(Id, Sel, Sel) -> i8 =
+            std::mem::transmute(objc_msgSend as *const c_void);
+        let send_get: unsafe extern "C" fn(Id, Sel) -> i8 =
+            std::mem::transmute(objc_msgSend as *const c_void);
+        let send_set: unsafe extern "C" fn(Id, Sel, i8) =
+            std::mem::transmute(objc_msgSend as *const c_void);
+
+        let responds = sel_registerName(c"respondsToSelector:".as_ptr());
+        let getter = sel_registerName(c"_windowOcclusionDetectionEnabled".as_ptr());
+        let setter = sel_registerName(c"_setWindowOcclusionDetectionEnabled:".as_ptr());
+        if send_responds(view, responds, getter) == 0 || send_responds(view, responds, setter) == 0
+        {
+            return Err("private selector missing on this WebKit");
+        }
+        let previous = send_get(view, getter) != 0;
+        send_set(view, setter, 0);
+        Ok(previous)
+    }
 }
 
 fn reveal(window: &WebviewWindow) {
@@ -536,22 +619,26 @@ pub fn request_quit(app: &AppHandle) {
             if let Err(error) = window.close() {
                 cancel_close();
                 crate::logging::error(&format!("Could not begin a durable quit: {error}"));
-                app.dialog()
-                    .message(format!("ROSI could not begin quitting safely: {error}"))
-                    .title("Could Not Quit ROSI")
-                    .kind(MessageDialogKind::Error)
-                    .show(|_| {});
+                crate::notices::show(
+                    "Could Not Quit ROSI",
+                    &format!("ROSI could not begin quitting safely: {error}"),
+                    crate::notices::NoticeKind::Error,
+                    false,
+                );
             }
         }
         None => match shutdown() {
             Ok(()) => app.exit(0),
             Err(error) => {
                 APP_QUITTING.store(false, Ordering::SeqCst);
-                app.dialog()
-                    .message(format!("ROSI could not save the download queue, so it will remain open.\n\n{error}"))
-                    .title("Could Not Quit ROSI")
-                    .kind(MessageDialogKind::Error)
-                    .show(|_| {});
+                crate::notices::show(
+                    "Could Not Quit ROSI",
+                    &format!(
+                        "ROSI could not save the download queue, so it will remain open.\n\n{error}"
+                    ),
+                    crate::notices::NoticeKind::Error,
+                    false,
+                );
             }
         },
     }

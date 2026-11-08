@@ -121,16 +121,17 @@ const ARTIFACT_RULES = [
   ext(".flatpak"),
   rx(/\.appimage$/i),
 
-  rx(/^ROSI(?:-MacOS-universal)?\.zip$/i),
+  rx(/^ROSI(?:-MacOS-(?:universal|arm64|x64))?\.zip$/i),
 
   rx(/\.nsis\.zip$/i),
   rx(/\.app\.tar\.gz$/i),
+  rx(/\.app\.tar\.zst$/i),
   rx(/\.appimage\.tar\.gz$/i),
 
   rx(/\.(?:exe|msi|dmg|flatpak|appimage)\.sig$/i),
-  rx(/^ROSI(?:-MacOS-universal)?\.zip\.sig$/i),
+  rx(/^ROSI(?:-MacOS-(?:universal|arm64|x64))?\.zip\.sig$/i),
   rx(/\.nsis\.zip\.sig$/i),
-  rx(/\.tar\.gz\.sig$/i),
+  rx(/\.tar\.(?:gz|zst)\.sig$/i),
 
   exact("latest.json"),
   isPerTargetManifest,
@@ -142,9 +143,10 @@ const SIGN_RULES = [
   ext(".dmg"),
   ext(".flatpak"),
   rx(/\.appimage$/i),
-  rx(/^ROSI(?:-MacOS-universal)?\.zip$/i),
+  rx(/^ROSI(?:-MacOS-(?:universal|arm64|x64))?\.zip$/i),
   rx(/\.nsis\.zip$/i),
   rx(/\.app\.tar\.gz$/i),
+  rx(/\.app\.tar\.zst$/i),
   rx(/\.appimage\.tar\.gz$/i),
 ];
 
@@ -274,7 +276,7 @@ function clearPreStagedUpdaterManifests() {
 function pickNewestByBasename(paths) {
   const latest = new Map();
   for (const filePath of paths) {
-    const name = path.basename(filePath);
+    const name = cleanArtifactName(path.basename(filePath), filePath);
     let stat;
     try {
       stat = fs.statSync(filePath);
@@ -282,11 +284,32 @@ function pickNewestByBasename(paths) {
       continue;
     }
     const current = latest.get(name);
+    if (
+      current &&
+      /^ROSI-MacOS-(?:universal|arm64|x64)\.(?:dmg|zip)$/i.test(name)
+    ) {
+      throw new Error(
+        `Multiple current macOS package artifacts normalize to ${name}: ${current.filePath}, ${filePath}`,
+      );
+    }
     if (!current || stat.mtimeMs > current.mtimeMs) {
       latest.set(name, { filePath, mtimeMs: stat.mtimeMs });
     }
   }
   return Array.from(latest.values()).map((entry) => entry.filePath);
+}
+
+// `tauri build --target {aarch64,x86_64}-apple-darwin` (the per-arch updater
+// builds) also writes an arch-less ROSI.app.tar.gz. Only the universal build's
+// archive may serve the arch-less `darwin-*-app` targets.
+function isPerArchTauriAppArchive(filePath) {
+  const name = path.basename(filePath);
+  if (!/\.app\.tar\.gz(?:\.sig)?$/i.test(name) || inferArchFromName(name)) {
+    return false;
+  }
+  return filePath
+    .split(/[\\/]+/)
+    .some((part) => /^(?:aarch64|x86_64)-apple-darwin$/i.test(part));
 }
 
 function walk(dir, results = []) {
@@ -302,12 +325,42 @@ function walk(dir, results = []) {
   return results;
 }
 
-function cleanArtifactBaseName(name) {
-  if (/\.tar\.gz$/i.test(name)) return name;
+function inferMacosPackageArch(name, filePath = "") {
+  const canonical = name.match(
+    /^ROSI-MacOS-(universal|arm64|x64)\.(?:dmg|zip)$/i,
+  );
+  if (canonical) return canonical[1].toLowerCase();
+
+  const source = `${name} ${filePath}`;
+  if (/universal-apple-darwin|(?:^|[-_.])universal(?:[-_.]|$)/i.test(source)) {
+    return "universal";
+  }
+  if (
+    /aarch64-apple-darwin|(?:^|[-_.])(?:aarch64|arm64)(?:[-_.]|$)/i.test(source)
+  ) {
+    return "arm64";
+  }
+  if (
+    /x86_64-apple-darwin|(?:^|[-_.])(?:x86_64|amd64|x64)(?:[-_.]|$)/i.test(
+      source,
+    )
+  ) {
+    return "x64";
+  }
+  // Old universal outputs named ROSI.dmg/ROSI.zip have no architecture token.
+  return "universal";
+}
+
+function cleanArtifactBaseName(name, filePath = "") {
+  if (/\.tar\.(?:gz|zst)$/i.test(name)) return name;
   if (/\.nsis\.zip$/i.test(name)) return name;
 
-  if (/\.dmg$/i.test(name)) return "ROSI-MacOS-universal.dmg";
-  if (/^ROSI\.zip$/i.test(name)) return "ROSI-MacOS-universal.zip";
+  if (/\.dmg$/i.test(name)) {
+    return `ROSI-MacOS-${inferMacosPackageArch(name, filePath)}.dmg`;
+  }
+  if (/^ROSI\.zip$/i.test(name)) {
+    return `ROSI-MacOS-${inferMacosPackageArch(name, filePath)}.zip`;
+  }
 
   if (/x64-setup\.exe$/i.test(name)) return "ROSI-Windows-x64.exe";
   if (/arm64-setup\.exe$/i.test(name)) return "ROSI-Windows-arm64.exe";
@@ -322,14 +375,18 @@ function cleanArtifactBaseName(name) {
   return name;
 }
 
-function cleanArtifactName(name) {
+function cleanArtifactName(name, filePath = "") {
   if (name === "latest.json") return name;
   if (name.endsWith(".sig")) {
     const base = name.slice(0, -4);
-    return `${cleanArtifactBaseName(base)}.sig`;
+    return `${cleanArtifactBaseName(base, filePath)}.sig`;
   }
-  return cleanArtifactBaseName(name);
+  return cleanArtifactBaseName(name, filePath);
 }
+
+// Installers that only custom-target clients request, on every channel. They
+// never become the generic `{os}-{arch}` fallback that older clients read.
+const CUSTOM_TARGET_INSTALLERS = new Set(["app-zst"]);
 
 const FALLBACK_INSTALLER_PRIORITY = {
   windows: { nsis: 3, msi: 2 },
@@ -399,6 +456,14 @@ function canPopulateFallbackTarget(_target) {
 
 function resolveUpdaterTargets(name) {
   const targets = [];
+  if (/\.app\.tar\.zst$/i.test(name)) {
+    // Per-arch only (scripts/pack-macos-updater-zst.js). Packaged macOS apps
+    // request these through the custom `darwin[-beta]-{arch}-app-zst` target.
+    const arch = inferArchFromName(name);
+    if (arch) targets.push({ os: "darwin", arch, installer: "app-zst" });
+    return targets;
+  }
+
   if (/\.app\.tar\.gz$/i.test(name)) {
     const arch = inferArchFromName(name);
     const arches = arch ? [arch] : ["x86_64", "aarch64"];
@@ -449,7 +514,10 @@ function updaterChannelVariants(
   ];
 }
 
-function generateUpdaterManifests(files) {
+function generateUpdaterManifests(
+  files,
+  { outputDir = releaseDir, publicKey } = {},
+) {
   const byName = new Map();
   for (const filePath of files) {
     byName.set(path.basename(filePath), filePath);
@@ -463,10 +531,11 @@ function generateUpdaterManifests(files) {
   }
   verifyUpdaterSignatures({
     root,
-    releaseDir,
+    releaseDir: outputDir,
     byName,
     signatureByBaseName,
     resolveUpdaterTargets,
+    publicKey,
   });
 
   const manifests = new Map();
@@ -517,10 +586,13 @@ function generateUpdaterManifests(files) {
         const installerKey = `${targetName}-${target.arch}-${target.installer}`;
         const fallbackKey = `${targetName}-${target.arch}`;
         manifest.platforms[installerKey] = { url, signature };
-        if (channel.targetSuffix) {
-          // A beta check uses the full installer-aware key as its custom Tauri
-          // target. Give that key its own endpoint manifest so installers do
-          // not fall through to the generic fallback.
+        if (
+          channel.targetSuffix ||
+          CUSTOM_TARGET_INSTALLERS.has(target.installer)
+        ) {
+          // A beta or compact check uses the full installer-aware key as its
+          // custom Tauri target. Give that key its own endpoint manifest so
+          // installers do not fall through to the generic fallback.
           const installerManifestName = `latest-${installerKey}.json`;
           manifests.set(installerManifestName, {
             version: VERSION,
@@ -582,7 +654,7 @@ function generateUpdaterManifests(files) {
     if (manifest.notes) {
       output.notes = manifest.notes;
     }
-    const dest = path.join(releaseDir, manifestName);
+    const dest = path.join(outputDir, manifestName);
     fs.writeFileSync(dest, JSON.stringify(output, null, 2) + "\n");
     console.log(
       `  + ${manifestName} (${Object.keys(output.platforms).length} platform entries)`,
@@ -639,6 +711,24 @@ function checksumTargetKeysForArtifactName(
   if (manifestKey) return [manifestKey];
 
   const baseName = name.endsWith(".sig") ? name.slice(0, -4) : name;
+  const macosPackage = baseName.match(
+    /^ROSI-MacOS-(universal|arm64|x64)\.(?:dmg|zip)$/i,
+  );
+  if (macosPackage) {
+    const arches =
+      macosPackage[1].toLowerCase() === "universal"
+        ? ["x86_64", "aarch64"]
+        : [macosPackage[1].toLowerCase() === "arm64" ? "aarch64" : "x86_64"];
+    return Array.from(
+      new Set(
+        arches.flatMap((arch) =>
+          channelVariants.map(
+            (channel) => `darwin${channel.targetSuffix}-${arch}`,
+          ),
+        ),
+      ),
+    );
+  }
   return Array.from(
     new Set(
       resolveUpdaterTargets(baseName).flatMap((target) =>
@@ -650,11 +740,47 @@ function checksumTargetKeysForArtifactName(
   );
 }
 
+function checksumGroupsForArtifacts(
+  files,
+  channelVariants = updaterChannelVariants(IS_PRERELEASE),
+) {
+  const candidates = files.filter((filePath) => {
+    const name = path.basename(filePath);
+    return !name.endsWith(".asc") && !isChecksumTextName(name);
+  });
+  const manifestTargetKeys = Array.from(
+    new Set(
+      candidates
+        .map((filePath) => parseManifestTargetKey(path.basename(filePath)))
+        .filter(Boolean),
+    ),
+  );
+  const buckets = new Map();
+  for (const filePath of candidates) {
+    const name = path.basename(filePath);
+    let targetKeys = checksumTargetKeysForArtifactName(name, channelVariants);
+    if (targetKeys.length === 0 && manifestTargetKeys.length > 0) {
+      targetKeys = manifestTargetKeys;
+    }
+    if (targetKeys.length === 0) targetKeys = ["generic"];
+    for (const targetKey of targetKeys) {
+      if (!buckets.has(targetKey)) buckets.set(targetKey, []);
+      buckets.get(targetKey).push(filePath);
+    }
+  }
+  return new Map(
+    Array.from(buckets, ([key, values]) => [
+      key,
+      Array.from(new Set(values)),
+    ]).sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
 function normalizePreStagedArtifacts(staged) {
   const selected = new Map();
   for (const filePath of staged) {
     const originalName = path.basename(filePath);
-    const cleanName = cleanArtifactName(originalName);
+    const cleanName = cleanArtifactName(originalName, filePath);
     let stat;
     try {
       stat = fs.statSync(filePath);
@@ -693,7 +819,9 @@ function collectArtifacts() {
   fs.mkdirSync(releaseDir, { recursive: true });
   const buildSession = readBuildSession();
 
-  const discovered = SEARCH_DIRS.flatMap((d) => walk(d));
+  const discovered = SEARCH_DIRS.flatMap((d) => walk(d)).filter(
+    (filePath) => !isPerArchTauriAppArchive(filePath),
+  );
   const found = discovered.filter(
     (filePath) =>
       artifactMatchesVersion(path.basename(filePath)) &&
@@ -711,7 +839,7 @@ function collectArtifacts() {
     const collected = [];
     for (const src of selected) {
       const originalName = path.basename(src);
-      const cleanName = cleanArtifactName(originalName);
+      const cleanName = cleanArtifactName(originalName, src);
       const dest = path.join(releaseDir, cleanName);
       fs.copyFileSync(src, dest);
       if (cleanName !== originalName) {
@@ -775,41 +903,8 @@ function sha256(filePath) {
 }
 
 function generateChecksums(files) {
-  const candidates = files.filter((f) => {
-    const name = path.basename(f);
-    return !name.endsWith(".asc") && !isChecksumTextName(name);
-  });
   const channelVariants = updaterChannelVariants(IS_PRERELEASE);
-
-  const manifestTargetKeys = Array.from(
-    new Set(
-      candidates
-        .map((f) => parseManifestTargetKey(path.basename(f)))
-        .filter(Boolean),
-    ),
-  );
-
-  const buckets = new Map();
-  const addToBucket = (targetKey, filePath) => {
-    if (!buckets.has(targetKey)) {
-      buckets.set(targetKey, []);
-    }
-    buckets.get(targetKey).push(filePath);
-  };
-
-  for (const filePath of candidates) {
-    const name = path.basename(filePath);
-    let targetKeys = checksumTargetKeysForArtifactName(name, channelVariants);
-    if (targetKeys.length === 0 && manifestTargetKeys.length > 0) {
-      targetKeys = manifestTargetKeys;
-    }
-    if (targetKeys.length === 0) {
-      targetKeys = ["generic"];
-    }
-    for (const targetKey of targetKeys) {
-      addToBucket(targetKey, filePath);
-    }
-  }
+  const buckets = checksumGroupsForArtifacts(files, channelVariants);
 
   const outputs = [];
   for (const targetKey of Array.from(buckets.keys()).sort()) {
@@ -1332,6 +1427,8 @@ function requiredPublishedBetaManifestNames() {
     "darwin-beta-x86_64-app",
     "darwin-beta-aarch64",
     "darwin-beta-aarch64-app",
+    "darwin-beta-x86_64-app-zst",
+    "darwin-beta-aarch64-app-zst",
     "linux-beta-x86_64",
     "linux-beta-x86_64-appimage",
   ]);
@@ -1704,9 +1801,13 @@ export {
   cleanArtifactName,
   generateUpdaterManifests,
   isArtifact,
+  isPerArchTauriAppArchive,
   assertReleaseTargetsCommit,
   buildUploadList,
   checksumTargetKeysForArtifactName,
+  checksumGroupsForArtifacts,
+  pickNewestByBasename,
+  isSignable,
   isChecksumTextName,
   isDirectExecution,
   isExplicitTruthy,

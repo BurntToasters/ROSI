@@ -3,7 +3,12 @@ import fs from "fs";
 import path from "path";
 import { execFileSync } from "child_process";
 import { fileURLToPath, pathToFileURL } from "url";
-import { EXPECTED_SCENARIOS, scenarioOutcomeProblems } from "./test-e2e.js";
+import {
+  discoverV5Fixes,
+  e2eRunPlan,
+  SCREENSHOT_SCENARIO_NAMES,
+  scenarioOutcomeProblems,
+} from "./test-e2e.js";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const defaultRoot = path.resolve(scriptDirectory, "..");
@@ -216,6 +221,13 @@ function expectedE2eEvidencePaths(root, identity) {
   };
 }
 
+function fullSuiteExpectedScenarios(root) {
+  const v5AreaNames = discoverV5Fixes(path.join(root, "e2e", "v5-fixes")).map(
+    (area) => area.area,
+  );
+  return e2eRunPlan({ onlySpec: null, v5AreaNames }).expectedScenarios;
+}
+
 export function verifyFullE2eEvidence(proof, root, identity) {
   const { reportPath, binaryPath } = expectedE2eEvidencePaths(root, identity);
   let report;
@@ -227,12 +239,31 @@ export function verifyFullE2eEvidence(proof, root, identity) {
     );
   }
   const { reportSha256: embeddedSha, ...reportBody } = report;
+  // The same full-suite inventory the gate builds: the manifest scenarios plus
+  // one scenario per discovered v5-fixes area.
+  const expectedScenarios = fullSuiteExpectedScenarios(root);
   const scenarioProblems = Array.isArray(report.scenarios)
-    ? scenarioOutcomeProblems(report.scenarios, identity.platform)
+    ? scenarioOutcomeProblems(
+        report.scenarios,
+        identity.platform,
+        expectedScenarios,
+      )
     : ["scenario results are missing"];
-  const screenshotScenario = Array.isArray(report.scenarios)
-    ? report.scenarios.find((scenario) => scenario.name === "ui-screenshots")
-    : null;
+  // Every screenshot scenario's shots count: the main UI pass and the ui-polish
+  // area, so a missing ui-polish shot fails the same count and name checks.
+  const screenshotScenarios = Array.isArray(report.scenarios)
+    ? report.scenarios.filter((scenario) =>
+        SCREENSHOT_SCENARIO_NAMES.includes(scenario?.name),
+      )
+    : [];
+  const screenshotScenario =
+    screenshotScenarios.length > 0
+      ? {
+          shots: screenshotScenarios.flatMap((scenario) =>
+            Array.isArray(scenario.shots) ? scenario.shots : [],
+          ),
+        }
+      : null;
   const screenshotArtifactProblems = verifyScreenshotArtifacts(
     report.screenshots,
     root,
@@ -257,7 +288,7 @@ export function verifyFullE2eEvidence(proof, root, identity) {
     report.arch !== identity.arch ||
     report.node !== identity.node ||
     JSON.stringify(report.expectedScenarios) !==
-      JSON.stringify(EXPECTED_SCENARIOS) ||
+      JSON.stringify(expectedScenarios) ||
     scenarioProblems.length > 0 ||
     !Array.isArray(report.missingScenarios) ||
     report.missingScenarios.length > 0 ||

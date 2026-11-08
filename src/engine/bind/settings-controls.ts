@@ -1,12 +1,129 @@
 // Startup bindings for settings controls.
-import { RosiSettings, isValidSubtitleLangs } from '../core';
+import { RosiSettings, isValidSubtitleLangs, isValidUrl, logError } from '../core';
+import {
+  UI_MESSAGES,
+  configureEffectiveOptionsRequestBuilder,
+  refreshEffectiveOptionsSummary,
+} from '../messages';
+import type { EffectiveOptionsReadiness } from '../messages';
 import { showModal } from '../overlays';
+import { isPlaylistScopeVisible, resolvePlaylistSelection } from '../playlist';
+import { buildRequestOverrides, readAdvancedFormatSelections } from '../presets';
 import { formatBytes, formatRelativeTime } from '../progress';
 import { refs } from '../refs';
 import { flushBeforeRestart, persistSettings, settingsStore } from '../settings-store';
 import { applyDownloadProfile, bindExternalLink, updateUIFromSettings } from '../settings-view';
 import { applyTheme, updateBackgroundAnimation } from '../theme';
+import { notifyUpdateChannelChanged } from '../updater-ui';
 import { showToast, updateConsoleVisibility } from '../ui-helpers';
+import { api } from '../../api';
+
+function buildEffectiveOptionsReadiness(): EffectiveOptionsReadiness {
+  const url = refs.urlInput?.value.trim() ?? '';
+  const profile = settingsStore.settings?.downloadMode ?? 'compatible';
+  if (!url) {
+    return { state: 'profile-preview', profile, audioFormat: settingsStore.settings?.audioFormat };
+  }
+  if (!isValidUrl(url)) return { state: 'invalid-url' };
+
+  const settings = settingsStore.settings;
+  if (
+    settingsStore.persistDebounceTimer ||
+    settingsStore.settingsSaveInFlight ||
+    settingsStore.settingsSaveWaiters.length > 0
+  ) {
+    return { state: 'settings-saving' };
+  }
+  if (settingsStore.settingsSavedRevision !== settingsStore.settingsRevision) {
+    return { state: 'settings-unsaved' };
+  }
+  // "Ask every time" defers the folder to each download, so the preview waits for
+  // it. Otherwise an empty folder is not a blocker: download_options::resolve_output_path
+  // falls back to the downloads directory, so the request omits outputPath below.
+  if (settings.askDownloadLocation) return { state: 'destination' };
+  const outputPath = settings.downloadFolder?.trim() ?? '';
+
+  const formatSelections = readAdvancedFormatSelections(url);
+  if (settings.advancedOptions && !formatSelections.videoFormat && !formatSelections.audioFormat) {
+    return { state: 'formats' };
+  }
+
+  const playlist = resolvePlaylistSelection();
+  const playlistVisible = isPlaylistScopeVisible();
+  if (playlistVisible && !playlist) return { state: 'playlist' };
+
+  const request = {
+    url,
+    ...(outputPath ? { outputPath } : {}),
+    ...buildRequestOverrides({
+      formats: formatSelections,
+      playlist: playlistVisible ? (playlist ?? undefined) : undefined,
+    }),
+  };
+  return { state: 'ready', request, usesDefaultFolder: !outputPath };
+}
+
+function setDownloadFolderFeedback(message: string) {
+  const feedback = document.getElementById('downloadFolderFeedback');
+  if (!feedback) return;
+  feedback.textContent = message;
+  feedback.hidden = message === '';
+}
+
+/**
+ * Open the folder picker for the destination strip. A cancel is explained only
+ * while "Ask every time" is off, as in the wizard: with it on, no folder is needed.
+ */
+async function chooseDownloadFolder(explainCancel: boolean): Promise<string | null> {
+  setDownloadFolderFeedback('');
+  try {
+    const chosen = await api.selectDownloadLocation();
+    if (chosen) return chosen;
+    if (explainCancel) setDownloadFolderFeedback(UI_MESSAGES.wizard.folderCancelled);
+    return null;
+  } catch (error) {
+    logError('Download folder selection failed', error);
+    setDownloadFolderFeedback(UI_MESSAGES.wizard.folderFailed);
+    return null;
+  }
+}
+
+function bindEffectiveOptionsSummary() {
+  configureEffectiveOptionsRequestBuilder(buildEffectiveOptionsReadiness);
+  const watchedElements = [
+    refs.urlInput,
+    refs.profileAudioFormatSelect,
+    refs.downloadPresetSelect,
+    refs.convertToggle,
+    refs.convertFormatSelect,
+    refs.keepOriginalToggle,
+    refs.gpuAccelerationToggle,
+    refs.gpuTypeSelect,
+    refs.writeSubtitlesToggle,
+    refs.subtitleLangsInput,
+    refs.embedMetadataToggle,
+    refs.embedThumbnailToggle,
+    refs.sponsorblockToggle,
+    refs.askDownloadLocationToggle,
+    refs.playlistRangeStart,
+    refs.playlistRangeEnd,
+  ].filter((element): element is NonNullable<typeof element> => element !== null);
+  watchedElements.forEach((element) => {
+    if (element === refs.urlInput) {
+      element.addEventListener('input', () => refreshEffectiveOptionsSummary());
+    }
+    element.addEventListener('change', () => refreshEffectiveOptionsSummary());
+  });
+  document
+    .getElementById('downloadProfilesComposer')
+    ?.addEventListener('click', () => refreshEffectiveOptionsSummary());
+  document
+    .getElementById('playlistScope')
+    ?.addEventListener('change', () => refreshEffectiveOptionsSummary());
+  document
+    .getElementById('changeDownloadFolderBtn')
+    ?.addEventListener('click', () => window.setTimeout(refreshEffectiveOptionsSummary, 0));
+}
 
 /** Windows-only browser cookie choices. */
 export function bindWindowsBrowserChoice() {
@@ -30,6 +147,7 @@ export function bindWindowsBrowserChoice() {
 
 /** Settings toggles, selects, and inputs that save on change. */
 export function bindSettingsControls() {
+  bindEffectiveOptionsSummary();
   const {
     animateBackgroundToggle,
     askDownloadLocationToggle,
@@ -87,16 +205,30 @@ export function bindSettingsControls() {
   }
   if (askDownloadLocationToggle) {
     askDownloadLocationToggle.addEventListener('change', (e) => {
-      settingsStore.settings.askDownloadLocation = (e.target as HTMLInputElement).checked;
+      const askEachTime = (e.target as HTMLInputElement).checked;
+      settingsStore.settings.askDownloadLocation = askEachTime;
+      setDownloadFolderFeedback('');
       void persistSettings();
+      // With no folder and "Ask every time" off, ask for one now, so the next
+      // download does not save somewhere the user never chose.
+      if (!askEachTime && !settingsStore.settings.downloadFolder?.trim()) {
+        void chooseDownloadFolder(true).then((savePath) => {
+          if (!savePath || settingsStore.settings.askDownloadLocation) return;
+          settingsStore.settings.downloadFolder = savePath;
+          updateUIFromSettings();
+          refreshEffectiveOptionsSummary();
+          void persistSettings(true, true);
+        });
+      }
     });
   }
   if (changeDownloadFolderBtn) {
     changeDownloadFolderBtn.addEventListener('click', async () => {
-      const savePath = await window.api.selectDownloadLocation();
+      const savePath = await chooseDownloadFolder(!settingsStore.settings.askDownloadLocation);
       if (!savePath) return;
       settingsStore.settings.downloadFolder = savePath;
       updateUIFromSettings();
+      refreshEffectiveOptionsSummary();
       void persistSettings(true, true);
     });
   }
@@ -317,6 +449,10 @@ export function bindSettingsControls() {
 
 /** Update channel, reset, export, import, and statistics. */
 export function bindSettingsActions() {
+  const retrySettingsSave = document.getElementById('retrySettingsSave');
+  retrySettingsSave?.addEventListener('click', () => {
+    void persistSettings(false, true);
+  });
   const {
     exportSettingsBtn,
     importSettingsBtn,
@@ -345,18 +481,14 @@ export function bindSettingsActions() {
 
   if (updateChannelSelect) {
     updateChannelSelect.addEventListener('change', (e) => {
-      const previousChannel = settingsStore.settings.updateChannel ?? 'auto';
       settingsStore.settings.updateChannel = (e.target as HTMLSelectElement)
         .value as RosiSettings['updateChannel'];
-      // Retire the old update identity before the async settings write can
-      // complete; the updater holds that save before its target recheck.
-      const save = persistSettings(false, true);
-      if (window.api.getChannel() !== 'msstore') {
-        window.api.notifyUpdaterChannelChanged?.(
-          settingsStore.settings.updateChannel,
-          save,
-          previousChannel
-        );
+      persistSettings(false, true).catch((error: unknown) =>
+        logError('Could not save the update channel', error)
+      );
+      // Rust saves the channel itself and retires the old update identity first.
+      if (api.getChannel() !== 'msstore') {
+        notifyUpdateChannelChanged(settingsStore.settings.updateChannel);
       }
     });
   }
@@ -376,7 +508,7 @@ export function bindSettingsActions() {
               localStorage.removeItem('rosi-flat-ui');
               localStorage.removeItem('rosi-theme');
               try {
-                await window.api.resetSettings();
+                await api.resetSettings();
               } catch (error) {
                 localStorage.setItem(
                   'rosi-flat-ui',
@@ -402,7 +534,7 @@ export function bindSettingsActions() {
     exportSettingsBtn.addEventListener('click', async () => {
       try {
         if (!(await persistSettings(false, true))) return;
-        const result = await window.api.exportSettings();
+        const result = await api.exportSettings();
         if (result && result.ok) {
           showToast('Settings exported successfully.', { type: 'success' });
         } else if (result && !result.ok) {
@@ -427,7 +559,7 @@ export function bindSettingsActions() {
             action: async () => {
               try {
                 if (!(await persistSettings(false, true))) return;
-                const result = await window.api.importSettings();
+                const result = await api.importSettings();
                 if (result && result.ok) {
                   showToast('Settings imported successfully.', { type: 'success' });
                 } else {
@@ -448,7 +580,7 @@ export function bindSettingsActions() {
   if (viewStatsBtn) {
     viewStatsBtn.addEventListener('click', async () => {
       try {
-        const stats = await window.api.getStats();
+        const stats = await api.getStats();
         const formatList = Object.entries(stats.formatCounts || {})
           .sort((a, b) => b[1] - a[1])
           .slice(0, 5)
@@ -474,7 +606,7 @@ export function bindSettingsActions() {
               label: 'Reset Stats',
               action: async () => {
                 try {
-                  const result = await window.api.resetStats();
+                  const result = await api.resetStats();
                   if (!result.ok) {
                     showToast('Could not reset statistics. Please try again.', { type: 'error' });
                     return;

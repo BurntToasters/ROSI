@@ -774,13 +774,13 @@ test("25. dependency update entry points use guarded Cargo resolution", () => {
   const packageJson = JSON.parse(
     readFileSync(new URL("../package.json", import.meta.url), "utf8"),
   );
-  for (const name of ["u", "u2", "deps:rust:update"]) {
+  for (const name of ["u", "deps:rust:update"]) {
     const command = packageJson.scripts?.[name];
     if (!command) continue;
     assert.doesNotMatch(command, /\bcargo update\b/);
     assert.match(command, /cargo-safe-update/);
   }
-  for (const name of ["u", "u2"]) {
+  for (const name of ["u"]) {
     const command = packageJson.scripts[name];
     assert.match(command, /npm-safe-update/);
     assert.match(command, /sync-version\.js/);
@@ -1568,31 +1568,35 @@ test("44. deceptive registry baseline cannot preserve a too-young release", () =
 });
 
 test("45. update environment versions fail closed at exact boundaries", () => {
-  assert.deepEqual(parseVersion("12.0.1"), [12, 0, 1]);
-  assert.equal(isVersionAtLeast("12.0.1", MINIMUM_NPM_VERSION), true);
-  assert.equal(isVersionAtLeast("12.1.0", MINIMUM_NPM_VERSION), true);
-  assert.equal(isVersionAtLeast("12.0.0", MINIMUM_NPM_VERSION), false);
+  assert.deepEqual(parseVersion("12.2.1"), [12, 2, 1]);
+  assert.equal(isVersionAtLeast("12.2.1", MINIMUM_NPM_VERSION), true);
+  assert.equal(isVersionAtLeast("12.3.0", MINIMUM_NPM_VERSION), true);
+  assert.equal(isVersionAtLeast("12.2.0", MINIMUM_NPM_VERSION), false);
   assert.equal(isVersionAtLeast("11.99.99", MINIMUM_NPM_VERSION), false);
   assert.equal(isSupportedNodeVersion("22.22.2"), false);
-  assert.equal(isSupportedNodeVersion("22.99.99"), false);
   assert.equal(isSupportedNodeVersion("23.99.99"), false);
-  assert.equal(isSupportedNodeVersion("24.15.0"), true);
-  assert.equal(isSupportedNodeVersion("24.14.9"), false);
+  assert.equal(isSupportedNodeVersion("24.22.0"), false);
+  assert.equal(isSupportedNodeVersion("24.22.1"), true);
   assert.equal(isSupportedNodeVersion("25.99.99"), false);
-  assert.equal(isSupportedNodeVersion("26.0.0"), true);
+  assert.equal(isSupportedNodeVersion("26.12.9"), false);
+  assert.equal(isSupportedNodeVersion("26.13.0"), true);
+  assert.equal(isSupportedNodeVersion("27.0.0"), true);
   assert.throws(() => parseVersion("latest"), /Invalid semantic version/);
 });
 
 // Failure modes covered: a floating `stable` toolchain passes without the
-// repository pin; a prefix match accepts 1.98.10 for 1.98.1; rustup's
-// host-qualified exact version is rejected; or a malformed pin passes.
+// repository pin; a prefix match accepts a later patch release for the exact
+// pin; rustup's host-qualified exact version is rejected; or a malformed pin
+// passes.
 test("45a. npm updater requires exact repository-pinned Rust toolchain", () => {
   const root = process.cwd();
   const pinned = readPinnedRustToolchain(root);
-  assert.equal(pinned, "1.98.1");
-  assert.equal(hasRustToolchain("1.98.1\n", pinned), true);
+  const [major, minor, patch] = pinned.split(".").map(Number);
+  const nextPatch = `${major}.${minor}.${patch + 1}`;
+  assert.match(pinned, /^\d+\.\d+\.\d+$/u);
+  assert.equal(hasRustToolchain(`${pinned}\n`, pinned), true);
   assert.equal(
-    hasRustToolchain("1.98.1-aarch64-apple-darwin (default)\n", pinned),
+    hasRustToolchain(`${pinned}-aarch64-apple-darwin (default)\n`, pinned),
     true,
   );
   assert.equal(hasRustToolchain("stable\n", pinned), false);
@@ -1601,7 +1605,7 @@ test("45a. npm updater requires exact repository-pinned Rust toolchain", () => {
     false,
   );
   assert.equal(
-    hasRustToolchain("1.98.10-aarch64-apple-darwin\n", pinned),
+    hasRustToolchain(`${nextPatch}-aarch64-apple-darwin\n`, pinned),
     false,
   );
 
@@ -1923,5 +1927,35 @@ test("51. npm rollback refuses to overwrite a concurrent package-lock edit", () 
     assert.equal(readFileSync(packageLock, "utf8"), "original\n");
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("rust toolchain CLI --print matches the bare pin and never combines with an action", () => {
+  const script = fileURLToPath(
+    new URL("./rust-toolchain.mjs", import.meta.url),
+  );
+  const run = (args) =>
+    spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
+  const bare = run([]);
+  assert.equal(bare.status, 0, bare.stderr);
+  assert.match(bare.stdout, /^\d+\.\d+\.\d+\n$/u);
+  const printed = run(["--print"]);
+  assert.equal(printed.status, 0, printed.stderr);
+  assert.equal(printed.stdout, bare.stdout);
+  for (const args of [
+    ["--print", "--install"],
+    ["--install", "--print"],
+    ["--print", "--target", "x86_64-pc-windows-msvc"],
+    ["--target", "x86_64-pc-windows-msvc", "--print"],
+  ]) {
+    const result = run(args);
+    const label = args.join(" ");
+    assert.notEqual(result.status, 0, `${label} must fail`);
+    assert.match(
+      result.stderr,
+      /--print cannot be combined/u,
+      `${label} must name --print`,
+    );
+    assert.equal(result.stdout, "", `${label} must not print or act`);
   }
 });

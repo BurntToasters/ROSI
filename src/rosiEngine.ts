@@ -1,5 +1,9 @@
 import { bindActivityControls } from './engine/bind/activity';
-import { bindAppShell, bindLicensesOverlay } from './engine/bind/app-shell';
+import {
+  bindAppShell,
+  bindLicensesExternalLinks,
+  bindLicensesOverlay,
+} from './engine/bind/app-shell';
 import { bindBackendEvents } from './engine/bind/backend-events';
 import { bindDownloadControls } from './engine/bind/download';
 import { initPlaylistScope } from './engine/bind/playlist';
@@ -28,16 +32,11 @@ import {
   updateUIFromSettings,
 } from './engine/settings-view';
 import { replayActivityDownload } from './engine/url-actions';
-import {
-  RosiSettings,
-  activityModule,
-  dockModule,
-  iconsModule,
-  logError,
-  queueModule,
-  renderStatusText,
-  updatesModule,
-} from './engine/core';
+import { RosiSettings, logError, renderStatusText } from './engine/core';
+import { initActivityPanel } from './modules/activity';
+import { icon } from './modules/icons';
+import { markUnseen } from './modules/dock';
+import { resolveQueueSectionElement } from './modules/queue';
 import { checkDenoInstallation } from './engine/deno';
 import { fetchFormats } from './engine/formats';
 import { showModal } from './engine/overlays';
@@ -46,6 +45,7 @@ import { applyTheme } from './engine/theme';
 import { showToast } from './engine/ui-helpers';
 import { cleanupUpdaterListeners, setupAutoUpdater } from './engine/updater-ui';
 import { launchSetupWizard } from './engine/wizard';
+import { api } from './api';
 
 type PrepareForCloseHandler = (generation: number) => Promise<void>;
 
@@ -67,10 +67,41 @@ function setPrepareForCloseHandler(handler: PrepareForCloseHandler) {
   resolvePrepareForCloseHandler(handler);
 }
 
+/**
+ * Defaults for a startup settings load that failed. Rust owns the defaults, so
+ * they come from `get_default_settings`. The minimal object is used only when
+ * that call fails too; its version mirrors CURRENT_SETTINGS_VERSION in
+ * `src-tauri/src/constants.rs` because no backend answer exists at that point.
+ */
+const MINIMAL_SETTINGS_VERSION = 7;
+
+async function settingsAfterLoadFailure(): Promise<{
+  settings: RosiSettings;
+  defaultsFailed: boolean;
+}> {
+  try {
+    const result =
+      typeof api.getDefaultSettings === 'function' ? await api.getDefaultSettings() : null;
+    if (!result?.ok) {
+      throw new Error(result?.error?.message ?? 'get_default_settings returned no data');
+    }
+    return { settings: result.data as RosiSettings, defaultsFailed: false };
+  } catch (error) {
+    logError('Failed to load default settings', error);
+    return {
+      settings: {
+        settingsVersion: MINIMAL_SETTINGS_VERSION,
+        theme: 'system',
+      } as RosiSettings,
+      defaultsFailed: true,
+    };
+  }
+}
+
 async function initializeRenderer() {
   const ipcCleanupFunctions: Array<() => void> = (refs.ipcCleanupFunctions = []);
   ipcCleanupFunctions.push(
-    window.api.onPrepareForClose(async (generation) => {
+    api.onPrepareForClose(async (generation) => {
       try {
         const handler = await prepareForCloseHandlerReady;
         await handler(generation);
@@ -87,50 +118,16 @@ async function initializeRenderer() {
   );
   refs.pendingManualCompletions = new Map<number, RosiDownloadCompletion>();
   try {
-    settingsStore.settings = (await window.api.getSettings()) as RosiSettings;
+    settingsStore.settings = (await api.getSettings()) as RosiSettings;
   } catch (error) {
     logError('Failed to load settings', error);
-    settingsStore.settings = {
-      settingsVersion: 7,
-      theme: 'system',
-      showConsoleOutput: false,
-      dockTab: 'queue',
-      dockCollapsed: false,
-      downloadMode: 'compatible',
-      downloadPresets: [],
-      askDownloadLocation: false,
-      advancedOptions: false,
-      audioFormat: 'mp3',
-      convertEnabled: false,
-      convertFormat: 'mp4',
-      keepOriginalAfterConvert: true,
-      firstLaunch: true,
-      hookBrowser: false,
-      browserChoice: 'chrome',
-      animateBackground: true,
-      flatUi: localStorage.getItem('rosi-flat-ui') === 'true',
-      notifications: true,
-      denoReminderDismissed: false,
-      gpuAcceleration: false,
-      gpuType: 'auto',
-      bestQuality: false,
-      ffmpegPath: '',
-      upstreamProxy: '',
-      downloadFolder: '',
-      hideSupportModal: false,
-      checkUpdatesOnStartup: true,
-      updateChannel: 'auto',
-      audioOnly: false,
-      writeSubtitles: false,
-      subtitleLangs: 'en',
-      embedThumbnail: false,
-      embedMetadata: false,
-      sponsorblockRemove: false,
-      showTaskbarProgress: true,
-    };
+    const fallback = await settingsAfterLoadFailure();
+    settingsStore.settings = fallback.settings;
     showModal({
       title: 'Settings Error',
-      message: 'Could not load settings. Using defaults.',
+      message: fallback.defaultsFailed
+        ? 'Could not load settings or the default settings from the backend. ROSI is using minimal settings for this session.'
+        : 'Could not load settings. Using defaults.',
       buttons: [{ label: 'OK', primary: true }],
     });
   }
@@ -138,7 +135,7 @@ async function initializeRenderer() {
   applyTheme(settingsStore.settings.theme ?? 'system');
 
   try {
-    const version = await window.api.getAppVersion();
+    const version = await api.getAppVersion();
     const versionLink = document.getElementById('versionLink');
     const betaBadge = document.getElementById('betaBadge');
     if (versionLink && version) {
@@ -149,15 +146,11 @@ async function initializeRenderer() {
       );
       versionLink.addEventListener('click', (event) => {
         event.preventDefault();
-        void window.api.openExternal(
-          `https://github.com/BurntToasters/ROSI/releases/tag/v${version}`
-        );
+        void api.openExternal(`https://github.com/BurntToasters/ROSI/releases/tag/v${version}`);
       });
-      const isBeta =
-        updatesModule && typeof updatesModule.isPrereleaseVersion === 'function'
-          ? updatesModule.isPrereleaseVersion(version)
-          : /-(beta|alpha|rc)/i.test(version);
-      if (isBeta) {
+      // Same rule as is_beta_version in src-tauri/src/updater.rs; the Rust side
+      // owns the update policy, this only styles the version label.
+      if (/-(beta|alpha|rc)/i.test(version)) {
         versionLink.classList.add('beta-version');
         if (betaBadge) betaBadge.classList.remove('hidden');
       }
@@ -172,7 +165,7 @@ async function initializeRenderer() {
   }
 
   try {
-    const platform = await window.api.getAppPlatform();
+    const platform = await api.getAppPlatform();
     const taskbarSetting = document.getElementById('taskbarProgressSetting');
     const taskbarLinuxNote = document.getElementById('taskbarProgressLinuxNote');
     if (platform === 'linux') {
@@ -187,7 +180,7 @@ async function initializeRenderer() {
     logError('Could not resolve app platform for settings UI', e);
   }
   try {
-    settingsStore.isFlatpakBuild = (await window.api.isFlatpak?.()) === true;
+    settingsStore.isFlatpakBuild = (await api.isFlatpak?.()) === true;
   } catch (e) {
     logError('Could not detect the Flatpak build', e);
   }
@@ -203,7 +196,7 @@ async function initializeRenderer() {
     document.getElementById('browserFlatpakHint')?.classList.remove('hidden');
   }
 
-  if (window.api.getChannel() !== 'msstore') {
+  if (api.getChannel() !== 'msstore') {
     try {
       setupAutoUpdater(() => flushBeforeRestart('Installing the update'));
     } catch (e) {
@@ -217,7 +210,7 @@ async function initializeRenderer() {
       // A settings file from a newer ROSI is preserved on purpose; it must not
       // keep the app from closing.
       if (!saved && settingsStore.lastSettingsSaveErrorCode !== 'NEWER_VERSION') return;
-      await window.api.notifySettingsFlushed(generation);
+      await api.notifySettingsFlushed(generation);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       showModal({
@@ -307,19 +300,11 @@ async function initializeRenderer() {
   refs.clearQueueBtn = byId<HTMLButtonElement>('clearQueueBtn');
   refs.clearFinishedQueueBtn = byId<HTMLButtonElement>('clearFinishedQueueBtn');
   refs.cancelQueueBtn = byId<HTMLButtonElement>('cancelQueueBtn');
-  const queueStatusMessage = (refs.queueStatusMessage = byId('queueStatusMessage'));
+  // role and aria-live live in index.html on #queueStatusMessage, so no runtime copy here.
+  refs.queueStatusMessage = byId('queueStatusMessage');
   refs.queueList = byId('queueList');
   refs.queueCount = byId('queueCount');
-  refs.queueSection =
-    (queueModule && typeof queueModule.resolveQueueSectionElement === 'function'
-      ? queueModule.resolveQueueSectionElement(document)
-      : null) || byId('queueSection');
-
-  if (queueStatusMessage) {
-    queueStatusMessage.setAttribute('role', 'status');
-    queueStatusMessage.setAttribute('aria-live', 'polite');
-    queueStatusMessage.setAttribute('aria-atomic', 'true');
-  }
+  refs.queueSection = resolveQueueSectionElement(document) || byId('queueSection');
 
   if (fetchFormatsBtn) fetchFormatsBtn._originalClick = fetchFormats;
   if (downloadBtn) downloadBtn._originalClick = null;
@@ -362,18 +347,17 @@ async function initializeRenderer() {
   bindUrlInput();
 
   // Renders the empty or legacy state and binds the activity filter buttons.
-  refs.activityPanel =
-    activityModule?.initActivityPanel({
-      showToast,
-      renderStatusText,
-      formatRelativeTime,
-      revealFileLocation,
-      icon: (name, size) => iconsModule?.icon(name, size) ?? null,
-      markUnseen: (tab) => dockModule?.markUnseen(tab),
-      onReplay: (entry) => {
-        void replayActivityDownload(entry);
-      },
-    }) ?? null;
+  refs.activityPanel = initActivityPanel({
+    showToast,
+    renderStatusText,
+    formatRelativeTime,
+    revealFileLocation,
+    icon,
+    markUnseen,
+    onReplay: (entry) => {
+      void replayActivityDownload(entry);
+    },
+  });
 
   bindActivityControls();
 
@@ -432,6 +416,7 @@ async function initializeRenderer() {
   }
 
   bindLicensesOverlay();
+  bindLicensesExternalLinks();
 
   bindKeyboardShortcuts();
 }

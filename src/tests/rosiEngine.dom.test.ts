@@ -3,20 +3,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 
+// This suite has never rendered Lucide icons: the icons module was not loaded
+// here, so icon-only buttons kept their text labels. The stub keeps that fixture.
+vi.mock('../modules/icons', () => ({
+  icon: () => null,
+  initializeIcons: () => {},
+  parseStatus: (text: string) => ({ icon: null, tone: null, text }),
+  renderStatus: (target: HTMLElement, text: string) => {
+    target.textContent = text;
+  },
+}));
+
 const REPO = path.resolve(__dirname, '..', '..');
 const RENDERER = path.join(REPO, 'src');
 const INDEX_HTML = path.join(RENDERER, 'index.html');
-// Renderer modules attach to window.rosiModules when imported, in index.html order.
-const loadRendererModules = async () => {
-  await import('../modules/ui');
-  await import('../modules/downloads');
-  await import('../modules/activity');
-  await import('../modules/queue');
-  await import('../modules/settings');
-  await import('../modules/updates');
-  await import('../modules/dock');
-};
-
 // Extract the <body> markup from the real index.html (minus its <script> tags,
 // which we run ourselves) so the engine binds against the shipping DOM.
 const bodyHtml = (() => {
@@ -25,6 +25,14 @@ const bodyHtml = (() => {
   const inner = match?.[1] ?? '';
   return inner.replace(/<script[\s\S]*?<\/script>/gi, '');
 })();
+
+// The engine reads the API through its module. Each test swaps in its mock.
+const apiMock = vi.hoisted(() => ({ current: {} as unknown }));
+vi.mock('../api', () => ({
+  get api() {
+    return apiMock.current;
+  },
+}));
 
 interface MockApi {
   [key: string]: ReturnType<typeof vi.fn> | (() => unknown);
@@ -92,6 +100,14 @@ function buildMockApi(overrides: Partial<MockApi> = {}): MockApi {
     cancelDownload: vi.fn(),
     cancelFormats: vi.fn(),
     addToQueue: vi.fn(() => ok({ added: 1, skipped: 0 })),
+    // Answers like extract_queue_urls for plain http(s) tokens.
+    extractQueueUrls: vi.fn((text: string) => {
+      const urls: string[] = [];
+      for (const token of text.split(/\s+/)) {
+        if (/^https?:\/\//.test(token) && !urls.includes(token)) urls.push(token);
+      }
+      return ok({ urls, rejected: [], rejectedCount: 0 });
+    }),
     removeFromQueue: vi.fn(() => ok(undefined)),
     retryQueueItem: vi.fn(() => ok(undefined)),
     reorderQueueItem: vi.fn(() => ok(undefined)),
@@ -162,7 +178,7 @@ function clearTrackedDocListeners() {
 // DOMContentLoaded the engine waits on.
 async function loadEngine(api: MockApi) {
   document.body.innerHTML = bodyHtml;
-  (window as unknown as { api: MockApi }).api = api;
+  apiMock.current = api;
   // matchMedia is not implemented in jsdom; stub it for theme resolution.
   (window as unknown as { matchMedia: unknown }).matchMedia = (query: string) => ({
     matches: false,
@@ -172,12 +188,9 @@ async function loadEngine(api: MockApi) {
     addListener: () => {},
     removeListener: () => {},
   });
-  // Load the renderer modules first (they attach to window.rosiModules), then
-  // the engine, mirroring index.html's script order.
-  // Fresh module instances per test, so engine state never leaks between tests.
+  // Fresh module instances per test, so engine and module state never leak
+  // between tests. The engine imports the renderer modules directly.
   vi.resetModules();
-  delete (window as unknown as { rosiModules?: unknown }).rosiModules;
-  await loadRendererModules();
   await import('../rosiEngine');
   document.dispatchEvent(new Event('DOMContentLoaded'));
   await flush(50);
@@ -270,14 +283,21 @@ describe('rosiEngine DOM wiring', () => {
     expect(
       document.getElementById('profileAudioFormatContainer')?.classList.contains('hidden')
     ).toBe(false);
-    expect(api.saveSettings).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        downloadMode: 'audio',
-        audioOnly: true,
-        advancedOptions: false,
-        bestQuality: false,
-      })
-    );
+    // Saves send only the keys that differ from the backend baseline. The switch
+    // changes three keys; advancedOptions stays false and is not resent.
+    const sent = (api.saveSettings as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as Record<
+      string,
+      unknown
+    >;
+    expect(sent).toMatchObject({ downloadMode: 'audio', audioOnly: true, bestQuality: false });
+    // The stored result is the baseline plus the patch: the audio profile, with advancedOptions still false.
+    const merged = { ...defaultSettings(), downloadMode: 'best-video', bestQuality: true, ...sent };
+    expect(merged).toMatchObject({
+      downloadMode: 'audio',
+      audioOnly: true,
+      advancedOptions: false,
+      bestQuality: false,
+    });
   });
 
   it('asks once for a destination when Ask every time is enabled', async () => {
@@ -385,7 +405,18 @@ describe('rosiEngine DOM wiring', () => {
       getFormats: vi.fn(() =>
         Promise.resolve({
           ok: true,
-          data: '137 mp4 1920x1080 video only\n140 m4a audio only',
+          data: {
+            formats: [
+              {
+                formatId: '137',
+                streamKind: 'video',
+                vcodec: 'avc1.640028',
+                resolution: '1920x1080',
+                fps: 30,
+              },
+              { formatId: '140', streamKind: 'audio', acodec: 'mp4a.40.2' },
+            ],
+          },
         })
       ) as unknown as ReturnType<typeof vi.fn>,
     });
@@ -443,7 +474,18 @@ describe('rosiEngine DOM wiring', () => {
       getFormats: vi.fn(() =>
         Promise.resolve({
           ok: true,
-          data: '137 mp4 1920x1080 video only\n140 m4a audio only',
+          data: {
+            formats: [
+              {
+                formatId: '137',
+                streamKind: 'video',
+                vcodec: 'avc1.640028',
+                resolution: '1920x1080',
+                fps: 30,
+              },
+              { formatId: '140', streamKind: 'audio', acodec: 'mp4a.40.2' },
+            ],
+          },
         })
       ) as unknown as ReturnType<typeof vi.fn>,
     });
@@ -492,6 +534,19 @@ describe('rosiEngine DOM wiring', () => {
           ],
         })
       ) as unknown as ReturnType<typeof vi.fn>,
+      // Apply takes the preset's values from Rust's resolution (B2), so the mock answers
+      // the preset resolution the way resolve_preset_options would.
+      resolvePresetOptions: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          data: {
+            url: '',
+            outputPath: '/tmp/rosi',
+            presetId: 'p-range',
+            playlist: { mode: 'range', start: 2, end: 5 },
+          },
+        })
+      ),
     });
     await loadEngine(api);
 
@@ -649,6 +704,7 @@ describe('rosiEngine DOM wiring', () => {
     });
 
     queueInput.dispatchEvent(dropEvent);
+    await flush(10);
 
     expect(queueInput.value).toBe('https://example.com/existing\nhttps://example.com/dropped');
   });
@@ -738,7 +794,12 @@ describe('rosiEngine DOM wiring', () => {
 
   it('starts a direct download from a valid URL and selected folder', async () => {
     const savePath = '/Users/test/Downloads';
+    // Ask every time keeps the folder picker path. With it off and no folder, the
+    // download saves to the Downloads folder without a picker.
     const api = buildMockApi({
+      getSettings: vi.fn(() =>
+        Promise.resolve({ ...defaultSettings(), askDownloadLocation: true })
+      ),
       selectDownloadLocation: vi.fn(() => Promise.resolve(savePath)),
     });
     await loadEngine(api);

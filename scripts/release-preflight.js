@@ -41,12 +41,27 @@ function git(args) {
   }).trimEnd();
 }
 
+function assertZstdRunnable() {
+  try {
+    execFileSync("zstd", ["--version"], { stdio: "ignore" });
+  } catch {
+    throw new Error(
+      "zstd was not found or cannot run. Install it with: brew install zstd",
+    );
+  }
+}
+
 /**
  * Release source checks: the right branch, a clean tree, and HEAD pushed to
  * its upstream. Hosted CI is not required here; it runs on pushes but does
  * not gate releases.
  */
 function runPreflight() {
+  // macOS updater archives need the zstd CLI; fail before any mac build starts.
+  if (process.platform === "darwin") {
+    assertZstdRunnable();
+  }
+
   const version = String(packageJson.version ?? "");
   const expectedBranch = expectedReleaseBranch(version);
   const branch = git(["branch", "--show-current"]);

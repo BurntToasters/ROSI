@@ -142,8 +142,9 @@ pub fn error(message: &str) {
 }
 
 #[tauri::command(async)]
-pub fn log_error(message: serde_json::Value) {
-    let Some(text) = message.as_str() else {
+pub fn log_error(message: crate::ipc::FalliblePayload<String>) {
+    // A non-string message is dropped, as the untyped version did.
+    let crate::ipc::FalliblePayload::Typed(text) = message else {
         return;
     };
     let truncated: String = if text.chars().count() > MAX_RENDERER_MESSAGE_CHARS {

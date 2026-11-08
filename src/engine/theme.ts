@@ -1,3 +1,4 @@
+import { api } from '../api';
 // Theme resolution, the system theme listener, and theme-dependent styling.
 export type ThemeName = 'system' | 'light' | 'dark' | 'purple';
 
@@ -33,7 +34,7 @@ export function syncLicensesTheme(theme: ThemeName) {
 // Pin the native title bar to the rendered theme rather than the system
 // appearance, so a dark page never sits under a light bar.
 export function syncWindowTheme(theme: ThemeName) {
-  window.api?.setWindowTheme?.(theme === 'light' ? 'light' : 'dark');
+  api.setWindowTheme?.(theme === 'light' ? 'light' : 'dark');
 }
 
 export function teardownSystemThemeListener() {

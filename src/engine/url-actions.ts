@@ -1,5 +1,5 @@
 // URL field state, primary action buttons, and activity replay.
-import { applyActiveDownloadProgressPhases, extractHttpUrls, isValidUrl, logError } from './core';
+import { applyActiveDownloadProgressPhases, isValidUrl, logError } from './core';
 import { clearAdvancedFormatSelections, invalidateFormatRequest } from './formats';
 import {
   beginManualDownloadOperation,
@@ -15,6 +15,7 @@ import { downloadState, hideProgressBar } from './progress';
 import { refs } from './refs';
 import { settingsStore } from './settings-store';
 import { setButtonLoading, showToast } from './ui-helpers';
+import { api } from '../api';
 
 // ── Activity replay ─────────────────────────────────────────────────────────
 export async function replayActivityDownload(entry: RosiDownloadActivity) {
@@ -27,8 +28,7 @@ export async function replayActivityDownload(entry: RosiDownloadActivity) {
   const outputPath =
     typeof request.outputPath === 'string' && request.outputPath.trim()
       ? request.outputPath
-      : settingsStore.settings.downloadFolder?.trim() ||
-        (await window.api.selectDownloadLocation());
+      : settingsStore.settings.downloadFolder?.trim() || (await api.selectDownloadLocation());
   if (!outputPath) return;
   request.outputPath = outputPath;
 
@@ -42,14 +42,14 @@ export async function replayActivityDownload(entry: RosiDownloadActivity) {
     syncPrimaryActionState();
   };
   setButtonLoading(refs.downloadBtn, true, () => {
-    window.api.cancelDownload();
+    api.cancelDownload();
     downloadState.downloadAbort?.();
     hideProgressBar();
   });
   applyActiveDownloadProgressPhases(settingsStore.settings, 'Starting download...');
   try {
     prepareManualDownloadStart(operation);
-    const result = await window.api.downloadVideo(request);
+    const result = await api.downloadVideo(request);
     if (operation !== manualDownload.manualDownloadOperation) return;
     if (!result || result.ok !== true) {
       failManualDownloadStart(operation);
@@ -85,6 +85,22 @@ export function setDownloadButtonLabel(label: string) {
   }
 }
 
+/**
+ * Links to count while typing. Only `isValidUrl` decides here, so the hint may
+ * show a link the backend refuses. The add path uses the backend result.
+ */
+function batchHintUrls(raw: string): string[] {
+  const seen = new Set<string>();
+  raw.split(/\r?\n/).forEach((line) => {
+    const trimmedLine = line.trim();
+    if (!trimmedLine || trimmedLine.startsWith('#')) return;
+    trimmedLine.split(/\s+/).forEach((token) => {
+      if (isValidUrl(token)) seen.add(token);
+    });
+  });
+  return [...seen];
+}
+
 export function syncPrimaryActionState() {
   const hasInput = !!refs.urlInput;
   const hasPrimaryButton = !!refs.downloadBtn;
@@ -97,8 +113,8 @@ export function syncPrimaryActionState() {
     clearAdvancedFormatSelections();
   }
   const hasValue = trimmed.length > 0;
-  const extracted = extractHttpUrls(raw);
-  urlActionState.pendingBatchUrls = extracted.urls.length > 1 ? extracted.urls : [];
+  const hintUrls = batchHintUrls(raw);
+  urlActionState.pendingBatchUrls = hintUrls.length > 1 ? hintUrls : [];
   const isBatch = urlActionState.pendingBatchUrls.length > 1;
   const validUrl = hasValue && (isBatch || isValidUrl(trimmed));
   const showInvalid = urlActionState.hasUrlValidationIntent && hasValue && !validUrl;

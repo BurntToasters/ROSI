@@ -32,7 +32,7 @@ a startup check is silent. Same as other builds.
 P2. Newer version in Flatpak: `available` carries `manualInstall: true`. The
 modal offers "Open Release Page" (primary) and "Later". No "Download &
 Install" button is shown.
-P3. "Open Release Page" calls `window.api.openExternal` with exactly
+P3. "Open Release Page" calls `window.__ROSI_E2E__.api.openExternal` with exactly
 `https://github.com/BurntToasters/ROSI/releases/tag/v<version>`.
 P4. The release URL is built from the feed version with `encodeURIComponent`,
 so a version string cannot change the host or path. Semver versions
@@ -68,6 +68,10 @@ N4. Existing jsdom tests in `src/tests/updater-races.test.ts` use
 extra field does not break them.
 
 ## E2E spec risks
+
+Since 5.1.0-beta.1 the spec drives the Rust update engine against a local signed
+feed (`e2e/helpers/updater-engine-fixture.js`). E1 and N4 describe the removed
+renderer adapter and jsdom tests and are kept as history.
 
 E1. The E2E adapter (`window.__ROSI_E2E__.updaterAdapter`) is only read when
 `VITE_ROSI_E2E === '1'`. Without it the spec would hit the real feed. The

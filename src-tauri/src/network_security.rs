@@ -4,8 +4,8 @@
 //! URL once before launching the process is not a network security boundary.
 //! Every HTTP request and HTTPS CONNECT sent through this short-lived proxy is
 //! resolved and checked again here, then connected to the exact vetted
-//! address. The proxy uses a fixed worker pool and closes active sockets when
-//! its owning operation ends.
+//! address. Client networking runs as bounded tasks on Tauri's Tokio runtime;
+//! DNS uses an independent fixed-size resolver and drops cancelled queued jobs.
 //!
 //! When the user configures an upstream HTTP proxy, the vetted destination is
 //! reached through it instead: CONNECT for HTTPS, and absolute-form requests
@@ -16,18 +16,20 @@ use crate::constants::MAX_UPSTREAM_PROXY_BYTES;
 use crate::ip_policy::is_public_ip;
 use reqwest::redirect::Policy;
 use reqwest::Client;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
+#[cfg(feature = "e2e")]
 use std::io::{self, Read, Write};
-use std::net::{
-    IpAddr, Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs,
-};
-use std::sync::mpsc::{self, Receiver, SyncSender};
+#[cfg(feature = "e2e")]
+use std::net::TcpStream;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
+use std::sync::mpsc;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Condvar, Mutex, OnceLock,
 };
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::time::{Duration, Instant};
+use tokio::sync::oneshot;
 
 const MAX_PROXY_HEADER_BYTES: usize = 64 * 1024;
 /// Status line and headers of the upstream proxy's answer to CONNECT.
@@ -39,16 +41,9 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(4);
 /// Budget for all addresses of one destination.
 const CONNECT_TOTAL_TIMEOUT: Duration = Duration::from_secs(12);
 const IO_TIMEOUT: Duration = Duration::from_secs(20);
-/// yt-dlp keeps finished HTTPS connections open in its pool, and each open
-/// tunnel holds a worker. Size the pool above yt-dlp's per-process pool count
-/// and close idle tunnels, so pooled connections cannot starve new ones.
-const PROXY_WORKERS: usize = 32;
-const MAX_PENDING_PROXY_CLIENTS: usize = 64;
 /// A tunnel with no traffic in either direction for this long is closed.
-/// yt-dlp reopens a dropped pooled connection on its next request. This stays
-/// below yt-dlp's 20 s socket timeout so a queued connection is served first.
+/// yt-dlp reopens a dropped pooled connection on its next request.
 const TUNNEL_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
-const RELAY_MAX_IDLE_SLEEP: Duration = Duration::from_millis(25);
 const RELAY_BUFFER_BYTES: usize = 16 * 1024;
 const DNS_RESOLVER_WORKERS: usize = 4;
 const MAX_PENDING_DNS_QUERIES: usize = 16;
@@ -58,6 +53,11 @@ const DNS_RESOLUTION_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const DNS_RESOLVER_START_TIMEOUT: Duration = Duration::from_secs(1);
 #[cfg(feature = "e2e")]
 const E2E_DNS_DELAY: Duration = Duration::from_secs(2);
+/// Fail-safe for lookups the capacity probe holds at its gate. The probe
+/// reopens the gate itself; this bound only keeps a failed probe from leaving
+/// workers blocked for the rest of the process.
+#[cfg(feature = "e2e")]
+const E2E_DNS_HOLD_TIMEOUT: Duration = Duration::from_secs(30);
 
 static DNS_RESOLVER: OnceLock<Option<Arc<DnsResolverPool>>> = OnceLock::new();
 static NEXT_DNS_JOB_ID: AtomicU64 = AtomicU64::new(1);
@@ -67,7 +67,7 @@ struct DnsJob {
     host: String,
     port: u16,
     cancelled: Arc<AtomicBool>,
-    response: SyncSender<Option<Vec<SocketAddr>>>,
+    response: oneshot::Sender<Option<Vec<SocketAddr>>>,
 }
 
 struct DnsResolverState {
@@ -89,11 +89,15 @@ struct DnsResolverState {
     cancelled_waits: u64,
     #[cfg(feature = "e2e")]
     synthetic_lookups_started: u64,
+    #[cfg(feature = "e2e")]
+    lookup_gate_closed: bool,
 }
 
 struct DnsResolverShared {
     state: Mutex<DnsResolverState>,
     queue_ready: Condvar,
+    #[cfg(feature = "e2e")]
+    lookup_gate: Condvar,
 }
 
 struct DnsResolverPool {
@@ -103,10 +107,53 @@ struct DnsResolverPool {
 struct PendingDnsJob {
     id: u64,
     cancelled: Arc<AtomicBool>,
-    response: Receiver<Option<Vec<SocketAddr>>>,
+    response: oneshot::Receiver<Option<Vec<SocketAddr>>>,
+    shared: Arc<DnsResolverShared>,
+    finished: bool,
+}
+
+impl PendingDnsJob {
+    fn finish(&mut self) {
+        self.finished = true;
+    }
+
+    fn cancel(&mut self) {
+        if self.finished {
+            return;
+        }
+        self.finished = true;
+        if self.cancelled.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let queued_len = state.queue.len();
+        state.queue.retain(|job| job.id != self.id);
+        #[cfg(feature = "e2e")]
+        {
+            state.cancelled_waits = state.cancelled_waits.saturating_add(1);
+        }
+        if state.queue.len() != queued_len {
+            drop(state);
+            self.shared.queue_ready.notify_one();
+        }
+    }
+}
+
+impl Drop for PendingDnsJob {
+    fn drop(&mut self) {
+        self.cancel();
+    }
 }
 
 type ParsedHttpRequest = (String, String, String, Vec<(String, String)>);
+
+#[path = "network_security_async.rs"]
+mod async_proxy;
+pub use async_proxy::NetworkSecurityGuard;
 
 /// A validated upstream HTTP proxy. The host is kept without IPv6 brackets.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -230,8 +277,12 @@ impl DnsResolverPool {
                 cancelled_waits: 0,
                 #[cfg(feature = "e2e")]
                 synthetic_lookups_started: 0,
+                #[cfg(feature = "e2e")]
+                lookup_gate_closed: false,
             }),
             queue_ready: Condvar::new(),
+            #[cfg(feature = "e2e")]
+            lookup_gate: Condvar::new(),
         });
         let (ready_sender, ready_receiver) = mpsc::channel();
 
@@ -275,7 +326,7 @@ impl DnsResolverPool {
     fn enqueue(&self, host: &str, port: u16) -> Option<PendingDnsJob> {
         let id = NEXT_DNS_JOB_ID.fetch_add(1, Ordering::Relaxed);
         let cancelled = Arc::new(AtomicBool::new(false));
-        let (response_sender, response_receiver) = mpsc::sync_channel(1);
+        let (response_sender, response_receiver) = oneshot::channel();
         let mut state = self
             .shared
             .state
@@ -309,26 +360,27 @@ impl DnsResolverPool {
             id,
             cancelled,
             response: response_receiver,
+            shared: Arc::clone(&self.shared),
+            finished: false,
         })
     }
 
-    fn cancel(&self, pending: &PendingDnsJob) {
-        pending.cancelled.store(true, Ordering::Release);
+    fn cancel(&self, pending: &mut PendingDnsJob) {
+        pending.cancel();
+    }
+
+    /// While closed, lookups for `rosi-dns-hold-` hosts stay on their worker
+    /// until the gate reopens. Ordinary lookups are not affected.
+    #[cfg(feature = "e2e")]
+    fn set_lookup_gate(&self, closed: bool) {
         let mut state = self
             .shared
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let queued_len = state.queue.len();
-        state.queue.retain(|job| job.id != pending.id);
-        #[cfg(feature = "e2e")]
-        {
-            state.cancelled_waits = state.cancelled_waits.saturating_add(1);
-        }
-        if state.queue.len() != queued_len {
-            drop(state);
-            self.shared.queue_ready.notify_one();
-        }
+        state.lookup_gate_closed = closed;
+        drop(state);
+        self.shared.lookup_gate.notify_all();
     }
 
     #[cfg(feature = "e2e")]
@@ -415,6 +467,51 @@ fn dns_resolver_worker(shared: Arc<DnsResolverShared>) {
     }
 }
 
+/// Holds a probe lookup on its worker while the gate is closed. The wait is
+/// bounded by `E2E_DNS_HOLD_TIMEOUT`, and a stopped pool releases it at once.
+#[cfg(feature = "e2e")]
+fn hold_e2e_lookup(shared: &DnsResolverShared) {
+    let deadline = Instant::now() + E2E_DNS_HOLD_TIMEOUT;
+    let mut state = shared
+        .state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    state.synthetic_lookups_started = state.synthetic_lookups_started.saturating_add(1);
+    while state.lookup_gate_closed && !state.stopped {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let (next, _) = shared
+            .lookup_gate
+            .wait_timeout(state, remaining)
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state = next;
+    }
+}
+
+/// Closes the lookup gate for one probe batch and reopens it on drop, so every
+/// exit from the batch releases the held workers.
+#[cfg(feature = "e2e")]
+struct E2eLookupGate {
+    resolver: Arc<DnsResolverPool>,
+}
+
+#[cfg(feature = "e2e")]
+impl E2eLookupGate {
+    fn close(resolver: Arc<DnsResolverPool>) -> Self {
+        resolver.set_lookup_gate(true);
+        Self { resolver }
+    }
+}
+
+#[cfg(feature = "e2e")]
+impl Drop for E2eLookupGate {
+    fn drop(&mut self) {
+        self.resolver.set_lookup_gate(false);
+    }
+}
+
 fn resolve_dns_addresses(
     host: &str,
     port: u16,
@@ -422,6 +519,12 @@ fn resolve_dns_addresses(
 ) -> Option<Vec<SocketAddr>> {
     #[cfg(not(feature = "e2e"))]
     let _ = shared;
+
+    #[cfg(feature = "e2e")]
+    if host.starts_with("rosi-dns-hold-") {
+        hold_e2e_lookup(shared);
+        return Some(vec![SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)]);
+    }
 
     #[cfg(feature = "e2e")]
     if host.starts_with("rosi-dns-delay-") {
@@ -446,427 +549,6 @@ fn resolve_dns_addresses(
         resolved.push(address);
     }
     Some(resolved)
-}
-
-struct ProxyShared {
-    stopped: AtomicBool,
-    operation_cancelled: Option<Arc<AtomicBool>>,
-    upstream: Option<UpstreamProxy>,
-    queued: Mutex<VecDeque<TcpStream>>,
-    queue_ready: Condvar,
-    active: Mutex<HashMap<u64, Vec<TcpStream>>>,
-    next_id: AtomicU64,
-}
-
-impl ProxyShared {
-    fn new(operation_cancelled: Option<Arc<AtomicBool>>, upstream: Option<UpstreamProxy>) -> Self {
-        Self {
-            stopped: AtomicBool::new(false),
-            operation_cancelled,
-            upstream,
-            queued: Mutex::new(VecDeque::new()),
-            queue_ready: Condvar::new(),
-            active: Mutex::new(HashMap::new()),
-            next_id: AtomicU64::new(1),
-        }
-    }
-
-    fn enqueue(&self, mut stream: TcpStream) {
-        let mut queued = self
-            .queued
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if self.stopped.load(Ordering::Acquire) || self.operation_is_cancelled() {
-            let _ = stream.shutdown(Shutdown::Both);
-            return;
-        }
-        if queued.len() >= MAX_PENDING_PROXY_CLIENTS {
-            drop(queued);
-            let _ = stream.set_write_timeout(Some(Duration::from_millis(100)));
-            write_proxy_error(&mut stream, 503, "Proxy Busy");
-            let _ = stream.shutdown(Shutdown::Both);
-            return;
-        }
-        queued.push_back(stream);
-        self.queue_ready.notify_one();
-    }
-
-    fn stop(&self) {
-        self.stopped.store(true, Ordering::Release);
-        let mut queued = self
-            .queued
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        for stream in queued.drain(..) {
-            let _ = stream.shutdown(Shutdown::Both);
-        }
-        drop(queued);
-        let active = self
-            .active
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        for sockets in active.values() {
-            for socket in sockets {
-                let _ = socket.shutdown(Shutdown::Both);
-            }
-        }
-        self.queue_ready.notify_all();
-    }
-
-    fn next_client(&self) -> Option<TcpStream> {
-        let mut queued = self
-            .queued
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        loop {
-            if self.stopped.load(Ordering::Acquire) {
-                return None;
-            }
-            if self.operation_is_cancelled() {
-                drop(queued);
-                self.stop();
-                return None;
-            }
-            if let Some(stream) = queued.pop_front() {
-                return Some(stream);
-            }
-            queued = self
-                .queue_ready
-                .wait(queued)
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-        }
-    }
-
-    fn operation_is_cancelled(&self) -> bool {
-        self.operation_cancelled
-            .as_ref()
-            .is_some_and(|cancelled| cancelled.load(Ordering::Acquire))
-    }
-}
-
-struct ActiveSockets {
-    shared: Arc<ProxyShared>,
-    id: u64,
-}
-
-impl ActiveSockets {
-    fn register(&self, stream: &TcpStream) -> io::Result<()> {
-        let clone = stream.try_clone()?;
-        let mut active = self
-            .shared
-            .active
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if self.shared.stopped.load(Ordering::Acquire) || self.shared.operation_is_cancelled() {
-            let _ = clone.shutdown(Shutdown::Both);
-            return Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "network operation was cancelled",
-            ));
-        }
-        active.entry(self.id).or_default().push(clone);
-        Ok(())
-    }
-}
-
-impl Drop for ActiveSockets {
-    fn drop(&mut self) {
-        self.shared
-            .active
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&self.id);
-    }
-}
-
-/// Owns the per-operation loopback proxy. Retain it until the process or HTTP
-/// operation finishes; dropping it closes the listener, queued sockets, and
-/// both ends of every active connection.
-pub struct NetworkSecurityGuard {
-    proxy_url: String,
-    bind_addr: SocketAddr,
-    shared: Arc<ProxyShared>,
-    listener_thread: Option<JoinHandle<()>>,
-}
-
-impl NetworkSecurityGuard {
-    /// Starts an authenticated loopback proxy. Any bind, entropy, or thread
-    /// startup failure is returned; callers must not fall back to direct I/O.
-    #[cfg(feature = "e2e")]
-    pub fn start() -> Result<Self, String> {
-        Self::start_inner(None, None)
-    }
-
-    /// Starts a proxy that shuts down its listener and active sockets when
-    /// the owning tracked operation is cancelled. `upstream_proxy` is the
-    /// `upstreamProxy` setting, read once here: an empty value connects
-    /// directly, and an invalid value fails the start instead of going direct.
-    pub fn start_with_cancellation(
-        operation_cancelled: Arc<AtomicBool>,
-        upstream_proxy: &str,
-    ) -> Result<Self, String> {
-        let upstream = parse_upstream_proxy(upstream_proxy)?;
-        Self::start_inner(Some(operation_cancelled), upstream)
-    }
-
-    fn start_inner(
-        operation_cancelled: Option<Arc<AtomicBool>>,
-        upstream: Option<UpstreamProxy>,
-    ) -> Result<Self, String> {
-        if operation_cancelled
-            .as_ref()
-            .is_some_and(|cancelled| cancelled.load(Ordering::Acquire))
-        {
-            return Err("The network operation was cancelled.".into());
-        }
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .map_err(|error| format!("Could not start the secure network proxy: {error}"))?;
-        listener
-            .set_nonblocking(true)
-            .map_err(|error| format!("Could not configure the secure network proxy: {error}"))?;
-        let bind_addr = listener
-            .local_addr()
-            .map_err(|error| format!("Could not inspect the secure network proxy: {error}"))?;
-
-        let mut token = [0u8; 24];
-        getrandom::fill(&mut token)
-            .map_err(|error| format!("Could not create secure proxy credentials: {error}"))?;
-        let token = token
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        let expected_auth = Arc::<str>::from(format!(
-            "Basic {}",
-            base64_encode(format!("rosi:{token}").as_bytes())
-        ));
-        let proxy_url = format!("http://rosi:{token}@{bind_addr}");
-        let shared = Arc::new(ProxyShared::new(operation_cancelled, upstream));
-
-        for worker in 0..PROXY_WORKERS {
-            let worker_shared = Arc::clone(&shared);
-            let worker_auth = Arc::clone(&expected_auth);
-            if let Err(error) = thread::Builder::new()
-                .name(format!("rosi-network-worker-{worker}"))
-                .spawn(move || proxy_worker(worker_shared, worker_auth))
-            {
-                shared.stop();
-                return Err(format!(
-                    "Could not start the secure network proxy workers: {error}"
-                ));
-            }
-        }
-
-        let listener_shared = Arc::clone(&shared);
-        let listener_thread = match thread::Builder::new()
-            .name("rosi-network-listener".into())
-            .spawn(move || {
-                while !listener_shared.stopped.load(Ordering::Acquire) {
-                    if listener_shared.operation_is_cancelled() {
-                        listener_shared.stop();
-                        break;
-                    }
-                    match listener.accept() {
-                        Ok((stream, _)) => listener_shared.enqueue(stream),
-                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                            thread::sleep(Duration::from_millis(10));
-                        }
-                        Err(_) => break,
-                    }
-                }
-            }) {
-            Ok(thread) => thread,
-            Err(error) => {
-                shared.stop();
-                return Err(format!("Could not start the secure network proxy: {error}"));
-            }
-        };
-
-        Ok(Self {
-            proxy_url,
-            bind_addr,
-            shared,
-            listener_thread: Some(listener_thread),
-        })
-    }
-
-    /// Credential-bearing proxy URL for a subprocess or HTTP client. Treat it
-    /// as an ephemeral secret and do not log it.
-    pub fn proxy_url(&self) -> &str {
-        &self.proxy_url
-    }
-}
-
-impl Drop for NetworkSecurityGuard {
-    fn drop(&mut self) {
-        self.shared.stop();
-        // The listener is nonblocking. Wake it and join only that bounded
-        // accept loop; request workers are fixed-count and exit asynchronously.
-        let _ = TcpStream::connect_timeout(&self.bind_addr, Duration::from_millis(100));
-        if let Some(listener_thread) = self.listener_thread.take() {
-            let _ = listener_thread.join();
-        }
-    }
-}
-
-fn proxy_worker(shared: Arc<ProxyShared>, expected_auth: Arc<str>) {
-    while let Some(mut client) = shared.next_client() {
-        if configure_proxy_client_socket(&client).is_err() {
-            let _ = client.shutdown(Shutdown::Both);
-            continue;
-        }
-        let id = shared.next_id.fetch_add(1, Ordering::Relaxed);
-        let active = ActiveSockets {
-            shared: Arc::clone(&shared),
-            id,
-        };
-        if active.register(&client).is_err() {
-            continue;
-        }
-        handle_proxy_client(&mut client, &expected_auth, &active);
-    }
-}
-
-fn configure_proxy_client_socket(client: &TcpStream) -> io::Result<()> {
-    // Windows accepted sockets inherit the listener's nonblocking mode. HTTP
-    // parsing and body copying use blocking reads bounded by these timeouts.
-    client.set_nonblocking(false)?;
-    client.set_read_timeout(Some(IO_TIMEOUT))?;
-    client.set_write_timeout(Some(IO_TIMEOUT))?;
-    Ok(())
-}
-
-fn handle_proxy_client(client: &mut TcpStream, expected_auth: &str, active: &ActiveSockets) {
-    let Ok((header, buffered)) = read_request_header(client) else {
-        return;
-    };
-    let Ok(header_text) = std::str::from_utf8(&header) else {
-        write_proxy_error(client, 400, "Bad Request");
-        return;
-    };
-    let Some((method, target, version, headers)) = parse_request(header_text) else {
-        write_proxy_error(client, 400, "Bad Request");
-        return;
-    };
-    let auth_values: Vec<&str> = headers
-        .iter()
-        .filter(|(name, _)| name.eq_ignore_ascii_case("proxy-authorization"))
-        .map(|(_, value)| value.trim())
-        .collect();
-    if auth_values.len() != 1 || auth_values[0] != expected_auth {
-        write_proxy_error(client, 407, "Proxy Authentication Required");
-        return;
-    }
-
-    if method.eq_ignore_ascii_case("CONNECT") {
-        let Ok((host, port, is_literal_loopback)) = parse_connect_target(&target) else {
-            write_proxy_error(client, 400, "Bad CONNECT Target");
-            return;
-        };
-        let Some(addresses) = vet_destination(&host, port, is_literal_loopback, active) else {
-            write_proxy_error(client, 403, "Destination Blocked");
-            return;
-        };
-        let (mut upstream, tunnel_leftover) = match &active.shared.upstream {
-            None => match connect_addresses(addresses, active) {
-                Some(stream) => (stream, Vec::new()),
-                None => {
-                    write_proxy_error(client, 403, "Destination Blocked");
-                    return;
-                }
-            },
-            Some(proxy) => match connect_via_upstream(proxy, &host, port, active) {
-                Ok(tunnel) => tunnel,
-                Err(()) => {
-                    write_proxy_error(client, 502, "Upstream Proxy Failed");
-                    return;
-                }
-            },
-        };
-        if active.shared.stopped.load(Ordering::Acquire) {
-            return;
-        }
-        if client
-            .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-            .is_err()
-        {
-            return;
-        }
-        if !tunnel_leftover.is_empty() && client.write_all(&tunnel_leftover).is_err() {
-            return;
-        }
-        let _ = relay_bidirectional(client, &mut upstream, &active.shared, &buffered);
-        return;
-    }
-
-    let Ok(url) = url::Url::parse(&target) else {
-        write_proxy_error(client, 400, "Absolute URL Required");
-        return;
-    };
-    if url.scheme() != "http" || !url.username().is_empty() || url.password().is_some() {
-        write_proxy_error(client, 403, "Destination Blocked");
-        return;
-    }
-    let Some(url_host) = url.host() else {
-        write_proxy_error(client, 400, "Missing Host");
-        return;
-    };
-    let host = host_string(&url_host);
-    let Some(port) = url.port_or_known_default() else {
-        write_proxy_error(client, 400, "Missing Port");
-        return;
-    };
-    let literal_loopback = host_is_loopback(&url_host);
-    let Some(addresses) = vet_destination(&host, port, literal_loopback, active) else {
-        write_proxy_error(client, 403, "Destination Blocked");
-        return;
-    };
-    // Through an upstream proxy the request goes there in absolute form, so
-    // the upstream can route it; the vetted address is not used.
-    let mut upstream = match &active.shared.upstream {
-        None => match connect_addresses(addresses, active) {
-            Some(stream) => stream,
-            None => {
-                write_proxy_error(client, 403, "Destination Blocked");
-                return;
-            }
-        },
-        Some(proxy) => match connect_to_upstream_proxy(proxy, active) {
-            Some(stream) => stream,
-            None => {
-                write_proxy_error(client, 502, "Upstream Proxy Failed");
-                return;
-            }
-        },
-    };
-    let absolute_form = active.shared.upstream.is_some();
-
-    let Some((forwarded, body_mode, expect_continue)) =
-        build_forwarded_request(&method, &version, &url, &headers, absolute_form)
-    else {
-        write_proxy_error(client, 400, "Unsupported HTTP Request");
-        return;
-    };
-    if upstream.write_all(&forwarded).is_err() {
-        return;
-    }
-    if expect_continue && client.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").is_err() {
-        return;
-    }
-    let copied = match body_mode {
-        HttpBodyMode::None => Ok(()),
-        HttpBodyMode::ContentLength(length) => {
-            copy_fixed_body(client, &mut upstream, &buffered, length, active)
-        }
-        HttpBodyMode::Chunked => copy_chunked_body(client, &mut upstream, &buffered, active),
-    };
-    if copied.is_err() || active.shared.stopped.load(Ordering::Acquire) {
-        return;
-    }
-    // The forwarded request already has `Connection: close`, and this proxy
-    // handles one request per upstream socket. Do not send a TCP FIN before
-    // reading the response: some HTTP servers treat a peer half-close as a
-    // signal to close their write side before a delayed or streamed body ends.
-    let _ = io::copy(&mut upstream, client);
 }
 
 fn parse_request(header_text: &str) -> Option<ParsedHttpRequest> {
@@ -1030,202 +712,6 @@ fn build_forwarded_request(
     Some((request, body_mode, expect_continue))
 }
 
-fn copy_fixed_body(
-    client: &mut TcpStream,
-    upstream: &mut TcpStream,
-    buffered: &[u8],
-    mut remaining: u64,
-    active: &ActiveSockets,
-) -> io::Result<()> {
-    let prefix_count = buffered.len().min(remaining as usize);
-    if prefix_count > 0 {
-        upstream.write_all(&buffered[..prefix_count])?;
-        remaining -= prefix_count as u64;
-    }
-    let mut chunk = [0u8; RELAY_BUFFER_BYTES];
-    while remaining > 0 {
-        if active.shared.stopped.load(Ordering::Acquire) {
-            return Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "network operation was cancelled",
-            ));
-        }
-        let limit = chunk.len().min(remaining as usize);
-        let count = client.read(&mut chunk[..limit])?;
-        if count == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "HTTP request body ended early",
-            ));
-        }
-        upstream.write_all(&chunk[..count])?;
-        remaining -= count as u64;
-    }
-    Ok(())
-}
-
-struct PrefixReader<'a> {
-    client: &'a mut TcpStream,
-    prefix: &'a [u8],
-    position: usize,
-}
-
-impl PrefixReader<'_> {
-    fn read_some(&mut self, output: &mut [u8]) -> io::Result<usize> {
-        if self.position < self.prefix.len() {
-            let count = output.len().min(self.prefix.len() - self.position);
-            output[..count].copy_from_slice(&self.prefix[self.position..self.position + count]);
-            self.position += count;
-            Ok(count)
-        } else {
-            self.client.read(output)
-        }
-    }
-
-    fn read_exact_bytes(&mut self, mut output: &mut [u8]) -> io::Result<()> {
-        while !output.is_empty() {
-            let count = self.read_some(output)?;
-            if count == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "chunked HTTP request body ended early",
-                ));
-            }
-            output = &mut output[count..];
-        }
-        Ok(())
-    }
-
-    fn read_crlf_line(&mut self) -> io::Result<Vec<u8>> {
-        let mut line = Vec::with_capacity(64);
-        let mut byte = [0u8; 1];
-        loop {
-            if line.len() >= 8192 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "chunk metadata line is too large",
-                ));
-            }
-            self.read_exact_bytes(&mut byte)?;
-            line.push(byte[0]);
-            if line.ends_with(b"\r\n") {
-                return Ok(line);
-            }
-            if byte[0] == b'\n' {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid chunk metadata terminator",
-                ));
-            }
-        }
-    }
-}
-
-fn copy_chunked_body(
-    client: &mut TcpStream,
-    upstream: &mut TcpStream,
-    buffered: &[u8],
-    active: &ActiveSockets,
-) -> io::Result<()> {
-    let mut reader = PrefixReader {
-        client,
-        prefix: buffered,
-        position: 0,
-    };
-    let mut total = 0u64;
-    loop {
-        if active.shared.stopped.load(Ordering::Acquire) {
-            return Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "network operation was cancelled",
-            ));
-        }
-        let line = reader.read_crlf_line()?;
-        let line_without_crlf = line
-            .strip_suffix(b"\r\n")
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid chunk size line"))?;
-        let size_text = line_without_crlf
-            .split(|byte| *byte == b';')
-            .next()
-            .unwrap_or_default();
-        let size_text = std::str::from_utf8(size_text)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid chunk size"))?;
-        let size = u64::from_str_radix(size_text.trim(), 16)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid chunk size"))?;
-        if size > MAX_HTTP_REQUEST_BODY_BYTES.saturating_sub(total) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "HTTP request body exceeds the configured limit",
-            ));
-        }
-        upstream.write_all(&line)?;
-        if size == 0 {
-            loop {
-                let trailer = reader.read_crlf_line()?;
-                upstream.write_all(&trailer)?;
-                if trailer == b"\r\n" {
-                    return Ok(());
-                }
-            }
-        }
-        let mut remaining = size;
-        let mut chunk = [0u8; RELAY_BUFFER_BYTES];
-        while remaining > 0 {
-            if active.shared.stopped.load(Ordering::Acquire) {
-                return Err(io::Error::new(
-                    io::ErrorKind::Interrupted,
-                    "network operation was cancelled",
-                ));
-            }
-            let count = chunk.len().min(remaining as usize);
-            reader.read_exact_bytes(&mut chunk[..count])?;
-            upstream.write_all(&chunk[..count])?;
-            remaining -= count as u64;
-        }
-        let mut terminator = [0u8; 2];
-        reader.read_exact_bytes(&mut terminator)?;
-        if &terminator != b"\r\n" {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid chunk terminator",
-            ));
-        }
-        upstream.write_all(&terminator)?;
-        total += size;
-    }
-}
-
-fn read_request_header(stream: &mut TcpStream) -> io::Result<(Vec<u8>, Vec<u8>)> {
-    let mut bytes = Vec::with_capacity(4096);
-    let mut chunk = [0u8; 4096];
-    loop {
-        if bytes.len() >= MAX_PROXY_HEADER_BYTES {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "proxy header too large",
-            ));
-        }
-        let count = stream.read(&mut chunk)?;
-        if count == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "proxy header ended",
-            ));
-        }
-        if bytes.len() + count > MAX_PROXY_HEADER_BYTES {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "proxy header too large",
-            ));
-        }
-        bytes.extend_from_slice(&chunk[..count]);
-        if let Some(index) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
-            let split = index + 4;
-            return Ok((bytes[..split].to_vec(), bytes[split..].to_vec()));
-        }
-    }
-}
-
 fn parse_connect_target(target: &str) -> Result<(String, u16, bool), ()> {
     let url = url::Url::parse(&format!("https://{target}/")).map_err(|_| ())?;
     if !url.username().is_empty()
@@ -1262,126 +748,6 @@ fn host_is_loopback(host: &url::Host<&str>) -> bool {
 /// Resolves a destination and applies the policy. Returns the vetted addresses
 /// only when every one is allowed; the caller must connect to those exact
 /// addresses (direct) or hand the hostname to the upstream proxy.
-fn vet_destination(
-    host: &str,
-    port: u16,
-    allow_literal_loopback: bool,
-    active: &ActiveSockets,
-) -> Option<Vec<SocketAddr>> {
-    let addresses = resolve_connection_destination(host, port, &active.shared.stopped)?;
-    let allowed = !addresses.is_empty()
-        && addresses.iter().all(|address| {
-            is_public_ip(address.ip())
-                || (allow_literal_loopback && e2e_allows_literal_loopback(host, address.ip()))
-        });
-    #[cfg(feature = "e2e")]
-    record_proxy_decision("connection", host, &addresses, allowed);
-    if !allowed || active.shared.stopped.load(Ordering::Acquire) {
-        return None;
-    }
-    Some(addresses)
-}
-
-/// Connects to the addresses in order, bounded by the total connect budget.
-fn connect_addresses(addresses: Vec<SocketAddr>, active: &ActiveSockets) -> Option<TcpStream> {
-    // Each address gets its own attempt budget, with address families
-    // interleaved, so an unreachable IPv6 route cannot consume the time an
-    // IPv4 fallback needs (a simplified Happy Eyeballs, RFC 8305).
-    let deadline = Instant::now() + CONNECT_TOTAL_TIMEOUT;
-    for address in interleave_address_families(addresses) {
-        if active.shared.stopped.load(Ordering::Acquire) {
-            return None;
-        }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            break;
-        }
-        if let Ok(stream) = TcpStream::connect_timeout(&address, remaining.min(CONNECT_TIMEOUT)) {
-            let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
-            let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
-            if active.register(&stream).is_err() {
-                let _ = stream.shutdown(Shutdown::Both);
-                return None;
-            }
-            return Some(stream);
-        }
-    }
-    None
-}
-
-/// Opens a TCP connection to the upstream proxy itself. The upstream is
-/// trusted and not vetted, so a private or loopback address is allowed.
-fn connect_to_upstream_proxy(proxy: &UpstreamProxy, active: &ActiveSockets) -> Option<TcpStream> {
-    let addresses =
-        resolve_connection_destination(&proxy.host, proxy.port, &active.shared.stopped)?;
-    connect_addresses(addresses, active)
-}
-
-/// Opens a CONNECT tunnel through the upstream proxy to a destination that
-/// has already been vetted. The hostname is sent as given, so the upstream
-/// resolves it. Any failure is an error, which the caller reports as 502.
-/// Returns the tunnel and any bytes the upstream sent after its headers.
-fn connect_via_upstream(
-    proxy: &UpstreamProxy,
-    host: &str,
-    port: u16,
-    active: &ActiveSockets,
-) -> Result<(TcpStream, Vec<u8>), ()> {
-    let mut stream = connect_to_upstream_proxy(proxy, active).ok_or(())?;
-    let authority = authority_for(host, port);
-    let request = format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n\r\n");
-    stream.write_all(request.as_bytes()).map_err(|_| ())?;
-    let (status, leftover) = read_upstream_response_head(&mut stream, &active.shared.stopped)?;
-    if !(200..300).contains(&status) {
-        return Err(());
-    }
-    Ok((stream, leftover))
-}
-
-fn authority_for(host: &str, port: u16) -> String {
-    if host.contains(':') {
-        format!("[{host}]:{port}")
-    } else {
-        format!("{host}:{port}")
-    }
-}
-
-/// Reads the upstream's status line and headers, bounded by
-/// `MAX_UPSTREAM_RESPONSE_HEADER_BYTES` and by one `IO_TIMEOUT` for the whole
-/// block, so a slow or endless header cannot hold a worker per read. Bytes
-/// after the blank line belong to the tunnel and are returned with the status.
-fn read_upstream_response_head(
-    stream: &mut TcpStream,
-    stopped: &AtomicBool,
-) -> Result<(u16, Vec<u8>), ()> {
-    let deadline = Instant::now() + IO_TIMEOUT;
-    let mut bytes = Vec::with_capacity(512);
-    let mut chunk = [0u8; 1024];
-    loop {
-        if let Some(end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
-            if end + 4 > MAX_UPSTREAM_RESPONSE_HEADER_BYTES {
-                return Err(());
-            }
-            let status = parse_status_code(&bytes[..end]).ok_or(())?;
-            return Ok((status, bytes[end + 4..].to_vec()));
-        }
-        if bytes.len() >= MAX_UPSTREAM_RESPONSE_HEADER_BYTES || stopped.load(Ordering::Acquire) {
-            return Err(());
-        }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err(());
-        }
-        stream.set_read_timeout(Some(remaining)).map_err(|_| ())?;
-        let count = stream.read(&mut chunk).map_err(|_| ())?;
-        if count == 0 {
-            return Err(());
-        }
-        bytes.extend_from_slice(&chunk[..count]);
-    }
-}
-
-/// The status code of an `HTTP/1.0` or `HTTP/1.1` status line.
 fn parse_status_code(head: &[u8]) -> Option<u16> {
     let line_end = head
         .windows(2)
@@ -1435,21 +801,6 @@ fn resolve_destination(host: &str, port: u16) -> Option<Vec<SocketAddr>> {
     resolve_system_dns(host, port)
 }
 
-fn resolve_connection_destination(
-    host: &str,
-    port: u16,
-    cancelled: &AtomicBool,
-) -> Option<Vec<SocketAddr>> {
-    if let Some(ip) = parse_ip_host(host) {
-        return Some(vec![SocketAddr::new(ip, port)]);
-    }
-    #[cfg(feature = "e2e")]
-    if let Some(mapped) = e2e_proxy_dns_override(host) {
-        return Some(vec![SocketAddr::new(mapped, port)]);
-    }
-    resolve_system_dns_with_cancel(host, port, Some(cancelled))
-}
-
 fn resolve_system_dns(host: &str, port: u16) -> Option<Vec<SocketAddr>> {
     resolve_system_dns_with_cancel(host, port, None)
 }
@@ -1463,27 +814,33 @@ fn resolve_system_dns_with_cancel(
         return None;
     }
     let resolver = shared_dns_resolver()?;
-    let pending = resolver.enqueue(host, port)?;
+    let mut pending = resolver.enqueue(host, port)?;
     let deadline = Instant::now() + DNS_RESOLUTION_TIMEOUT;
 
     loop {
         if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
-            resolver.cancel(&pending);
+            resolver.cancel(&mut pending);
             return None;
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            resolver.cancel(&pending);
+            resolver.cancel(&mut pending);
             return None;
         }
-        match pending
-            .response
-            .recv_timeout(remaining.min(DNS_RESOLUTION_POLL_INTERVAL))
-        {
-            Ok(result) => return result,
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => return None,
+        // Blocking callers have no runtime to await on. They check the reply
+        // at the interval below, which only bounds how late a cancel is seen.
+        match pending.response.try_recv() {
+            Ok(result) => {
+                pending.finish();
+                return result;
+            }
+            Err(oneshot::error::TryRecvError::Closed) => {
+                pending.finish();
+                return None;
+            }
+            Err(oneshot::error::TryRecvError::Empty) => {}
         }
+        thread::sleep(remaining.min(DNS_RESOLUTION_POLL_INTERVAL));
     }
 }
 
@@ -1703,139 +1060,49 @@ fn base64_encode(bytes: &[u8]) -> String {
     encoded
 }
 
-fn write_proxy_error(stream: &mut TcpStream, code: u16, reason: &str) {
-    let body = format!("{code} {reason}\n");
-    let response = format!(
-        "HTTP/1.1 {code} {reason}\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{body}",
-        body.len()
-    );
-    let _ = stream.write_all(response.as_bytes());
+/// Spawns probe callers for `indexes`. Each caller uses a `rosi-dns-hold-`
+/// host, so its lookup stays on a worker while the gate is closed.
+#[cfg(feature = "e2e")]
+fn spawn_e2e_dns_callers(
+    batch: usize,
+    indexes: std::ops::Range<usize>,
+    cancellations: &[Arc<AtomicBool>],
+    result_sender: &mpsc::Sender<(Duration, bool)>,
+    callers: &mut Vec<thread::JoinHandle<()>>,
+) -> Result<(), String> {
+    for index in indexes {
+        let cancellation = Arc::clone(&cancellations[index]);
+        let result_sender = result_sender.clone();
+        let host = format!("rosi-dns-hold-{batch}-{index}.invalid");
+        let caller = thread::Builder::new()
+            .name(format!("rosi-e2e-dns-caller-{batch}-{index}"))
+            .spawn(move || {
+                let started = Instant::now();
+                let result = resolve_system_dns_with_cancel(&host, 443, Some(&cancellation));
+                let _ = result_sender.send((started.elapsed(), result.is_none()));
+            })
+            .map_err(|error| error.to_string())?;
+        callers.push(caller);
+    }
+    Ok(())
 }
 
-fn relay_bidirectional(
-    client: &mut TcpStream,
-    upstream: &mut TcpStream,
-    shared: &ProxyShared,
-    initial_client_data: &[u8],
-) -> io::Result<()> {
-    if shared.stopped.load(Ordering::Acquire) {
-        return Err(io::Error::new(
-            io::ErrorKind::Interrupted,
-            "network operation was cancelled",
-        ));
-    }
-    upstream.write_all(initial_client_data)?;
-    client.set_nonblocking(true)?;
-    upstream.set_nonblocking(true)?;
-
-    let mut client_to_upstream = [0u8; RELAY_BUFFER_BYTES];
-    let mut client_to_upstream_len = 0usize;
-    let mut client_to_upstream_offset = 0usize;
-    let mut upstream_to_client = [0u8; RELAY_BUFFER_BYTES];
-    let mut upstream_to_client_len = 0usize;
-    let mut upstream_to_client_offset = 0usize;
-    let mut client_read_open = true;
-    let mut upstream_read_open = true;
-    let mut last_activity = Instant::now();
-    let mut idle_sleep = Duration::from_millis(1);
-
+/// Polls resolver state until `ready` holds or the deadline passes. Callers
+/// only use it for states that stay put while the gate is closed.
+#[cfg(feature = "e2e")]
+fn wait_for_resolver_state(
+    resolver: &DnsResolverPool,
+    deadline: Instant,
+    ready: impl Fn(&DnsResolverSnapshot) -> bool,
+) -> bool {
     loop {
-        if shared.stopped.load(Ordering::Acquire) {
-            return Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "network operation was cancelled",
-            ));
+        if ready(&resolver.snapshot()) {
+            return true;
         }
-        let mut progressed = false;
-        if client_to_upstream_offset < client_to_upstream_len {
-            match upstream
-                .write(&client_to_upstream[client_to_upstream_offset..client_to_upstream_len])
-            {
-                Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
-                Ok(count) => {
-                    client_to_upstream_offset += count;
-                    progressed = true;
-                }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                Err(error) => return Err(error),
-            }
-            if client_to_upstream_offset == client_to_upstream_len {
-                client_to_upstream_len = 0;
-                client_to_upstream_offset = 0;
-            }
+        if Instant::now() >= deadline {
+            return false;
         }
-        if upstream_to_client_offset < upstream_to_client_len {
-            match client
-                .write(&upstream_to_client[upstream_to_client_offset..upstream_to_client_len])
-            {
-                Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
-                Ok(count) => {
-                    upstream_to_client_offset += count;
-                    progressed = true;
-                }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                Err(error) => return Err(error),
-            }
-            if upstream_to_client_offset == upstream_to_client_len {
-                upstream_to_client_len = 0;
-                upstream_to_client_offset = 0;
-            }
-        }
-
-        if client_read_open && client_to_upstream_len == 0 {
-            match client.read(&mut client_to_upstream) {
-                Ok(0) => {
-                    client_read_open = false;
-                    let _ = upstream.shutdown(Shutdown::Write);
-                    progressed = true;
-                }
-                Ok(count) => {
-                    client_to_upstream_len = count;
-                    progressed = true;
-                }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                Err(error) => return Err(error),
-            }
-        }
-        if upstream_read_open && upstream_to_client_len == 0 {
-            match upstream.read(&mut upstream_to_client) {
-                Ok(0) => {
-                    upstream_read_open = false;
-                    let _ = client.shutdown(Shutdown::Write);
-                    progressed = true;
-                }
-                Ok(count) => {
-                    upstream_to_client_len = count;
-                    progressed = true;
-                }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                Err(error) => return Err(error),
-            }
-        }
-        if !client_read_open
-            && !upstream_read_open
-            && client_to_upstream_len == 0
-            && upstream_to_client_len == 0
-        {
-            return Ok(());
-        }
-        if progressed {
-            last_activity = Instant::now();
-            idle_sleep = Duration::from_millis(1);
-        } else {
-            if last_activity.elapsed() >= TUNNEL_IDLE_TIMEOUT {
-                let _ = client.shutdown(Shutdown::Both);
-                let _ = upstream.shutdown(Shutdown::Both);
-                return Ok(());
-            }
-            // Back off while idle so open pooled tunnels do not spin.
-            thread::sleep(idle_sleep);
-            idle_sleep = (idle_sleep * 2).min(RELAY_MAX_IDLE_SLEEP);
-        }
+        thread::sleep(Duration::from_millis(2));
     }
 }
 
@@ -1843,6 +1110,8 @@ fn relay_bidirectional(
 fn e2e_dns_cancellation_probe() -> Result<serde_json::Value, String> {
     const BATCHES: usize = 3;
     const CALLERS_PER_BATCH: usize = 24;
+    const OVERFLOW_CALLERS: u64 =
+        (CALLERS_PER_BATCH - DNS_RESOLVER_WORKERS - MAX_PENDING_DNS_QUERIES) as u64;
 
     let resolver = shared_dns_resolver().ok_or("bounded DNS resolver did not start")?;
     let mut max_caller_return = Duration::ZERO;
@@ -1875,6 +1144,7 @@ fn e2e_dns_cancellation_probe() -> Result<serde_json::Value, String> {
     idle_reached &= idle;
     let before = resolver.snapshot();
 
+    let mut batches_at_queue_limit = 0usize;
     for batch in 0..BATCHES {
         let (idle, waited) = wait_for_idle(idle_budget_left);
         idle_wait += waited;
@@ -1883,94 +1153,109 @@ fn e2e_dns_cancellation_probe() -> Result<serde_json::Value, String> {
         // Per-batch baseline: the probe-wide one goes stale after batch 0.
         let batch_before = resolver.snapshot();
         let batch_start = Instant::now();
+        // The gate keeps every lookup of this batch on its worker until the
+        // phases below have read their states. Its guard reopens it on every
+        // exit from the batch, including the error paths.
+        let gate = E2eLookupGate::close(Arc::clone(&resolver));
         let cancellations = (0..CALLERS_PER_BATCH)
             .map(|_| Arc::new(AtomicBool::new(false)))
             .collect::<Vec<_>>();
         let (result_sender, result_receiver) = mpsc::channel();
         let mut callers = Vec::with_capacity(CALLERS_PER_BATCH);
-        let mut spawn_error = None;
 
-        for (index, cancellation) in cancellations.iter().enumerate() {
-            let cancellation = Arc::clone(cancellation);
-            let result_sender = result_sender.clone();
-            let host = format!("rosi-dns-delay-{batch}-{index}.invalid");
-            match thread::Builder::new()
-                .name(format!("rosi-e2e-dns-caller-{batch}-{index}"))
-                .spawn(move || {
-                    let started = Instant::now();
-                    let result = resolve_system_dns_with_cancel(&host, 443, Some(&cancellation));
-                    let _ = result_sender.send((started.elapsed(), result.is_none()));
-                }) {
-                Ok(caller) => callers.push(caller),
-                Err(error) => {
-                    spawn_error = Some(error.to_string());
-                    break;
-                }
-            }
-        }
-        drop(result_sender);
-
-        // Latched per batch: a loaded runner may only show full capacity in a
-        // sample that is later drained by a finishing worker.
-        let submit_deadline = batch_start + Duration::from_secs(5);
-        let mut all_attempted = false;
-        let mut reached_capacity = false;
+        // Phase 1 holds every worker. Phase 2 fills the queue to its limit
+        // while the workers stay held. Phase 3 sends callers that must be
+        // rejected. Each wait reads a state that cannot change until the gate
+        // opens, so a loaded runner cannot make it miss the state.
+        let submit_deadline = batch_start + Duration::from_secs(10);
+        let mut workers_held = false;
+        let mut queue_full = false;
+        let mut overflow_rejected = false;
         let mut time_to_capacity = None;
-        let mut last_queue_len = 0;
-        let mut last_active = 0;
-        let mut max_queue_len = 0;
-        let mut max_active = 0;
-        while Instant::now() < submit_deadline {
-            let snapshot = resolver.snapshot();
-            last_queue_len = snapshot.queue_len;
-            last_active = snapshot.active_workers;
-            max_queue_len = max_queue_len.max(snapshot.queue_len);
-            max_active = max_active.max(snapshot.active_workers);
-            let attempts = snapshot
-                .request_attempts
-                .saturating_sub(batch_before.request_attempts);
-            all_attempted |= attempts >= CALLERS_PER_BATCH as u64;
-            if !reached_capacity
-                && snapshot.queue_len == MAX_PENDING_DNS_QUERIES
-                && snapshot.active_workers == DNS_RESOLVER_WORKERS
-                && snapshot.synthetic_lookups_started > batch_before.synthetic_lookups_started
-            {
-                reached_capacity = true;
-                time_to_capacity = Some(batch_start.elapsed());
+        let mut spawn_error = None;
+        'phases: {
+            if let Err(error) = spawn_e2e_dns_callers(
+                batch,
+                0..DNS_RESOLVER_WORKERS,
+                &cancellations,
+                &result_sender,
+                &mut callers,
+            ) {
+                spawn_error = Some(error);
+                break 'phases;
             }
-            if all_attempted && reached_capacity {
-                break;
+            workers_held = wait_for_resolver_state(&resolver, submit_deadline, |state| {
+                state.active_workers == DNS_RESOLVER_WORKERS
+            });
+            if !workers_held {
+                break 'phases;
             }
-            thread::sleep(Duration::from_millis(5));
+            if let Err(error) = spawn_e2e_dns_callers(
+                batch,
+                DNS_RESOLVER_WORKERS..DNS_RESOLVER_WORKERS + MAX_PENDING_DNS_QUERIES,
+                &cancellations,
+                &result_sender,
+                &mut callers,
+            ) {
+                spawn_error = Some(error);
+                break 'phases;
+            }
+            queue_full = wait_for_resolver_state(&resolver, submit_deadline, |state| {
+                state.queue_len == MAX_PENDING_DNS_QUERIES
+                    && state.active_workers == DNS_RESOLVER_WORKERS
+            });
+            if !queue_full {
+                break 'phases;
+            }
+            time_to_capacity = Some(batch_start.elapsed());
+            if let Err(error) = spawn_e2e_dns_callers(
+                batch,
+                DNS_RESOLVER_WORKERS + MAX_PENDING_DNS_QUERIES..CALLERS_PER_BATCH,
+                &cancellations,
+                &result_sender,
+                &mut callers,
+            ) {
+                spawn_error = Some(error);
+                break 'phases;
+            }
+            overflow_rejected = wait_for_resolver_state(&resolver, submit_deadline, |state| {
+                state
+                    .rejected_requests
+                    .saturating_sub(batch_before.rejected_requests)
+                    >= OVERFLOW_CALLERS
+                    && state.queue_len == MAX_PENDING_DNS_QUERIES
+            });
         }
+        let observed = resolver.snapshot();
         max_time_to_capacity = max_time_to_capacity.max(time_to_capacity.unwrap_or(Duration::ZERO));
 
         for cancellation in &cancellations {
             cancellation.store(true, Ordering::Release);
         }
-        for caller in callers {
+        for caller in callers.drain(..) {
             let _ = caller.join();
         }
+        drop(result_sender);
+        drop(gate);
         while let Ok((elapsed, returned_without_answer)) = result_receiver.try_recv() {
             max_caller_return = max_caller_return.max(elapsed);
             callers_returned_without_answer += usize::from(returned_without_answer);
         }
 
-        if let Some(error) = spawn_error {
-            return Err(format!("could not start bounded DNS E2E caller: {error}"));
-        }
-        if !all_attempted || !reached_capacity {
-            let end = resolver.snapshot();
+        if spawn_error.is_some() || !(workers_held && queue_full && overflow_rejected) {
             return Err(format!(
-                "bounded DNS E2E callers did not reach the resolver queue limit (batch={batch} elapsedMs={} lastQueueLen={last_queue_len} lastActiveWorkers={last_active} maxQueueLen={max_queue_len} maxActiveWorkers={max_active} attemptsDelta={} syntheticLookupsDelta={} rejectedDelta={} workersStarted={} idleReached={idle} idleWaitMs={} allAttempted={all_attempted} reachedCapacity={reached_capacity})",
+                "bounded DNS E2E callers did not reach the resolver queue limit (batch={batch} elapsedMs={} heldWorkers={workers_held} queueFull={queue_full} overflowRejected={overflow_rejected} activeWorkers={} queueLen={} attemptsDelta={} rejectedDelta={} syntheticLookupsDelta={} workersStarted={} idleReached={idle} idleWaitMs={} spawnError={spawn_error:?})",
                 batch_start.elapsed().as_millis(),
-                end.request_attempts.saturating_sub(batch_before.request_attempts),
-                end.synthetic_lookups_started.saturating_sub(batch_before.synthetic_lookups_started),
-                end.rejected_requests.saturating_sub(batch_before.rejected_requests),
-                end.workers_started,
+                observed.active_workers,
+                observed.queue_len,
+                observed.request_attempts.saturating_sub(batch_before.request_attempts),
+                observed.rejected_requests.saturating_sub(batch_before.rejected_requests),
+                observed.synthetic_lookups_started.saturating_sub(batch_before.synthetic_lookups_started),
+                observed.workers_started,
                 idle_wait.as_millis(),
             ));
         }
+        batches_at_queue_limit += 1;
     }
 
     let drain_deadline = Instant::now() + E2E_DNS_DELAY + Duration::from_secs(1);
@@ -1988,6 +1273,7 @@ fn e2e_dns_cancellation_probe() -> Result<serde_json::Value, String> {
     let after = resolver.snapshot();
     Ok(serde_json::json!({
         "batches": BATCHES,
+        "batchesAtQueueLimit": batches_at_queue_limit,
         "requestAttempts": after.request_attempts.saturating_sub(before.request_attempts),
         "workersStarted": after.workers_started,
         "workerLimit": DNS_RESOLVER_WORKERS,
@@ -2126,11 +1412,13 @@ pub fn e2e_pipelining_probe() -> Result<serde_json::Value, String> {
         "uniqueLocalBracketedIsPrivate": parse_ip_host("[fd00::1]").is_some_and(|address| !is_public_ip(address)),
     });
     let policy_matrix = e2e_policy_matrix();
+    let async_proxy = async_proxy::e2e_capacity_probe()?;
     Ok(serde_json::json!({
         "requests": requests,
         "responseStatus": response_status,
         "responseBody": response_body,
         "secondTargetForwarded": requests.iter().any(|line| line.contains("/blocked") || line.contains("private.test")),
+        "asyncProxy": async_proxy,
         "dnsResolution": dns_resolution,
         "ipv6Classification": ipv6_classification,
         "policyMatrix": policy_matrix,

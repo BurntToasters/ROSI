@@ -19,8 +19,9 @@ split into focused modules:
 | `validation.rs`       | Security boundary: URL safety (no private/loopback hosts), path allow-lists, IPC payloads |
 | `settings.rs`         | Settings model, lenient migration/sanitization, import/export                      |
 | `legacy.rs`           | First-launch import of ROSI 4 data from `<config dir>/rosi`                        |
-| `downloader.rs`       | Single active download session: yt-dlp, optional FFmpeg conversion, cancellation   |
-| `queue.rs`            | Persistent queue (`download-queue.json` + backup) and its sequential runner        |
+| `downloader.rs`       | Single active download session: yt-dlp, optional FFmpeg conversion, cancellation. The session is owned by one thread (`downloader/session_owner.rs`) that runs its tasks in order; callers wait on replies, and the owner never waits on processes or the coordinator. Child modules `downloader/conversion.rs` (FFmpeg runs) and `downloader/publication.rs` (output installs, captions) |
+| `queue.rs`            | Persistent queue (`download-queue.json` + backup), its writer, and its sequential runner. The queue state is owned by the coordinator thread, not held in a global lock |
+| `coordinator.rs`      | Single owner of queue state, queue transitions, and session results: one thread applies each change in arrival order, publishes revisioned queue snapshots, and answers reads over reply channels |
 | `command_builders.rs` | yt-dlp / FFmpeg argument builders and codec probing                                |
 | `progress.rs`         | yt-dlp JSON / FFmpeg `-progress` parsing, phase and queue weighting, throttling    |
 | `media_info.rs`       | Format listing (`-F`) and metadata previews                                        |
@@ -28,11 +29,13 @@ split into focused modules:
 | `sidecars.rs`         | Sidecar location and effective FFmpeg resolution                                   |
 | `process_util.rs`     | Scrubbed environment, process groups, tree termination, bounded output capture     |
 | `platform.rs`         | Platform queries, beta updater target, OS handoffs (open URL, reveal, notify)      |
+| `updater.rs`          | Update engine: one state thread owns channel and target selection (per-arch zstd feeds with a universal fallback, Rosetta to native `aarch64`), check/download/install generations, single-flight download and install, and the Flatpak feed-only rule; emits `updater-status` and `updater-progress` |
 | `window.rs`           | Splash, deferred main-window reveal, close flow (confirm, settings flush), restart |
 | `app_menu.rs`         | Native macOS menu                                                                  |
 | `app_state.rs`        | Process-wide handles: app handle, resolved user directories, background event sink |
 | `constants.rs`        | Limits and allow-lists shared by validation, settings, and the downloader          |
 | `deno.rs`             | Deno runtime detection and optional install for yt-dlp's JavaScript extractors     |
+| `download_options.rs` | Shared option precedence, validation, and snapshots for manual and queued downloads and the effective-options preview |
 | `ffmpeg_guard.rs`     | Per-operation FFmpeg/ffprobe launchers that restrict yt-dlp to local inputs        |
 | `fs_util.rs`          | Atomic, private file writes and bounded reads for persisted JSON state             |
 | `gpu.rs`              | Hardware encoder detection by probing FFmpeg (cached for five minutes)             |
@@ -40,6 +43,7 @@ split into focused modules:
 | `ipc.rs`              | `{ ok, data } \| { ok: false, error }` envelopes shared with the frontend           |
 | `logging.rs`          | Rolling local diagnostics log (`logs/rosi.log`)                                    |
 | `network_security.rs` | Per-operation outbound proxy that pins each destination to a vetted IP, optionally reached through the user's upstream HTTP proxy |
+| `network_security_async.rs` | Tokio implementation of the proxy's listener and client tasks (256 active, 128 pending); DNS stays in `network_security.rs`'s resolver pool |
 | `staging.rs`          | Startup sweep of stale ROSI scratch entries in the download folder (no symlink following) |
 | `types.rs`            | Shared data model, serialized as camelCase to match the v4 bridge shapes          |
 
@@ -64,19 +68,20 @@ normal loaders validate everything, and the result is recorded in
   argument and result types from `generated/ipc-types.ts`. It is the only place
   that calls `invoke()`; `src/tests/commands.contract.test.ts` checks its names
   against `src-tauri/build.rs` and the main window capability.
-- `tauri-bridge.ts` implements the renderer API (`window.api`) on top of
-  `commands.ts` and Tauri events. `window.api` stays the seam that the vitest
-  DOM tests and the E2E specs drive.
-- `updater.ts` wraps `@tauri-apps/plugin-updater`. Stable checks use the default
-  `latest-{target}-{arch}.json` endpoints; beta checks pass the
-  `{os}-beta-{arch}-{installer}` target from `get_beta_updater_target`.
-- `main.ts` is the entry point. It imports the bridge first, then the renderer
+- `api.ts` exports the renderer API object `api` on top of `commands.ts` and
+  Tauri events. Callers import it and call `api.method(...)` at call time. The
+  vitest DOM tests mock this module. The E2E hook exposes the same object as
+  `window.__ROSI_E2E__.api` in E2E builds only.
+- `engine/updater-ui.ts` draws update state. It calls the updater commands in
+  `commands.ts` and renders the `updater-status` and `updater-progress` events;
+  it makes no update decisions. The webview has no updater plugin permissions.
+- `main.ts` is the entry point. It imports `api.ts` first, then the renderer
   modules, then `rosiEngine.ts`. After the renderer reports startup readiness it
   calls `mark_main_window_ready`, which lets the backend close the splash.
 - `rosiEngine.ts` is the renderer controller's startup: it loads settings,
   looks up the DOM, and calls the `engine/bind/*` functions in order, which bind
-  each feature's controls and the backend events. It calls the same `window.api` contract the v4 Electron preload
-  exposed, which `tauri-bridge.ts` implements.
+  each feature's controls and the backend events. It uses the same API contract
+  the v4 Electron preload exposed, which `api.ts` implements.
 - `engine/*` are ES modules split out of the controller by feature:
   `settings-store.ts` (settings state and serialized saves), `settings-view.ts`,
   `queue-controller.ts`, `manual-download.ts`, `preview-controller.ts`,
@@ -110,6 +115,32 @@ builds. The release pipeline (`scripts/run-release.js`, `release-session.js`,
 
 The vendored `src-tauri/vendor/tauri-plugin-updater` carries install-safety
 patches, documented in `src-tauri/vendor/tauri-plugin-updater/PATCHES.md`.
+
+### Compact macOS updates
+
+Fresh installs use the universal DMG/ZIP. In-app updates on macOS download a
+per-arch `ROSI-{aarch64,x86_64}.app.tar.zst` instead of the universal
+`ROSI.app.tar.gz` (141.5 MB to about 60 MB):
+
+- `release:mac:continue` also runs `tauri build --target {aarch64,x86_64}-apple-darwin --bundles app`.
+  `scripts/pack-macos-updater-zst.js` then repacks each per-arch `.app.tar.gz` with
+  `zstd --long=27` and signs the result (`tauri signer sign --app-version`). The long
+  window dedupes `rosi-ffmpeg` against `rosi-ffprobe`. The tar bytes are unchanged, so
+  the bundle signature and staple survive.
+- `scripts/gpg-sign.js` publishes them under `latest-darwin[-beta]-{arch}-app-zst.json`
+  and never collects the per-arch builds' arch-less `.app.tar.gz`.
+- Packaged macOS apps ask for that target (`get_compact_updater_target`). If the
+  compact feed is missing they fall back to the universal feed, which stays published
+  for clients older than 5.1.0. An x86_64 process running under Rosetta 2 requests
+  `darwin[-beta]-aarch64-app-zst` so it updates directly to native Apple Silicon execution.
+- Staged updates are verified prior to installation: the vendored updater validates that
+  the extracted executable and sidecars match the host architecture before live bundle
+  replacement or backup retirement.
+- `rosi-yt-dlp` is upstream's universal2 binary and already compressed, so about
+  36 MB of every update is yt-dlp.
+
+Failure modes: `e2e/updater-zst.failure-modes.md`. Check: `npm run test:e2e:updater-zst`
+(report in `e2e/artifacts/updater-zst-report.json`).
 
 ### macOS entitlements for sidecars (planned, not implemented)
 
@@ -150,6 +181,7 @@ Ordered plan (confirm each Tauri step with a dry run before changing the pipelin
    insert steps 2 to 5 into `scripts/release-session.js` or `run-release.js`
    between `tauri build` and checksum/GPG signing in `scripts/gpg-sign.js`.
 7. Regenerated artifacts to re-check before publish: the `.app`, `.app.tar.gz`,
+   the per-arch bundles and their `.app.tar.zst` (repack after re-signing),
    `.sig`, the `latest-*.json` manifests, the DMG, the ZIP, checksums, and
    GPG signatures. `verify-release-draft.js` must pass on the final set.
 

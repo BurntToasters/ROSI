@@ -47,8 +47,8 @@ describe('typed command map', () => {
     expect(direct).toEqual([]);
   });
 
-  it('routes window.api through mapped command names (mode 5)', () => {
-    const bridge = read('src/tauri-bridge.ts');
+  it('routes the api object through mapped command names (mode 5)', () => {
+    const bridge = read('src/api.ts');
     const called = [...bridge.matchAll(/\b(?:call|fire)\('([a-z0-9_]+)'/g)].map((m) => m[1]);
     expect(called.length).toBeGreaterThan(0);
     for (const name of called) expect(mapped).toContain(name);

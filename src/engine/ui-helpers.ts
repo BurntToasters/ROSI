@@ -1,16 +1,17 @@
 // Toasts, console output, sidebar, and button state helpers.
-import { dockModule, uiModule } from './core';
+import {
+  appendConsoleOutput as appendOutput,
+  closeSidebar as closeSidebarPanel,
+  setButtonLoading as setLoading,
+  showToast as showToastMessage,
+  toggleAdvancedUI as toggleAdvancedPanel,
+  toggleSidebar as toggleSidebarPanel,
+  updateConsoleVisibility as updateConsoleOutputVisibility,
+} from '../modules/ui';
+import { markUnseen } from '../modules/dock';
 
 export function updateConsoleVisibility(show: boolean) {
-  if (uiModule && typeof uiModule.updateConsoleVisibility === 'function') {
-    uiModule.updateConsoleVisibility(show);
-    return;
-  }
-  const consoleSection = document.getElementById('console-section');
-  if (consoleSection) {
-    consoleSection.classList.toggle('visible', !!show);
-  }
-  document.body.classList.toggle('console-visible', !!show);
+  updateConsoleOutputVisibility(show);
 }
 
 export type ToastType = 'warning' | 'error' | 'success' | 'info';
@@ -19,16 +20,12 @@ export function showToast(
   message: unknown,
   { type = 'info', duration = 4000 }: { type?: ToastType; duration?: number } = {}
 ) {
-  if (uiModule && typeof uiModule.showToast === 'function') {
-    uiModule.showToast(message, { type, duration });
-  }
+  showToastMessage(message, { type, duration });
 }
 
 export function appendConsoleOutput(outputEl: HTMLElement | null, text: string) {
-  if (uiModule && typeof uiModule.appendConsoleOutput === 'function') {
-    uiModule.appendConsoleOutput(outputEl, text);
-  }
-  dockModule?.markUnseen('console');
+  appendOutput(outputEl, text);
+  markUnseen('console');
 }
 
 export function setButtonLoading(
@@ -37,24 +34,16 @@ export function setButtonLoading(
   onCancel?: (() => void) | null,
   cancelLabel?: string
 ) {
-  if (uiModule && typeof uiModule.setButtonLoading === 'function') {
-    uiModule.setButtonLoading(button, isLoading, onCancel, cancelLabel);
-  }
+  setLoading(button, isLoading, onCancel, cancelLabel);
 }
 
 export function toggleSidebar() {
-  if (uiModule && typeof uiModule.toggleSidebar === 'function') {
-    uiModule.toggleSidebar();
-  }
+  toggleSidebarPanel();
 }
 
 export function closeSidebar() {
-  if (uiModule && typeof uiModule.closeSidebar === 'function') {
-    uiModule.closeSidebar();
-  }
+  closeSidebarPanel();
 }
 export function toggleAdvancedUI(show: boolean) {
-  if (uiModule && typeof uiModule.toggleAdvancedUI === 'function') {
-    uiModule.toggleAdvancedUI(show);
-  }
+  toggleAdvancedPanel(show);
 }

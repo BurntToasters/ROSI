@@ -1,10 +1,6 @@
 // Startup bindings for backend events.
 import { logError } from '../core';
-import {
-  handleLegacyManualCompletion,
-  handleManualDownloadCompletion,
-  manualDownload,
-} from '../manual-download';
+import { handleManualDownloadCompletion, manualDownload } from '../manual-download';
 import { showLicenses } from '../overlays';
 import { renderPresetOptions } from '../presets';
 import { applyJobProgress, downloadState, showProgressBar } from '../progress';
@@ -13,34 +9,27 @@ import { refs } from '../refs';
 import { reconcileSettingsInPlace, settingsStore } from '../settings-store';
 import { syncDockFromSettings, updateUIFromSettings } from '../settings-view';
 import { applyTheme } from '../theme';
-import { appendConsoleOutput, setButtonLoading, toggleSidebar } from '../ui-helpers';
-import { checkForUpdates } from '../updater-ui';
+import { appendConsoleOutput, toggleSidebar } from '../ui-helpers';
+import { checkForUpdates, notifyUpdateChannelChanged } from '../updater-ui';
+import { api } from '../../api';
 
 /** Backend events: progress, completion, queue, activity, and menu actions. */
 export function bindBackendEvents() {
-  const { activityPanel, fetchFormatsBtn, ipcCleanupFunctions, outputEl } = refs;
+  const { activityPanel, ipcCleanupFunctions, outputEl } = refs;
+  // Newest queue revision rendered so far. Snapshots older than it are dropped.
+  let latestQueueRevision = 0;
+  // Queue snapshots received so far. The startup read carries no revision, so
+  // it is applied only if no snapshot arrived while it was in flight.
+  let queueSnapshotsSeen = 0;
   ipcCleanupFunctions.push(
-    window.api.onProgress((message) => {
+    api.onProgress((message) => {
       if (!outputEl) return;
       appendConsoleOutput(outputEl, message);
-
-      if (
-        !manualDownload.manualDownloadStartPending &&
-        manualDownload.manualSessionIdentityReceived &&
-        manualDownload.manualDownloadSessionId === null &&
-        downloadState.isDownloading &&
-        (message.includes('Identified file:') || message.includes('Successfully converted to'))
-      ) {
-        const fileMatch = message.match(/(?:Identified file:|Successfully converted to)\s*(.+)$/);
-        if (fileMatch && fileMatch[1]) {
-          downloadState.lastDownloadedFilePath = fileMatch[1].trim();
-        }
-      }
     })
   );
 
   ipcCleanupFunctions.push(
-    window.api.onJobProgress((event) => {
+    api.onJobProgress((event) => {
       if (
         !event.queueItemId &&
         (manualDownload.manualDownloadStartPending ||
@@ -70,7 +59,7 @@ export function bindBackendEvents() {
   );
 
   ipcCleanupFunctions.push(
-    window.api.onMenuAction((action) => {
+    api.onMenuAction((action) => {
       if (action === 'check-for-updates') {
         void checkForUpdates();
         return;
@@ -93,44 +82,44 @@ export function bindBackendEvents() {
   );
 
   ipcCleanupFunctions.push(
-    window.api.onComplete((statusMessage) => {
-      if (fetchFormatsBtn) setButtonLoading(fetchFormatsBtn, false);
+    api.onComplete((statusMessage) => {
       if (outputEl) appendConsoleOutput(outputEl, statusMessage);
-      handleLegacyManualCompletion(statusMessage);
     })
   );
 
   ipcCleanupFunctions.push(
-    window.api.onDownloadComplete((completion) => {
+    api.onDownloadComplete((completion) => {
       handleManualDownloadCompletion(completion);
     })
   );
 
-  if (typeof window.api.onDownloadActivityUpdate === 'function') {
+  if (typeof api.onDownloadActivityUpdate === 'function') {
     ipcCleanupFunctions.push(
-      window.api.onDownloadActivityUpdate((activity) => {
+      api.onDownloadActivityUpdate((activity) => {
         activityPanel?.setEntries(activity);
       })
     );
   }
 
   ipcCleanupFunctions.push(
-    window.api.onQueueUpdate((queue) => {
-      renderQueue(queue);
+    api.onQueueUpdate((payload) => {
+      // Older payloads are bare arrays without a revision; they are always applied.
+      const snapshot = Array.isArray(payload) ? { revision: null, items: payload } : payload;
+      if (snapshot.revision !== null) {
+        if (snapshot.revision < latestQueueRevision) return;
+        latestQueueRevision = snapshot.revision;
+      }
+      queueSnapshotsSeen += 1;
+      renderQueue(snapshot.items);
     })
   );
 
   ipcCleanupFunctions.push(
-    window.api.onSettingsImported((importedSettings) => {
-      const previousChannel = settingsStore.settings.updateChannel ?? 'auto';
+    api.onSettingsImported((importedSettings) => {
       settingsStore.settingsRevision += 1;
       reconcileSettingsInPlace(importedSettings);
-      if (window.api.getChannel() !== 'msstore') {
-        window.api.notifyUpdaterChannelChanged?.(
-          settingsStore.settings.updateChannel ?? 'auto',
-          undefined,
-          previousChannel
-        );
+      if (api.getChannel() !== 'msstore') {
+        notifyUpdateChannelChanged(settingsStore.settings.updateChannel ?? 'auto');
       }
       try {
         updateUIFromSettings();
@@ -144,8 +133,11 @@ export function bindBackendEvents() {
     })
   );
 
-  window.api
+  const snapshotsBeforeRead = queueSnapshotsSeen;
+  api
     .getQueue()
-    .then((queue) => renderQueue(queue))
+    .then((queue) => {
+      if (queueSnapshotsSeen === snapshotsBeforeRead) renderQueue(queue);
+    })
     .catch(() => {});
 }

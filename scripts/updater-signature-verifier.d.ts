@@ -6,4 +6,5 @@ export function verifyUpdaterSignatures(options: {
   byName: Map<string, string>;
   signatureByBaseName: Map<string, string>;
   resolveUpdaterTargets(name: string): unknown[];
+  publicKey?: string;
 }): void;

@@ -1,5 +1,7 @@
 // Startup bindings for settings search, reset, and collapsible sections.
 import { RosiSettings } from '../core';
+import { UI_MESSAGES } from '../messages';
+import { showModal } from '../overlays';
 import { byId, refs } from '../refs';
 import { loadDefaultSettings, persistSettings, settingsStore } from '../settings-store';
 import {
@@ -81,23 +83,46 @@ export function initSettingsSearch() {
       const sectionName = button.dataset.resetSection ?? '';
       const keys = SECTION_RESET_KEYS[sectionName];
       if (!keys) return;
-      const defaults = await loadDefaultSettings();
-      if (!defaults) {
-        showToast('Could not load default settings.', { type: 'error' });
-        return;
-      }
-      const settingsRecord = settingsStore.settings as unknown as Record<string, unknown>;
-      const defaultsRecord = defaults as unknown as Record<string, unknown>;
-      keys.forEach((key) => {
-        settingsRecord[key] = defaultsRecord[key];
-      });
-      updateUIFromSettings();
-      applyTheme(settingsStore.settings.theme ?? 'system');
-      const saved = await persistSettings(true, true);
-      showToast(saved ? 'Section restored to defaults.' : 'Could not save the restored section.', {
-        type: saved ? 'success' : 'error',
+      const sectionLabel =
+        button.closest('.settings-section')?.querySelector('.settings-section-title')
+          ?.textContent ?? sectionName;
+      // Only the confirm action resets. Cancel, Escape and the close control leave
+      // every value untouched and return focus to this button. Focus it first so
+      // the return target is this button however the prompt was opened: a script
+      // or pointer click may not focus it (Safari does not focus buttons on click).
+      button.focus();
+      showModal({
+        title: UI_MESSAGES.settings.resetTitle(sectionLabel),
+        message: UI_MESSAGES.settings.resetMessage(sectionLabel),
+        buttons: [
+          { label: UI_MESSAGES.settings.resetCancel },
+          {
+            label: UI_MESSAGES.settings.resetConfirm,
+            danger: true,
+            action: () => void applySectionReset(keys),
+          },
+        ],
       });
     });
+  });
+}
+
+async function applySectionReset(keys: string[]) {
+  const defaults = await loadDefaultSettings();
+  if (!defaults) {
+    showToast(UI_MESSAGES.settings.defaultsFailed, { type: 'error' });
+    return;
+  }
+  const settingsRecord = settingsStore.settings as unknown as Record<string, unknown>;
+  const defaultsRecord = defaults as unknown as Record<string, unknown>;
+  keys.forEach((key) => {
+    settingsRecord[key] = defaultsRecord[key];
+  });
+  updateUIFromSettings();
+  applyTheme(settingsStore.settings.theme ?? 'system');
+  const saved = await persistSettings(true, true);
+  showToast(saved ? UI_MESSAGES.settings.resetSaved : UI_MESSAGES.settings.resetFailed, {
+    type: saved ? 'success' : 'error',
   });
 }
 

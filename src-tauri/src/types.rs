@@ -1,6 +1,7 @@
 //! Shared data model. Field names serialize as camelCase so the frontend sees
 //! the same shapes the Electron preload bridge exposed in ROSI v4.
 
+use crate::ipc::{present_payload, FalliblePayload};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -372,6 +373,16 @@ pub struct QueueItem {
     pub error: Option<String>,
 }
 
+/// Payload of `queue-update`. `revision` increases with every queue change the
+/// coordinator publishes, so the renderer can drop an older snapshot.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct QueueSnapshot {
+    pub revision: u64,
+    pub items: Vec<QueueItem>,
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -386,6 +397,45 @@ pub struct VideoInfo {
     pub is_playlist: bool,
     pub playlist_count: Option<f64>,
     pub webpage_url: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum StreamKind {
+    Audio,
+    Video,
+    AudioVideo,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(optional_fields = nullable))]
+pub struct FormatEntry {
+    pub format_id: String,
+    pub stream_kind: StreamKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vcodec: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub acodec: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fps: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_size_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_size_bytes: Option<u64>,
+    /// Option text for format pickers, built by the backend. The renderer shows it verbatim.
+    pub display_label: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct FormatList {
+    pub formats: Vec<FormatEntry>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, PartialEq)]
@@ -412,10 +462,118 @@ pub struct GpuDetectionResult {
     pub intel: bool,
 }
 
+/// A notification after validation: trimmed title and body.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct NotificationRequest {
     pub title: Option<String>,
     pub body: Option<String>,
+}
+
+/// `show_notification` options as sent. Each field is typed on its own, so a
+/// wrong type is refused by `validate_notification` with the group message.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct NotificationInput {
+    #[cfg_attr(test, ts(type = "string", optional))]
+    pub title: Option<FalliblePayload<String>>,
+    #[cfg_attr(test, ts(type = "string", optional))]
+    pub body: Option<FalliblePayload<String>>,
+    #[cfg_attr(test, ts(type = "string", optional))]
+    pub file_path: Option<FalliblePayload<String>>,
+}
+
+/// `reorder_queue_item` request as sent. A missing or wrong-typed field is
+/// refused by `validate_queue_reorder` with that field's message.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct QueueReorderInput {
+    #[cfg_attr(test, ts(type = "string", optional))]
+    pub id: Option<FalliblePayload<String>>,
+    #[cfg_attr(test, ts(type = "\"up\" | \"down\"", optional))]
+    pub direction: Option<FalliblePayload<String>>,
+}
+
+/// A partial settings update as the renderer sends it. Each known key is
+/// typed on its own (`None` when absent, `Invalid` for a wrong type, `null`
+/// included), so `validate_settings_patch` can refuse fields one at a time.
+/// Unknown keys are ignored.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsPatchInput {
+    #[serde(default, deserialize_with = "present_payload")]
+    pub settings_version: Option<FalliblePayload<f64>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub download_presets: Option<FalliblePayload<Vec<DownloadPreset>>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub show_console_output: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub dock_collapsed: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub ask_download_location: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub advanced_options: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub audio_only: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub convert_enabled: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub keep_original_after_convert: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub first_launch: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub hook_browser: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub animate_background: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub flat_ui: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub notifications: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub show_taskbar_progress: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub deno_reminder_dismissed: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub gpu_acceleration: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub best_quality: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub hide_support_modal: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub check_updates_on_startup: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub write_subtitles: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub embed_thumbnail: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub embed_metadata: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub sponsorblock_remove: Option<FalliblePayload<bool>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub download_mode: Option<FalliblePayload<String>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub dock_tab: Option<FalliblePayload<String>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub theme: Option<FalliblePayload<String>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub gpu_type: Option<FalliblePayload<String>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub audio_format: Option<FalliblePayload<String>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub convert_format: Option<FalliblePayload<String>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub update_channel: Option<FalliblePayload<String>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub subtitle_langs: Option<FalliblePayload<String>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub browser_choice: Option<FalliblePayload<String>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub ffmpeg_path: Option<FalliblePayload<String>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub upstream_proxy: Option<FalliblePayload<String>>,
+    #[serde(default, deserialize_with = "present_payload")]
+    pub download_folder: Option<FalliblePayload<String>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -423,6 +581,137 @@ pub struct QueueProgress {
     pub completed_items: usize,
     pub queue_total: usize,
     pub queue_item_id: Option<String>,
+}
+
+/// Pushed on `updater-status`. Every variant is produced by `updater.rs`.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(tag = "status", rename_all = "kebab-case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum UpdaterStatusEvent {
+    Checking,
+    #[serde(rename_all = "camelCase")]
+    Available {
+        candidate_id: u64,
+        version: String,
+        release_notes: Option<String>,
+        is_beta: bool,
+        /// Flatpak builds read the feed; the update is taken from the release page.
+        manual_install: bool,
+    },
+    #[serde(rename_all = "camelCase")]
+    NotAvailable {
+        version: String,
+        is_beta: bool,
+    },
+    Error {
+        message: String,
+        kind: UpdaterErrorKind,
+    },
+    Cancelled,
+    #[serde(rename_all = "camelCase")]
+    Downloaded {
+        candidate_id: u64,
+        version: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum UpdaterErrorKind {
+    Feed,
+    Download,
+    Install,
+}
+
+/// Pushed on `updater-progress` while a download runs.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct UpdaterProgressEvent {
+    pub percent: f64,
+    pub bytes_per_second: f64,
+    pub transferred: u64,
+    pub total: u64,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum CheckRefusalReason {
+    DevMode,
+    Message,
+}
+
+/// Why `check_for_updates` did not start a check. `null` means it started.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct CheckRefusal {
+    pub reason: CheckRefusalReason,
+    pub message: String,
+}
+
+/// Result of `download_update`. Failures are reported here and as events.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct DownloadOutcome {
+    pub success: bool,
+    pub cancelled: bool,
+    pub error: Option<String>,
+}
+
+impl DownloadOutcome {
+    pub fn success() -> Self {
+        Self {
+            success: true,
+            cancelled: false,
+            error: None,
+        }
+    }
+
+    pub fn cancelled() -> Self {
+        Self {
+            success: false,
+            cancelled: true,
+            error: None,
+        }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            success: false,
+            cancelled: false,
+            error: Some(message.into()),
+        }
+    }
+}
+
+/// Payload for `extract_queue_urls`: raw pasted or dropped text.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct QueueTextInput {
+    pub text: String,
+}
+
+/// Result of `extract_queue_urls`. `rejected` lists at most a few refused
+/// link tokens; `rejected_count` is the full number.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ExtractedQueueUrls {
+    pub urls: Vec<String>,
+    pub rejected: Vec<String>,
+    pub rejected_count: usize,
+}
+
+/// Payload for `resolve_preset_options`: a saved preset id and no URL.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct PresetOptionsInput {
+    pub preset_id: String,
 }
 
 #[cfg(test)]
@@ -456,10 +745,18 @@ mod ts_bindings {
             JobProgressEvent::decl(&cfg),
             QueueStatus::decl(&cfg),
             QueueItem::decl(&cfg),
+            QueueSnapshot::decl(&cfg),
             VideoInfo::decl(&cfg),
+            StreamKind::decl(&cfg),
+            FormatEntry::decl(&cfg),
+            FormatList::decl(&cfg),
             DownloadStats::decl(&cfg),
             GpuDetectionResult::decl(&cfg),
             crate::ipc::IpcError::decl(&cfg),
+            crate::ipc::DownloadRequestInput::decl(&cfg),
+            PresetOptionsInput::decl(&cfg),
+            QueueTextInput::decl(&cfg),
+            ExtractedQueueUrls::decl(&cfg),
             crate::downloader::Started::decl(&cfg),
             crate::queue::Started::decl(&cfg),
             crate::queue::AddResult::decl(&cfg),
@@ -469,6 +766,14 @@ mod ts_bindings {
             crate::settings::Exported::decl(&cfg),
             crate::settings::Imported::decl(&cfg),
             crate::deno::InstallResult::decl(&cfg),
+            NotificationInput::decl(&cfg),
+            QueueReorderInput::decl(&cfg),
+            UpdaterStatusEvent::decl(&cfg),
+            UpdaterErrorKind::decl(&cfg),
+            UpdaterProgressEvent::decl(&cfg),
+            CheckRefusalReason::decl(&cfg),
+            CheckRefusal::decl(&cfg),
+            DownloadOutcome::decl(&cfg),
         ];
         let mut out = String::from(
             "// Generated from src-tauri/src/types.rs by the ts_bindings test. Do not edit.\n",

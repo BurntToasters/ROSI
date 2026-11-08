@@ -1,5 +1,5 @@
 // Startup bindings for format fetching and the download button.
-import { applyActiveDownloadProgressPhases, extractHttpUrls, isValidUrl, logError } from '../core';
+import { applyActiveDownloadProgressPhases, isValidUrl, logError } from '../core';
 import { fetchFormats } from '../formats';
 import {
   beginManualDownloadOperation,
@@ -9,30 +9,20 @@ import {
   receiveManualDownloadStart,
 } from '../manual-download';
 import { isPlaylistScopeVisible, resolvePlaylistSelection } from '../playlist';
-import {
-  buildOnScreenPresetOverrides,
-  getSelectedPreset,
-  readAdvancedFormatSelections,
-} from '../presets';
+import { buildRequestOverrides, readAdvancedFormatSelections } from '../presets';
 import { downloadState, hideProgressBar } from '../progress';
-import { addUrlsToQueue } from '../queue-controller';
+import { addUrlsToQueue, extractQueueLinks } from '../queue-controller';
 import { refs } from '../refs';
 import { persistSettings, settingsStore } from '../settings-store';
 import { updateUIFromSettings } from '../settings-view';
 import { appendConsoleOutput, setButtonLoading, showToast } from '../ui-helpers';
 import { checkForUpdates } from '../updater-ui';
 import { syncPrimaryActionState, updateUrlButtons, urlActionState } from '../url-actions';
+import { api } from '../../api';
 
 /** Format fetching, the download button, and manual update checks. */
 export function bindDownloadControls() {
-  const {
-    checkUpdateBtn,
-    convertFormatSelect,
-    downloadBtn,
-    fetchFormatsBtn,
-    keepOriginalToggle,
-    outputEl,
-  } = refs;
+  const { checkUpdateBtn, downloadBtn, fetchFormatsBtn, outputEl } = refs;
   if (fetchFormatsBtn) {
     fetchFormatsBtn.onclick = fetchFormats;
   }
@@ -60,11 +50,12 @@ export function bindDownloadControls() {
         }
 
         // Multiple links go to the queue instead of the single-download path.
-        const batch = extractHttpUrls(url);
+        const extracted = await extractQueueLinks(url);
+        const batch = extracted.ok ? extracted.data : { urls: [], rejectedCount: 0 };
         if (batch.urls.length > 1) {
           failManualDownloadStart(operation);
           downloadState.isDownloading = false;
-          const added = await addUrlsToQueue(batch.urls, batch.rejected);
+          const added = await addUrlsToQueue(batch.urls, batch.rejectedCount);
           if (added && urlInput) {
             urlInput.value = '';
             urlActionState.hasUrlValidationIntent = false;
@@ -109,27 +100,20 @@ export function bindDownloadControls() {
           syncPrimaryActionState();
           return;
         }
-        const activePreset = getSelectedPreset();
-        const presetOverrides = activePreset
-          ? {
-              presetId: activePreset.id,
-              presetName: activePreset.name,
-              ...buildOnScreenPresetOverrides(formatSelections),
-            }
-          : {};
+        const requestOverrides = buildRequestOverrides({
+          formats: formatSelections,
+          playlist: scopeVisible ? (playlist ?? undefined) : undefined,
+        });
         const ffmpegPath = settingsStore.settings.ffmpegPath;
-        const convertFormat = settingsStore.settings.convertEnabled
-          ? convertFormatSelect?.value.trim() || undefined
-          : undefined;
-        const keepOriginal = settingsStore.settings.convertEnabled
-          ? keepOriginalToggle?.checked
-          : undefined;
         let savePath = settingsStore.settings.askDownloadLocation
           ? null
           : settingsStore.settings.downloadFolder?.trim() || null;
-        if (!savePath) {
+        // "Ask every time" off with no folder is not a blocker: the backend saves to
+        // the Downloads folder when outputPath is omitted (same as the queue path).
+        const usesDefaultFolder = !settingsStore.settings.askDownloadLocation && !savePath;
+        if (!savePath && !usesDefaultFolder) {
           try {
-            savePath = await window.api.selectDownloadLocation();
+            savePath = await api.selectDownloadLocation();
           } catch (dialogError) {
             failManualDownloadStart(operation);
             logError('Error opening save dialog', dialogError);
@@ -142,7 +126,7 @@ export function bindDownloadControls() {
           }
         }
 
-        if (!savePath) {
+        if (!savePath && !usesDefaultFolder) {
           failManualDownloadStart(operation);
           downloadState.isDownloading = false;
           syncPrimaryActionState();
@@ -152,15 +136,17 @@ export function bindDownloadControls() {
           }
           return;
         }
-        settingsStore.settings.downloadFolder = savePath;
-        updateUIFromSettings();
-        const saved = await persistSettings(true, true);
-        if (!saved) {
-          failManualDownloadStart(operation);
-          downloadState.isDownloading = false;
-          syncPrimaryActionState();
-          showToast('Could not save download settings. Please try again.', { type: 'error' });
-          return;
+        if (savePath) {
+          settingsStore.settings.downloadFolder = savePath;
+          updateUIFromSettings();
+          const saved = await persistSettings(true, true);
+          if (!saved) {
+            failManualDownloadStart(operation);
+            downloadState.isDownloading = false;
+            syncPrimaryActionState();
+            showToast('Could not save download settings. Please try again.', { type: 'error' });
+            return;
+          }
         }
         if (outputEl) outputEl.textContent = '';
         downloadState.downloadAbort = () => {
@@ -170,7 +156,7 @@ export function bindDownloadControls() {
           syncPrimaryActionState();
         };
         setButtonLoading(downloadBtn, true, () => {
-          window.api.cancelDownload();
+          api.cancelDownload();
           downloadState.downloadAbort?.();
           hideProgressBar();
         });
@@ -183,17 +169,11 @@ export function bindDownloadControls() {
         });
 
         prepareManualDownloadStart(operation);
-        const startResult = await window.api.downloadVideo({
+        const startResult = await api.downloadVideo({
           url: url.trim(),
-          videoFormat,
-          audioFormat,
-          outputPath: savePath,
-          convertFormat,
-          keepOriginal,
+          ...(savePath ? { outputPath: savePath } : {}),
           ffmpegPath,
-          // When radios are hidden, omit playlist so a selected preset's All/Range applies.
-          ...(scopeVisible && playlist ? { playlist } : {}),
-          ...presetOverrides,
+          ...requestOverrides,
         });
         if (operation !== manualDownload.manualDownloadOperation) return;
         if (!startResult || startResult.ok !== true) {

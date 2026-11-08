@@ -11,7 +11,7 @@
   Build from a VS developer shell (`npm run win-compiler:arm64` or
   `win-compiler:x64`), which puts that clang on `PATH`; a plain PowerShell
   window does not.
-- Node.js `^24.15.0 || >=26` (`engines.node` in package.json)
+- Node.js `^24.22.1 || >=26.13.0` (`engines.node` in package.json)
 - Rust (rustup)
 - Azure Artifact Signing: once per release VM, as Administrator, run
   `npm run setup:win:artifact-signing`
@@ -19,11 +19,24 @@
 ## macOS
 
 - macOS 15 or later. `minimumSystemVersion` in `tauri.conf.json` is
-  15.0 because the bundled FFmpeg is built for macOS 15; `build:mac:zip` rejects
-  any bundled Mach-O whose minimum OS is above that floor.
+  15.0 because the bundled FFmpeg is built for macOS 15; `build:mac:zip` checks
+  the minimum OS of each required architecture slice against that floor.
 - Xcode Command Line Tools (`lipo`, `codesign`, `notarytool`)
-- Node.js `^24.15.0 || >=26`
+- zstd CLI (`brew install zstd`) for the updater archives; checked by `npm run prerelease:prepare`
+- Node.js `^24.22.1 || >=26.13.0`
 - Rust (rustup)
+
+macOS builds can produce the universal package or native arm64 and x64
+packages. `npm run build:mac:universal` builds the universal DMG/app, then
+`npm run build:mac:zip` verifies the signed app and creates its ZIP.
+`npm run build:mac:native` builds each native app once with its DMG and
+updater archive, then creates architecture-matched ZIPs. Individual prepared
+targets are `build:mac:arm64:prepared` and `build:mac:x64:prepared`; run the
+matching `build:mac:zip:arm64` or `build:mac:zip:x64` after those builds.
+Native app and FFmpeg/ffprobe binaries must be thin for their target. The
+upstream universal2 yt-dlp binary may remain universal when it contains the
+requested slice. Every public installer is named
+`ROSI-MacOS-{arm64,x64,universal}.{dmg,zip}`.
 
 ## Linux
 
@@ -31,7 +44,7 @@
   baseline.
 - `npm run setup:deb` installs the Ubuntu build, E2E (xvfb), 7-Zip (for
   `get:ffmpeg`), and Flatpak prerequisites.
-- Node.js `^24.15.0 || >=26`
+- Node.js `^24.22.1 || >=26.13.0`
 - Rust (rustup)
 - Linux v5 releases ship x64 only (`npm run release:linux:x64`). ARM64 wiring
   (`release:linux:arm64`, `build:linux:arm64`) remains for future development
@@ -39,7 +52,7 @@
 
 ## Rust toolchain policy
 
-ROSI builds with Rust `1.98.1`, pinned in `rust-toolchain.toml` and used by CI,
+ROSI builds with the Rust version pinned in `rust-toolchain.toml`, used by CI,
 Flatpak, and release builds. Install that exact toolchain before building:
 
 ```sh
@@ -221,9 +234,9 @@ The `b`, `r`, and `release:*` scripts intentionally reset and clean their Git
 worktrees. Run them only on disposable, isolated build VMs. `b` and `r` run
 directly without confirmation. `release:finalize` also runs without a guard, so
 run it only from a checkout with nothing uncommitted. Before publishing,
-verify that the draft contains the Windows x64/ARM64 NSIS installers, the
-universal macOS DMG/ZIP, Linux x64 AppImage/Flatpak, updater
-manifests/signatures, SHA-256 lists, and GPG detached signatures
+verify that the draft contains the Windows x64/ARM64 NSIS installers, native
+arm64/x64 and universal macOS DMG/ZIP packages, Linux x64 AppImage/Flatpak,
+updater manifests/signatures, SHA-256 lists, and GPG detached signatures
 (`npm run release:verify:draft`).
 
 ## Microsoft Store

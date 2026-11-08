@@ -163,6 +163,178 @@ fn macos_bundle_executable_complete(path: &Path) -> bool {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn is_rosetta_translated() -> bool {
+    let mut ret: libc::c_int = 0;
+    let mut size: libc::size_t = std::mem::size_of_val(&ret);
+    let name = c"sysctl.proc_translated";
+    let res = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            &mut ret as *mut _ as *mut libc::c_void,
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    res == 0 && ret == 1
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_rosetta_translated() -> bool {
+    false
+}
+
+/// Z02.4: verifies that a Mach-O executable supports the host architecture
+/// before swapping into place.
+pub fn macos_bundle_executable_supports_host_arch(path: &Path) -> bool {
+    macos_executable_supports_runtime_host(path, std::env::consts::ARCH, is_rosetta_translated())
+}
+
+pub fn macos_executable_supports_runtime_host(
+    path: &Path,
+    compile_arch: &str,
+    rosetta_translated: bool,
+) -> bool {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    use std::io::Read;
+    let mut header = [0u8; 4096];
+    let Ok(n) = file.read(&mut header) else {
+        return false;
+    };
+    macho_bytes_support_runtime_host(&header[..n], compile_arch, rosetta_translated)
+}
+
+pub fn macos_bundle_supports_runtime_host(
+    bundle_path: &Path,
+    compile_arch: &str,
+    rosetta_translated: bool,
+) -> bool {
+    let Some(identity) = macos_app_bundle_identity(bundle_path) else {
+        return false;
+    };
+    let macos_dir = bundle_path.join("Contents/MacOS");
+    let executable = macos_dir.join(&identity.executable);
+    if !macos_executable_supports_runtime_host(&executable, compile_arch, rosetta_translated) {
+        return false;
+    }
+    ["rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"]
+        .iter()
+        .all(|sidecar| {
+            macos_executable_supports_runtime_host(
+                &macos_dir.join(sidecar),
+                compile_arch,
+                rosetta_translated,
+            )
+        })
+}
+
+pub fn macho_bytes_support_host_arch(bytes: &[u8]) -> bool {
+    macho_bytes_support_runtime_host(bytes, std::env::consts::ARCH, is_rosetta_translated())
+}
+
+pub fn macho_bytes_support_runtime_host(
+    bytes: &[u8],
+    compile_arch: &str,
+    rosetta_translated: bool,
+) -> bool {
+    match compile_arch {
+        "aarch64" => macho_bytes_support_arch(bytes, "aarch64"),
+        "x86_64" if rosetta_translated => {
+            macho_bytes_support_arch(bytes, "aarch64") || macho_bytes_support_arch(bytes, "x86_64")
+        }
+        "x86_64" => macho_bytes_support_arch(bytes, "x86_64"),
+        _ => false,
+    }
+}
+
+pub fn macho_bytes_support_arch(bytes: &[u8], target_arch: &str) -> bool {
+    const MH_MAGIC_64: [u8; 4] = [0xcf, 0xfa, 0xed, 0xfe];
+    const MH_CIGAM_64: [u8; 4] = [0xfe, 0xed, 0xfa, 0xcf];
+    const FAT_MAGIC: [u8; 4] = [0xca, 0xfe, 0xba, 0xbe];
+    const FAT_CIGAM: [u8; 4] = [0xbe, 0xba, 0xfe, 0xca];
+    const FAT_MAGIC_64: [u8; 4] = [0xca, 0xfe, 0xba, 0xbf];
+    const FAT_CIGAM_64: [u8; 4] = [0xbf, 0xba, 0xfe, 0xca];
+
+    const CPU_TYPE_X86_64: u32 = 0x01000007;
+    const CPU_TYPE_ARM64: u32 = 0x0100000c;
+
+    let expected_cputype = match target_arch {
+        "aarch64" | "arm64" => CPU_TYPE_ARM64,
+        "x86_64" | "amd64" => CPU_TYPE_X86_64,
+        _ => return false,
+    };
+
+    if bytes.len() < 8 {
+        return false;
+    }
+
+    if bytes.starts_with(&MH_MAGIC_64) {
+        let cputype = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        return cputype == expected_cputype;
+    }
+    if bytes.starts_with(&MH_CIGAM_64) {
+        let cputype = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        return cputype == expected_cputype;
+    }
+    if bytes.starts_with(&FAT_MAGIC) || bytes.starts_with(&FAT_CIGAM) {
+        let is_be = bytes.starts_with(&FAT_MAGIC);
+        let nfat = if is_be {
+            u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]])
+        } else {
+            u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]])
+        };
+        let count = (nfat as usize).min(64);
+        for i in 0..count {
+            let Some(offset) = i.checked_mul(20).and_then(|o| o.checked_add(8)) else {
+                return false;
+            };
+            let Some(slice) = bytes.get(offset..offset + 4) else {
+                return false;
+            };
+            let cputype = if is_be {
+                u32::from_be_bytes([slice[0], slice[1], slice[2], slice[3]])
+            } else {
+                u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]])
+            };
+            if cputype == expected_cputype {
+                return true;
+            }
+        }
+        return false;
+    }
+    if bytes.starts_with(&FAT_MAGIC_64) || bytes.starts_with(&FAT_CIGAM_64) {
+        let is_be = bytes.starts_with(&FAT_MAGIC_64);
+        let nfat = if is_be {
+            u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]])
+        } else {
+            u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]])
+        };
+        let count = (nfat as usize).min(64);
+        for i in 0..count {
+            let Some(offset) = i.checked_mul(32).and_then(|o| o.checked_add(8)) else {
+                return false;
+            };
+            let Some(slice) = bytes.get(offset..offset + 4) else {
+                return false;
+            };
+            let cputype = if is_be {
+                u32::from_be_bytes([slice[0], slice[1], slice[2], slice[3]])
+            } else {
+                u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]])
+            };
+            if cputype == expected_cputype {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    false
+}
+
 /// Session variables pkexec, zenity, and polkit agents need after `env_clear`.
 /// Never includes `PATH`.
 pub const LINUX_PRIVILEGED_ENV_ALLOWLIST: &[&str] = &[

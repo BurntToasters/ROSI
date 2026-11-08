@@ -26,6 +26,7 @@ import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { spawnSync } from "child_process";
 import { verifyUpdaterSignatures } from "./updater-signature-verifier.js";
+import { resolveUpdaterTargets } from "./gpg-sign.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -64,6 +65,8 @@ const TARGETS = [
   "windows-aarch64",
   "darwin-aarch64",
   "darwin-x86_64",
+  "darwin-aarch64-app-zst",
+  "darwin-x86_64-app-zst",
   "linux-x86_64",
   "linux-aarch64",
   "windows-beta-x86_64",
@@ -74,6 +77,8 @@ const TARGETS = [
   "darwin-beta-aarch64-app",
   "darwin-beta-x86_64",
   "darwin-beta-x86_64-app",
+  "darwin-beta-aarch64-app-zst",
+  "darwin-beta-x86_64-app-zst",
   "linux-beta-x86_64",
   "linux-beta-x86_64-appimage",
   "linux-beta-aarch64",
@@ -85,6 +90,8 @@ const STANDARD_STABLE_TARGETS = [
   "windows-aarch64",
   "darwin-aarch64",
   "darwin-x86_64",
+  "darwin-aarch64-app-zst",
+  "darwin-x86_64-app-zst",
   "linux-x86_64",
 ];
 
@@ -97,6 +104,8 @@ const STANDARD_BETA_TARGETS = [
   "darwin-beta-aarch64-app",
   "darwin-beta-x86_64",
   "darwin-beta-x86_64-app",
+  "darwin-beta-aarch64-app-zst",
+  "darwin-beta-x86_64-app-zst",
   "linux-beta-x86_64",
   "linux-beta-x86_64-appimage",
 ];
@@ -256,7 +265,12 @@ export function resolveLiveUpdaterTargets(name) {
   ) {
     return [];
   }
-  if (/\.(exe|msi|dmg|flatpak|appimage|zip)$/i.test(name)) {
+  // Manifests also reference macOS .app.tar.gz / .app.tar.zst archives, which
+  // only gpg-sign's resolver knows about.
+  if (
+    /\.(exe|msi|dmg|flatpak|appimage|zip)$/i.test(name) ||
+    resolveUpdaterTargets(name).length > 0
+  ) {
     return [{ os: "live", arch: "artifact" }];
   }
   return [];

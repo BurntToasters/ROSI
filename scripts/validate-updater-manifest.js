@@ -65,6 +65,28 @@ function hasMinisignEnvelope(value) {
   );
 }
 
+// Only a line starting with the exact "trusted comment: " prefix counts; the
+// untrusted comment line also contains "trusted comment:" as a substring.
+function minisignTrustedComment(value) {
+  const outer = decodeStrictBase64(value);
+  if (!outer) return null;
+  const line = outer
+    .toString("utf8")
+    .trim()
+    .split(/\r?\n/)
+    .find((entry) => entry.startsWith("trusted comment: "));
+  return line === undefined ? null : line.slice("trusted comment: ".length);
+}
+
+// Tauri writes tab-separated key:value fields, e.g.
+// timestamp:1700000000\tfile:ROSI.app.tar.gz\tversion:5.0.2.
+function minisignSignedVersion(value) {
+  const comment = minisignTrustedComment(value);
+  if (comment === null) return null;
+  const field = comment.split("\t").find((part) => part.startsWith("version:"));
+  return field === undefined ? null : field.slice("version:".length);
+}
+
 export function validateManifestData(data, filePath) {
   const problems = [];
   const fail = (message) => problems.push(message);
@@ -105,7 +127,7 @@ export function validateManifestData(data, filePath) {
     ? expectedTarget.replace(/-(?:aarch64|x86_64)$/i, "")
     : null;
   const target = expectedTarget.match(
-    /^(darwin|windows|linux)(-beta)?-(x86_64|aarch64)(?:-(app|nsis|msi|appimage))?$/,
+    /^(darwin|windows|linux)(-beta)?-(x86_64|aarch64)(?:-(app-zst|app|nsis|msi|appimage))?$/,
   );
   if (!target) {
     fail(`${filePath}: unsupported manifest target ${expectedTarget}`);
@@ -121,7 +143,8 @@ export function validateManifestData(data, filePath) {
   if (
     installer &&
     installer !== defaultInstaller &&
-    !(os === "windows" && installer === "msi")
+    !(os === "windows" && installer === "msi") &&
+    !(os === "darwin" && installer === "app-zst")
   ) {
     fail(`${filePath}: unsupported installer ${installer}`);
   }
@@ -195,6 +218,19 @@ export function validateManifestData(data, filePath) {
       fail(
         `${filePath}: platforms.${key}.signature must be a base64-encoded minisign envelope`,
       );
+    } else {
+      // tauri.conf.json sets requireSignedVersion, so the signed version must
+      // be present and must match the manifest it is served under.
+      const signedVersion = minisignSignedVersion(platform.signature);
+      if (signedVersion === null) {
+        fail(
+          `${filePath}: platforms.${key}.signature has no version: field in its trusted comment`,
+        );
+      } else if (signedVersion !== data.version) {
+        fail(
+          `${filePath}: platforms.${key}.signature is signed for version ${signedVersion}, manifest version is ${data.version}`,
+        );
+      }
     }
   }
   return problems;

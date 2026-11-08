@@ -1,23 +1,23 @@
 // Queue rendering, actions, and status messages.
-import { RosiJobProgressEvent, dockModule, logError, queueModule } from './core';
-import { isPlaylistScopeVisible, resolvePlaylistSelection } from './playlist';
+import { RosiJobProgressEvent, logError } from './core';
+import { selectTab as selectDockTab } from '../modules/dock';
 import {
-  buildOnScreenPresetOverrides,
-  getSelectedPreset,
-  readAdvancedFormatSelections,
-} from './presets';
-import { revealFileLocation } from './progress';
+  renderQueue as renderQueueRows,
+  setQueueItemError,
+  updateQueueItemProgress,
+} from '../modules/queue';
+import { isPlaylistScopeVisible, resolvePlaylistSelection } from './playlist';
+import { buildRequestOverrides, readAdvancedFormatSelections } from './presets';
 import { refs } from './refs';
 import { persistSettings, settingsStore } from './settings-store';
 import { ToastType, showToast } from './ui-helpers';
+import { api } from '../api';
 
 /**
- * Per-job overrides sent with queue additions.
- * Returns `{ ok: false }` when the visible playlist range is invalid so nothing is queued.
- * When playlist radios are visible, their value (including Current) always wins over a
- * selected preset. When the scope UI is still hidden, playlist is omitted so a preset
- * saved as All/Range can apply. Other on-screen settings are always sent with a preset
- * so convert/GPU/profile toggles cannot be silently overwritten.
+ * Per-job overrides sent with queue additions, built by the same builder as
+ * manual downloads. Returns `{ ok: false }` when the visible playlist range is
+ * invalid so nothing is queued. Playlist is omitted while its radios are hidden,
+ * so a preset saved as All/Range can apply.
  */
 export function buildQueueRequestOverrides(
   outputPath?: string,
@@ -27,20 +27,13 @@ export function buildQueueRequestOverrides(
   const playlist = resolvePlaylistSelection();
   if (scopeVisible && !playlist) return { ok: false };
 
-  const overrides: Record<string, unknown> = {};
+  const overrides: Record<string, unknown> = {
+    ...buildRequestOverrides({
+      formats: formatSelections ?? readAdvancedFormatSelections(),
+      playlist: scopeVisible ? (playlist ?? undefined) : undefined,
+    }),
+  };
   if (outputPath) overrides.outputPath = outputPath;
-  const formats = formatSelections ?? readAdvancedFormatSelections();
-  if (formats.videoFormat) overrides.videoFormat = formats.videoFormat;
-  if (formats.audioFormat) overrides.audioFormat = formats.audioFormat;
-  const preset = getSelectedPreset();
-  if (preset) {
-    overrides.presetId = preset.id;
-    overrides.presetName = preset.name;
-    Object.assign(overrides, buildOnScreenPresetOverrides(formats));
-    if (scopeVisible && playlist) overrides.playlist = playlist;
-  } else if (scopeVisible && playlist && playlist.mode !== 'current') {
-    overrides.playlist = playlist;
-  }
   return {
     ok: true,
     overrides: Object.keys(overrides).length > 0 ? overrides : undefined,
@@ -57,7 +50,7 @@ export async function resolveQueueDestination(): Promise<{
 }> {
   if (!settingsStore.settings.askDownloadLocation) return { cancelled: false };
   try {
-    const chosen = await window.api.selectDownloadLocation();
+    const chosen = await api.selectDownloadLocation();
     if (!chosen) return { cancelled: true };
     return { outputPath: chosen, cancelled: false };
   } catch (error) {
@@ -102,8 +95,8 @@ export async function addUrlsToQueue(urls: string[], rejected = 0) {
     }
     // Omit the second argument entirely when there is nothing to override.
     const result = built.overrides
-      ? await window.api.addToQueue(urls, built.overrides)
-      : await window.api.addToQueue(urls);
+      ? await api.addToQueue(urls, built.overrides)
+      : await api.addToQueue(urls);
     if (result && result.ok) {
       const parts = [
         queueMessageForCount(
@@ -115,7 +108,7 @@ export async function addUrlsToQueue(urls: string[], rejected = 0) {
       if (result.data.skipped > 0) parts.push(`${result.data.skipped} already queued.`);
       if (rejected > 0) parts.push(`${rejected} ignored as invalid.`);
       announceQueueAction(parts.join(' '));
-      dockModule?.selectTab('queue');
+      selectDockTab('queue');
       return true;
     }
     const message = result?.error?.message || 'Could not add links to the queue.';
@@ -129,6 +122,17 @@ export async function addUrlsToQueue(urls: string[], rejected = 0) {
     return false;
   } finally {
     endQueueAction();
+  }
+}
+
+/** Splits pasted or dropped text into queue links with the backend's URL rules. */
+export async function extractQueueLinks(
+  text: string
+): Promise<RosiIpcResult<RosiExtractedQueueUrls>> {
+  try {
+    return await api.extractQueueUrls(text);
+  } catch {
+    return { ok: false, error: { code: 'INTERNAL_ERROR', message: 'Could not read the links.' } };
   }
 }
 
@@ -148,122 +152,171 @@ export function updateQueueButtonStates(queue: RosiQueueItem[]) {
   }
 }
 
+/** A row's inline action error. It applies only while the item keeps the status it had. */
+interface QueueRowError {
+  status: RosiQueueItem['status'];
+  message: string;
+}
+
+function rowErrorFor(item: RosiQueueItem): string | null {
+  const entry = queueController.rowErrors.get(item.id);
+  return entry && entry.status === item.status ? entry.message : null;
+}
+
+function reportQueueRowError(id: string, message: string) {
+  const item = queueController.currentQueue.find((candidate) => candidate.id === id);
+  if (!item) return;
+  queueController.rowErrors.set(id, { status: item.status, message });
+  if (refs.queueList) setQueueItemError(refs.queueList, id, message);
+}
+
+function clearQueueRowError(id: string) {
+  if (!queueController.rowErrors.delete(id)) return;
+  if (refs.queueList) setQueueItemError(refs.queueList, id, null);
+}
+
 export function renderQueue(queue: RosiQueueItem[]) {
   queueController.currentQueue = queue;
-  updateQueueButtonStates(queue);
-  if (queueModule && typeof queueModule.renderQueue === 'function') {
-    queueModule.renderQueue(
-      queue,
-      { queueList: refs.queueList, queueSection: refs.queueSection, queueCount: refs.queueCount },
-      {
-        focusQueueItemId: queueController.focusQueueItemId,
-        retryQueueItem: async (id: string) => {
-          if (typeof window.api.retryQueueItem !== 'function') return;
-          queueController.focusQueueItemId = id;
-          const endQueueAction = beginQueueAction();
-          try {
-            const result = await window.api.retryQueueItem(id);
-            if (!result || !result.ok) {
-              queueController.focusQueueItemId = null;
-              const message = result?.error?.message || 'Could not retry the queue item.';
-              setQueueStatusMessage(message);
-              showToast(message, { type: 'error' });
-            } else {
-              // A running queue picks the item up on its own; otherwise the
-              // user still has to start it.
-              const queueIsRunning = queueController.currentQueue.some(
-                (item) => item.status === 'downloading'
-              );
-              announceQueueAction(
-                queueIsRunning
-                  ? 'Queued the item again. It will run after the current download.'
-                  : 'Queued the item again. Start the queue to run it.'
-              );
-            }
-          } catch {
-            queueController.focusQueueItemId = null;
-            const message = 'Could not retry the queue item.';
-            setQueueStatusMessage(message);
-            showToast(message, { type: 'error' });
-          } finally {
-            endQueueAction();
-          }
-        },
-        reorderQueueItem: async (id: string, direction: 'up' | 'down') => {
-          if (typeof window.api.reorderQueueItem !== 'function') return;
-          queueController.focusQueueItemId = id;
-          const endQueueAction = beginQueueAction();
-          try {
-            const result = await window.api.reorderQueueItem({ id, direction });
-            if (!result || !result.ok) {
-              queueController.focusQueueItemId = null;
-              const message = result?.error?.message || 'Could not reorder the queue item.';
-              setQueueStatusMessage(message);
-            } else {
-              setQueueStatusMessage(`Moved item ${direction} in the queue.`);
-            }
-          } catch {
-            queueController.focusQueueItemId = null;
-            setQueueStatusMessage('Could not reorder the queue item.');
-          } finally {
-            endQueueAction();
-          }
-        },
-        copyDiagnostics: async (item: RosiQueueItem) => {
-          const diagnostics = [
-            `URL: ${item.url}`,
-            `Status: ${item.status}`,
-            item.filename ? `File: ${item.filename}` : '',
-            item.error ? `Error: ${item.error}` : '',
-          ]
-            .filter(Boolean)
-            .join('\n');
-          try {
-            await navigator.clipboard.writeText(diagnostics);
-            setQueueStatusMessage('Copied diagnostics to the clipboard.');
-          } catch {
-            showToast('Could not copy diagnostics to the clipboard.', { type: 'warning' });
-          }
-        },
-        openFileLocation: (filePath: string) => revealFileLocation(filePath),
-        removeFromQueue: async (id: string) => {
-          const removeIndex = queueController.currentQueue.findIndex((item) => item.id === id);
-          const nextFocusId =
-            removeIndex >= 0
-              ? queueController.currentQueue
-                  .slice(removeIndex + 1)
-                  .find((item) => item.status === 'pending')?.id ||
-                queueController.currentQueue
-                  .slice(0, removeIndex)
-                  .reverse()
-                  .find((item) => item.status === 'pending')?.id ||
-                null
-              : null;
-          queueController.focusQueueItemId = nextFocusId;
-          const endQueueAction = beginQueueAction();
-          try {
-            const result = await window.api.removeFromQueue(id);
-            if (!result || !result.ok) {
-              queueController.focusQueueItemId = null;
-              const message = result?.error?.message || 'Could not remove the queue item.';
-              setQueueStatusMessage(message);
-              showToast(message, { type: 'error' });
-            } else {
-              setQueueStatusMessage('Removed item from the queue.');
-            }
-          } catch {
-            queueController.focusQueueItemId = null;
-            const message = 'Could not remove the queue item.';
-            setQueueStatusMessage(message);
-            showToast(message, { type: 'error' });
-          } finally {
-            endQueueAction();
-          }
-        },
-      }
-    );
-    queueController.focusQueueItemId = null;
+  // Forget errors for items that have left the queue.
+  for (const id of queueController.rowErrors.keys()) {
+    if (!queue.some((item) => item.id === id)) queueController.rowErrors.delete(id);
   }
+  updateQueueButtonStates(queue);
+  renderQueueRows(
+    queue,
+    { queueList: refs.queueList, queueSection: refs.queueSection, queueCount: refs.queueCount },
+    {
+      focusQueueItemId: queueController.focusQueueItemId,
+      retryQueueItem: async (id: string) => {
+        if (typeof api.retryQueueItem !== 'function') return;
+        queueController.focusQueueItemId = id;
+        const endQueueAction = beginQueueAction();
+        try {
+          const result = await api.retryQueueItem(id);
+          if (!result || !result.ok) {
+            queueController.focusQueueItemId = null;
+            const message = result?.error?.message || 'Could not retry the queue item.';
+            setQueueStatusMessage(message);
+            showToast(message, { type: 'error' });
+            reportQueueRowError(id, message);
+          } else {
+            clearQueueRowError(id);
+            // A running queue picks the item up on its own; otherwise the
+            // user still has to start it.
+            const queueIsRunning = queueController.currentQueue.some(
+              (item) => item.status === 'downloading'
+            );
+            announceQueueAction(
+              queueIsRunning
+                ? 'Queued the item again. It will run after the current download.'
+                : 'Queued the item again. Start the queue to run it.'
+            );
+          }
+        } catch {
+          queueController.focusQueueItemId = null;
+          const message = 'Could not retry the queue item.';
+          setQueueStatusMessage(message);
+          showToast(message, { type: 'error' });
+          reportQueueRowError(id, message);
+        } finally {
+          endQueueAction();
+        }
+      },
+      reorderQueueItem: async (id: string, direction: 'up' | 'down') => {
+        if (typeof api.reorderQueueItem !== 'function') return;
+        queueController.focusQueueItemId = id;
+        const endQueueAction = beginQueueAction();
+        try {
+          const result = await api.reorderQueueItem({ id, direction });
+          if (!result || !result.ok) {
+            queueController.focusQueueItemId = null;
+            const message = result?.error?.message || 'Could not reorder the queue item.';
+            setQueueStatusMessage(message);
+            reportQueueRowError(id, message);
+          } else {
+            clearQueueRowError(id);
+            setQueueStatusMessage(`Moved item ${direction} in the queue.`);
+          }
+        } catch {
+          queueController.focusQueueItemId = null;
+          setQueueStatusMessage('Could not reorder the queue item.');
+          reportQueueRowError(id, 'Could not reorder the queue item.');
+        } finally {
+          endQueueAction();
+        }
+      },
+      copyDiagnostics: async (item: RosiQueueItem) => {
+        const diagnostics = [
+          `URL: ${item.url}`,
+          `Status: ${item.status}`,
+          item.filename ? `File: ${item.filename}` : '',
+          item.error ? `Error: ${item.error}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n');
+        try {
+          await navigator.clipboard.writeText(diagnostics);
+          setQueueStatusMessage('Copied diagnostics to the clipboard.');
+        } catch {
+          showToast('Could not copy diagnostics to the clipboard.', { type: 'warning' });
+        }
+      },
+      openFileLocation: async (filePath: string, id: string) => {
+        const message = 'Could not open that file location.';
+        try {
+          const result = await api.openFileLocation(filePath);
+          if (!result || !result.ok) {
+            const failure = result?.error?.message || message;
+            showToast(failure, { type: 'warning' });
+            reportQueueRowError(id, failure);
+          } else {
+            clearQueueRowError(id);
+          }
+        } catch {
+          showToast(message, { type: 'warning' });
+          reportQueueRowError(id, message);
+        }
+      },
+      rowErrorFor,
+      removeFromQueue: async (id: string) => {
+        const removeIndex = queueController.currentQueue.findIndex((item) => item.id === id);
+        const nextFocusId =
+          removeIndex >= 0
+            ? queueController.currentQueue
+                .slice(removeIndex + 1)
+                .find((item) => item.status === 'pending')?.id ||
+              queueController.currentQueue
+                .slice(0, removeIndex)
+                .reverse()
+                .find((item) => item.status === 'pending')?.id ||
+              null
+            : null;
+        queueController.focusQueueItemId = nextFocusId;
+        const endQueueAction = beginQueueAction();
+        try {
+          const result = await api.removeFromQueue(id);
+          if (!result || !result.ok) {
+            queueController.focusQueueItemId = null;
+            const message = result?.error?.message || 'Could not remove the queue item.';
+            setQueueStatusMessage(message);
+            showToast(message, { type: 'error' });
+            reportQueueRowError(id, message);
+          } else {
+            setQueueStatusMessage('Removed item from the queue.');
+          }
+        } catch {
+          queueController.focusQueueItemId = null;
+          const message = 'Could not remove the queue item.';
+          setQueueStatusMessage(message);
+          showToast(message, { type: 'error' });
+          reportQueueRowError(id, message);
+        } finally {
+          endQueueAction();
+        }
+      },
+    }
+  );
+  queueController.focusQueueItemId = null;
 }
 
 /**
@@ -281,14 +334,11 @@ export function applyQueueItemProgress(event: RosiJobProgressEvent) {
   }
   // Patch the single active row; only fall back to a full render if the row
   // is missing, so frequent progress ticks cannot steal focus.
-  const patched =
-    queueModule && typeof queueModule.updateQueueItemProgress === 'function'
-      ? queueModule.updateQueueItemProgress(target, {
-          queueList: refs.queueList,
-          queueSection: refs.queueSection,
-          queueCount: refs.queueCount,
-        })
-      : false;
+  const patched = updateQueueItemProgress(target, {
+    queueList: refs.queueList,
+    queueSection: refs.queueSection,
+    queueCount: refs.queueCount,
+  });
   if (!patched) renderQueue(queueController.currentQueue);
 }
 
@@ -354,9 +404,11 @@ export const queueController: {
   currentQueue: RosiQueueItem[];
   queueStatusTimer: ReturnType<typeof setTimeout> | null;
   queueActionLocks: number;
+  rowErrors: Map<string, QueueRowError>;
 } = {
   focusQueueItemId: null,
   currentQueue: [],
   queueStatusTimer: null,
   queueActionLocks: 0,
+  rowErrors: new Map(),
 };

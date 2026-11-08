@@ -80,3 +80,7 @@ assets/.ytdlp-download-*.tmp
 
 # E2E run artifacts (kept locally as verification evidence)
 e2e/artifacts/
+
+# Windows VM PowerShell module analysis caches (accidentally committed; never tracked)
+Microsoft/
+**/Microsoft/Windows/PowerShell/

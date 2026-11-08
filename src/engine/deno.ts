@@ -1,7 +1,9 @@
 // Deno detection, reminder, and install flow.
 import { RosiSettings, logError } from './core';
+import { UI_MESSAGES, setRuntimeCheckFailed } from './messages';
 import { showModal } from './overlays';
 import { showRestartFailure } from './updater-ui';
+import { api } from '../api';
 
 // Automatic Deno install uses winget (Windows) or Homebrew (macOS) only when found.
 export function isLinuxPlatform() {
@@ -24,7 +26,8 @@ export async function checkDenoInstallation(
   }
 
   try {
-    const isInstalled = await window.api.checkDenoInstalled();
+    const isInstalled = await api.checkDenoInstalled();
+    setRuntimeCheckFailed(false);
 
     if (!isInstalled && isLinuxPlatform()) {
       showModal({
@@ -35,9 +38,9 @@ export async function checkDenoInstallation(
           {
             label: 'Open Deno Instructions',
             primary: true,
-            action: () => window.api.openExternal(DENO_INSTALL_DOCS),
+            action: () => api.openExternal(DENO_INSTALL_DOCS),
           },
-          { label: 'Later' },
+          { label: UI_MESSAGES.wizard.later },
           {
             label: "No, don't remind me",
             action: () => {
@@ -66,7 +69,7 @@ export async function checkDenoInstallation(
               });
 
               try {
-                const result = await window.api.installDeno();
+                const result = await api.installDeno();
                 if (result && result.cancelled) {
                   showModal({
                     title: 'Installation Cancelled',
@@ -92,7 +95,7 @@ export async function checkDenoInstallation(
                       action: async () => {
                         if (!(await flushBeforeRestart())) return;
                         try {
-                          await window.api.restartApp();
+                          await api.restartApp();
                         } catch (error) {
                           showRestartFailure(error);
                         }
@@ -116,7 +119,7 @@ export async function checkDenoInstallation(
                     {
                       label: 'Open Install Instructions',
                       primary: true,
-                      action: () => window.api.openExternal(DENO_INSTALL_DOCS),
+                      action: () => api.openExternal(DENO_INSTALL_DOCS),
                     },
                     { label: 'OK' },
                   ],
@@ -138,5 +141,18 @@ export async function checkDenoInstallation(
     }
   } catch (error) {
     logError('Error checking Deno installation', error);
+    setRuntimeCheckFailed(true);
+    showModal({
+      title: UI_MESSAGES.wizard.denoCheckUnavailableTitle,
+      message: UI_MESSAGES.wizard.denoCheckFailed,
+      buttons: [
+        {
+          label: UI_MESSAGES.wizard.installInstructions,
+          primary: true,
+          action: () => api.openExternal(DENO_INSTALL_DOCS),
+        },
+        { label: 'Later' },
+      ],
+    });
   }
 }

@@ -1,10 +1,11 @@
 // Startup bindings for queue input and actions.
-import { applyActiveDownloadProgressPhases, extractHttpUrls, isMac } from '../core';
+import { applyActiveDownloadProgressPhases, isMac } from '../core';
 import { showModal } from '../overlays';
 import {
   addUrlsToQueue,
   announceQueueAction,
   beginQueueAction,
+  extractQueueLinks,
   queueController,
   queueMessageForCount,
   setQueueStatusMessage,
@@ -13,6 +14,7 @@ import {
 import { refs } from '../refs';
 import { settingsStore } from '../settings-store';
 import { showToast } from '../ui-helpers';
+import { api } from '../../api';
 
 /** Queue input and queue action buttons. */
 export function bindQueueControls() {
@@ -51,13 +53,14 @@ export function bindQueueControls() {
     queueUrlInput.addEventListener('dragleave', () => {
       queueUrlInput.classList.remove('drag-over');
     });
-    queueUrlInput.addEventListener('drop', (e) => {
+    queueUrlInput.addEventListener('drop', async (e) => {
       const dragEvent = e as DragEvent;
       dragEvent.preventDefault();
       queueUrlInput.classList.remove('drag-over');
       const dt = dragEvent.dataTransfer;
       const text = dt ? dt.getData('text/uri-list') || dt.getData('text/plain') : '';
-      const { urls } = extractHttpUrls(text);
+      const extracted = await extractQueueLinks(text);
+      const urls = extracted.ok ? extracted.data.urls : [];
       const dropped = urls.length > 0 ? urls.join('\n') : '';
       if (dropped) {
         const existing = queueUrlInput.value.trim();
@@ -79,14 +82,28 @@ export function bindQueueControls() {
         showToast(message, { type: 'warning' });
         return;
       }
-      const { urls, rejected } = extractHttpUrls(raw);
+      // Hold the queue lock while the backend splits the text, so a second click waits.
+      const endQueueAction = beginQueueAction();
+      let extracted: Awaited<ReturnType<typeof extractQueueLinks>>;
+      try {
+        extracted = await extractQueueLinks(raw);
+      } finally {
+        endQueueAction();
+      }
+      if (!extracted.ok) {
+        const message = extracted.error.message;
+        setQueueStatusMessage(message);
+        showToast(message, { type: 'warning' });
+        return;
+      }
+      const { urls, rejectedCount } = extracted.data;
       if (urls.length === 0) {
         const message = 'No valid http or https links were found.';
         setQueueStatusMessage(message);
         showToast(message, { type: 'warning' });
         return;
       }
-      const added = await addUrlsToQueue(urls, rejected);
+      const added = await addUrlsToQueue(urls, rejectedCount);
       if (added) queueUrlInput.value = '';
     });
   }
@@ -96,7 +113,7 @@ export function bindQueueControls() {
       if (queueController.queueActionLocks > 0) return;
       const endQueueAction = beginQueueAction();
       try {
-        const result = await window.api.startQueue();
+        const result = await api.startQueue();
         if (result && result.ok) {
           applyActiveDownloadProgressPhases(settingsStore.settings, 'Queue download...');
           announceQueueAction('Queue started processing.');
@@ -129,7 +146,7 @@ export function bindQueueControls() {
             action: async () => {
               const endQueueAction = beginQueueAction();
               try {
-                const result = await window.api.clearQueue();
+                const result = await api.clearQueue();
                 if (result && result.ok) {
                   announceQueueAction('Queue cleared.');
                 } else {
@@ -156,7 +173,7 @@ export function bindQueueControls() {
       if (queueController.queueActionLocks > 0) return;
       const endQueueAction = beginQueueAction();
       try {
-        const result = await window.api.clearFinishedQueue();
+        const result = await api.clearFinishedQueue();
         if (result && result.ok) {
           announceQueueAction(
             queueMessageForCount(
@@ -194,7 +211,7 @@ export function bindQueueControls() {
             action: async () => {
               const endQueueAction = beginQueueAction();
               try {
-                const result = await window.api.cancelQueue();
+                const result = await api.cancelQueue();
                 if (result && result.ok) {
                   announceQueueAction('Queue cancelled.');
                 } else {

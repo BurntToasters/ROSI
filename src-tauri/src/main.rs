@@ -5,7 +5,9 @@ mod app_menu;
 mod app_state;
 mod command_builders;
 mod constants;
+mod coordinator;
 mod deno;
+mod download_options;
 mod downloader;
 mod ffmpeg_guard;
 mod fs_util;
@@ -16,6 +18,7 @@ mod legacy;
 mod logging;
 mod media_info;
 mod network_security;
+mod notices;
 mod platform;
 mod process_util;
 mod progress;
@@ -25,6 +28,7 @@ mod sidecars;
 mod staging;
 mod stats;
 mod types;
+mod updater;
 mod validation;
 mod window;
 
@@ -61,12 +65,22 @@ fn report_missing_ytdlp(app: &tauri::AppHandle) -> bool {
 fn e2e_emit_stale_download_events(
     window: tauri::WebviewWindow,
     current_session_id: u64,
+    stale_queue_snapshot: Option<bool>,
 ) -> Result<(), String> {
     if window.label() != app_state::MAIN_WINDOW {
         return Err("Only the main window may emit E2E download events.".into());
     }
     if !(2..=1_000_000_000).contains(&current_session_id) {
         return Err("The E2E session ID is outside the permitted range.".into());
+    }
+    if stale_queue_snapshot.unwrap_or(false) {
+        // The coordinator starts revisions at 1, so revision 0 is older than
+        // any snapshot the renderer has seen. Applying it would drop every row.
+        app_state::emit(
+            "queue-update",
+            serde_json::json!({ "revision": 0, "items": [] }),
+        );
+        return Ok(());
     }
     let stale_session_id = current_session_id - 1;
     app_state::emit(
@@ -104,20 +118,20 @@ fn e2e_emit_stale_download_events(
 
 #[cfg(feature = "e2e")]
 #[tauri::command]
-fn e2e_network_pipelining_probe(window: tauri::WebviewWindow) -> Result<serde_json::Value, String> {
-    if window.label() != app_state::MAIN_WINDOW {
-        return Err("Only the main window may run the E2E network probe.".into());
-    }
-    network_security::e2e_pipelining_probe()
-}
-
-#[cfg(feature = "e2e")]
-#[tauri::command]
 fn e2e_updater_install_probe(window: tauri::WebviewWindow) -> Result<(), String> {
     if window.label() != app_state::MAIN_WINDOW {
         return Err("Only the main window may run the E2E updater install probe.".into());
     }
     window::shutdown()
+}
+
+#[cfg(feature = "e2e")]
+#[tauri::command]
+fn e2e_network_pipelining_probe(window: tauri::WebviewWindow) -> Result<serde_json::Value, String> {
+    if window.label() != app_state::MAIN_WINDOW {
+        return Err("Only the main window may run the E2E network probe.".into());
+    }
+    network_security::e2e_pipelining_probe()
 }
 
 macro_rules! generate_app_handler {
@@ -139,7 +153,10 @@ macro_rules! generate_app_handler {
             media_info::cancel_video_info,
             downloader::download_video,
             downloader::cancel_download,
+            download_options::resolve_download_options,
+            download_options::resolve_preset_options,
             queue::add_to_queue,
+            queue::extract_queue_urls,
             queue::remove_from_queue,
             queue::retry_queue_item,
             queue::reorder_queue_item,
@@ -160,6 +177,12 @@ macro_rules! generate_app_handler {
             platform::get_app_platform,
             platform::get_distribution_channel,
             platform::get_beta_updater_target,
+            platform::get_compact_updater_target,
+            updater::check_for_updates,
+            updater::download_update,
+            updater::install_update,
+            updater::cancel_update_download,
+            updater::set_update_channel,
             window::restart_app,
             logging::log_error,
             window::notify_settings_flushed,
@@ -227,7 +250,10 @@ fn main() {
             e2e_emit_stale_download_events,
             e2e_network_pipelining_probe,
             e2e_updater_install_probe,
+            updater::e2e_configure_updater,
+            updater::e2e_updater_probe,
             window::e2e_cancel_close_request,
+            notices::e2e_native_notices,
         ]);
     #[cfg(not(feature = "e2e"))]
     let invoke_handler: Box<tauri::ipc::InvokeHandler<tauri::Wry>> =

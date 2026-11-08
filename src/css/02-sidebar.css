@@ -559,6 +559,34 @@
   border-top: 1px solid var(--border-subtle);
 }
 
+.settings-save-feedback {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  min-height: 1.8rem;
+  margin-bottom: 0.55rem;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.settings-save-feedback[data-state='error'] {
+  color: var(--danger);
+}
+
+.settings-save-feedback[data-state='saved'] {
+  color: var(--success);
+}
+
+.settings-save-feedback[data-state='saving'] {
+  color: var(--text-secondary);
+}
+
+.setting-explanation {
+  margin: 0;
+  line-height: 1.4;
+}
+
 .reset-btn {
   --btn-h: 38px;
 }

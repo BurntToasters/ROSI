@@ -1,9 +1,11 @@
 //! Platform queries, updater target selection, and OS handoffs (external
 //! URLs, reveal in file manager, notifications, folder picker).
 
-use crate::ipc::{self, IpcResult, INTERNAL_ERROR, INVALID_PATH};
+use crate::ipc::{
+    self, FalliblePayload, IpcResult, JsonObject, INTERNAL_ERROR, INVALID_PATH, INVALID_URL,
+};
+use crate::types::NotificationInput;
 use serde::Serialize;
-use serde_json::Value;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
@@ -32,6 +34,28 @@ pub fn get_distribution_channel() -> &'static str {
     distribution_channel()
 }
 
+#[cfg(target_os = "macos")]
+fn is_rosetta_translated() -> bool {
+    let mut ret: libc::c_int = 0;
+    let mut size: libc::size_t = std::mem::size_of_val(&ret);
+    let name = c"sysctl.proc_translated";
+    let res = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            &mut ret as *mut _ as *mut libc::c_void,
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    res == 0 && ret == 1
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_rosetta_translated() -> bool {
+    false
+}
+
 #[tauri::command]
 pub fn get_beta_updater_target() -> String {
     use tauri::utils::config::BundleType;
@@ -41,10 +65,14 @@ pub fn get_beta_updater_target() -> String {
         "macos" => "darwin",
         other => other,
     };
-    let arch = match std::env::consts::ARCH {
-        "x86" => "i686",
-        "arm64" => "aarch64",
-        other => other,
+    let arch = if is_rosetta_translated() {
+        "aarch64"
+    } else {
+        match std::env::consts::ARCH {
+            "x86" => "i686",
+            "arm64" => "aarch64",
+            other => other,
+        }
     };
     let installer = match tauri::utils::platform::bundle_type() {
         Some(BundleType::Deb) => Some("deb"),
@@ -59,6 +87,35 @@ pub fn get_beta_updater_target() -> String {
         Some(installer) => format!("{os}-beta-{arch}-{installer}"),
         None => format!("{os}-beta-{arch}"),
     }
+}
+
+/// Packaged macOS apps update from per-arch `.app.tar.zst` archives
+/// (`scripts/pack-macos-updater-zst.js`). `None` everywhere else, so those
+/// builds keep the default or beta target.
+#[tauri::command]
+pub fn get_compact_updater_target(beta: bool) -> Option<String> {
+    use tauri::utils::config::BundleType;
+
+    if !cfg!(target_os = "macos")
+        || !matches!(
+            tauri::utils::platform::bundle_type(),
+            Some(BundleType::App | BundleType::Dmg)
+        )
+    {
+        return None;
+    }
+    // Target arch: an x86_64 process running under Rosetta translation requests
+    // the native aarch64 bundle so the update migrates to native execution.
+    let arch = if is_rosetta_translated() {
+        "aarch64"
+    } else {
+        match std::env::consts::ARCH {
+            arch @ ("aarch64" | "x86_64") => arch,
+            _ => return None,
+        }
+    };
+    let channel = if beta { "-beta" } else { "" };
+    Some(format!("darwin{channel}-{arch}-app-zst"))
 }
 
 /// The AppImage GTK hook (linuxdeploy-plugin-gtk, Tauri CLI < 2.12) exports
@@ -124,15 +181,24 @@ pub struct Shown {
 }
 
 #[tauri::command]
-pub async fn open_external(app: tauri::AppHandle, url: Value) -> IpcResult<Opened> {
+pub async fn open_external(
+    app: tauri::AppHandle,
+    url: FalliblePayload<String>,
+) -> IpcResult<Opened> {
     // URL validation resolves DNS, which can block for seconds.
-    tauri::async_runtime::spawn_blocking(move || open_external_blocking(&app, &url))
+    tauri::async_runtime::spawn_blocking(move || open_external_blocking(&app, url))
         .await
         .unwrap_or_else(|error| ipc::err(INTERNAL_ERROR, error.to_string()))
 }
 
-fn open_external_blocking(app: &tauri::AppHandle, url: &Value) -> IpcResult<Opened> {
-    let url = match crate::validation::validate_external_url(url) {
+fn open_external_blocking(
+    app: &tauri::AppHandle,
+    url: FalliblePayload<String>,
+) -> IpcResult<Opened> {
+    let url = match url
+        .into_typed(INVALID_URL, "Invalid external URL payload.")
+        .and_then(|url| crate::validation::validate_external_url(&url))
+    {
         Ok(url) => url,
         Err(error) => return ipc::from_error(error),
     };
@@ -146,8 +212,14 @@ fn open_external_blocking(app: &tauri::AppHandle, url: &Value) -> IpcResult<Open
 }
 
 #[tauri::command(async)]
-pub fn open_file_location(app: tauri::AppHandle, file_path: Value) -> IpcResult<Opened> {
-    let path = match crate::validation::validate_file_location(&file_path) {
+pub fn open_file_location(
+    app: tauri::AppHandle,
+    file_path: FalliblePayload<String>,
+) -> IpcResult<Opened> {
+    let path = match file_path
+        .into_typed(INVALID_PATH, "File path must be a non-empty string.")
+        .and_then(|path| crate::validation::validate_file_path(&path))
+    {
         Ok(path) => std::path::PathBuf::from(path),
         Err(error) => return ipc::from_error(error),
     };
@@ -184,8 +256,11 @@ pub fn open_file_location(app: tauri::AppHandle, file_path: Value) -> IpcResult<
 }
 
 #[tauri::command(async)]
-pub fn show_notification(app: tauri::AppHandle, options: Value) -> IpcResult<Shown> {
-    let request = match crate::validation::validate_notification(&options) {
+pub fn show_notification(
+    app: tauri::AppHandle,
+    options: FalliblePayload<JsonObject<NotificationInput>>,
+) -> IpcResult<Shown> {
+    let request = match crate::validation::validate_notification(options) {
         Ok(request) => request,
         Err(error) => return ipc::from_error(error),
     };

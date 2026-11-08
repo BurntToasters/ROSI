@@ -66,6 +66,10 @@ export function requiredDraftInstallerNames({
   const names = [
     "ROSI-Windows-x64.exe",
     "ROSI-Windows-arm64.exe",
+    "ROSI-MacOS-arm64.dmg",
+    "ROSI-MacOS-arm64.zip",
+    "ROSI-MacOS-x64.dmg",
+    "ROSI-MacOS-x64.zip",
     "ROSI-MacOS-universal.dmg",
     "ROSI-MacOS-universal.zip",
     "ROSI-Linux-x64.AppImage",
@@ -77,10 +81,24 @@ export function requiredDraftInstallerNames({
   return names;
 }
 
+// macOS updater archives are not installers, but each one ships with the same
+// minisign `.sig` and GPG `.asc` sidecars and must be listed in a SHA256SUMS.
+export function requiredDraftUpdaterArchiveNames() {
+  return [
+    "ROSI.app.tar.gz",
+    "ROSI-aarch64.app.tar.zst",
+    "ROSI-x86_64.app.tar.zst",
+  ];
+}
+
 export function requiredDraftSidecarNames(installers) {
   return installers.flatMap((name) => {
     const names = [`${name}.asc`];
-    if (/\.exe$/i.test(name) || /\.AppImage$/i.test(name)) {
+    if (
+      /\.exe$/i.test(name) ||
+      /\.AppImage$/i.test(name) ||
+      /\.app\.tar\.(?:gz|zst)$/i.test(name)
+    ) {
       names.unshift(`${name}.sig`);
     }
     return names;
@@ -95,6 +113,8 @@ export function requiredDraftStableManifestNames({
     "windows-aarch64",
     "darwin-x86_64",
     "darwin-aarch64",
+    "darwin-x86_64-app-zst",
+    "darwin-aarch64-app-zst",
     "linux-x86_64",
   ];
   if (requireLinuxAarch64) {
@@ -115,6 +135,8 @@ export function requiredDraftBetaManifestNames({
     "darwin-beta-x86_64-app",
     "darwin-beta-aarch64",
     "darwin-beta-aarch64-app",
+    "darwin-beta-x86_64-app-zst",
+    "darwin-beta-aarch64-app-zst",
     "linux-beta-x86_64",
     "linux-beta-x86_64-appimage",
   ];
@@ -362,10 +384,12 @@ export function verifyGpgDetachedSignature({
 export function requiredDraftAssetNames(options = {}) {
   const requireLinuxAarch64 = Boolean(options.requireLinuxAarch64);
   const installers = requiredDraftInstallerNames({ requireLinuxAarch64 });
+  const updaterArchives = requiredDraftUpdaterArchiveNames();
   return Array.from(
     new Set([
       ...installers,
-      ...requiredDraftSidecarNames(installers),
+      ...updaterArchives,
+      ...requiredDraftSidecarNames([...installers, ...updaterArchives]),
       ...requiredDraftChecksumNames({ requireLinuxAarch64 }),
       ...requiredDraftStableManifestNames({ requireLinuxAarch64 }),
       ...requiredDraftBetaManifestNames({ requireLinuxAarch64 }),
@@ -674,7 +698,10 @@ async function verifyDraftGpgAndChecksums({
     }
     assetsByName.set(asset.name, asset);
   }
-  const installers = requiredDraftInstallerNames({ requireLinuxAarch64 });
+  const signedNames = [
+    ...requiredDraftInstallerNames({ requireLinuxAarch64 }),
+    ...requiredDraftUpdaterArchiveNames(),
+  ];
   const requiredChecksumNames = requiredDraftChecksumNames({
     requireLinuxAarch64,
   })
@@ -699,7 +726,7 @@ async function verifyDraftGpgAndChecksums({
     );
   }
   const expectedSignatureNames = [
-    ...requiredDraftSidecarNames(installers).filter((name) =>
+    ...requiredDraftSidecarNames(signedNames).filter((name) =>
       name.endsWith(".asc"),
     ),
     ...checksumNames.map((name) => `${name}.asc`),
@@ -769,7 +796,7 @@ async function verifyDraftGpgAndChecksums({
       for (const payloadName of listed) covered.add(payloadName);
     }
     const requiredPayloadNames = [
-      ...installers,
+      ...signedNames,
       ...requiredDraftStableManifestNames({ requireLinuxAarch64 }),
       ...requiredDraftBetaManifestNames({ requireLinuxAarch64 }),
     ];

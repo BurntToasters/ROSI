@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-e2e-configure-updater"
+description = "Enables the e2e_configure_updater command without any pre-configured scope."
+commands.allow = ["e2e_configure_updater"]
+
+[[permission]]
+identifier = "deny-e2e-configure-updater"
+description = "Denies the e2e_configure_updater command without any pre-configured scope."
+commands.deny = ["e2e_configure_updater"]

@@ -17,7 +17,7 @@ export interface Commands {
   reset_stats: { args: void; result: Envelope<void> };
   get_download_activity: { args: void; result: Envelope<Ipc.DownloadCompletion[]> };
   clear_download_activity: { args: void; result: Envelope<void> };
-  get_formats: { args: { url: string }; result: Envelope<string> };
+  get_formats: { args: { url: string }; result: Envelope<Ipc.FormatList> };
   cancel_formats: { args: void; result: void };
   get_video_info: {
     args: { url: string; playlistMode: 'current' | 'all' | null };
@@ -25,20 +25,29 @@ export interface Commands {
   };
   cancel_video_info: { args: void; result: void };
   download_video: {
-    args: { options: Partial<Ipc.DownloadRequestOptions> };
+    args: { options: Ipc.DownloadRequestInput };
     result: Envelope<Ipc.DownloadStarted>;
+  };
+  resolve_download_options: {
+    args: { options: Ipc.DownloadRequestInput };
+    result: Envelope<Ipc.DownloadRequestOptions>;
+  };
+  resolve_preset_options: {
+    args: { options: Ipc.PresetOptionsInput };
+    result: Envelope<Ipc.DownloadRequestOptions>;
   };
   cancel_download: { args: void; result: void };
   add_to_queue: {
-    args: { urls: string[]; options: Partial<Ipc.DownloadRequestOptions> | null };
+    args: { urls: string[]; options: Ipc.DownloadRequestInput | null };
     result: Envelope<Ipc.AddResult>;
+  };
+  extract_queue_urls: {
+    args: { input: Ipc.QueueTextInput };
+    result: Envelope<Ipc.ExtractedQueueUrls>;
   };
   remove_from_queue: { args: { id: string }; result: Envelope<void> };
   retry_queue_item: { args: { id: string }; result: Envelope<void> };
-  reorder_queue_item: {
-    args: { request: { id: string; direction: 'up' | 'down' } };
-    result: Envelope<void>;
-  };
+  reorder_queue_item: { args: { request: Ipc.QueueReorderInput }; result: Envelope<void> };
   clear_queue: { args: void; result: Envelope<void> };
   clear_finished_queue: { args: void; result: Envelope<Ipc.RemovedCount> };
   get_queue: { args: void; result: Ipc.QueueItem[] };
@@ -47,10 +56,7 @@ export interface Commands {
   select_download_location: { args: void; result: string | null };
   open_external: { args: { url: string }; result: Envelope<Ipc.Opened> };
   open_file_location: { args: { filePath: string }; result: Envelope<Ipc.Opened> };
-  show_notification: {
-    args: { options: { title?: string; body?: string; filePath?: string } };
-    result: Envelope<Ipc.Shown>;
-  };
+  show_notification: { args: { options: Ipc.NotificationInput }; result: Envelope<Ipc.Shown> };
   check_deno_installed: { args: void; result: boolean };
   install_deno: { args: void; result: Ipc.InstallResult };
   detect_gpu: { args: void; result: Ipc.GpuDetectionResult };
@@ -59,6 +65,12 @@ export interface Commands {
   get_app_platform: { args: void; result: NodeJS.Platform };
   get_distribution_channel: { args: void; result: string };
   get_beta_updater_target: { args: void; result: string };
+  get_compact_updater_target: { args: { beta: boolean }; result: string | null };
+  check_for_updates: { args: void; result: Ipc.CheckRefusal | null };
+  download_update: { args: { candidateId: number }; result: Ipc.DownloadOutcome };
+  install_update: { args: { candidateId: number }; result: void };
+  cancel_update_download: { args: void; result: void };
+  set_update_channel: { args: { channel: Ipc.UpdateChannel }; result: void };
   restart_app: { args: void; result: void };
   log_error: { args: { message: string }; result: void };
   notify_settings_flushed: { args: { generation: number }; result: void };

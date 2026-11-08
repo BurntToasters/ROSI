@@ -29,9 +29,8 @@ permissions:
   contents: read
 
 env:
-  NODE_VERSION: "24.16.0"
-  NPM_VERSION: "12.0.2"
-  RUST_VERSION: "1.98.1"
+  NODE_VERSION: "26.13.0"
+  NPM_VERSION: "12.2.1"
   CARGO_AUDIT_VERSION: "0.22.2"
 
 jobs:
@@ -74,9 +73,17 @@ jobs:
           cache: npm
       - name: Install latest npm 12
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel="$(node scripts/rust-toolchain.mjs)"
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           components: rustfmt, clippy
       - name: Install Linux dependencies
         run: |
@@ -127,9 +134,17 @@ jobs:
           cache: npm
       - name: Install latest npm 12
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel="$(node scripts/rust-toolchain.mjs)"
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           components: clippy
       - run: npm ci --ignore-scripts
       # On windows-latest gpg ships only in Git for Windows (usr\bin), which is
@@ -222,9 +237,17 @@ jobs:
           cache: npm
       - name: Install latest npm 12
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel="$(node scripts/rust-toolchain.mjs)"
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
@@ -269,9 +292,17 @@ jobs:
           cache: npm
       - name: Install latest npm 12
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel="$(node scripts/rust-toolchain.mjs)"
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
       - run: npm ci --ignore-scripts
       - run: node scripts/npm-audit-signatures.cjs
       - name: npm audit - production

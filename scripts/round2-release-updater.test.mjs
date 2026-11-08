@@ -9,7 +9,10 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { copyBundledNotices } from "./copy-bundled-licenses.js";
 import { validateStableMetadataChange } from "./check-stable-metadata-pr.mjs";
-import { syncChangelogForVersion } from "./sync-version-helpers.js";
+import {
+  macBundleVersionFromSemver,
+  syncChangelogForVersion,
+} from "./sync-version-helpers.js";
 import { run as updateMetainfo } from "./update-metainfo.js";
 import { validateChangelogForVersion } from "./validate-changelog-version.js";
 import {
@@ -55,7 +58,10 @@ function metadataFiles() {
     "src-tauri/tauri.conf.json": json({
       productName: "ROSI",
       version: beta,
-      bundle: { resources: {} },
+      bundle: {
+        resources: {},
+        macOS: { bundleVersion: macBundleVersionFromSemver(beta) },
+      },
     }),
     "CHANGELOG.md": `# ROSI\n\n## Changes in \`v${beta}:\`\n\n- Beta notes.\n`,
     "run.rosie.rosi.metainfo.xml": `<component>\n  <launchable type="desktop-id">run.rosie.rosi.desktop</launchable>\n  <url type="homepage">https://example.invalid/rosi</url>\n  <releases>\n    <release version="${beta}" date="2026-01-01"/>\n    <release version="1.2.2-beta.1" date="2025-12-01"/>\n    <release version="1.2.2" date="2025-11-01"/>\n  </releases>\n</component>\n`,
@@ -88,6 +94,10 @@ function metadataFiles() {
   head["src-tauri/tauri.conf.json"] = json({
     ...JSON.parse(base["src-tauri/tauri.conf.json"]),
     version: stable,
+    bundle: {
+      resources: {},
+      macOS: { bundleVersion: macBundleVersionFromSemver(stable) },
+    },
   });
   head["CHANGELOG.md"] =
     `# ROSI\n\n## Changes in \`v${stable}:\`\n\n- Stable notes.\n\n${base["CHANGELOG.md"]}`;
@@ -161,6 +171,14 @@ function realStablePromotionFixture() {
         .replaceAll(beta, betaVersion)
         .replaceAll(stable, stableVersion);
     }
+  }
+  for (const [files, version] of [
+    [base, betaVersion],
+    [head, stableVersion],
+  ]) {
+    const conf = JSON.parse(files["src-tauri/tauri.conf.json"]);
+    conf.bundle.macOS.bundleVersion = macBundleVersionFromSemver(version);
+    files["src-tauri/tauri.conf.json"] = json(conf);
   }
 
   const betaCallout =

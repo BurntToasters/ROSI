@@ -1,20 +1,14 @@
-// Main window entry. Order matters: the bridge must define window.api before
-// the renderer modules and engine evaluate.
-import { waitForPrepareForCloseListener } from './tauri-bridge';
+// Main window entry. Order matters: the API module evaluates before the engine,
+// and the engine uses it at call time. Icons swap the markup placeholders when
+// they load, so they are imported before the engine.
+import { api, waitForPrepareForCloseListener } from './api';
 import './modules/icons';
-import './modules/ui';
-import './modules/downloads';
-import './modules/activity';
-import './modules/queue';
-import './modules/settings';
-import './modules/updates';
-import './modules/dock';
 import './rosiEngine';
 import { call } from './commands';
 import { installE2eHookIfEnabled } from './e2e-hook';
 
 function hideStoreManagedUpdateControls(): void {
-  if (window.api.getChannel() !== 'msstore') return;
+  if (api.getChannel() !== 'msstore') return;
   for (const id of ['checkUpdateBtn', 'checkUpdatesOnStartupLabel']) {
     const element = document.getElementById(id);
     if (element) element.style.display = 'none';

@@ -291,16 +291,14 @@ pub fn notify_newer_once(what: &str) {
     crate::logging::warn(&format!(
         "Told the user that a newer ROSI version owns {what}; changes will not be saved."
     ));
-    if let Some(app) = crate::app_state::app() {
-        use tauri_plugin_dialog::DialogExt;
-        app.dialog()
-            .message(format!(
-                "{what} was saved by a newer version of ROSI. This version will not overwrite it, so changes you make here will not be kept. Reopen the newer ROSI version to keep working with this data."
-            ))
-            .title("Newer ROSI Data")
-            .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
-            .show(|_| {});
-    }
+    crate::notices::show(
+        "Newer ROSI Data",
+        &format!(
+            "{what} was saved by a newer version of ROSI. This version will not overwrite it, so changes you make here will not be kept. Reopen the newer ROSI version to keep working with this data."
+        ),
+        crate::notices::NoticeKind::Warning,
+        false,
+    );
 }
 
 /// Versioned list files are `{ "schemaVersion": n, "items": [...] }`. Files

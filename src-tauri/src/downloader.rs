@@ -1,49 +1,50 @@
 //! Single active download session: yt-dlp download, optional FFmpeg
 //! conversion, cancellation, structured progress, and completion reporting.
 //!
-//! Lock discipline: the `ACTIVE` session lock is never held while emitting
-//! events, touching windows, or invoking completion callbacks (the queue's
-//! callback takes the queue lock). `EVENT_PUBLISH` serializes lifecycle event
-//! publication with replacing the active session so older terminal events
-//! cannot arrive after a newer session becomes current.
+//! The one `Session` lives on the session owner thread
+//! (`downloader/session_owner.rs`). Every read or change of it is a task the
+//! owner runs in arrival order, so a replaced session's events are dropped.
 //!
-//! Lock order, outermost first. A path may skip links but never reverses one:
+//! Waits, by caller:
+//! - Caller -> owner: a task and its reply. The owner waits on nothing else.
+//!   Its tasks emit events and make non-blocking submits to the coordinator.
+//! - Caller -> coordinator: `await_finalized`, from caller threads only.
+//! - Process waits, termination, and stats writes run on the caller, after the
+//!   owner returns a plan or a completion.
 //!
-//! - Session chain: `STARTUP` -> `EVENT_PUBLISH` -> `ACTIVE` -> `FINALIZING`.
-//! - Queue chain: `START_GUARD` (queue.rs) is taken before `STARTUP`, `ACTIVE`
-//!   and `QUEUE`. `QUEUE` is not held across `start_download` or
-//!   `cancel_active_session`; `start_queue` is the one place that calls into
-//!   the session lock while holding it (`QUEUE` -> `ACTIVE`, via `can_start`).
-//! - `QUEUE_PUBLICATION` -> `QUEUE` (queue.rs `broadcast`). `PERSIST_SIGNAL` is a leaf.
-//! - Completion callbacks run after `EVENT_PUBLISH` and `ACTIVE` are released,
-//!   with the session still listed in `FINALIZING`. The queue callback then
-//!   takes `QUEUE`, then `QUEUE_PUBLICATION`.
-//! - Condvars release their lock while waiting: `SESSION_CHANGED` with `ACTIVE`,
-//!   `FINALIZATION_CHANGED` with `FINALIZING`, `RUNNER_CHANGED` with `QUEUE`.
+//! `install` makes a session current. `cancel_session` returns the session's
+//! children to terminate. `finish_locked` takes the session out, so only the
+//! first finish gets its completion. `COUNTER` stays an atomic id source, since
+//! ids are minted before install. `can_start` and `is_busy` read an atomic hint
+//! that install decides on.
 
-use crate::command_builders::{
-    build_ffmpeg_args, build_ytdlp_args, resolve_video_encoder, YtdlpArgsInput,
-};
+use crate::command_builders::{build_ytdlp_args, YtdlpArgsInput};
 use crate::constants::*;
-use crate::ipc::{self, IpcResult, NOT_AVAILABLE};
+use crate::ipc::{self, DownloadRequestInput, FalliblePayload, IpcResult, NOT_AVAILABLE};
 use crate::progress::{self, Metrics, Reporter};
-use crate::staging::{
-    file_identity, install_no_replace, reserve_download_stage, reserve_path_output_file,
-    sync_staged_file, DownloadStage, FileIdentity,
-};
+use crate::staging::{reserve_download_stage, reserve_path_output_file, DownloadStage};
 use crate::types::{
-    DownloadCompletion, DownloadProfile, DownloadRequestOptions, GpuType, JobProgressEvent,
-    Outcome, Owner, Phase, QueueProgress, Settings,
+    DownloadCompletion, DownloadRequestOptions, JobProgressEvent, Outcome, Owner, Phase,
+    QueueProgress, Settings,
 };
 use crate::validation::{is_path_within, is_safe_http_url, resolve_path};
-use serde_json::{Map, Value};
 use std::collections::{HashSet, VecDeque};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
+use tokio::sync::watch;
 
-pub type CompletionCallback = Box<dyn FnOnce(DownloadCompletion) + Send + 'static>;
+mod conversion;
+mod publication;
+mod session_owner;
+
+use conversion::run_conversion;
+use publication::{install_download_output, publish_caption_sidecars};
+use session_owner::Installed;
+
+pub use session_owner::{can_start, is_busy};
 
 const CANCELLED_STATUS: &str = "⏹️ Cancelled.";
 const CANCELLED_PROGRESS: &str = "⏹️ Download/Conversion cancelled by user.";
@@ -57,13 +58,13 @@ struct Session {
     request: DownloadRequestOptions,
     owner: Owner,
     cancelled: bool,
-    network_cancellation: Arc<AtomicBool>,
+    /// Signalled by `cancel_session`; the proxy observes it through a receiver.
+    network_cancellation: watch::Sender<bool>,
     cancel_notify: bool,
     ytdlp: Option<Arc<crate::process_util::ManagedChild>>,
     ytdlp_exit_pending: bool,
     conversion_pending: bool,
     ffmpeg: Option<Arc<crate::process_util::ManagedChild>>,
-    on_complete: Option<CompletionCallback>,
     ytdlp_postprocess: bool,
     ytdlp_download_finished: bool,
     conversion_format: Option<String>,
@@ -75,103 +76,41 @@ struct Session {
     reporter: Reporter,
 }
 
-static ACTIVE: Mutex<Option<Session>> = Mutex::new(None);
-/// Mirrors whether ACTIVE holds a session, so the main thread can ask without
-/// waiting on the session lock.
-static ACTIVE_PRESENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-static SESSION_CHANGED: Condvar = Condvar::new();
-static FINALIZING: Mutex<Vec<u64>> = Mutex::new(Vec::new());
-static FINALIZATION_CHANGED: Condvar = Condvar::new();
-
-struct CompletionFinalizer(u64);
-
-impl CompletionFinalizer {
-    fn begin(id: u64) -> Self {
-        FINALIZING
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .push(id);
-        Self(id)
-    }
-}
-
-impl Drop for CompletionFinalizer {
-    fn drop(&mut self) {
-        FINALIZING
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .retain(|id| *id != self.0);
-        FINALIZATION_CHANGED.notify_all();
-        SESSION_CHANGED.notify_all();
-    }
-}
-
-fn finalizing_ids() -> Vec<u64> {
-    FINALIZING
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .iter()
-        .copied()
-        .collect()
-}
-
-fn wait_for_finalizations(ids: &[u64]) {
-    let mut pending = FINALIZING.lock().unwrap_or_else(|p| p.into_inner());
-    while ids.iter().any(|id| pending.contains(id)) {
-        pending = FINALIZATION_CHANGED
-            .wait(pending)
-            .unwrap_or_else(|p| p.into_inner());
-    }
-}
-
-static STARTUP: Mutex<()> = Mutex::new(());
-static EVENT_PUBLISH: Mutex<()> = Mutex::new(());
+/// Session ids. Minted before a session is installed, so a caller needs no
+/// round trip for one. Not owner state.
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn lock() -> MutexGuard<'static, Option<Session>> {
-    ACTIVE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-fn wait_for_session_completion(id: u64) {
-    let mut active = lock();
-    while active.as_ref().is_some_and(|session| session.id == id) {
-        active = SESSION_CHANGED
-            .wait(active)
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-    }
-    drop(active);
-    wait_for_finalizations(&[id]);
-}
-
-fn with_session<R>(id: u64, f: impl FnOnce(&mut Session) -> R) -> Option<R> {
-    let mut guard = lock();
-    match guard.as_mut() {
+/// Run `f` on the current session if it has id `id`. `None` when that session
+/// is gone or was replaced. `f` runs on the session owner, in arrival order.
+fn with_session<R: Send + 'static>(
+    id: u64,
+    f: impl FnOnce(&mut Session) -> R + Send + 'static,
+) -> Option<R> {
+    session_owner::run(move |slot| match slot.as_mut() {
         Some(session) if session.id == id => Some(f(session)),
         _ => None,
-    }
+    })
+    .flatten()
 }
 
 fn is_active(id: u64) -> bool {
     with_session(id, |_| ()).is_some()
 }
 
-pub fn is_busy() -> bool {
-    ACTIVE_PRESENT.load(Ordering::SeqCst)
-}
-
-pub fn can_start(owner: Owner) -> bool {
-    lock().as_ref().is_none_or(|session| session.owner == owner)
+/// The active session's id when another owner holds the slot. Callers wait on
+/// it with `coordinator::await_finalized` instead of polling.
+pub fn blocking_session(owner: Owner) -> Option<u64> {
+    session_owner::run(move |slot| {
+        slot.as_ref()
+            .filter(|session| session.owner != owner)
+            .map(|session| session.id)
+    })
+    .flatten()
 }
 
 fn send_progress(id: u64, message: impl Into<String>) {
-    let _publish = EVENT_PUBLISH
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if is_active(id) {
-        crate::app_state::emit("progress", message.into());
-    }
+    let message = message.into();
+    with_session(id, move |_| crate::app_state::emit("progress", message));
 }
 
 fn apply_taskbar(event: &JobProgressEvent) {
@@ -202,22 +141,14 @@ fn apply_taskbar(event: &JobProgressEvent) {
 }
 
 fn emit_job_progress(id: u64, event: JobProgressEvent) {
-    let _publish = EVENT_PUBLISH
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let show_taskbar = with_session(id, |session| {
-        session
-            .reporter
-            .should_emit(&event)
-            .then_some(session.reporter.show_taskbar)
-    })
-    .flatten();
-    if let Some(show_taskbar) = show_taskbar {
-        crate::app_state::emit("job-progress", event.clone());
-        if show_taskbar {
-            apply_taskbar(&event);
+    with_session(id, move |session| {
+        if session.reporter.should_emit(&event) {
+            crate::app_state::emit("job-progress", event.clone());
+            if session.reporter.show_taskbar {
+                apply_taskbar(&event);
+            }
         }
-    }
+    });
 }
 
 fn build_for(
@@ -244,12 +175,13 @@ fn build_for(
 }
 
 fn emit_phase(id: u64, phase: Phase, percent: f64, status: &str, indeterminate: Option<bool>) {
-    let event = with_session(id, |session| {
+    let status = status.to_string();
+    let event = with_session(id, move |session| {
         build_for(
             session,
             phase,
             percent,
-            status,
+            &status,
             None,
             indeterminate,
             Metrics::default(),
@@ -263,7 +195,9 @@ fn emit_phase(id: u64, phase: Phase, percent: f64, status: &str, indeterminate: 
 /// Update phase state from one yt-dlp line. Returns whether the line was
 /// progress output that should not also be echoed to the console.
 fn handle_progress_line(id: u64, line: &str) -> bool {
-    let result = with_session(id, |session| {
+    let owned = line.to_string();
+    let result = with_session(id, move |session| {
+        let line = owned.as_str();
         if let Some(json) = progress::try_parse_json(line) {
             if let Some(postprocessor) = json.postprocessor.as_deref() {
                 // Post-processing reports no byte counts; it occupies the
@@ -439,25 +373,20 @@ fn output_format_from_path(path: &Path) -> Option<String> {
         .filter(|extension| !extension.is_empty())
 }
 
-fn complete_session(id: u64, status_message: &str, outcome: Outcome, meta: CompletionMeta) {
-    let publish = EVENT_PUBLISH
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let session = {
-        let mut guard = lock();
-        match guard.as_ref() {
-            Some(session) if session.id == id => {
-                let finalizer = CompletionFinalizer::begin(id);
-                let taken = guard.take().map(|session| (session, finalizer));
-                ACTIVE_PRESENT.store(false, Ordering::SeqCst);
-                taken
-            }
-            _ => None,
-        }
-    };
-    let Some((mut session, _finalizer)) = session else {
-        return;
-    };
+/// Take the session out of the slot and publish its completion events. Runs on
+/// the owner, so these events precede any later session's events. `None` when
+/// the session is no longer current, so its completion was already taken.
+fn finish_locked(
+    slot: &mut Option<Session>,
+    id: u64,
+    status_message: &str,
+    outcome: Outcome,
+    meta: CompletionMeta,
+) -> Option<DownloadCompletion> {
+    if slot.as_ref().is_none_or(|session| session.id != id) {
+        return None;
+    }
+    let mut session = slot.take()?;
     let mut outcome = outcome;
     let mut meta = meta;
     let partial_status;
@@ -534,236 +463,113 @@ fn complete_session(id: u64, status_message: &str, outcome: Outcome, meta: Compl
     if session.reporter.show_taskbar {
         apply_taskbar(&idle);
     }
-    drop(publish);
-    match outcome {
-        Outcome::Success => crate::stats::record(outcome, meta.format.as_deref(), size_bytes),
-        _ => crate::stats::record(outcome, None, None),
+    Some(completion)
+}
+
+/// Finalize a session and route its terminal result. Only the first call for a
+/// session gets its completion, so the coordinator sees each session once.
+fn complete_session(id: u64, status_message: &str, outcome: Outcome, meta: CompletionMeta) {
+    let status_message = status_message.to_string();
+    let finished =
+        session_owner::run(move |slot| finish_locked(slot, id, &status_message, outcome, meta))
+            .flatten();
+    let Some(completion) = finished else {
+        return;
+    };
+    match completion.outcome {
+        Outcome::Success => crate::stats::record(
+            Outcome::Success,
+            completion.format.as_deref(),
+            completion.size_bytes,
+        ),
+        other => crate::stats::record(other, None, None),
     }
-    if let Some(callback) = session.on_complete.take() {
-        callback(completion);
-    }
-    SESSION_CHANGED.notify_all();
+    crate::coordinator::terminal(id, completion);
+}
+
+/// What a cancel leaves to its caller: the children to terminate, and whether
+/// to wait for the reader thread or finish the session now.
+struct CancelPlan {
+    id: u64,
+    wait: bool,
+    children: Vec<Arc<crate::process_util::ManagedChild>>,
+    meta: CompletionMeta,
 }
 
 /// Cancel the active session. `notify` controls whether the user-facing
 /// cancellation message and legacy `complete` event are sent for queue runs.
 /// Manual sessions always announce their cancellation.
 pub fn cancel_active_session(notify: bool) {
-    cancel_session(notify, true, false);
+    cancel_session(None, notify, true, false);
 }
 
 /// Shutdown and stop path: never announces the cancellation, and kills yt-dlp
 /// before ffmpeg.
 pub fn kill_all_processes() {
-    cancel_session(false, false, true);
+    cancel_session(None, false, false, true);
 }
 
-/// Shared cancel body. `notify` and `notify_manual` decide whether the cancel
-/// is announced (`show`). `ytdlp_first` sets the child termination order:
-/// ffmpeg then yt-dlp for cancels, yt-dlp then ffmpeg for shutdown.
-fn cancel_session(notify: bool, notify_manual: bool, ytdlp_first: bool) {
-    let (id, children, partial, wait_for_ytdlp, show) = {
-        let mut guard = lock();
-        let Some(session) = guard.as_mut() else {
-            // Snapshot under ACTIVE so completion cannot clear the slot before
-            // registering its pending callback. Do not wait on future sessions.
-            let pending = finalizing_ids();
-            drop(guard);
-            wait_for_finalizations(&pending);
-            return;
-        };
-        session.cancelled = true;
-        session.network_cancellation.store(true, Ordering::Release);
-        let show = notify || (notify_manual && session.owner == Owner::Manual);
-        session.cancel_notify = show;
-        let wait_for_ytdlp =
-            session.ytdlp_exit_pending || session.conversion_pending || session.ytdlp.is_some();
-        if wait_for_ytdlp {
-            session.ytdlp_exit_pending = true;
-        }
-        let children = if ytdlp_first {
-            [session.ytdlp.take(), session.ffmpeg.take()]
-        } else {
-            [session.ffmpeg.take(), session.ytdlp.take()]
-        };
-        (
-            session.id,
-            children,
-            partial_completion_meta(session),
-            wait_for_ytdlp,
-            show,
-        )
+/// Shared cancel body. `target` names one session, or the current one when
+/// `None`. `notify` and `notify_manual` decide whether the cancel is announced.
+/// `ytdlp_first` sets the child termination order. Termination and waits run
+/// here, on the caller, never on the owner.
+fn cancel_session(target: Option<u64>, notify: bool, notify_manual: bool, ytdlp_first: bool) {
+    let plan = session_owner::run(move |slot| {
+        cancel_locked(slot, target, notify, notify_manual, ytdlp_first)
+    })
+    .flatten();
+    let Some(plan) = plan else {
+        // Nothing current matched. A named session that was already replaced
+        // or finished is still awaited, so its terminal result is routed first.
+        crate::coordinator::await_finalized(target);
+        return;
     };
-    for child in children.into_iter().flatten() {
+    for child in plan.children {
         crate::process_util::terminate_tree(&child);
     }
-    if wait_for_ytdlp {
-        wait_for_session_completion(id);
+    if plan.wait {
+        // The reader thread finalizes the session once yt-dlp has exited.
+        crate::coordinator::await_finalized(Some(plan.id));
         return;
     }
-    complete_session(
-        id,
-        CANCELLED_STATUS,
-        Outcome::Cancelled,
-        CompletionMeta {
+    complete_session(plan.id, CANCELLED_STATUS, Outcome::Cancelled, plan.meta);
+}
+
+/// Owner side of a cancel: mark the session and hand its children to the caller.
+fn cancel_locked(
+    slot: &mut Option<Session>,
+    target: Option<u64>,
+    notify: bool,
+    notify_manual: bool,
+    ytdlp_first: bool,
+) -> Option<CancelPlan> {
+    let session = slot
+        .as_mut()
+        .filter(|session| target.is_none_or(|id| session.id == id))?;
+    session.cancelled = true;
+    session.network_cancellation.send_replace(true);
+    let show = notify || (notify_manual && session.owner == Owner::Manual);
+    session.cancel_notify = show;
+    let wait = session.ytdlp_exit_pending || session.conversion_pending || session.ytdlp.is_some();
+    if wait {
+        session.ytdlp_exit_pending = true;
+    }
+    let (first, second) = if ytdlp_first {
+        (session.ytdlp.take(), session.ffmpeg.take())
+    } else {
+        (session.ffmpeg.take(), session.ytdlp.take())
+    };
+    let children = [first, second].into_iter().flatten().collect();
+    Some(CancelPlan {
+        id: session.id,
+        wait,
+        children,
+        meta: CompletionMeta {
             progress_message: show.then(|| CANCELLED_PROGRESS.to_string()),
             suppress_legacy_complete: !show,
-            ..partial
+            ..partial_completion_meta(session)
         },
-    );
-}
-
-fn to_map(value: &impl serde::Serialize) -> Map<String, Value> {
-    match serde_json::to_value(value) {
-        Ok(Value::Object(map)) => map,
-        _ => Map::new(),
-    }
-}
-
-fn resolve_preset_options(
-    settings: &Settings,
-    options: DownloadRequestOptions,
-) -> DownloadRequestOptions {
-    let Some(preset) = options.preset_id.as_deref().and_then(|id| {
-        settings
-            .download_presets
-            .iter()
-            .find(|preset| preset.id == id)
-    }) else {
-        return options;
-    };
-    let mut merged = crate::settings::preset_to_request_options(preset);
-    for (key, value) in to_map(&options) {
-        merged.insert(key, value);
-    }
-    if options.preset_name.is_none() {
-        merged.insert("presetName".into(), Value::String(preset.name.clone()));
-    }
-    serde_json::from_value(Value::Object(merged)).unwrap_or(options)
-}
-
-fn apply_request_to_settings(settings: &Settings, options: &DownloadRequestOptions) -> Settings {
-    let mut effective = settings.clone();
-    // IPC validation admits only known names, so an unknown value cannot reach here.
-    if let Some(profile) = options.profile.as_deref().and_then(DownloadProfile::parse) {
-        effective.download_mode = profile;
-    }
-    effective.advanced_options = effective.download_mode == DownloadProfile::Custom;
-    effective.audio_only = effective.download_mode == DownloadProfile::Audio;
-    effective.best_quality = effective.download_mode == DownloadProfile::BestVideo;
-    if let Some(value) = options.advanced_options {
-        effective.advanced_options = value;
-    }
-    if let Some(value) = options.audio_only {
-        effective.audio_only = value;
-    }
-    if let Some(value) = options.best_quality {
-        effective.best_quality = value;
-    }
-    if let Some(value) = &options.audio_output_format {
-        effective.audio_format = value.clone();
-    }
-    if let Some(value) = options.convert_enabled {
-        effective.convert_enabled = value;
-    }
-    if let Some(format) = &options.convert_format {
-        if !format.trim().is_empty() {
-            effective.convert_format = format.clone();
-            if options.convert_enabled.is_none() {
-                effective.convert_enabled = true;
-            }
-        } else if options.convert_enabled.is_none() {
-            effective.convert_enabled = false;
-        }
-    }
-    if let Some(value) = options.keep_original {
-        effective.keep_original_after_convert = value;
-    }
-    if let Some(value) = options.hook_browser {
-        effective.hook_browser = value;
-    }
-    if let Some(value) = options
-        .browser_choice
-        .as_ref()
-        .filter(|value| !value.is_empty())
-    {
-        effective.browser_choice = value.clone();
-    }
-    if let Some(value) = options.gpu_acceleration {
-        effective.gpu_acceleration = value;
-    }
-    if let Some(value) = options.gpu_type.as_deref().and_then(GpuType::parse) {
-        effective.gpu_type = value;
-    }
-    if let Some(value) = options.write_subtitles {
-        effective.write_subtitles = value;
-    }
-    if let Some(value) = options
-        .subtitle_langs
-        .as_ref()
-        .filter(|value| !value.is_empty())
-    {
-        effective.subtitle_langs = value.clone();
-    }
-    if let Some(value) = options.embed_thumbnail {
-        effective.embed_thumbnail = value;
-    }
-    if let Some(value) = options.embed_metadata {
-        effective.embed_metadata = value;
-    }
-    if let Some(value) = options.sponsorblock_remove {
-        effective.sponsorblock_remove = value;
-    }
-    if let Some(value) = &options.ffmpeg_path {
-        effective.ffmpeg_path = value.clone();
-    }
-    effective
-}
-
-fn resolved_snapshot(
-    options: &DownloadRequestOptions,
-    effective: &Settings,
-) -> DownloadRequestOptions {
-    DownloadRequestOptions {
-        url: options.url.trim().to_string(),
-        output_path: options.output_path.clone(),
-        ffmpeg_path: options
-            .ffmpeg_path
-            .clone()
-            .filter(|path| !path.is_empty())
-            .or_else(|| Some(effective.ffmpeg_path.clone()).filter(|path| !path.is_empty())),
-        convert_enabled: Some(effective.convert_enabled),
-        convert_format: Some(effective.convert_format.clone()),
-        keep_original: Some(effective.keep_original_after_convert),
-        video_format: options.video_format.clone(),
-        audio_format: options.audio_format.clone(),
-        playlist: Some(
-            options
-                .playlist
-                .clone()
-                .unwrap_or(crate::types::PlaylistSelection {
-                    mode: "current".into(),
-                    start: None,
-                    end: None,
-                }),
-        ),
-        profile: Some(effective.download_mode.as_str().to_string()),
-        preset_id: options.preset_id.clone(),
-        preset_name: options.preset_name.clone(),
-        best_quality: Some(effective.best_quality),
-        advanced_options: Some(effective.advanced_options),
-        audio_only: Some(effective.audio_only),
-        audio_output_format: Some(effective.audio_format.clone()),
-        hook_browser: Some(effective.hook_browser),
-        browser_choice: Some(effective.browser_choice.clone()),
-        gpu_acceleration: Some(effective.gpu_acceleration),
-        gpu_type: Some(effective.gpu_type.as_str().to_string()),
-        write_subtitles: Some(effective.write_subtitles),
-        subtitle_langs: Some(effective.subtitle_langs.clone()),
-        embed_thumbnail: Some(effective.embed_thumbnail),
-        embed_metadata: Some(effective.embed_metadata),
-        sponsorblock_remove: Some(effective.sponsorblock_remove),
-    }
+    })
 }
 
 /// Stream lines (split on `\n` and `\r`) from a child pipe.
@@ -902,56 +708,41 @@ fn append_bounded(buffer: &Mutex<String>, line: &str, limit: usize, keep_tail: b
     text.push('\n');
 }
 
-/// Returned when another owner holds the session slot. The unused completion
-/// callback is handed back so the caller can retry later.
+/// Returned when another owner holds the session slot. The caller keeps its
+/// completion sender and can retry later.
 pub struct OwnerConflict {
     pub message: String,
-    pub on_complete: CompletionCallback,
+    /// The session holding the slot, for the caller to await.
+    pub session_id: u64,
 }
 
 /// Start a download. Validation failures are reported through the normal
 /// completion path; `Err` only means another owner holds the session slot.
 pub fn start_download(
-    options: DownloadRequestOptions,
+    options: crate::download_options::ResolvedDownloadOptions,
     owner: Owner,
     queue_progress: Option<QueueProgress>,
-    on_complete: CompletionCallback,
+    completion: Sender<DownloadCompletion>,
 ) -> Result<u64, OwnerConflict> {
-    let settings = crate::settings::load();
-    let request = resolve_preset_options(&settings, options);
-    let effective = apply_request_to_settings(&settings, &request);
-    let snapshot = resolved_snapshot(&request, &effective);
+    let request = options.request;
+    let effective = options.effective_settings;
+    let snapshot = request.clone();
     let plan = progress::resolve_plan(&effective);
-    let startup = STARTUP
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let existing_owner = lock().as_ref().map(|session| session.owner);
-    match existing_owner {
-        Some(current) if current != owner => {
-            return Err(OwnerConflict {
-                message: "Download session already active with a different owner.".to_string(),
-                on_complete,
-            })
-        }
-        Some(_) => cancel_active_session(false),
-        None => {}
-    }
     let id = COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
-    let network_cancellation = Arc::new(AtomicBool::new(false));
-    let session = Session {
+    let (network_cancellation, network_cancel_receiver) = watch::channel(false);
+    let mut session = Box::new(Session {
         id,
         completion_id: crate::fs_util::uuid_v4(),
         started_at: crate::app_state::now_ms(),
         request: snapshot,
         owner,
         cancelled: false,
-        network_cancellation: Arc::clone(&network_cancellation),
+        network_cancellation,
         cancel_notify: false,
         ytdlp: None,
         ytdlp_exit_pending: false,
         conversion_pending: false,
         ffmpeg: None,
-        on_complete: Some(on_complete),
         ytdlp_postprocess: false,
         ytdlp_download_finished: false,
         conversion_format: None,
@@ -960,28 +751,50 @@ pub fn start_download(
         conversion_failures: Vec::new(),
         partial_error: None,
         reporter: Reporter::new(plan, queue_progress, effective.show_taskbar_progress),
-    };
-    {
-        let _publish = EVENT_PUBLISH
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *lock() = Some(session);
-        ACTIVE_PRESENT.store(true, Ordering::SeqCst);
+    });
+    let mut completion = completion;
+    loop {
+        match session_owner::install(session, completion) {
+            None => {
+                return Err(OwnerConflict {
+                    message: "Download session is unavailable.".to_string(),
+                    session_id: id,
+                })
+            }
+            Some(Installed::Accepted) => break,
+            Some(Installed::Conflict { session_id }) => {
+                return Err(OwnerConflict {
+                    message: "Download session already active with a different owner.".to_string(),
+                    session_id,
+                })
+            }
+            Some(Installed::Occupied {
+                session_id,
+                session: waiting,
+                completion: returned,
+            }) => {
+                // Same owner: cancel the session that holds the slot, wait for
+                // its finalization, then install this one.
+                cancel_session(Some(session_id), false, true, false);
+                crate::coordinator::await_finalized(Some(session_id));
+                session = waiting;
+                session.started_at = crate::app_state::now_ms();
+                completion = returned;
+            }
+        }
     }
-    let mut startup = Some(startup);
 
     let requested_ffmpeg = request
         .ffmpeg_path
         .clone()
         .filter(|path| !path.is_empty())
-        .unwrap_or_else(|| settings.ffmpeg_path.clone());
+        .unwrap_or_else(|| effective.ffmpeg_path.clone());
     let ffmpeg_command = crate::sidecars::effective_ffmpeg(Some(&requested_ffmpeg));
     let ytdlp = crate::sidecars::ytdlp_path();
     let url = request.url.clone();
 
     if !is_safe_http_url(&url) {
         send_progress(id, "⚠️ Invalid or missing URL.");
-        drop(startup.take());
         complete_session(
             id,
             "❌ Failed (Invalid URL).",
@@ -992,7 +805,6 @@ pub fn start_download(
     }
     if request.output_path.trim().is_empty() {
         send_progress(id, "⚠️ Invalid or missing download folder.");
-        drop(startup.take());
         complete_session(
             id,
             "❌ Failed (Invalid Folder).",
@@ -1006,7 +818,6 @@ pub fn start_download(
             id,
             format!("❌ Error: yt-dlp binary not found at {}", ytdlp.display()),
         );
-        drop(startup.take());
         complete_session(
             id,
             "❌ Failed (Missing Dependency).",
@@ -1017,8 +828,9 @@ pub fn start_download(
     }
 
     let download_dir = resolve_path(&request.output_path);
-    with_session(id, |session| {
-        session.request.output_path = download_dir.to_string_lossy().into_owned();
+    let download_path = download_dir.to_string_lossy().into_owned();
+    with_session(id, move |session| {
+        session.request.output_path = download_path;
     });
     if !download_dir.exists() {
         send_progress(
@@ -1027,7 +839,6 @@ pub fn start_download(
         );
         if let Err(error) = std::fs::create_dir_all(&download_dir) {
             send_progress(id, format!("❌ Error before starting download: {error}"));
-            drop(startup.take());
             complete_session(
                 id,
                 "❌ Failed (Initial Setup Error).",
@@ -1044,7 +855,6 @@ pub fn start_download(
                 download_dir.display()
             ),
         );
-        drop(startup.take());
         complete_session(
             id,
             "❌ Failed (Invalid Folder).",
@@ -1061,7 +871,6 @@ pub fn start_download(
                 id,
                 format!("❌ Could not reserve private download staging: {error}"),
             );
-            drop(startup.take());
             complete_session(
                 id,
                 "❌ Failed (Initial Setup Error).",
@@ -1081,7 +890,6 @@ pub fn start_download(
                 id,
                 format!("❌ Could not reserve download metadata: {error}"),
             );
-            drop(startup.take());
             complete_session(
                 id,
                 "❌ Failed (Initial Setup Error).",
@@ -1107,7 +915,6 @@ pub fn start_download(
         Err(error) => {
             let _ = std::fs::remove_file(&path_output_file);
             send_progress(id, format!("❌ Secure media-tool setup failed: {error}"));
-            drop(startup.take());
             complete_session(
                 id,
                 "❌ Download failed (secure media-tool setup error).",
@@ -1121,31 +928,30 @@ pub fn start_download(
         }
     };
     let ffmpeg_location = ffmpeg_guard.location().to_string_lossy().into_owned();
-    let network_guard = match crate::network_security::NetworkSecurityGuard::start_with_cancellation(
-        Arc::clone(&network_cancellation),
-        &effective.upstream_proxy,
-    ) {
-        Ok(guard) => guard,
-        Err(error) => {
-            let _ = std::fs::remove_file(&path_output_file);
-            if !active_not_cancelled(id) {
-                drop(startup.take());
+    let network_guard =
+        match crate::network_security::NetworkSecurityGuard::start_with_cancel_signal(
+            network_cancel_receiver,
+            &effective.upstream_proxy,
+        ) {
+            Ok(guard) => guard,
+            Err(error) => {
+                let _ = std::fs::remove_file(&path_output_file);
+                if !active_not_cancelled(id) {
+                    return Ok(id);
+                }
+                send_progress(id, format!("❌ Secure network setup failed: {error}"));
+                complete_session(
+                    id,
+                    "❌ Download failed (secure network setup error).",
+                    Outcome::Failed,
+                    CompletionMeta {
+                        error: Some(error),
+                        ..CompletionMeta::default()
+                    },
+                );
                 return Ok(id);
             }
-            send_progress(id, format!("❌ Secure network setup failed: {error}"));
-            drop(startup.take());
-            complete_session(
-                id,
-                "❌ Download failed (secure network setup error).",
-                Outcome::Failed,
-                CompletionMeta {
-                    error: Some(error),
-                    ..CompletionMeta::default()
-                },
-            );
-            return Ok(id);
-        }
-    };
+        };
     let (args, status_messages) = build_ytdlp_args(YtdlpArgsInput {
         download_dir: &download_stage.directory,
         url: &url,
@@ -1207,7 +1013,6 @@ pub fn start_download(
         Err(error) => {
             let _ = std::fs::remove_file(&path_output_file);
             send_progress(id, format!("❌ Failed to start download process: {error}"));
-            drop(startup.take());
             complete_session(
                 id,
                 "❌ Download failed (process spawn error).",
@@ -1217,11 +1022,12 @@ pub fn start_download(
             return Ok(id);
         }
     };
-    let registered = with_session(id, |session| {
+    let owned_child = Arc::clone(&child);
+    let registered = with_session(id, move |session| {
         if session.cancelled {
             false
         } else {
-            session.ytdlp = Some(Arc::clone(&child));
+            session.ytdlp = Some(owned_child);
             session.ytdlp_exit_pending = true;
             true
         }
@@ -1230,10 +1036,8 @@ pub fn start_download(
     if !registered {
         crate::process_util::terminate_tree(&child);
         let _ = std::fs::remove_file(&path_output_file);
-        drop(startup.take());
         return Ok(id);
     }
-    drop(startup.take());
 
     let stdout_buffer = Arc::new(Mutex::new(String::new()));
     let stderr_buffer = Arc::new(Mutex::new(String::new()));
@@ -1361,269 +1165,6 @@ fn downloaded_file_paths(exit: &YtdlpExit) -> Result<Vec<PathBuf>, String> {
     Ok(paths)
 }
 
-fn install_download_output(temp: &Path, download_dir: &Path) -> Result<PathBuf, String> {
-    let file_name = temp
-        .file_name()
-        .ok_or_else(|| "Downloaded output has no file name.".to_string())?;
-    install_download_output_named(temp, download_dir, &file_name.to_string_lossy())
-}
-
-fn install_download_output_named(
-    temp: &Path,
-    download_dir: &Path,
-    preferred_name: &str,
-) -> Result<PathBuf, String> {
-    let preferred = Path::new(preferred_name)
-        .file_name()
-        .filter(|name| !name.is_empty())
-        .ok_or_else(|| "Downloaded output has an invalid destination name.".to_string())?;
-    let preferred = preferred.to_string_lossy();
-    let preferred_path = Path::new(preferred.as_ref());
-    let extension = preferred_path
-        .extension()
-        .map(|value| value.to_string_lossy().into_owned())
-        .filter(|value| !value.is_empty());
-    let stem = preferred_path
-        .file_stem()
-        .map(|value| value.to_string_lossy().into_owned())
-        .unwrap_or_else(|| preferred.to_string());
-    sync_staged_file(temp)
-        .map_err(|error| format!("Could not sync downloaded file {}: {error}", temp.display()))?;
-    for suffix in 0..10_000u32 {
-        let name = if suffix == 0 {
-            preferred.to_string()
-        } else if let Some(extension) = extension.as_deref() {
-            format!("{stem} ({suffix}).{extension}")
-        } else {
-            format!("{stem} ({suffix})")
-        };
-        let destination = download_dir.join(name);
-        match install_no_replace(temp, &destination) {
-            Ok(()) => {
-                crate::fs_util::sync_directory(download_dir).map_err(|error| {
-                    format!(
-                        "Could not sync download directory {} after installing {}: {error}",
-                        download_dir.display(),
-                        destination.display()
-                    )
-                })?;
-                return Ok(destination);
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                return Err(format!(
-                    "Could not atomically install downloaded output {} without replacing it: {error}",
-                    destination.display()
-                ));
-            }
-        }
-    }
-    Err("Could not find an unused name for a downloaded output.".to_string())
-}
-
-const CAPTION_EXTENSIONS: &[&str] = &[
-    "ass", "json3", "lrc", "srt", "ssa", "srv1", "srv2", "srv3", "ttml", "vtt",
-];
-
-fn caption_sidecar_paths(
-    input: &Path,
-    stage: &DownloadStage,
-) -> Result<Vec<(PathBuf, FileIdentity)>, String> {
-    let parent = input
-        .parent()
-        .ok_or_else(|| format!("Caption source has no parent: {}", input.display()))?;
-    let stem = input
-        .file_stem()
-        .ok_or_else(|| format!("Caption source has no filename: {}", input.display()))?;
-    let prefix = format!("{}.", stem.to_string_lossy());
-    let owned_entries = stage.owned_entries.as_ref().ok_or_else(|| {
-        format!(
-            "Could not enumerate captions without an ownership snapshot for {}",
-            parent.display()
-        )
-    })?;
-    let mut paths = Vec::new();
-    for (relative, expected_identity) in owned_entries {
-        let path = stage.directory.join(relative);
-        if path.parent() != Some(parent) {
-            continue;
-        }
-        let Some(name) = path.file_name().map(|name| name.to_string_lossy()) else {
-            continue;
-        };
-        let extension = path
-            .extension()
-            .map(|extension| extension.to_string_lossy().to_ascii_lowercase());
-        if !name.starts_with(&prefix)
-            || !extension
-                .as_deref()
-                .is_some_and(|extension| CAPTION_EXTENSIONS.contains(&extension))
-        {
-            continue;
-        }
-        let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
-            format!(
-                "Could not inspect staged caption {}: {error}",
-                path.display()
-            )
-        })?;
-        if !metadata.file_type().is_file() {
-            return Err(format!(
-                "Staged caption is not a regular file: {}",
-                path.display()
-            ));
-        }
-        if file_identity(&path) != Some(*expected_identity) {
-            return Err(format!(
-                "Staged caption changed after ownership was recorded: {}",
-                path.display()
-            ));
-        }
-        paths.push((path, *expected_identity));
-    }
-    paths.sort_by(|left, right| left.0.cmp(&right.0));
-    Ok(paths)
-}
-
-fn publish_owned_caption_sidecar(
-    sidecar: &Path,
-    expected_identity: FileIdentity,
-    download_dir: &Path,
-    preferred_name: &str,
-    stage: &mut DownloadStage,
-) -> Result<PathBuf, String> {
-    if file_identity(sidecar) != Some(expected_identity) {
-        stage.preserve_on_drop = true;
-        return Err(format!(
-            "Staged caption changed before publication: {}",
-            sidecar.display()
-        ));
-    }
-    let mut quarantined = None;
-    for _ in 0..32 {
-        let quarantine = sidecar
-            .parent()
-            .ok_or_else(|| format!("Staged caption has no parent: {}", sidecar.display()))?
-            .join(format!(
-                ".rosi-caption-publish-{}",
-                crate::fs_util::uuid_v4()
-            ));
-        match install_no_replace(sidecar, &quarantine) {
-            Ok(()) => {
-                crate::staging::hide_on_windows(&quarantine);
-                quarantined = Some(quarantine);
-                break;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                stage.preserve_on_drop = true;
-                return Err(format!(
-                    "Could not quarantine staged caption {} for identity verification: {error}",
-                    sidecar.display()
-                ));
-            }
-        }
-    }
-    let Some(quarantine) = quarantined else {
-        stage.preserve_on_drop = true;
-        return Err(format!(
-            "Could not reserve a caption identity-check path for {}.",
-            sidecar.display()
-        ));
-    };
-    if file_identity(&quarantine) != Some(expected_identity) {
-        stage.preserve_on_drop = true;
-        let restore = install_no_replace(&quarantine, sidecar);
-        return Err(match restore {
-            Ok(()) => format!(
-                "A replacement caption was restored to staging and was not published: {}",
-                sidecar.display()
-            ),
-            Err(error) => format!(
-                "A replacement caption was not published and remains in recovery staging at {}: {error}",
-                quarantine.display()
-            ),
-        });
-    }
-
-    match install_download_output_named(&quarantine, download_dir, preferred_name) {
-        Ok(published) if file_identity(&published) == Some(expected_identity) => Ok(published),
-        Ok(published) => {
-            stage.preserve_on_drop = true;
-            Err(format!(
-                "Caption identity changed during publication; inspect the staged recovery at {} (destination {}).",
-                sidecar.display(),
-                published.display()
-            ))
-        }
-        Err(error) => {
-            stage.preserve_on_drop = true;
-            if quarantine.exists() {
-                let _ = install_no_replace(&quarantine, sidecar);
-            }
-            Err(format!(
-                "Could not preserve requested caption sidecar {}: {error}",
-                sidecar.display()
-            ))
-        }
-    }
-}
-
-fn publish_caption_sidecars(
-    input: &Path,
-    output_media: &Path,
-    download_dir: &Path,
-    stage: &mut DownloadStage,
-) -> Result<Vec<PathBuf>, String> {
-    let input_stem = input
-        .file_stem()
-        .ok_or_else(|| format!("Caption source has no filename: {}", input.display()))?
-        .to_string_lossy();
-    let output_stem = output_media
-        .file_stem()
-        .ok_or_else(|| {
-            format!(
-                "Caption destination has no filename: {}",
-                output_media.display()
-            )
-        })?
-        .to_string_lossy();
-    let sidecars = match caption_sidecar_paths(input, stage) {
-        Ok(sidecars) => sidecars,
-        Err(error) => {
-            stage.preserve_on_drop = true;
-            return Err(error);
-        }
-    };
-    let mut published = Vec::new();
-    for (sidecar, expected_identity) in sidecars {
-        let Some(name) = sidecar.file_name().map(|name| name.to_string_lossy()) else {
-            continue;
-        };
-        let Some(suffix) = name.strip_prefix(&format!("{input_stem}")) else {
-            continue;
-        };
-        let preferred = format!("{output_stem}{suffix}");
-        match publish_owned_caption_sidecar(
-            &sidecar,
-            expected_identity,
-            download_dir,
-            &preferred,
-            stage,
-        ) {
-            Ok(path) => published.push(path),
-            Err(error) => {
-                stage.preserve_on_drop = true;
-                return Err(format!(
-                    "Could not preserve requested caption sidecar {}: {error}",
-                    sidecar.display()
-                ));
-            }
-        }
-    }
-    Ok(published)
-}
-
 fn install_downloaded_file_paths(
     stage_paths: Vec<PathBuf>,
     download_dir: &Path,
@@ -1735,7 +1276,6 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
         (session.cancelled, session.cancel_notify)
     }) else {
         let _ = std::fs::remove_file(&exit.path_output_file);
-        SESSION_CHANGED.notify_all();
         return;
     };
     let path_output_file = exit.path_output_file.clone();
@@ -1804,7 +1344,7 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
                 id,
                 format!("⚠️ {message} Continuing with the downloaded entries."),
             );
-            with_session(id, |session| session.partial_error = Some(message));
+            with_session(id, move |session| session.partial_error = Some(message));
             exit.code = Some(0);
         }
     }
@@ -2025,1278 +1565,8 @@ pub fn sanitize_filename(input: &str) -> String {
     trimmed[..end].to_string()
 }
 
-fn emit_convert_progress(id: u64, percent: Option<f64>, status: &str) {
-    let value = percent.unwrap_or(f64::NAN);
-    emit_phase(
-        id,
-        Phase::Convert,
-        value,
-        status,
-        Some(percent.is_none() || !value.is_finite()),
-    );
-}
-
-fn show_ffmpeg_missing_dialog(ffmpeg: &Path) {
-    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-    let Some(app) = crate::app_state::app() else {
-        return;
-    };
-    let mut dialog = app
-        .dialog()
-        .message(format!(
-            "Failed to start conversion: FFmpeg not found at {}.\n\nROSI uses bundled FFmpeg by default. If you set a custom FFmpeg path, make sure it points to a valid FFmpeg binary.",
-            ffmpeg.display()
-        ))
-        .title("FFmpeg Error")
-        .kind(MessageDialogKind::Error);
-    if let Some(window) = crate::app_state::main_window() {
-        dialog = dialog.parent(&window);
-    }
-    dialog.show(|_| {});
-}
-
-#[derive(Debug)]
-enum ConversionFailure {
-    Cancelled,
-    TimedOut,
-    Spawn(std::io::Error),
-    Exit(Option<i32>, String),
-    Setup(String),
-    SetupPublished { message: String, path: PathBuf },
-}
-
 fn active_not_cancelled(id: u64) -> bool {
     with_session(id, |session| !session.cancelled).unwrap_or(false)
-}
-
-fn install_conversion_output_for_session(
-    id: u64,
-    temp: &Path,
-    input: &Path,
-    target: &str,
-    download_dir: &Path,
-) -> Result<PathBuf, ConversionFailure> {
-    if !active_not_cancelled(id) {
-        return Err(ConversionFailure::Cancelled);
-    }
-    // File installation and fsync run without the session lock, so close
-    // requests, cancellation and progress never wait on disk flushes. A cancel
-    // that lands meanwhile still sees this output in the batch result.
-    let output = install_conversion_output(temp, input, target, download_dir)
-        .map_err(ConversionFailure::Setup)?;
-    with_session(id, |session| {
-        session.conversion_format = Some(target.to_string());
-        session.completed_paths.push(output.clone());
-    });
-    Ok(output)
-}
-
-fn record_conversion_failure(id: u64, path: &Path, detail: &str) {
-    with_session(id, |session| {
-        if !session.cancelled {
-            session.failed_paths.push(path.to_path_buf());
-            session
-                .conversion_failures
-                .push(format!("{}: {detail}", path.display()));
-        }
-    });
-}
-
-struct ConversionTemp {
-    directory: PathBuf,
-    output: PathBuf,
-}
-
-impl Drop for ConversionTemp {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.output);
-        let _ = std::fs::remove_dir(&self.directory);
-    }
-}
-
-fn reserve_conversion_temp(input: &Path, target: &str) -> Result<ConversionTemp, String> {
-    let parent = input.parent().unwrap_or_else(|| Path::new("."));
-    for _ in 0..32 {
-        let directory = parent.join(format!(".rosi-convert-{}", crate::fs_util::uuid_v4()));
-        match crate::fs_util::private_dir_builder().create(&directory) {
-            Ok(()) => {
-                crate::staging::hide_on_windows(&directory);
-                return Ok(ConversionTemp {
-                    output: directory.join(format!("output.{target}")),
-                    directory,
-                });
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error.to_string()),
-        }
-    }
-    Err("Could not reserve a unique conversion staging path.".to_string())
-}
-
-fn install_conversion_output(
-    temp: &Path,
-    input: &Path,
-    target: &str,
-    download_dir: &Path,
-) -> Result<PathBuf, String> {
-    let raw_stem = input
-        .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let mut stem = sanitize_filename(&raw_stem);
-    if stem.trim().is_empty() {
-        stem = format!("download_{}", crate::fs_util::uuid_v4());
-    }
-    // Leave room for the largest collision suffix (` (9999)`) and the
-    // longest supported extension so every installed component stays within
-    // common 255-byte filesystem limits.
-    let max_stem_bytes = 255usize.saturating_sub(7 + 1 + target.len());
-    let mut end = stem.len().min(max_stem_bytes);
-    while end > 0 && !stem.is_char_boundary(end) {
-        end -= 1;
-    }
-    stem.truncate(end);
-    sync_staged_file(temp).map_err(|error| {
-        format!(
-            "Could not sync converted output {}: {error}",
-            temp.display()
-        )
-    })?;
-    for suffix in 0..10_000u32 {
-        let name = if suffix == 0 {
-            format!("{stem}.{target}")
-        } else {
-            format!("{stem} ({suffix}).{target}")
-        };
-        let candidate = download_dir.join(name);
-        match install_no_replace(temp, &candidate) {
-            Ok(()) => {
-                crate::fs_util::sync_directory(download_dir).map_err(|error| {
-                    format!(
-                        "Could not sync output directory {} after installing {}: {error}",
-                        download_dir.display(),
-                        candidate.display()
-                    )
-                })?;
-                return Ok(candidate);
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                return Err(format!(
-                "Could not atomically install converted output {} without replacing it: {error}",
-                candidate.display()
-            ))
-            }
-        }
-    }
-    Err("Could not find an unused filename for the converted output.".to_string())
-}
-
-fn execute_ffmpeg(
-    id: u64,
-    ffmpeg: &Path,
-    args: &[String],
-    duration_seconds: Option<f64>,
-    progress_start: f64,
-    progress_span: f64,
-) -> Result<(), ConversionFailure> {
-    if !active_not_cancelled(id) {
-        return Err(ConversionFailure::Cancelled);
-    }
-    let mut command = crate::process_util::command(ffmpeg, args, &[], true);
-    let child = crate::process_util::spawn(&mut command).map_err(ConversionFailure::Spawn)?;
-    let registered = with_session(id, |session| {
-        if session.cancelled {
-            false
-        } else {
-            session.ffmpeg = Some(Arc::clone(&child));
-            true
-        }
-    })
-    .unwrap_or(false);
-    if !registered {
-        crate::process_util::terminate_tree(&child);
-        return Err(ConversionFailure::Cancelled);
-    }
-
-    let progress_state = Arc::new(Mutex::new(progress::FfmpegProgressState::new(
-        duration_seconds,
-    )));
-    let last_output = Arc::new(Mutex::new(std::time::Instant::now()));
-    let stdout_reader = {
-        let state = Arc::clone(&progress_state);
-        let last_output = Arc::clone(&last_output);
-        read_lines(child.take_stdout(), move |line| {
-            if let Ok(mut at) = last_output.lock() {
-                *at = std::time::Instant::now();
-            }
-            if !active_not_cancelled(id) {
-                return;
-            }
-            let percent = state
-                .lock()
-                .ok()
-                .and_then(|mut state| state.push(&format!("{line}\n")));
-            if let Some(percent) = percent {
-                let aggregate =
-                    progress_start + (percent.clamp(0.0, 100.0) / 100.0) * progress_span;
-                emit_convert_progress(id, Some(aggregate), "Converting...");
-            }
-        })
-    };
-    let stderr = Arc::new(Mutex::new(String::new()));
-    let stderr_reader = {
-        let stderr = Arc::clone(&stderr);
-        let last_output = Arc::clone(&last_output);
-        read_lines(child.take_stderr(), move |line| {
-            if let Ok(mut at) = last_output.lock() {
-                *at = std::time::Instant::now();
-            }
-            let text = line.trim();
-            if !text.is_empty() {
-                append_bounded(&stderr, text, MAX_ERROR_BUFFER, true);
-                send_progress(id, format!("[ffmpeg] {text}"));
-            }
-        })
-    };
-
-    let mut timed_out = false;
-    // `-progress` reports about twice a second, so silence means a stall.
-    let waited = loop {
-        match child.wait_timeout(std::time::Duration::from_secs(1)) {
-            Ok(None) => {
-                let silent_for = last_output
-                    .lock()
-                    .map(|at| at.elapsed())
-                    .unwrap_or_default();
-                if silent_for >= FFMPEG_STALL_TIMEOUT {
-                    break Ok(None);
-                }
-            }
-            other => break other,
-        }
-    };
-    let status = match waited {
-        Ok(Some(status)) => Some(status),
-        Ok(None) => {
-            timed_out = true;
-            if with_session(id, |session| {
-                session
-                    .ffmpeg
-                    .as_ref()
-                    .is_some_and(|owned| Arc::ptr_eq(owned, &child))
-            })
-            .unwrap_or(false)
-            {
-                send_progress(
-                    id,
-                    "❌ Conversion stopped: FFmpeg made no progress for 10 minutes.",
-                );
-            }
-            crate::process_util::terminate_tree(&child);
-            child.wait().ok()
-        }
-        Err(_) => {
-            crate::process_util::terminate_tree(&child);
-            child.wait().ok()
-        }
-    };
-    let readers_complete = wait_for_readers([stdout_reader, stderr_reader]);
-    timed_out |= !readers_complete;
-    let was_cancelled = with_session(id, |session| {
-        if session
-            .ffmpeg
-            .as_ref()
-            .is_some_and(|owned| Arc::ptr_eq(owned, &child))
-        {
-            session.ffmpeg = None;
-        }
-        session.cancelled
-    })
-    .unwrap_or(true);
-    if was_cancelled {
-        return Err(ConversionFailure::Cancelled);
-    }
-    if timed_out {
-        return Err(ConversionFailure::TimedOut);
-    }
-    let Some(status) = status else {
-        return Err(ConversionFailure::Setup(
-            "Could not read FFmpeg's exit status.".to_string(),
-        ));
-    };
-    if status.success() {
-        Ok(())
-    } else {
-        Err(ConversionFailure::Exit(
-            status.code(),
-            stderr.lock().map(|text| text.clone()).unwrap_or_default(),
-        ))
-    }
-}
-
-fn probe_media_codecs_for_session(
-    id: u64,
-    ffmpeg: &Path,
-    input: &Path,
-) -> Result<crate::command_builders::SourceCodecs, String> {
-    let args = vec![
-        "-hide_banner".to_string(),
-        "-protocol_whitelist".to_string(),
-        "file".to_string(),
-        "-i".to_string(),
-        input.to_string_lossy().into_owned(),
-    ];
-    let mut command = crate::process_util::command(ffmpeg, &args, &[], true);
-    let child = match crate::process_util::spawn(&mut command) {
-        Ok(child) => child,
-        Err(error) => {
-            crate::logging::warn(&format!("Failed to spawn ffmpeg codec probe: {error}"));
-            return Err(format!("Could not start the codec probe: {error}"));
-        }
-    };
-    let registered = with_session(id, |session| {
-        if session.cancelled {
-            false
-        } else {
-            session.ffmpeg = Some(Arc::clone(&child));
-            true
-        }
-    })
-    .unwrap_or(false);
-    if !registered {
-        crate::process_util::terminate_tree(&child);
-        return Err("The download session ended before its codec probe completed.".into());
-    }
-
-    let output =
-        crate::process_util::wait_with_output(&child, CODEC_PROBE_TIMEOUT, 4096, MAX_ERROR_BUFFER);
-    let cancelled = with_session(id, |session| {
-        if session
-            .ffmpeg
-            .as_ref()
-            .is_some_and(|owned| Arc::ptr_eq(owned, &child))
-        {
-            session.ffmpeg = None;
-        }
-        session.cancelled
-    })
-    .unwrap_or(true);
-    if cancelled {
-        return Err("The download session was cancelled during its codec probe.".into());
-    }
-    match output {
-        Ok(output) if output.timed_out => {
-            crate::logging::warn("FFmpeg codec probe timed out or left output pipes open.");
-            Err("The codec probe timed out or left output pipes open.".into())
-        }
-        Ok(output) if output.stderr.len() >= MAX_ERROR_BUFFER => {
-            crate::logging::warn("FFmpeg codec probe diagnostics reached the capture limit.");
-            Err("The codec probe diagnostics were truncated at the capture limit.".into())
-        }
-        Ok(output) if !output.stderr.contains("Input #") || !output.stderr.contains("Stream #") => {
-            crate::logging::warn(
-                "FFmpeg codec probe returned no complete input stream diagnostics.",
-            );
-            Err("The codec probe did not identify the input streams.".into())
-        }
-        Ok(output) => Ok(crate::command_builders::parse_codecs(&output.stderr)),
-        Err(error) => {
-            crate::logging::warn(&format!("Failed to run ffmpeg codec probe: {error}"));
-            Err(format!("Failed to run the codec probe: {error}"))
-        }
-    }
-}
-
-struct ConversionPosition {
-    index: usize,
-    count: usize,
-}
-
-struct ConvertedOutput {
-    path: PathBuf,
-    unchanged: bool,
-    preserve_original: bool,
-}
-
-fn convert_one(
-    id: u64,
-    input: &Path,
-    download_dir: &Path,
-    target: &str,
-    effective: &Settings,
-    ffmpeg: &Path,
-    position: ConversionPosition,
-) -> Result<ConvertedOutput, ConversionFailure> {
-    let input_ext = input
-        .extension()
-        .map(|ext| ext.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
-    let progress_start = position.index as f64 * 100.0 / position.count.max(1) as f64;
-    let progress_span = 100.0 / position.count.max(1) as f64;
-    if input_ext == target {
-        send_progress(
-            id,
-            format!(
-                "ℹ️ {} is already {}. Skipping conversion.",
-                input.file_name().unwrap_or_default().to_string_lossy(),
-                target.to_uppercase()
-            ),
-        );
-        emit_convert_progress(id, Some(progress_start + progress_span), "Entry complete");
-        return Ok(ConvertedOutput {
-            path: input.to_path_buf(),
-            unchanged: true,
-            preserve_original: false,
-        });
-    }
-    send_progress(
-        id,
-        format!(
-            "🎬 Converting {} to {}...",
-            input.file_name().unwrap_or_default().to_string_lossy(),
-            target.to_uppercase()
-        ),
-    );
-    let (codecs, probe_complete) = match probe_media_codecs_for_session(id, ffmpeg, input) {
-        Ok(codecs) => (codecs, true),
-        Err(error) => {
-            crate::logging::warn(&format!(
-                "Could not reliably inspect codecs for {}; retaining the original after conversion: {error}",
-                input.display()
-            ));
-            (crate::command_builders::SourceCodecs::default(), false)
-        }
-    };
-    if !active_not_cancelled(id) {
-        return Err(ConversionFailure::Cancelled);
-    }
-    let preserve_original =
-        crate::command_builders::must_preserve_original(target, &codecs, probe_complete);
-    let selected_encoder = resolve_video_encoder(effective);
-    let original_args = build_ffmpeg_args(input, input, target, &selected_encoder, Some(&codecs));
-    let gpu_encoder_used = effective.gpu_acceleration
-        && selected_encoder != "copy"
-        && original_args
-            .windows(2)
-            .any(|pair| pair[0] == "-c:v" && pair[1] == selected_encoder);
-    let encoders = if gpu_encoder_used {
-        vec![selected_encoder.clone(), "libx264".to_string()]
-    } else {
-        vec![selected_encoder]
-    };
-    for (attempt, encoder) in encoders.iter().enumerate() {
-        let staging = reserve_conversion_temp(input, target).map_err(ConversionFailure::Setup)?;
-        let temp = &staging.output;
-        let args = build_ffmpeg_args(input, temp, target, encoder, Some(&codecs));
-        if *encoder != "libx264" && *encoder != "copy" {
-            send_progress(id, format!("🖥️ Using GPU acceleration ({encoder})"));
-        } else if attempt > 0 {
-            send_progress(
-                id,
-                "⚠️ GPU encoder failed. Retrying conversion on the CPU (libx264).",
-            );
-        }
-        match execute_ffmpeg(
-            id,
-            ffmpeg,
-            &args,
-            codecs.duration_seconds,
-            progress_start,
-            progress_span,
-        ) {
-            Ok(()) => {
-                if !active_not_cancelled(id) {
-                    let _ = std::fs::remove_file(temp);
-                    return Err(ConversionFailure::Cancelled);
-                }
-                if !std::fs::symlink_metadata(temp)
-                    .is_ok_and(|metadata| metadata.file_type().is_file())
-                    || crate::fs_util::file_size(temp).unwrap_or(0) == 0
-                {
-                    let _ = std::fs::remove_file(temp);
-                    return Err(ConversionFailure::Setup(
-                        "FFmpeg reported success without creating a non-empty output.".to_string(),
-                    ));
-                }
-                let output = match install_conversion_output_for_session(
-                    id,
-                    temp,
-                    input,
-                    target,
-                    download_dir,
-                ) {
-                    Ok(output) => output,
-                    Err(error) => {
-                        let _ = std::fs::remove_file(temp);
-                        return Err(error);
-                    }
-                };
-                emit_convert_progress(id, Some(progress_start + progress_span), "Entry complete");
-                return Ok(ConvertedOutput {
-                    path: output,
-                    unchanged: false,
-                    preserve_original,
-                });
-            }
-            Err(ConversionFailure::Exit(code, _stderr)) if attempt + 1 < encoders.len() => {
-                let _ = std::fs::remove_file(temp);
-                send_progress(
-                    id,
-                    format!(
-                        "⚠️ GPU FFmpeg attempt exited with code {}; trying CPU encoder.",
-                        code.map_or("null".to_string(), |value| value.to_string())
-                    ),
-                );
-            }
-            Err(error) => {
-                let _ = std::fs::remove_file(temp);
-                return Err(error);
-            }
-        }
-    }
-    Err(ConversionFailure::Setup(
-        "No compatible FFmpeg encoder attempt completed.".to_string(),
-    ))
-}
-
-fn failure_message(failure: &ConversionFailure) -> String {
-    match failure {
-        ConversionFailure::Cancelled => "Conversion cancelled.".into(),
-        ConversionFailure::TimedOut => "FFmpeg made no progress for 10 minutes.".into(),
-        ConversionFailure::Spawn(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            "FFmpeg was not found at the configured path.".into()
-        }
-        ConversionFailure::Spawn(error) => format!("Could not start FFmpeg: {error}"),
-        ConversionFailure::Exit(code, details) => format!(
-            "FFmpeg exited with code {}. {}",
-            code.map_or("null".to_string(), |value| value.to_string()),
-            details
-                .lines()
-                .rev()
-                .take(8)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect::<Vec<_>>()
-                .join(" | ")
-        ),
-        ConversionFailure::Setup(message) => message.clone(),
-        ConversionFailure::SetupPublished { message, .. } => message.clone(),
-    }
-}
-
-fn complete_conversion_batch(
-    id: u64,
-    target: String,
-    total_entries: usize,
-    completed: Vec<PathBuf>,
-    failed: Vec<PathBuf>,
-    failures: Vec<String>,
-    cancelled: bool,
-) {
-    let final_path = completed.last().cloned();
-    let format = final_path
-        .as_deref()
-        .and_then(output_format_from_path)
-        .or_else(|| Some(target.clone()));
-    let bytes = completed
-        .iter()
-        .filter_map(|path| crate::fs_util::file_size(path))
-        .fold(0u64, u64::saturating_add);
-    // Silent cancellations (queue shutdown, replaced sessions) stay silent,
-    // matching the download-phase cancellation path.
-    let notify = cancelled && with_session(id, |session| session.cancel_notify).unwrap_or(false);
-    let meta = CompletionMeta {
-        format,
-        bytes: (!completed.is_empty()).then_some(bytes),
-        file_path: final_path,
-        output_paths: (!completed.is_empty()).then_some(completed),
-        failed_paths: (!failed.is_empty()).then_some(failed.clone()),
-        error: (!failures.is_empty()).then(|| failures.join("; ")),
-        progress_message: notify.then(|| CANCELLED_PROGRESS.into()),
-        suppress_legacy_complete: cancelled && !notify,
-    };
-    if cancelled {
-        complete_session(id, CANCELLED_STATUS, Outcome::Cancelled, meta);
-    } else if failed.is_empty() {
-        complete_session(id, "🎬 Conversion complete.", Outcome::Success, meta);
-    } else {
-        let status = format!(
-            "❌ Conversion partially failed ({} of {} entries).",
-            failed.len(),
-            total_entries
-        );
-        complete_session(id, &status, Outcome::Failed, meta);
-    }
-}
-
-#[derive(Debug)]
-struct PublicationFailure {
-    media_path: Option<PathBuf>,
-    detail: String,
-}
-
-fn find_published_identity(download_dir: &Path, identity: FileIdentity) -> Option<PathBuf> {
-    std::fs::read_dir(download_dir)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .find(|path| {
-            std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
-                && file_identity(path) == Some(identity)
-        })
-}
-
-fn publish_staged_source(
-    input: &Path,
-    download_dir: &Path,
-    stage: &mut DownloadStage,
-) -> Result<PathBuf, PublicationFailure> {
-    match install_download_output(input, download_dir) {
-        Ok(path) => Ok(path),
-        Err(error) => {
-            if input.exists() {
-                stage.preserve_on_drop = true;
-                Err(PublicationFailure {
-                    media_path: None,
-                    detail: format!(
-                        "{error} The original remains in owned staging at {}.",
-                        input.display()
-                    ),
-                })
-            } else {
-                // A post-install directory sync can fail after the no-replace
-                // move succeeded. In that case the source is already present
-                // at its final path, so preserving the now-empty staging
-                // directory would add no protection.
-                let media_path = stage
-                    .identity_for(input)
-                    .and_then(|identity| find_published_identity(download_dir, identity));
-                Err(PublicationFailure {
-                    media_path,
-                    detail: error,
-                })
-            }
-        }
-    }
-}
-
-fn publish_staged_source_with_captions(
-    input: &Path,
-    download_dir: &Path,
-    stage: &mut DownloadStage,
-    write_subtitles: bool,
-) -> Result<PathBuf, PublicationFailure> {
-    let published = publish_staged_source(input, download_dir, stage)?;
-    if write_subtitles {
-        if let Err(detail) = publish_caption_sidecars(input, &published, download_dir, stage) {
-            stage.preserve_on_drop = true;
-            return Err(PublicationFailure {
-                media_path: Some(published),
-                detail,
-            });
-        }
-    }
-    Ok(published)
-}
-
-fn push_completed_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
-    if !paths.contains(&path) {
-        paths.push(path);
-    }
-}
-
-fn publish_same_extension_for_session(
-    id: u64,
-    input: &Path,
-    target: &str,
-    download_dir: &Path,
-    stage: &mut DownloadStage,
-    write_subtitles: bool,
-) -> Result<PathBuf, ConversionFailure> {
-    if !active_not_cancelled(id) {
-        return Err(ConversionFailure::Cancelled);
-    }
-    // Publication runs without the session lock; see
-    // install_conversion_output_for_session.
-    match publish_staged_source_with_captions(input, download_dir, stage, write_subtitles) {
-        Ok(published) => {
-            with_session(id, |session| {
-                session.conversion_format = Some(target.to_string());
-                session.completed_paths.push(published.clone());
-            });
-            Ok(published)
-        }
-        Err(failure) => {
-            if let Some(path) = failure.media_path {
-                with_session(id, |session| session.completed_paths.push(path.clone()));
-                return Err(ConversionFailure::SetupPublished {
-                    message: failure.detail,
-                    path,
-                });
-            }
-            Err(ConversionFailure::Setup(failure.detail))
-        }
-    }
-}
-
-/// Remove only the source that was present in this session's ownership
-/// snapshot. Moving it to a fresh private quarantine first makes the identity
-/// recheck apply to the entry we actually remove. A replacement is instead
-/// installed with no-replace semantics in the user's selected folder.
-fn retire_staged_source(
-    input: &Path,
-    download_dir: &Path,
-    stage: &mut DownloadStage,
-) -> Result<Option<PathBuf>, PublicationFailure> {
-    let Some(expected_identity) = stage.identity_for(input) else {
-        return publish_staged_source(input, download_dir, stage).map(Some);
-    };
-    let Some(parent) = input.parent() else {
-        stage.preserve_on_drop = true;
-        return Err(PublicationFailure {
-            media_path: None,
-            detail: format!("Staged source has no parent: {}", input.display()),
-        });
-    };
-    let Some(file_name) = input.file_name() else {
-        stage.preserve_on_drop = true;
-        return Err(PublicationFailure {
-            media_path: None,
-            detail: format!("Staged source has no filename: {}", input.display()),
-        });
-    };
-
-    for _ in 0..32 {
-        let quarantine_dir =
-            parent.join(format!(".rosi-source-retire-{}", crate::fs_util::uuid_v4()));
-        match crate::fs_util::private_dir_builder().create(&quarantine_dir) {
-            Ok(()) => crate::staging::hide_on_windows(&quarantine_dir),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                stage.preserve_on_drop = input.exists();
-                return Err(PublicationFailure {
-                    media_path: None,
-                    detail: format!(
-                        "Could not reserve a private quarantine for staged original {}: {error}",
-                        input.display()
-                    ),
-                });
-            }
-        }
-        let quarantine = quarantine_dir.join(file_name);
-        match install_no_replace(input, &quarantine) {
-            Ok(()) => {
-                if file_identity(&quarantine) == Some(expected_identity) {
-                    if let Err(error) = std::fs::remove_file(&quarantine) {
-                        stage.preserve_on_drop = true;
-                        return Err(PublicationFailure {
-                            media_path: None,
-                            detail: format!(
-                                "Could not remove verified original {} from private quarantine {}: {error}",
-                                input.display(),
-                                quarantine.display()
-                            ),
-                        });
-                    }
-                    if let Err(error) = std::fs::remove_dir(&quarantine_dir) {
-                        stage.preserve_on_drop = true;
-                        return Err(PublicationFailure {
-                            media_path: None,
-                            detail: format!(
-                                "Could not remove empty source quarantine {}: {error}",
-                                quarantine_dir.display()
-                            ),
-                        });
-                    }
-                    return Ok(None);
-                }
-                return match install_download_output(&quarantine, download_dir) {
-                    Ok(path) => match std::fs::remove_dir(&quarantine_dir) {
-                        Ok(()) => Ok(Some(path)),
-                        Err(error) => {
-                            stage.preserve_on_drop = true;
-                            Err(PublicationFailure {
-                                media_path: Some(path.clone()),
-                                detail: format!(
-                                    "Preserved replaced source at {} but could not retire its empty quarantine {}: {error}",
-                                    path.display(),
-                                    quarantine_dir.display()
-                                ),
-                            })
-                        }
-                    },
-                    Err(error) => {
-                        let source_remains = quarantine.exists();
-                        if !source_remains {
-                            let _ = std::fs::remove_dir(&quarantine_dir);
-                        }
-                        stage.preserve_on_drop = source_remains || quarantine_dir.exists();
-                        Err(PublicationFailure {
-                            media_path: None,
-                            detail: format!(
-                                "A replaced source was retained in private staging at {}: {error}",
-                                quarantine.display()
-                            ),
-                        })
-                    }
-                };
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                stage.preserve_on_drop = true;
-                return Err(PublicationFailure {
-                    media_path: None,
-                    detail: format!(
-                        "The private source quarantine path was claimed unexpectedly: {}",
-                        quarantine.display()
-                    ),
-                });
-            }
-            Err(error) => {
-                let _ = std::fs::remove_dir(&quarantine_dir);
-                if input.exists() {
-                    stage.preserve_on_drop = true;
-                }
-                return Err(PublicationFailure {
-                    media_path: None,
-                    detail: format!(
-                        "Could not quarantine staged original {}: {error}",
-                        input.display()
-                    ),
-                });
-            }
-        }
-    }
-    stage.preserve_on_drop = input.exists();
-    Err(PublicationFailure {
-        media_path: None,
-        detail: format!(
-            "Could not reserve a private quarantine for staged original {}.",
-            input.display()
-        ),
-    })
-}
-
-struct PendingSourcePublication<'a> {
-    id: u64,
-    inputs: &'a [PathBuf],
-    download_dir: &'a Path,
-    stage: &'a mut DownloadStage,
-    write_subtitles: bool,
-    completed: &'a mut Vec<PathBuf>,
-    failed: &'a mut Vec<PathBuf>,
-    failures: &'a mut Vec<String>,
-}
-
-fn publish_pending_sources(publication: PendingSourcePublication<'_>) {
-    for input in publication.inputs {
-        if !input.exists() {
-            continue;
-        }
-        match publish_staged_source_with_captions(
-            input,
-            publication.download_dir,
-            publication.stage,
-            publication.write_subtitles,
-        ) {
-            Ok(path) => {
-                send_progress(
-                    publication.id,
-                    format!("ℹ️ Preserved original download: {}", path.display()),
-                );
-                if !publication.completed.contains(&path) {
-                    publication.completed.push(path);
-                }
-            }
-            Err(error) => {
-                let failed_path = error.media_path.unwrap_or_else(|| input.clone());
-                crate::logging::error(&format!(
-                    "Could not fully publish staged original {}: {}",
-                    input.display(),
-                    error.detail
-                ));
-                if !publication.completed.contains(&failed_path)
-                    && failed_path != *input
-                    && failed_path.exists()
-                {
-                    publication.completed.push(failed_path.clone());
-                }
-                publication.failed.push(failed_path.clone());
-                publication
-                    .failures
-                    .push(format!("{}: {}", failed_path.display(), error.detail));
-            }
-        }
-    }
-}
-
-fn run_conversion(
-    id: u64,
-    downloaded: Vec<PathBuf>,
-    mut stage: DownloadStage,
-    download_dir: PathBuf,
-    effective: Settings,
-    ffmpeg: PathBuf,
-) {
-    std::thread::spawn(move || {
-        send_progress(id, "⏳ Checking if conversion is needed...");
-        let target = if effective.convert_format.trim().is_empty() {
-            "mp4".to_string()
-        } else {
-            effective.convert_format.trim().to_lowercase()
-        };
-        let count = downloaded.len();
-        let total_entries = count;
-        let mut completed = Vec::new();
-        let mut failed = Vec::new();
-        let mut failures = Vec::new();
-        let mut missing_ffmpeg = false;
-        for (index, input) in downloaded.iter().enumerate() {
-            if !active_not_cancelled(id) {
-                publish_pending_sources(PendingSourcePublication {
-                    id,
-                    inputs: &downloaded[index..],
-                    download_dir: &download_dir,
-                    stage: &mut stage,
-                    write_subtitles: effective.write_subtitles,
-                    completed: &mut completed,
-                    failed: &mut failed,
-                    failures: &mut failures,
-                });
-                complete_conversion_batch(
-                    id,
-                    target,
-                    total_entries,
-                    completed,
-                    failed,
-                    failures,
-                    true,
-                );
-                return;
-            }
-            match convert_one(
-                id,
-                input,
-                &download_dir,
-                &target,
-                &effective,
-                &ffmpeg,
-                ConversionPosition { index, count },
-            ) {
-                Ok(result) if result.unchanged => {
-                    match publish_same_extension_for_session(
-                        id,
-                        input,
-                        &target,
-                        &download_dir,
-                        &mut stage,
-                        effective.write_subtitles,
-                    ) {
-                        Ok(output) => {
-                            completed.push(output);
-                        }
-                        Err(ConversionFailure::Cancelled) => {
-                            publish_pending_sources(PendingSourcePublication {
-                                id,
-                                inputs: &downloaded[index..],
-                                download_dir: &download_dir,
-                                stage: &mut stage,
-                                write_subtitles: effective.write_subtitles,
-                                completed: &mut completed,
-                                failed: &mut failed,
-                                failures: &mut failures,
-                            });
-                            complete_conversion_batch(
-                                id,
-                                target,
-                                total_entries,
-                                completed,
-                                failed,
-                                failures,
-                                true,
-                            );
-                            return;
-                        }
-                        Err(error) => {
-                            let detail = failure_message(&error);
-                            let failed_path = match &error {
-                                ConversionFailure::SetupPublished { path, .. } => {
-                                    push_completed_path(&mut completed, path.clone());
-                                    path.clone()
-                                }
-                                _ => input.clone(),
-                            };
-                            failed.push(failed_path.clone());
-                            failures.push(format!("{}: {detail}", failed_path.display()));
-                            record_conversion_failure(id, &failed_path, &detail);
-                            if input.exists() {
-                                stage.preserve_on_drop = true;
-                            }
-                        }
-                    }
-                }
-                Ok(result) => {
-                    let output = result.path;
-                    if !active_not_cancelled(id) {
-                        publish_pending_sources(PendingSourcePublication {
-                            id,
-                            inputs: &downloaded[index..],
-                            download_dir: &download_dir,
-                            stage: &mut stage,
-                            write_subtitles: effective.write_subtitles,
-                            completed: &mut completed,
-                            failed: &mut failed,
-                            failures: &mut failures,
-                        });
-                        if output.exists() && !completed.contains(&output) {
-                            completed.push(output);
-                        }
-                        complete_conversion_batch(
-                            id,
-                            target,
-                            total_entries,
-                            completed,
-                            failed,
-                            failures,
-                            true,
-                        );
-                        return;
-                    }
-                    let should_preserve_original = result.preserve_original;
-                    let mut preserve_publication_failed = false;
-                    if should_preserve_original {
-                        match publish_staged_source_with_captions(
-                            input,
-                            &download_dir,
-                            &mut stage,
-                            effective.write_subtitles,
-                        ) {
-                            Ok(path) => {
-                                send_progress(
-                                    id,
-                                    format!(
-                                        "ℹ️ Retained original to preserve artwork or unsupported or unverified captions: {}",
-                                        path.display()
-                                    ),
-                                );
-                                push_completed_path(&mut completed, path);
-                            }
-                            Err(error) => {
-                                preserve_publication_failed = true;
-                                let failed_path =
-                                    error.media_path.clone().unwrap_or_else(|| input.clone());
-                                if error.media_path.is_some() {
-                                    push_completed_path(&mut completed, failed_path.clone());
-                                }
-                                failed.push(failed_path.clone());
-                                failures.push(format!(
-                                    "{}: {}",
-                                    failed_path.display(),
-                                    error.detail
-                                ));
-                                record_conversion_failure(id, &failed_path, &error.detail);
-                            }
-                        }
-                    } else if effective.write_subtitles {
-                        if let Err(error) =
-                            publish_caption_sidecars(input, &output, &download_dir, &mut stage)
-                        {
-                            let detail = format!("Could not publish requested captions: {error}");
-                            let preserved = publish_staged_source_with_captions(
-                                input,
-                                &download_dir,
-                                &mut stage,
-                                true,
-                            );
-                            preserve_publication_failed = true;
-                            let (failed_path, detail) = match preserved {
-                                Ok(path) => {
-                                    push_completed_path(&mut completed, path.clone());
-                                    (path, detail)
-                                }
-                                Err(preserve_error) => {
-                                    let failed_path = preserve_error
-                                        .media_path
-                                        .clone()
-                                        .unwrap_or_else(|| input.clone());
-                                    if preserve_error.media_path.is_some() {
-                                        push_completed_path(&mut completed, failed_path.clone());
-                                    }
-                                    (failed_path, format!("{detail}; {}", preserve_error.detail))
-                                }
-                            };
-                            failed.push(failed_path.clone());
-                            failures.push(format!("{}: {detail}", failed_path.display()));
-                            record_conversion_failure(id, &failed_path, &detail);
-                        }
-                    }
-                    if !should_preserve_original
-                        && !effective.keep_original_after_convert
-                        && !preserve_publication_failed
-                    {
-                        match retire_staged_source(input, &download_dir, &mut stage) {
-                            Ok(None) => send_progress(
-                                id,
-                                format!("🗑️ Deleted owned original: {}", input.display()),
-                            ),
-                            Ok(Some(path)) => {
-                                send_progress(
-                                    id,
-                                    format!(
-                                        "ℹ️ Preserved replaced original file: {}",
-                                        path.display()
-                                    ),
-                                );
-                                push_completed_path(&mut completed, path);
-                            }
-                            Err(error) => {
-                                send_progress(
-                                    id,
-                                    format!(
-                                        "⚠️ Could not retire original safely: {}",
-                                        error.detail
-                                    ),
-                                );
-                                let failed_path =
-                                    error.media_path.clone().unwrap_or_else(|| input.clone());
-                                if error.media_path.is_some() {
-                                    push_completed_path(&mut completed, failed_path.clone());
-                                }
-                                failed.push(failed_path.clone());
-                                failures.push(format!(
-                                    "{}: {}",
-                                    failed_path.display(),
-                                    error.detail
-                                ));
-                                record_conversion_failure(id, &failed_path, &error.detail);
-                            }
-                        }
-                    } else if !should_preserve_original
-                        && effective.keep_original_after_convert
-                        && !preserve_publication_failed
-                    {
-                        match publish_staged_source(input, &download_dir, &mut stage) {
-                            Ok(path) => {
-                                send_progress(
-                                    id,
-                                    format!("ℹ️ Keeping original file: {}", path.display()),
-                                );
-                                push_completed_path(&mut completed, path);
-                            }
-                            Err(error) => {
-                                let failed_path =
-                                    error.media_path.clone().unwrap_or_else(|| input.clone());
-                                if error.media_path.is_some() {
-                                    push_completed_path(&mut completed, failed_path.clone());
-                                }
-                                failed.push(failed_path.clone());
-                                failures.push(format!(
-                                    "{}: {}",
-                                    failed_path.display(),
-                                    error.detail
-                                ));
-                                record_conversion_failure(id, &failed_path, &error.detail);
-                            }
-                        }
-                    }
-                    send_progress(
-                        id,
-                        format!("🎉 Successfully converted to {}", output.display()),
-                    );
-                    push_completed_path(&mut completed, output);
-                }
-                Err(ConversionFailure::Cancelled) => {
-                    publish_pending_sources(PendingSourcePublication {
-                        id,
-                        inputs: &downloaded[index..],
-                        download_dir: &download_dir,
-                        stage: &mut stage,
-                        write_subtitles: effective.write_subtitles,
-                        completed: &mut completed,
-                        failed: &mut failed,
-                        failures: &mut failures,
-                    });
-                    complete_conversion_batch(
-                        id,
-                        target,
-                        total_entries,
-                        completed,
-                        failed,
-                        failures,
-                        true,
-                    );
-                    return;
-                }
-                Err(error) => {
-                    if matches!(&error, ConversionFailure::Spawn(spawn) if spawn.kind() == std::io::ErrorKind::NotFound)
-                    {
-                        missing_ffmpeg = true;
-                    }
-                    let detail = failure_message(&error);
-                    let preserved = publish_staged_source_with_captions(
-                        input,
-                        &download_dir,
-                        &mut stage,
-                        effective.write_subtitles,
-                    );
-                    let failed_path = match preserved {
-                        Ok(path) => {
-                            send_progress(
-                                id,
-                                format!("❌ Conversion failed for {}: {detail}", path.display()),
-                            );
-                            push_completed_path(&mut completed, path.clone());
-                            path
-                        }
-                        Err(preserve_error) => {
-                            let failed_path = preserve_error
-                                .media_path
-                                .clone()
-                                .unwrap_or_else(|| input.clone());
-                            if preserve_error.media_path.is_some() {
-                                push_completed_path(&mut completed, failed_path.clone());
-                            }
-                            let detail = format!("{detail}; {}", preserve_error.detail);
-                            send_progress(
-                                id,
-                                format!(
-                                    "❌ Conversion failed for {}: {detail}",
-                                    failed_path.display()
-                                ),
-                            );
-                            failures.push(format!("{}: {detail}", failed_path.display()));
-                            record_conversion_failure(id, &failed_path, &detail);
-                            failed.push(failed_path);
-                            continue;
-                        }
-                    };
-                    record_conversion_failure(id, &failed_path, &detail);
-                    failed.push(failed_path.clone());
-                    failures.push(format!("{}: {detail}", failed_path.display()));
-                }
-            }
-        }
-        if missing_ffmpeg {
-            send_progress(
-                id,
-                format!("❌ FFmpeg was not found at {}.", ffmpeg.display()),
-            );
-            show_ffmpeg_missing_dialog(&ffmpeg);
-        }
-        if failed.is_empty() {
-            emit_convert_progress(id, Some(100.0), "Conversion complete");
-        }
-        complete_conversion_batch(
-            id,
-            target,
-            total_entries,
-            completed,
-            failed,
-            failures,
-            false,
-        );
-    });
 }
 
 #[derive(serde::Serialize)]
@@ -3309,19 +1579,25 @@ pub struct Started {
 }
 
 #[tauri::command(async)]
-pub fn download_video(options: Value) -> IpcResult<Started> {
-    let request = match crate::validation::validate_download_request(&options) {
-        Ok(request) => request,
-        Err(error) => return ipc::from_error(error),
-    };
+pub fn download_video(options: FalliblePayload<DownloadRequestInput>) -> IpcResult<Started> {
+    let settings = crate::settings::load();
+    let resolved =
+        match crate::download_options::resolve_value(&settings, &options.into_value(), None) {
+            Ok(resolved) => resolved,
+            Err(error) => return ipc::from_error(error),
+        };
     // The runner briefly holds no session between items, so the session slot
     // alone cannot tell that a queue run owns the downloader.
     if !can_start(Owner::Manual) || crate::queue::is_running() {
         return ipc::err(NOT_AVAILABLE, "A queue download is already in progress.");
     }
-    let on_complete: CompletionCallback =
-        Box::new(|completion| crate::activity::record(&completion));
-    match start_download(request, Owner::Manual, None, on_complete) {
+    let (completion, recorded) = std::sync::mpsc::channel::<DownloadCompletion>();
+    std::thread::spawn(move || {
+        if let Ok(completion) = recorded.recv() {
+            crate::activity::record(&completion);
+        }
+    });
+    match start_download(resolved, Owner::Manual, None, completion) {
         Ok(session_id) => ipc::ok(Started {
             started: true,
             session_id,
@@ -3347,7 +1623,7 @@ mod audit4_tests {
     use std::time::Duration;
     static SERIAL: Mutex<()> = Mutex::new(());
 
-    fn session(callback: CompletionCallback) -> Session {
+    fn session() -> Session {
         Session {
             id: u64::MAX,
             completion_id: "audit4".into(),
@@ -3355,13 +1631,12 @@ mod audit4_tests {
             request: DownloadRequestOptions::default(),
             owner: Owner::Queue,
             cancelled: false,
-            network_cancellation: Arc::new(AtomicBool::new(false)),
+            network_cancellation: watch::channel(false).0,
             cancel_notify: false,
             ytdlp: None,
             ytdlp_exit_pending: false,
             conversion_pending: false,
             ffmpeg: None,
-            on_complete: Some(callback),
             ytdlp_postprocess: false,
             ytdlp_download_finished: false,
             conversion_format: None,
@@ -3374,46 +1649,13 @@ mod audit4_tests {
     }
 
     #[test]
-    fn cancellation_waits_for_callback_after_active_slot_is_empty() {
-        let _serial = SERIAL.lock().unwrap();
-        let (entered_tx, entered_rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        *lock() = Some(session(Box::new(move |_| {
-            entered_tx.send(()).unwrap();
-            release_rx.recv().unwrap();
-        })));
-        let completion = std::thread::spawn(|| {
-            complete_session(
-                u64::MAX,
-                "Done",
-                Outcome::Success,
-                CompletionMeta::default(),
-            )
-        });
-        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert!(lock().is_none());
-        let (cancel_tx, cancel_rx) = mpsc::channel();
-        let cancel = std::thread::spawn(move || {
-            cancel_active_session(false);
-            cancel_tx.send(()).unwrap();
-        });
-        let early = cancel_rx.recv_timeout(Duration::from_millis(100)).is_ok();
-        release_tx.send(()).unwrap();
-        completion.join().unwrap();
-        cancel.join().unwrap();
-        assert!(
-            !early,
-            "Cancellation returned before completion callback finished"
-        );
-    }
-
-    #[test]
     fn cancellation_retains_explicit_recovery_error() {
         let _serial = SERIAL.lock().unwrap();
         let (tx, rx) = mpsc::channel();
-        *lock() = Some(session(Box::new(move |completion| {
-            tx.send(completion).unwrap();
-        })));
+        assert!(matches!(
+            session_owner::install(Box::new(session()), tx),
+            Some(Installed::Accepted)
+        ));
         complete_session(
             u64::MAX,
             "Cancelled",
@@ -3424,7 +1666,10 @@ mod audit4_tests {
             },
         );
         assert_eq!(
-            rx.recv().unwrap().error.as_deref(),
+            rx.recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .error
+                .as_deref(),
             Some("Recovery at /tmp/staging")
         );
     }

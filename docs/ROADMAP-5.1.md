@@ -1,20 +1,26 @@
 # ROSI 5.1 roadmap
 
-These are deferred, long-term items. None of them blocks 5.0.0 stable. Each
-entry gives the problem with file and line evidence, a concrete plan, and
+This status ledger separates work already present in the repository, scope
+accepted for ROSI 5.1, and work deferred beyond 5.1. “Accepted” is a planning
+status, not evidence that implementation or platform verification is complete.
+The accepted delivery plan and proof gaps are in
+[IMPLEMENTATION-5.1.md](IMPLEMENTATION-5.1.md). The required stable matrix is
+macOS 15 and newer, Linux x64, and Windows x64 and arm64. Linux arm64 remains
+deferred. Each entry gives the problem with file evidence, a concrete plan, and
 acceptance criteria. Line numbers were read on 2026-10-19 and will drift; search
 for the named symbol when they do.
 
-Items already covered by the current stable-readiness fixes are not listed
-here. Keep each item's acceptance criteria as the definition of done, and check
-them against the E2E evidence the change produces. Where a plan adds a
-dependency, the change must be approved on its own; this roadmap does not add
-one.
+Check acceptance criteria against evidence from the change that produces it.
+Where a plan adds a dependency, the change must be approved on its own; this
+roadmap does not add one.
 
 ## 1. Split the renderer engine into feature modules
 
-**Status (2026-10-20): done in 5.0.0-beta.4.** Feature logic lives in `src/engine/`, and per-feature event binding in `src/engine/bind/`. `src/rosiEngine.ts` (about 570 lines) loads settings, looks up the DOM, and calls the bind functions in their original order.
-
+**Status (2026-11-06): partial implementation present.** Feature logic lives in
+`src/engine/`, and per-feature event binding in `src/engine/bind/`.
+`src/rosiEngine.ts` is about 440 lines and still defines `initializeRenderer`;
+`window.rosiModules` remains in use. The extraction is useful existing work, but
+the acceptance criteria below are not all met. No completion is claimed here.
 
 **Problem.** `src/rosiEngine.ts` is 5,943 lines. `initializeRenderer` starts at
 `src/rosiEngine.ts:2370` and runs to about line 5927. It holds 66 nested
@@ -47,11 +53,14 @@ taking explicit inputs.
 
 ## 2. Typed command layer and generated IPC types
 
-**Status (2026-10-20): done in 5.0.0-beta.4.** `src/generated/ipc-types.ts` is generated from the Rust types (test-only `ts-rs`), `src/commands.ts` types every command call, and a contract test checks the command names against `build.rs` and the capability. `window.api` stays as the seam for vitest and E2E; removing it would mean rewriting those harnesses, which is not planned.
+**Status (2026-11-06): partial implementation present.**
+`src/generated/ipc-types.ts`, `src/commands.ts`, and the command contract check
+exist. The renderer API is now the `api` module in `src/api.ts` (B6 part B),
+not `window.api`. Only the E2E hook exposes it, as `window.__ROSI_E2E__.api`
+in E2E builds. The method list is still hand-written, so this item is not done.
 
-
-**Problem.** `src/tauri-bridge.ts:132` assigns `window.api`, a shim that copies
-the v4 Electron contract onto Tauri. The renderer also depends on IIFE modules
+**Problem.** The API object (formerly `src/tauri-bridge.ts`, now `src/api.ts`)
+copies the v4 Electron contract onto Tauri. The renderer also depends on IIFE modules
 exposed as window globals. The settings shape is written twice by hand:
 `src-tauri/src/types.rs:59` (`struct Settings`) and the TypeScript copy in
 `src/rosiEngine.ts:39` (`theme: 'system' | 'light' | 'dark' | 'purple'`). They
@@ -64,14 +73,15 @@ can drift without a compile error. Neither `tauri-specta` nor `ts-rs` is in
    Compare their Tauri 2 support and how they fit the build. Choose one.
 2. Generate a TypeScript file from the Rust command and type definitions during
    the build. Commit the generated file and have CI fail if it is stale.
-3. Replace `window.api` with typed wrappers around `invoke` and event listeners.
-   Migrate one command group at a time, and delete each `window.api` member once
-   no caller uses it.
+3. Replace the hand-written API methods with typed wrappers around `invoke` and
+   event listeners. Migrate one command group at a time. The `api` module exists;
+   the wrappers inside it are still per-method.
 4. Replace the IIFE globals with ES module imports, as item 1 does.
 
 **Acceptance criteria.**
 
-- `window.api` and `window.rosiModules` no longer exist in `src/`.
+- `window.api` and `window.rosiModules` no longer exist in `src/` (met: the API
+  is the `api` module, and the E2E seam is `window.__ROSI_E2E__.api`).
 - No hand-written copy of `Settings` or any other IPC type remains in `src/`.
 - A stale generated file fails CI, and a Rust type change without a matching
   TypeScript change fails the type check.
@@ -81,6 +91,10 @@ can drift without a compile error. Neither `tauri-specta` nor `ts-rs` is in
 
 **Status (2026-10-20): settings enums done in 5.0.0-beta.4** (`Theme`, `DockTab`, `DownloadProfile`, `GpuType`, `UpdateChannel`). Remaining: typed IPC structs in place of `serde_json::Value` plus hand validation.
 
+**Status (2026-11-06): partially implemented; typed IPC structs remain open.**
+The settings enums are present in `src-tauri/src/types.rs`. `serde_json::Value`
+still appears in backend helpers and command/probe code; no claim is made that
+the old acceptance criteria are complete.
 
 **Problem.** Several settings are free-form strings: `theme`
 (`src-tauri/src/types.rs:61`), `dock_tab` (`:63`), `download_mode` (`:65`),
@@ -117,6 +131,14 @@ back to defaults rather than failing the import.
 
 ## 4. Replace the downloader and queue locks with a state thread
 
+**Status (2026-11-06): implemented with residue, see [IMPLEMENTATION-5.1.md](IMPLEMENTATION-5.1.md).**
+`coordinator.rs` runs one command thread with reply channels and revisioned
+`queue-update`, and the condition variables are gone. Residue:
+
+- `queue.rs:40` still has the global `QUEUE: OnceLock<Mutex<QueueState>>`;
+  `downloader.rs:79-85` still has `ACTIVE`, `STARTUP`, `EVENT_PUBLISH` mutexes.
+  Acceptance said "no global Mutex or Condvar".
+
 **Problem.** The download and queue state uses global locks and condition
 variables. `src-tauri/src/downloader.rs:78` holds `ACTIVE: Mutex<Option<Session>>`
 with `SESSION_CHANGED` (`:82`), `FINALIZING` (`:83`), and
@@ -145,6 +167,16 @@ rather than enforced by types.
   process.
 
 ## 5. Async proxy relay on the Tauri runtime
+
+**Status (2026-11-06): implemented with residue, see [IMPLEMENTATION-5.1.md](IMPLEMENTATION-5.1.md).**
+The Tokio relay in `network_security_async.rs` serves 256 active and 128
+pending clients, and answers 503 on overload. The E2E probe is in place. Residue:
+
+- Polling remains: `network_security_async.rs:37,174-185`
+  (`EXTERNAL_CANCELLATION_POLL` 25 ms per client task), `:686-702` (DNS reply
+  polled with `try_recv` + 25 ms sleep); the DNS pool is still blocking threads
+  with a condvar (`network_security.rs:56,398-440`). Acceptance said "no polling
+  sleep" and "no measurable idle CPU".
 
 **Problem.** `src-tauri/src/network_security.rs` is 1,917 lines. It starts
 `PROXY_WORKERS: usize = 32` blocking workers (`:35`). Each `proxy_worker`
@@ -178,6 +210,13 @@ idle relay still wakes up on its sleep.
 
 ## 6. Regroup E2E suites by feature
 
+**Status (2026-11-06): implemented with residue, see [IMPLEMENTATION-5.1.md](IMPLEMENTATION-5.1.md).**
+`e2e/suites.json`, `--group` selection, and `scenarioGroups` in reports are in
+place. Residue:
+
+- 23 files in `e2e/` still named `round*`/`audit*`/`*repair*`;
+  `scripts/test-e2e.js` is 2,430 lines (target < 800).
+
 **Problem.** `e2e/` holds about 95 files and roughly 25,000 lines. 35 of the
 file names refer to audit rounds or repair passes (for example
 `round2-native.spec.js`, `audit4-repairs.spec.js`, and
@@ -205,6 +244,8 @@ names say nothing about what they cover. `scripts/test-e2e.js` is 2,165 lines.
 
 ## 7. Centralize user-facing strings
 
+**Status (2026-11-06): deferred beyond ROSI 5.1.**
+
 **Problem.** User-facing text is written inline in the renderer and the Rust
 backend. `src/rosiEngine.ts` has about 56 lines that call a toast helper, and the Rust
 backend has about 225 `format!` string literals, not all of them user-facing. Wording differs between the two sides, and no one
@@ -231,6 +272,10 @@ can translate or review the full set in one place.
 
 ## 8. macOS sidecar entitlements
 
+**Status (2026-11-06): entitlement redesign deferred beyond ROSI 5.1.** The
+current signing model remains part of platform verification; this roadmap item
+does not authorize a pipeline or entitlement change.
+
 **Problem.** Today `src-tauri/entitlements.plist` grants the whole app, including
 every sidecar, `disable-library-validation` and `allow-unsigned-executable-memory`.
 Only the PyInstaller `rosi-yt-dlp` needs them. The fix is already planned in
@@ -250,6 +295,9 @@ with a dry run before changing the pipeline.
   pipeline update.
 
 ## 9. Signed yt-dlp-only update channel
+
+**Status (2026-11-06): deferred beyond ROSI 5.1.** This is the independent
+yt-dlp update channel explicitly excluded from the accepted 5.1 milestones.
 
 **Problem.** yt-dlp is bundled. `assets/ytdlp-checksums.json` is the committed
 manifest (`scripts/fetch-ytdlp.cjs:37`), and `.github/workflows/ytdlp-watch.yml`
@@ -283,6 +331,8 @@ work, even though only one binary changed.
 
 ## 10. Dual-key updater support
 
+**Status (2026-11-06): deferred beyond ROSI 5.1.**
+
 **Problem.** The vendored updater trusts one Minisign public key, set in
 `src-tauri/tauri.conf.json:115` as `plugins.updater.pubkey`. A rotation needs a
 release signed with the old key, and a compromised old key can publish such a
@@ -309,6 +359,8 @@ release too. [KEY-COMPROMISE.md](KEY-COMPROMISE.md) describes this limit.
 
 ## 11. Deno end of life (about October 2027)
 
+**Status (2026-11-06): deferred beyond ROSI 5.1.**
+
 **Problem.** yt-dlp uses Deno as its default JavaScript runtime for YouTube.
 Deno is expected to shut down around October 2027, and yt-dlp has not picked a
 replacement. ROSI finds Deno by path in `src-tauri/src/deno.rs:19` to `:48`, and
@@ -333,6 +385,10 @@ wizard in `src/rosiEngine.ts`. See also the "Deno end of life" section of
 
 ## 12. Flathub or a hosted Flatpak repository
 
+**Status (2026-11-06): new Flatpak hosting and Linux arm64 deferred beyond
+ROSI 5.1.** Existing Flatpak packaging remains in the required Linux x64
+verification scope.
+
 **Problem.** The Flatpak is a single-file bundle, `ROSI-Linux-x64.flatpak`, on
 the GitHub release. The in-app updater does not apply to Flatpak, so Flatpak
 users update only by downloading the new file by hand. The stable runbook's
@@ -355,3 +411,69 @@ updater gate requires a manual reinstall for the same reason.
 - The release pipeline fails if the repository is not updated for a stable
   release.
 - The runbook's Flatpak updater step is replaced by a `flatpak update` check.
+
+## Deferred to 5.1.x
+
+These items are not required for 5.1.0. They are planned for 5.1.x and have not
+started. The proof gaps for the accepted milestones are in
+[IMPLEMENTATION-5.1.md](IMPLEMENTATION-5.1.md).
+
+### B7: Finish coordinator ownership (roadmap item 4)
+
+**Precondition.** The full gate, `npm run test:all -- --require-clean-proof`,
+must be green on every required platform (macOS 15 and newer, Linux x64,
+Windows x64, and Windows arm64) before this change starts. Today it is green
+only on macOS arm64. Before the port, write failure-mode rows for
+`cancel_session`, `complete_session`, `start_download`, and `on_ytdlp_exit`
+(`src-tauri/src/downloader.rs`). Part B's rows are in
+`e2e/session-ownership.failure-modes.md`.
+
+**Remaining globals** in `src-tauri/src` at this snapshot:
+
+| Symbol                                                    | File and line                 | Role                                                                                  |
+| --------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------- |
+| `QUEUE`: `OnceLock<Mutex<QueueState>>`, read by `state()` | `queue.rs:42`, `queue.rs:197` | **Done (B7 part A).** Removed. `QueueState` is a local in `coordinator::run`; reads are `Snapshot` and `IsRunning` requests. |
+| `PERSISTENCE` (inside `persistence()`)                    | `queue.rs:180`                | **Kept.** Configuration only: file paths and the save function. Its `revisions` mutex serializes the writer's `persist` and `flush`, and the writer tests depend on that, so it stays. |
+| `WRITER` (inside `writer()`)                              | `queue.rs:328`                | **Kept.** A `OnceLock` holding the writer's channel sender, not shared state. |
+| `ACTIVE`: `Mutex<Option<Session>>`, read by `lock()`      | `downloader.rs` (was `:82`) | **Done (B7 part B).** Removed. The session lives on the session owner thread (`downloader/session_owner.rs`). Reads and changes are tasks run in arrival order. |
+| `ACTIVE_PRESENT`: `AtomicBool`                            | `downloader.rs` (was `:85`) | **Done (B7 part B).** Replaced by the owner's read-only `SLOT_OWNER` hint, which `is_busy` and `can_start` read. The install task decides. |
+| `STARTUP`: `Mutex<()>`                                    | `downloader.rs` (was `:87`) | **Done (B7 part B).** Removed. `install` makes the one authoritative check. A same-owner start cancels the occupant by id, awaits it, and retries. |
+| `EVENT_PUBLISH`: `Mutex<()>`                              | `downloader.rs` (was `:88`) | **Done (B7 part B).** Removed. The owner runs every event emit in arrival order, so a replaced session's events are dropped. |
+| `COUNTER`: `AtomicU64`                                    | `downloader.rs:94`          | **Kept with reason.** Mints session ids before install, so no owner round trip is needed. It is an atomic counter, not shared state. |
+
+The `downloader/conversion.rs` and `downloader/publication.rs` modules declare no
+statics. Test-only statics (`SERIAL` at `downloader.rs:1631`) are excluded.
+Outside this list: `coordinator.rs` `COORDINATOR` holds a channel sender, not
+state, and `activity.rs` `state()` is outside the queue and downloader scope.
+
+**Acceptance.** Item 4's criteria apply: no global `Mutex` or `Condvar` in
+`downloader.rs` or `queue.rs`, queue updates keep their order, and the cancel,
+start, and restart E2E scenarios pass repeatedly. The `OnceLock` and atomic
+statics above are listed so the port accounts for them too.
+
+### B6: Renderer seams (roadmap items 1 and 2)
+
+**Status: done (part A and part B).** Not a 5.1.0 blocker, as the
+implementation plan states.
+
+- Part A: `window.rosiModules` is removed. The modules are ES module imports
+  (commit 17d0dea).
+- Part B: `window.api` is removed. The API object is `api` in `src/api.ts`.
+  Renderer callers import it and call `api.method(...)` at call time. The
+  E2E hook sets `window.__ROSI_E2E__.api` to the same object, inside the
+  `VITE_ROSI_E2E` branch only. `src/tauri-bridge.ts` is deleted. The vitest
+  DOM suite mocks `../api`, and the renderer DOM checks pass the module to
+  their loader. Failure modes: `src/api.failure-modes.md`.
+
+**Remaining.** The method signatures in `RosiRendererApi` (`src/api.ts`) are
+still written by hand. They use the generated payload types, but the method
+list is not generated from `commands.ts`. That is outside this item and can be
+done later.
+
+**Removal order (done).** Part A converted the modules to ES imports. Part B
+moved the API into `src/api.ts`, switched every caller to `api.method(...)`
+at call time, and removed the old global.
+
+**Acceptance (met, except the hand-written method list under Remaining).**
+`window.api` and `window.rosiModules` no longer exist in `src/`, and the E2E
+specs read `window.__ROSI_E2E__.api`.

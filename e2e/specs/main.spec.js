@@ -32,7 +32,7 @@ function sha256File(filePath) {
     .digest("hex");
 }
 
-/** Call a `window.api` method in the app and return its resolved value. */
+/** Call a `window.__ROSI_E2E__.api` method in the app and return its resolved value. */
 async function api(method, ...args) {
   // The WebDriver bridge fails on script results containing non-ASCII text,
   // so the page returns ASCII-escaped JSON and Node parses it.
@@ -44,7 +44,7 @@ async function api(method, ...args) {
           (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
         );
       Promise.resolve()
-        .then(() => window.api[name](...params))
+        .then(() => window.__ROSI_E2E__.api[name](...params))
         .then(
           (value) => done(ascii({ ok: true, value: value ?? null })),
           (error) =>
@@ -61,7 +61,9 @@ async function api(method, ...args) {
   );
   const outcome = JSON.parse(encoded);
   if (!outcome.ok)
-    throw new Error(`window.api.${method} failed: ${outcome.error}`);
+    throw new Error(
+      `window.__ROSI_E2E__.api.${method} failed: ${outcome.error}`,
+    );
   return outcome.value;
 }
 
@@ -303,7 +305,9 @@ async function reloadRenderer() {
   await browser.waitUntil(
     async () =>
       browser.execute(
-        () => Boolean(window.__ROSI_E2E__?.ready) && Boolean(window.api),
+        () =>
+          Boolean(window.__ROSI_E2E__?.ready) &&
+          Boolean(window.__ROSI_E2E__?.api),
       ),
     { timeout: 60_000, timeoutMsg: "renderer did not come back after reload" },
   );
@@ -611,7 +615,7 @@ async function restoreWizardSettings(original) {
 }
 
 /**
- * Replace window.api methods with recorders for bridge calls that would
+ * Replace window.__ROSI_E2E__.api methods with recorders for bridge calls that would
  * leave the app (browser, Finder, OS dialogs, notifications). Each stub
  * records its arguments and resolves to the given value.
  */
@@ -620,9 +624,9 @@ async function stubApi(stubs) {
     window.__rosiStubs ??= { original: {}, calls: [] };
     for (const [name, value] of Object.entries(map)) {
       if (!(name in window.__rosiStubs.original)) {
-        window.__rosiStubs.original[name] = window.api[name];
+        window.__rosiStubs.original[name] = window.__ROSI_E2E__.api[name];
       }
-      window.api[name] = (...args) => {
+      window.__ROSI_E2E__.api[name] = (...args) => {
         window.__rosiStubs.calls.push({
           name,
           args: JSON.parse(JSON.stringify(args)),
@@ -649,7 +653,7 @@ function restoreApi() {
   return browser.execute(() => {
     const stubs = window.__rosiStubs;
     if (!stubs) return [];
-    Object.assign(window.api, stubs.original);
+    Object.assign(window.__ROSI_E2E__.api, stubs.original);
     window.__rosiStubs = undefined;
     return stubs.calls;
   });
@@ -779,9 +783,14 @@ describe("ROSI main window", () => {
     await browser.waitUntil(
       async () =>
         browser.execute(
-          () => Boolean(window.__ROSI_E2E__?.ready) && Boolean(window.api),
+          () =>
+            Boolean(window.__ROSI_E2E__?.ready) &&
+            Boolean(window.__ROSI_E2E__?.api),
         ),
-      { timeout: 60_000, timeoutMsg: "E2E hook / window.api not installed" },
+      {
+        timeout: 60_000,
+        timeoutMsg: "E2E hook / window.__ROSI_E2E__.api not installed",
+      },
     );
   });
 
@@ -798,7 +807,7 @@ describe("ROSI main window", () => {
     try {
       await browser.execute(() => {
         const stubs = window.__rosiStubs;
-        if (stubs) Object.assign(window.api, stubs.original);
+        if (stubs) Object.assign(window.__ROSI_E2E__.api, stubs.original);
         window.__rosiStubs = undefined;
       });
       const patch = Object.fromEntries(
@@ -1666,6 +1675,58 @@ describe("ROSI main window", () => {
       expectedComponentText,
       "the rendered yt-dlp component license differs from the packaged source",
     );
+    // Licence links in the frame must reach api.openExternal through the main
+    // window's postMessage listener. Forged or unsafe messages must not.
+    const linkUrl = "https://www.gnu.org/licenses/old-licenses/gpl-2.0.html";
+    await browser.execute(() => {
+      const api = window.__ROSI_E2E__.api;
+      window.__rosiLicenseOriginalOpen = api.openExternal;
+      window.__rosiLicenseOpened = [];
+      api.openExternal = async (url) => {
+        window.__rosiLicenseOpened.push(url);
+        return { ok: true, data: { opened: true } };
+      };
+    });
+    try {
+      // The frame's CSP blocks WebDriver script injection, so the click is a
+      // DOM click on the frame's own link. It runs the frame's click handler,
+      // which posts the message to this window.
+      const clicked = await browser.execute((url) => {
+        const frameDoc =
+          document.getElementById("licenses-frame")?.contentDocument;
+        const link = [
+          ...(frameDoc?.querySelectorAll("a[data-external]") ?? []),
+        ].find((candidate) => candidate.getAttribute("data-external") === url);
+        if (!link) return false;
+        link.click();
+        return true;
+      }, linkUrl);
+      assert.ok(clicked, "licence link is missing from the frame");
+      await browser.waitUntil(
+        () => browser.execute(() => window.__rosiLicenseOpened.length === 1),
+        { timeout: 10_000, timeoutMsg: "licence link did not open" },
+      );
+      const afterLink = await browser.execute(() => window.__rosiLicenseOpened);
+      assert.deepEqual(afterLink, [linkUrl]);
+
+      // The main window posting the same shape must not open anything.
+      await browser.execute((url) => {
+        window.postMessage(
+          { type: "rosi-open-external", url },
+          window.location.origin,
+        );
+      }, linkUrl);
+      await browser.pause(300);
+      const afterForged = await browser.execute(
+        () => window.__rosiLicenseOpened,
+      );
+      assert.deepEqual(afterForged, [linkUrl]);
+    } finally {
+      await browser.switchToParentFrame();
+      await browser.execute(() => {
+        window.__ROSI_E2E__.api.openExternal = window.__rosiLicenseOriginalOpen;
+      });
+    }
     await browser.execute(() =>
       document.getElementById("close-licenses")?.click(),
     );
@@ -1684,7 +1745,7 @@ describe("ROSI main window", () => {
     await browser.pause(1500);
     const after = await browser.execute(() => ({
       href: window.location.href,
-      api: typeof window.api?.getAppVersion,
+      api: typeof window.__ROSI_E2E__?.api?.getAppVersion,
     }));
     assert.equal(after.href, before);
     assert.equal(after.api, "function");
@@ -1757,12 +1818,27 @@ describe("ROSI main window", () => {
       : `${MEDIA}/clip-one.mp4`;
     const formats = await api("getFormats", url);
     assert.equal(formats.ok, true, formats.error?.message);
+    assert.ok(Array.isArray(formats.data.formats));
+    assert.ok(
+      formats.data.formats.every(
+        (format) =>
+          typeof format.formatId === "string" &&
+          ["audio", "video", "audioVideo"].includes(format.streamKind),
+      ),
+    );
     if (HAS_FFMPEG) {
-      assert.match(formats.data, /audio only/);
-      assert.match(formats.data, /video only/);
+      assert.ok(
+        formats.data.formats.some((format) => format.streamKind === "audio"),
+      );
+      assert.ok(
+        formats.data.formats.some((format) => format.streamKind === "video"),
+      );
     }
     record("formats", {
-      lines: formats.data.split(/\r?\n/).filter(Boolean).length,
+      formats: formats.data.formats.length,
+      streamKinds: [
+        ...new Set(formats.data.formats.map((format) => format.streamKind)),
+      ],
     });
   });
 
@@ -1927,7 +2003,9 @@ describe("ROSI main window", () => {
   });
 
   it("switches Queue, Activity, and Console in one dock and remembers the tab", async () => {
-    await browser.execute(() => window.rosiModules.dock.selectTab("queue"));
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("queue"),
+    );
     let state = await dockState();
     assert.deepEqual(state.selected, ["queue"]);
     assert.deepEqual(state.visiblePanels, ["queueSection"]);
@@ -1990,7 +2068,9 @@ describe("ROSI main window", () => {
       "2",
     );
     await api("clearQueue");
-    await browser.execute(() => window.rosiModules.dock.selectTab("activity"));
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("activity"),
+    );
     await waitForSavedSetting("dockTab", "activity", "dock tab was not saved");
 
     await reloadRenderer();
@@ -2000,7 +2080,9 @@ describe("ROSI main window", () => {
     );
     state = await dockState();
     assert.deepEqual(state.visiblePanels, ["download-history"]);
-    await browser.execute(() => window.rosiModules.dock.selectTab("queue"));
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("queue"),
+    );
     await waitForSavedSetting(
       "dockTab",
       "queue",
@@ -2062,7 +2144,8 @@ describe("ROSI main window", () => {
 
   it("accepts links dropped onto the download card", async () => {
     const link = `${MEDIA}/clip-two.mp4`;
-    const dropped = await browser.execute((value) => {
+    // The drop reads the backend's link split, so wait for the value to land.
+    const dropped = await browser.executeAsync((value, done) => {
       const card = document.querySelector(".download-card");
       const input = document.getElementById("url");
       input.value = "";
@@ -2082,12 +2165,21 @@ describe("ROSI main window", () => {
           dataTransfer: data,
         }),
       );
-      return {
-        value: input.value,
-        highlighted,
-        overPrevented: over.defaultPrevented,
-        cleared: !card.classList.contains("drag-over"),
+      const cleared = !card.classList.contains("drag-over");
+      const started = Date.now();
+      const settle = () => {
+        if (input.value === value || Date.now() - started > 5000) {
+          done({
+            value: input.value,
+            highlighted,
+            overPrevented: over.defaultPrevented,
+            cleared,
+          });
+          return;
+        }
+        setTimeout(settle, 50);
       };
+      settle();
     }, link);
     await typeUrl("");
     assert.equal(dropped.value, link);
@@ -2160,7 +2252,7 @@ describe("ROSI main window", () => {
 
   it("shrinks the dock to its empty message and grows it for content", async () => {
     const originalTab = await browser.execute(
-      () => window.rosiModules.dock.getState().tab,
+      () => window.__ROSI_E2E__.modules.dock.getState().tab,
     );
     const measure = () =>
       browser.execute(() => {
@@ -2184,7 +2276,9 @@ describe("ROSI main window", () => {
     };
 
     await api("clearQueue");
-    await browser.execute(() => window.rosiModules.dock.selectTab("queue"));
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("queue"),
+    );
     const empty = await waitForEmpty(
       true,
       "empty queue did not shrink the dock",
@@ -2205,10 +2299,12 @@ describe("ROSI main window", () => {
 
     await api("clearQueue");
     await waitForEmpty(true, "cleared queue did not shrink the dock again");
-    await browser.execute(() => window.rosiModules.dock.selectTab("activity"));
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("activity"),
+    );
     const activity = await waitForEmpty(false, "activity with rows is empty");
     await browser.execute(
-      (tab) => window.rosiModules.dock.selectTab(tab),
+      (tab) => window.__ROSI_E2E__.modules.dock.selectTab(tab),
       originalTab,
     );
     record("dock-empty", {
@@ -2290,7 +2386,9 @@ describe("ROSI main window", () => {
 
   it("draws every icon from the bundled Lucide set", async () => {
     const icons = await browser.execute(() => {
-      window.rosiModules.ui.showToast("Lucide check", { type: "success" });
+      window.__ROSI_E2E__.modules.ui.showToast("Lucide check", {
+        type: "success",
+      });
       const svgs = [...document.querySelectorAll("svg")];
       return {
         placeholders: document.querySelectorAll("span[data-icon]").length,
@@ -2387,7 +2485,10 @@ describe("ROSI main window", () => {
     const result = await browser.execute(() => {
       const pictographic = /\p{Extended_Pictographic}/u;
       const probe = document.createElement("span");
-      window.rosiModules.icons.renderStatus(probe, "\u274C Download failed.");
+      window.__ROSI_E2E__.modules.icons.renderStatus(
+        probe,
+        "\u274C Download failed.",
+      );
       const output = document.getElementById("output");
       return {
         probeIcon: probe.querySelector("svg")?.dataset.icon ?? null,
@@ -2422,9 +2523,11 @@ describe("ROSI main window", () => {
 
   it("keeps console lines copyable, capped, and clearable", async () => {
     const originalTab = await browser.execute(
-      () => window.rosiModules.dock.getState().tab,
+      () => window.__ROSI_E2E__.modules.dock.getState().tab,
     );
-    await browser.execute(() => window.rosiModules.dock.selectTab("console"));
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("console"),
+    );
     const result = await browser.execute(() => {
       const output = document.getElementById("output");
       const lines = () =>
@@ -2435,7 +2538,10 @@ describe("ROSI main window", () => {
       const copied = output.textContent.split("\n").slice(0, -1);
       const before = { lines: lines(), copied };
       const bulk = Array.from({ length: 4100 }, (_, i) => `bulk line ${i}`);
-      window.rosiModules.ui.appendConsoleOutput(output, bulk.join("\n"));
+      window.__ROSI_E2E__.modules.ui.appendConsoleOutput(
+        output,
+        bulk.join("\n"),
+      );
       const after = lines();
       return {
         before,
@@ -2476,7 +2582,7 @@ describe("ROSI main window", () => {
       "cleared console did not shrink the dock",
     );
     await browser.execute(
-      (tab) => window.rosiModules.dock.selectTab(tab),
+      (tab) => window.__ROSI_E2E__.modules.dock.selectTab(tab),
       originalTab,
     );
     record("console-log", { capped: result.count, firstKept: result.first });
@@ -2484,7 +2590,7 @@ describe("ROSI main window", () => {
 
   it("keeps Activity row actions as quiet icon buttons", async () => {
     await browser.execute(() => {
-      window.rosiModules.dock.selectTab("activity");
+      window.__ROSI_E2E__.modules.dock.selectTab("activity");
       document.activeElement?.blur();
     });
     await settle();
@@ -2557,7 +2663,9 @@ describe("ROSI main window", () => {
   });
 
   it("runs each Activity row action", async () => {
-    await browser.execute(() => window.rosiModules.dock.selectTab("activity"));
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("activity"),
+    );
     await settle();
     const activity = (await api("getDownloadActivity")).data;
     const target = activity.find(
@@ -2591,8 +2699,8 @@ describe("ROSI main window", () => {
     // Open folder: stub the bridge so the test does not open Finder.
     await browser.execute(() => {
       window.__rosiOpened = [];
-      window.__rosiOpenFileLocation = window.api.openFileLocation;
-      window.api.openFileLocation = async (filePath) => {
+      window.__rosiOpenFileLocation = window.__ROSI_E2E__.api.openFileLocation;
+      window.__ROSI_E2E__.api.openFileLocation = async (filePath) => {
         window.__rosiOpened.push(filePath);
         return { ok: true };
       };
@@ -2603,7 +2711,7 @@ describe("ROSI main window", () => {
     );
     await settle(300);
     const opened = await browser.execute(() => {
-      window.api.openFileLocation = window.__rosiOpenFileLocation;
+      window.__ROSI_E2E__.api.openFileLocation = window.__rosiOpenFileLocation;
       return window.__rosiOpened;
     });
     assert.deepEqual(
@@ -3074,17 +3182,17 @@ describe("ROSI main window", () => {
               ? "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15"
               : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         });
-        window.api.checkDenoInstalled = async () => {
+        window.__ROSI_E2E__.api.checkDenoInstalled = async () => {
           if (how.check === "throw") throw new Error("lookup failed");
           return false;
         };
-        window.api.installDeno = async () => {
+        window.__ROSI_E2E__.api.installDeno = async () => {
           window.__rosiDeno.installs += 1;
           const next = how.installs.shift();
           if (next === "fail") throw new Error("winget exploded");
           return next === "cancel" ? { cancelled: true } : { success: true };
         };
-        window.api.openExternal = async (url) => {
+        window.__ROSI_E2E__.api.openExternal = async (url) => {
           window.__rosiDeno.external.push(url);
         };
       }, mode);
@@ -3291,7 +3399,10 @@ describe("ROSI main window", () => {
       });
     };
     const selectDock = (tab) =>
-      browser.execute((name) => window.rosiModules.dock.selectTab(name), tab);
+      browser.execute(
+        (name) => window.__ROSI_E2E__.modules.dock.selectTab(name),
+        tab,
+      );
 
     await resizeWindow(1200, 900);
     await typeUrl("");
@@ -3458,13 +3569,28 @@ describe("ROSI main window", () => {
       !defaults.sponsorblockRemove,
       "SponsorBlock change was not saved",
     );
-    await browser.execute(() =>
-      document
-        .querySelector(
-          '.settings-section-reset[data-reset-section="enhancements"]',
-        )
-        .click(),
+    const resetEnhancements = () =>
+      browser.execute(() =>
+        document
+          .querySelector(
+            '.settings-section-reset[data-reset-section="enhancements"]',
+          )
+          .click(),
+      );
+    // Reset asks first: Cancel must leave the changed values alone.
+    await resetEnhancements();
+    await waitForModal(true, "section reset did not ask for confirmation");
+    await clickModalButton("Cancel");
+    await waitForModal(false, "Cancel did not close the reset prompt");
+    assert.equal(
+      settingsOnDisk().embedMetadata,
+      !defaults.embedMetadata,
+      "Cancel changed the metadata setting",
     );
+    await resetEnhancements();
+    await waitForModal(true, "section reset did not reopen the prompt");
+    await clickModalButton("Reset section");
+    await waitForModal(false, "confirmed reset did not close the prompt");
     await waitForSavedSetting(
       "embedMetadata",
       defaults.embedMetadata,
@@ -3655,12 +3781,19 @@ describe("ROSI main window", () => {
     );
     await clickById("resetSettings");
     modal = await waitForModal(true, "Reset All asked nothing the second time");
+    const confirmedAt = Date.now();
     await clickModalButton(modal.buttons.find((label) => /reset/i.test(label)));
-    await settle(300);
+    // The confirm runs after the modal's hide timer and the settings flush
+    // round trip, so wait for the bridge call itself instead of a fixed delay.
+    await browser.waitUntil(
+      async () => (await stubCalls("resetSettings")).length > 0,
+      { timeout: 10_000, interval: 50, timeoutMsg: "confirming did not reset" },
+    );
+    const resetMs = Date.now() - confirmedAt;
     const calls = await stubCalls("resetSettings");
     await restoreApi();
     assert.equal(calls.length, 1, "confirming did not reset");
-    record("settings-reset-all", { prompt: modal.title });
+    record("settings-reset-all", { prompt: modal.title, resetMs });
   });
 
   it("opens every help and support link at the right address", async () => {
@@ -4095,7 +4228,9 @@ describe("ROSI main window", () => {
 
   it("runs the queue entirely from its controls", async () => {
     await api("clearQueue");
-    await browser.execute(() => window.rosiModules.dock.selectTab("queue"));
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("queue"),
+    );
     const urls = [`${MEDIA}/clip-two.mp4?ui=1`, `${MEDIA}/clip-three.mp4?ui=1`];
     const fillQueueInput = (text) =>
       browser.execute((value) => {
@@ -4185,6 +4320,69 @@ describe("ROSI main window", () => {
       timeoutMsg: "Clear did not empty the queue",
     });
     record("queue-controls", { completed: urls.length, cancelled: 1 });
+  });
+
+  it("splits a mixed paste through the backend and queues only the safe links", async () => {
+    await api("clearQueue");
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("queue"),
+    );
+    const kept = [
+      `${MEDIA}/clip-two.mp4?paste=1`,
+      `${MEDIA}/clip-three.mp4?paste=1`,
+    ];
+    // Private and local hosts and a non-http scheme must be refused.
+    const refused = [
+      "http://192.168.1.10/private.mp4",
+      "http://localhost:8080/local.mp4",
+      "ftp://files.example.com/clip.mp4",
+    ];
+    const mixed = [
+      "# pasted from chat, comment lines are skipped",
+      `${kept[0]} ${refused[0]} please`,
+      `${kept[1]}#t=5 ${kept[0]}`,
+      `${refused[1]}\n${refused[2]}`,
+    ].join("\n");
+
+    const direct = await api("extractQueueUrls", mixed);
+    assert.equal(direct.ok, true, "extract_queue_urls refused the paste");
+    assert.deepEqual(direct.data.urls, kept, "backend urls differ");
+    assert.deepEqual(direct.data.rejected, refused, "backend rejected differ");
+    assert.equal(direct.data.rejectedCount, refused.length);
+    const blank = await api("extractQueueUrls", "# only a note\n   ");
+    assert.deepEqual(blank.data.urls, []);
+    const oversized = await api("extractQueueUrls", "a".repeat(256 * 1024 + 1));
+    assert.equal(oversized.ok, false, "oversized paste was not refused");
+
+    // Paste into the real queue box and press Add.
+    await browser.execute((value) => {
+      const input = document.getElementById("queueUrlInput");
+      input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }, mixed);
+    await clickById("addToQueueBtn");
+    await browser.waitUntil(
+      async () => (await api("getQueue")).length === kept.length,
+      { timeout: 10_000, timeoutMsg: "Add did not queue the safe links" },
+    );
+    const queued = (await api("getQueue")).map((item) => item.url);
+    assert.deepEqual(queued, kept, "queue differs from the safe links");
+    const status = await browser.execute(
+      () => document.getElementById("queueStatusMessage")?.textContent ?? "",
+    );
+    assert.match(status, /3 ignored as invalid\./, `status was: ${status}`);
+    record("queue-paste-extraction", {
+      queued: queued.length,
+      rejectedCount: direct.data.rejectedCount,
+      rejected: direct.data.rejected,
+      command: {
+        ok: direct.ok,
+        urls: direct.data.urls,
+        blank: blank.data.urls,
+      },
+      oversizedRefused: oversized.ok === false,
+    });
+    await api("clearQueue");
   });
 
   it("changes the save folder and asks every time when told to", async () => {
@@ -4349,6 +4547,7 @@ describe("ROSI main window", () => {
     const target = !before.notifications;
     // Flip a toggle (saved after a 300 ms debounce) and close immediately:
     // the close flow must flush it before the window goes away.
+    const closeAt = Date.now();
     await browser.execute((checked) => {
       const toggle = document.getElementById("notificationsToggle");
       toggle.checked = checked;
@@ -4370,6 +4569,7 @@ describe("ROSI main window", () => {
         timeoutMsg: "main window never closed",
       },
     );
+    const closeMs = Date.now() - closeAt;
     const log = fs.readFileSync(logFile, "utf8");
     assert.match(
       log,
@@ -4380,6 +4580,6 @@ describe("ROSI main window", () => {
       fs.readFileSync(path.join(DATA_DIR, "settings.json"), "utf8"),
     );
     assert.equal(after.notifications, target);
-    record("close-flow", { flushedSetting: "notifications" });
+    record("close-flow", { flushedSetting: "notifications", closeMs });
   });
 });

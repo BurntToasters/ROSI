@@ -1,5 +1,6 @@
 // Startup binding for global keyboard shortcuts.
-import { dockModule, isMac } from '../core';
+import { isMac } from '../core';
+import { selectTab as selectDockTab } from '../../modules/dock';
 import {
   getTopActiveOverlayId,
   hideLicenses,
@@ -80,7 +81,7 @@ export function bindKeyboardShortcuts() {
       !typingOnMac
     ) {
       event.preventDefault();
-      dockModule?.selectTab(dockTab, { focus: true });
+      selectDockTab(dockTab, { focus: true });
     }
 
     if (modifierPressed && event.key === 'f') {

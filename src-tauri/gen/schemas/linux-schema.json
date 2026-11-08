@@ -411,6 +411,30 @@
           "markdownDescription": "Enables the download_video command without any pre-configured scope."
         },
         {
+          "description": "Enables the e2e_cancel_close_request command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-e2e-cancel-close-request",
+          "markdownDescription": "Enables the e2e_cancel_close_request command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the e2e_emit_stale_download_events command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-e2e-emit-stale-download-events",
+          "markdownDescription": "Enables the e2e_emit_stale_download_events command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the e2e_network_pipelining_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-e2e-network-pipelining-probe",
+          "markdownDescription": "Enables the e2e_network_pipelining_probe command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the e2e_updater_install_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-e2e-updater-install-probe",
+          "markdownDescription": "Enables the e2e_updater_install_probe command without any pre-configured scope."
+        },
+        {
           "description": "Enables the export_settings command without any pre-configured scope.",
           "type": "string",
           "const": "allow-export-settings",
@@ -427,6 +451,12 @@
           "type": "string",
           "const": "allow-get-beta-updater-target",
           "markdownDescription": "Enables the get_beta_updater_target command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_compact_updater_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-compact-updater-target",
+          "markdownDescription": "Enables the get_compact_updater_target command without any pre-configured scope."
         },
         {
           "description": "Enables the get_default_settings command without any pre-configured scope.",
@@ -657,6 +687,30 @@
           "markdownDescription": "Denies the download_video command without any pre-configured scope."
         },
         {
+          "description": "Denies the e2e_cancel_close_request command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-e2e-cancel-close-request",
+          "markdownDescription": "Denies the e2e_cancel_close_request command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the e2e_emit_stale_download_events command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-e2e-emit-stale-download-events",
+          "markdownDescription": "Denies the e2e_emit_stale_download_events command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the e2e_network_pipelining_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-e2e-network-pipelining-probe",
+          "markdownDescription": "Denies the e2e_network_pipelining_probe command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the e2e_updater_install_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-e2e-updater-install-probe",
+          "markdownDescription": "Denies the e2e_updater_install_probe command without any pre-configured scope."
+        },
+        {
           "description": "Denies the export_settings command without any pre-configured scope.",
           "type": "string",
           "const": "deny-export-settings",
@@ -673,6 +727,12 @@
           "type": "string",
           "const": "deny-get-beta-updater-target",
           "markdownDescription": "Denies the get_beta_updater_target command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_compact_updater_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-compact-updater-target",
+          "markdownDescription": "Denies the get_compact_updater_target command without any pre-configured scope."
         },
         {
           "description": "Denies the get_default_settings command without any pre-configured scope.",
@@ -873,6 +933,12 @@
           "markdownDescription": "Enables the default_window_icon command without any pre-configured scope."
         },
         {
+          "description": "Enables the exit command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:app:allow-exit",
+          "markdownDescription": "Enables the exit command without any pre-configured scope."
+        },
+        {
           "description": "Enables the fetch_data_store_identifiers command without any pre-configured scope.",
           "type": "string",
           "const": "core:app:allow-fetch-data-store-identifiers",
@@ -961,6 +1027,12 @@
           "type": "string",
           "const": "core:app:deny-default-window-icon",
           "markdownDescription": "Denies the default_window_icon command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the exit command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:app:deny-exit",
+          "markdownDescription": "Denies the exit command without any pre-configured scope."
         },
         {
           "description": "Denies the fetch_data_store_identifiers command without any pre-configured scope.",
@@ -2223,6 +2295,12 @@
           "markdownDescription": "Enables the set_fullscreen command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_fullscreen_on_monitor command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:window:allow-set-fullscreen-on-monitor",
+          "markdownDescription": "Enables the set_fullscreen_on_monitor command without any pre-configured scope."
+        },
+        {
           "description": "Enables the set_icon command without any pre-configured scope.",
           "type": "string",
           "const": "core:window:allow-set-icon",
@@ -2691,6 +2769,12 @@
           "markdownDescription": "Denies the set_fullscreen command without any pre-configured scope."
         },
         {
+          "description": "Denies the set_fullscreen_on_monitor command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:window:deny-set-fullscreen-on-monitor",
+          "markdownDescription": "Denies the set_fullscreen_on_monitor command without any pre-configured scope."
+        },
+        {
           "description": "Denies the set_icon command without any pre-configured scope.",
           "type": "string",
           "const": "core:window:deny-set-icon",
@@ -2919,10 +3003,10 @@
           "markdownDescription": "Denies the save command without any pre-configured scope."
         },
         {
-          "description": "This permission set configures which\nnotification features are by default exposed.\n\n#### Granted Permissions\n\nIt allows all notification related features.\n\n\n#### This default permission set includes:\n\n- `allow-is-permission-granted`\n- `allow-request-permission`\n- `allow-notify`\n- `allow-register-action-types`\n- `allow-register-listener`\n- `allow-cancel`\n- `allow-get-pending`\n- `allow-remove-active`\n- `allow-get-active`\n- `allow-check-permissions`\n- `allow-show`\n- `allow-batch`\n- `allow-list-channels`\n- `allow-delete-channel`\n- `allow-create-channel`\n- `allow-permission-state`",
+          "description": "This permission set configures which\nnotification features are by default exposed.\n\n#### Granted Permissions\n\nIt allows all notification related features.\n\n\n#### This default permission set includes:\n\n- `allow-is-permission-granted`\n- `allow-request-permission`\n- `allow-notify`\n- `allow-register-action-types`\n- `allow-register-listener`\n- `allow-remove-listener`\n- `allow-cancel`\n- `allow-get-pending`\n- `allow-remove-active`\n- `allow-get-active`\n- `allow-check-permissions`\n- `allow-show`\n- `allow-batch`\n- `allow-list-channels`\n- `allow-delete-channel`\n- `allow-create-channel`\n- `allow-permission-state`",
           "type": "string",
           "const": "notification:default",
-          "markdownDescription": "This permission set configures which\nnotification features are by default exposed.\n\n#### Granted Permissions\n\nIt allows all notification related features.\n\n\n#### This default permission set includes:\n\n- `allow-is-permission-granted`\n- `allow-request-permission`\n- `allow-notify`\n- `allow-register-action-types`\n- `allow-register-listener`\n- `allow-cancel`\n- `allow-get-pending`\n- `allow-remove-active`\n- `allow-get-active`\n- `allow-check-permissions`\n- `allow-show`\n- `allow-batch`\n- `allow-list-channels`\n- `allow-delete-channel`\n- `allow-create-channel`\n- `allow-permission-state`"
+          "markdownDescription": "This permission set configures which\nnotification features are by default exposed.\n\n#### Granted Permissions\n\nIt allows all notification related features.\n\n\n#### This default permission set includes:\n\n- `allow-is-permission-granted`\n- `allow-request-permission`\n- `allow-notify`\n- `allow-register-action-types`\n- `allow-register-listener`\n- `allow-remove-listener`\n- `allow-cancel`\n- `allow-get-pending`\n- `allow-remove-active`\n- `allow-get-active`\n- `allow-check-permissions`\n- `allow-show`\n- `allow-batch`\n- `allow-list-channels`\n- `allow-delete-channel`\n- `allow-create-channel`\n- `allow-permission-state`"
         },
         {
           "description": "Enables the batch command without any pre-configured scope.",
@@ -3007,6 +3091,12 @@
           "type": "string",
           "const": "notification:allow-remove-active",
           "markdownDescription": "Enables the remove_active command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remove_listener command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:allow-remove-listener",
+          "markdownDescription": "Enables the remove_listener command without any pre-configured scope."
         },
         {
           "description": "Enables the request_permission command without any pre-configured scope.",
@@ -3103,6 +3193,12 @@
           "type": "string",
           "const": "notification:deny-remove-active",
           "markdownDescription": "Denies the remove_active command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_listener command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:deny-remove-listener",
+          "markdownDescription": "Denies the remove_listener command without any pre-configured scope."
         },
         {
           "description": "Denies the request_permission command without any pre-configured scope.",

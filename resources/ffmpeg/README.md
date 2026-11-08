@@ -51,7 +51,13 @@ resources/ffmpeg/
 ## Notes
 
 - Use **GPL builds** (not LGPL) for x264/x265 support
-- Use **static builds** (not shared) for easier bundling
+- Use **static builds** (not shared) for easier bundling on Windows and macOS.
+  The **Linux x64** binaries are the exception: they are **dynamically linked**
+  against glibc (`/lib64/ld-linux-x86-64.so.2`, per `file`). Keep them that way
+  in a future bump; do not treat the dynamic link as a defect to fix.
+  `scripts/check-linux-glibc.js` guards the glibc floor: the Linux release fails
+  if a shipped binary needs a glibc newer than the documented floor (Ubuntu 24.04,
+  glibc 2.39). Any new FFmpeg build must pass that check.
 - Ensure binaries have execute permissions on macOS/Linux (`chmod +x`)
 - Verify binaries before a build with `npm run ffmpeg:check:all`; `npm run prepare:sidecars` re-verifies them before packaging
 - License text and GPLv2 written source offer ship with the app under the bundle resources at `ffmpeg/LICENSE.txt` and `ffmpeg/SOURCE_OFFER.txt`

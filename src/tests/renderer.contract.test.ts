@@ -134,7 +134,7 @@ describe('renderer wiring and accessibility contracts', () => {
     expect(engine).toMatch(/aria-current', 'step'/);
     expect(engine).toMatch(/busy: true/);
     expect(engine).toMatch(
-      /primary: true,\s*\n\s*action: \(\) => \{\s*\n\s*void window\.api\.openExternal\('https:\/\/rosie\.run\/support'\)/
+      /primary: true,\s*\n\s*action: \(\) => \{\s*\n\s*void api\.openExternal\('https:\/\/rosie\.run\/support'\)/
     );
 
     expect(
