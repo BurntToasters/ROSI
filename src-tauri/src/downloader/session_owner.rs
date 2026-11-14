@@ -55,8 +55,10 @@ fn run_owner(receiver: Receiver<Task>) {
     ON_OWNER.with(|flag| flag.set(true));
     let mut slot: Option<Session> = None;
     for task in receiver {
-        // A panicking task drops its reply, so its caller sees `None`. The
-        // owner keeps serving, as the old recovered mutex did.
+        // Dev and test builds unwind: a panicking task drops its reply, so its
+        // caller sees `None`, and the owner keeps serving. Release builds set
+        // `panic = "abort"` (Cargo.toml), so this catch never runs there; the
+        // panic hook logs first and the process aborts.
         if catch_unwind(AssertUnwindSafe(|| task(&mut slot))).is_err() {
             crate::logging::error("Download session task panicked.");
         }

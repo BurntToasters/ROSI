@@ -40,10 +40,16 @@ const sourceFiles = [
   "e2e/v5-fixes/downloader/install-fallback.spec.js",
   "e2e/v5-fixes/downloader/orphan-sweep.spec.js",
   "e2e/v5-fixes/downloader/panic-trace.spec.js",
+  "e2e/v5-fixes/downloader/cancel-ownership.spec.js",
+  "e2e/v5-fixes/downloader/long-path.spec.js",
   "e2e/v5-fixes/downloader/failure-modes.md",
   "src-tauri/src/fs_util.rs",
   "src-tauri/src/staging.rs",
   "src-tauri/src/logging.rs",
+  "src-tauri/src/downloader.rs",
+  "src-tauri/src/downloader/publication.rs",
+  "src-tauri/src/downloader/session_owner.rs",
+  "src-tauri/src/queue.rs",
 ];
 fs.mkdirSync(artifactRoot, { recursive: true });
 const sources = sourceFiles.map((source) => {
@@ -320,6 +326,16 @@ try {
   const panicProfile = createE2eProfile();
   runnerProfiles.push(panicProfile);
   cases.push(runSpec("panic-trace", panicProfile, {}, dirFor("panic-trace")));
+
+  const cancelProfile = createE2eProfile();
+  runnerProfiles.push(cancelProfile);
+  cases.push(
+    runSpec("cancel-ownership", cancelProfile, {}, dirFor("cancel-ownership")),
+  );
+
+  const longPathProfile = createE2eProfile();
+  runnerProfiles.push(longPathProfile);
+  cases.push(runSpec("long-path", longPathProfile, {}, dirFor("long-path")));
 } finally {
   for (const profile of runnerProfiles) {
     fs.rmSync(profile.profileDir, { recursive: true, force: true });

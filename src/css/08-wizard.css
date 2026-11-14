@@ -437,7 +437,7 @@
 }
 
 .wizard-field .wizard-field-error {
-  color: var(--danger);
+  color: var(--danger-text);
 }
 
 .wizard-field-error:empty {

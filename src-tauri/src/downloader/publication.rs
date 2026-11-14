@@ -47,13 +47,17 @@ fn install_download_output_named(
         let destination = download_dir.join(name);
         match install_no_replace(temp, &destination) {
             Ok(()) => {
-                crate::fs_util::sync_directory(download_dir).map_err(|error| {
-                    format!(
+                // The file is already installed under its final name, and the
+                // staged source is gone. A failed directory sync is reported as
+                // a warning: returning an error here would report the download
+                // as failed and drop the installed file from the results.
+                if let Err(error) = crate::fs_util::sync_directory(download_dir) {
+                    crate::logging::warn(&format!(
                         "Could not sync download directory {} after installing {}: {error}",
                         download_dir.display(),
                         destination.display()
-                    )
-                })?;
+                    ));
+                }
                 return Ok(destination);
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,

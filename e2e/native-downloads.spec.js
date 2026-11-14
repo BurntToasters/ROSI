@@ -553,7 +553,8 @@ describe("ROSI round 2 native repairs", () => {
         skipped: true,
         skipReason:
           "The POSIX FFmpeg gate wrapper used to replace a source during conversion is unavailable on Windows.",
-        invariantPassed: true,
+        // A skipped record proves nothing, so it does not report a pass.
+        invariantPassed: null,
       });
     } else {
       const replacementUrl = `${mediaUrl}/replace-source.mp4?round2-replacement=1`;
@@ -623,8 +624,11 @@ describe("ROSI round 2 native repairs", () => {
 
     const deno = await probeDeno();
     record("deno-version-probe", deno);
+    // A skipped probe (Windows: POSIX fixture) reports null and proves nothing.
     assert.equal(
-      deno.invariantPassed,
+      deno.skipped === true
+        ? deno.invariantPassed === null
+        : deno.invariantPassed,
       true,
       "Deno detection accepted a broken executable or rejected a valid one",
     );
@@ -767,7 +771,8 @@ describe("ROSI round 2 native repairs", () => {
       skipped: true,
       skipReason:
         "This suite does not force a real app helper leader to exit while a descendant keeps an inherited pipe open.",
-      invariantPassed: true,
+      // Unproven, so no pass: a skipped record reports null.
+      invariantPassed: null,
     });
   });
 });
@@ -779,7 +784,8 @@ async function probeDeno() {
       skipped: true,
       skipReason:
         "The isolated executable fixture currently uses a POSIX script.",
-      invariantPassed: true,
+      // A skipped record proves nothing, so it does not report a pass.
+      invariantPassed: null,
     };
   }
   const denoPath = env.ROSI_ROUND2_NATIVE_DENO;

@@ -137,7 +137,7 @@
   --btn-shadow-active: var(--button-danger-active-shadow);
   --btn-border: color-mix(in srgb, var(--danger) 35%, transparent);
   --btn-border-hover: var(--danger);
-  --btn-fg: var(--danger);
+  --btn-fg: var(--danger-text);
   --btn-fg-hover: var(--danger-contrast);
 }
 
@@ -158,12 +158,12 @@
 .btn--danger-hover {
   --btn-bg-hover: var(--danger-subtle);
   --btn-border-hover: color-mix(in srgb, var(--danger) 55%, transparent);
-  --btn-fg-hover: var(--danger);
+  --btn-fg-hover: var(--danger-text);
 }
 
 .btn--accent-hover {
   --btn-border-hover: var(--accent);
-  --btn-fg-hover: var(--accent-light);
+  --btn-fg-hover: var(--accent-text);
 }
 
 .btn--xs {

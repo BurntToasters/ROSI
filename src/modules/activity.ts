@@ -1,3 +1,4 @@
+import { copyText } from './clipboard';
 import { formatBytes } from './downloads';
 import { api } from '../api';
 
@@ -312,9 +313,10 @@ export function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPane
             `Copy source link for ${row.title}`,
             'copy',
             () => {
-              void navigator.clipboard.writeText(sourceUrl).then(
-                () => showToast('Source link copied.', { type: 'info' }),
-                () => showToast('Could not copy the source link.', { type: 'warning' })
+              void copyText(sourceUrl).then((copied) =>
+                copied
+                  ? showToast('Source link copied.', { type: 'info' })
+                  : showToast('Could not copy the source link.', { type: 'warning' })
               );
             }
           )
@@ -371,15 +373,6 @@ export function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPane
   }
 
   async function clearActivity(): Promise<boolean> {
-    if (typeof api.clearDownloadActivity !== 'function') {
-      try {
-        localStorage.removeItem(HISTORY_KEY);
-      } catch {
-        /* ignore */
-      }
-      setActivityEntries([]);
-      return true;
-    }
     try {
       const result = await api.clearDownloadActivity();
       if (!result || !result.ok) {

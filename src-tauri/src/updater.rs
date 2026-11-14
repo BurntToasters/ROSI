@@ -38,6 +38,9 @@ const CHANNEL_NOT_SAVED: &str =
 const DEV_MODE_MESSAGE: &str = "Update checking is not available in development mode.";
 const MSSTORE_MESSAGE: &str =
     "Updates for the Microsoft Store version are managed through the Microsoft Store app.";
+/// The plugin cannot abort a transfer, so a cancelled one holds the engine until it ends.
+const DOWNLOAD_STOPPING_MESSAGE: &str =
+    "The previous update download is still stopping. Try again when it finishes.";
 
 /// A feed answer the user may install. `bytes` is set once the download
 /// completed and its target was confirmed; install consumes them.
@@ -86,6 +89,14 @@ enum DownloadStart {
     },
 }
 
+enum CheckStart {
+    Started(u64),
+    /// Another check or a live download or install holds the engine: nothing to report.
+    Busy,
+    /// Only a cancelled transfer holds the engine: the caller is told why.
+    Refused(CheckRefusal),
+}
+
 enum InstallStart {
     Quiet,
     Proceed {
@@ -116,7 +127,7 @@ enum Step {
 
 enum Command {
     BeginCheck {
-        reply: Sender<Option<u64>>,
+        reply: Sender<CheckStart>,
     },
     CheckCurrent {
         generation: u64,
@@ -324,13 +335,25 @@ impl State {
         self.installed = None;
     }
 
-    fn begin_check(&mut self) -> Option<u64> {
+    /// True when the only thing holding the engine is a cancelled transfer that
+    /// has not ended yet.
+    fn only_stopping_download(&self) -> bool {
+        !self.installing && self.active.as_ref().is_some_and(|active| active.cancelled)
+    }
+
+    fn begin_check(&mut self) -> CheckStart {
         self.checks += 1;
+        if self.only_stopping_download() {
+            return CheckStart::Refused(CheckRefusal {
+                reason: CheckRefusalReason::Message,
+                message: DOWNLOAD_STOPPING_MESSAGE.into(),
+            });
+        }
         if self.busy() {
-            return None;
+            return CheckStart::Busy;
         }
         emit_status(UpdaterStatusEvent::Checking);
-        Some(self.checks)
+        CheckStart::Started(self.checks)
     }
 
     /// Returns false when the check must stop. A pending candidate for another
@@ -462,10 +485,13 @@ impl State {
         if pending.sequence != candidate_id {
             return DownloadStart::Refused(DownloadOutcome::cancelled());
         }
-        if self.active.is_some() {
-            return DownloadStart::Refused(DownloadOutcome::error(
-                "A download is already in progress.",
-            ));
+        if let Some(active) = self.active.as_ref() {
+            let message = if active.cancelled {
+                DOWNLOAD_STOPPING_MESSAGE
+            } else {
+                "A download is already in progress."
+            };
+            return DownloadStart::Refused(DownloadOutcome::error(message));
         }
         if self.installing || self.installed == Some(pending.sequence) {
             return DownloadStart::Refused(DownloadOutcome::error(
@@ -996,7 +1022,11 @@ fn check_once(generation: u64) -> Step {
 /// Runs a check to its decision. `None` means nothing to report to the caller.
 fn start_check() -> Option<CheckRefusal> {
     loop {
-        let generation = request(|reply| Command::BeginCheck { reply }).flatten()?;
+        let generation = match request(|reply| Command::BeginCheck { reply })? {
+            CheckStart::Started(generation) => generation,
+            CheckStart::Busy => return None,
+            CheckStart::Refused(refusal) => return Some(refusal),
+        };
         match check_once(generation) {
             Step::Finished(refusal) => return refusal,
             Step::Recheck => continue,

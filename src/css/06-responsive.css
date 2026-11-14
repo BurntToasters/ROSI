@@ -70,53 +70,6 @@
   }
 }
 
-@media (max-width: 780px) {
-  .url-input-wrapper {
-    grid-template-columns: 1fr;
-  }
-
-  .download-btn {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .download-destination {
-    flex-wrap: wrap;
-  }
-
-  .download-destination-copy {
-    flex-basis: calc(100% - 2rem);
-  }
-
-  .queue-toolbar {
-    flex-wrap: wrap;
-  }
-
-  .main-footer {
-    flex-wrap: wrap;
-    gap: var(--spacing-xs);
-    padding: var(--spacing-xs) var(--spacing-sm);
-  }
-}
-
-@media (max-width: 560px) {
-  .format-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .download-title {
-    font-size: var(--text-lg);
-  }
-
-  .preview-thumb-wrap {
-    width: 110px;
-  }
-
-  .flat-ui-toggle-label {
-    display: none;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

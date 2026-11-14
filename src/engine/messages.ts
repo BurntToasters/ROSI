@@ -3,8 +3,17 @@ import { api } from '../api';
 
 export const UI_MESSAGES = {
   options: {
-    profilePreview: (description: string) =>
-      `${description}. Enter a valid URL and choose a save location to check effective options.`,
+    // Names only the inputs still missing. The URL is always missing in this
+    // state; the location is missing when "Ask every time" is on.
+    profilePreview: (description: string, missingUrl: boolean, missingLocation: boolean) => {
+      const missing =
+        missingUrl && missingLocation
+          ? 'Enter a valid URL and choose a save location'
+          : missingLocation
+            ? 'Choose a save location'
+            : 'Enter a valid URL';
+      return `${description}. ${missing} to see what this download will use.`;
+    },
     // What each profile produces, shown before a URL exists to resolve it.
     profileDescriptions: {
       compatible:
@@ -16,18 +25,19 @@ export const UI_MESSAGES = {
       DownloadRequestOptions['profile'] & string,
       string | ((format: string) => string)
     >,
-    invalidUrl: 'Enter a valid http or https URL to check effective options.',
-    destination: 'Choose a save location before effective options can be checked.',
+    // Empty on purpose: the URL field message already explains the error.
+    invalidUrl: '',
+    destination: 'Choose a save location to see what this download will use.',
     formats: 'Select a video or audio format before checking custom options.',
-    playlist: 'Fix the playlist selection before checking effective options.',
-    resolving: 'Checking effective options…',
-    settingsSaving: 'Saving settings before checking effective options…',
+    playlist: 'Fix the playlist selection to see what this download will use.',
+    resolving: 'Checking what this download will use…',
+    settingsSaving: 'Saving settings before checking what this download will use…',
     settingsUnsaved:
-      'Settings are not saved. Retry the settings save before trusting the effective options preview.',
+      'Settings are not saved. Retry the settings save before trusting this preview.',
     unavailable:
-      'Effective options are unavailable. ROSI will validate them when the download starts.',
-    failed: (reason: string) => `Could not check effective options. ${reason}`,
-    result: (details: string) => `Effective options: ${details}`,
+      'What this download will use is unavailable. ROSI will check it when the download starts.',
+    failed: (reason: string) => `Could not check what this download will use. ${reason}`,
+    result: (details: string) => `This download will use: ${details}`,
     profiles: {
       compatible: 'Compatible',
       'best-video': 'Best video',
@@ -39,7 +49,8 @@ export const UI_MESSAGES = {
     saving: 'Saving settings…',
     saved: 'Settings saved.',
     saveFailed: 'Settings did not save. Your choices are still here; retry the save.',
-    conflict: 'Settings changed outside ROSI. Close ROSI and resolve that file before retrying.',
+    // NEWER_VERSION case: a newer ROSI wrote the file, so no outside edit is implied.
+    newerVersion: 'A newer ROSI version saved these settings. Changes made here are not kept.',
     retry: 'Retry save',
     resetTitle: (section: string) => `Reset ${section.toLowerCase()} settings?`,
     resetMessage: (section: string) =>
@@ -205,12 +216,25 @@ export function configureEffectiveOptionsRequestBuilder(builder: EffectiveOption
   refreshEffectiveOptionsSummary();
 }
 
+/**
+ * Whether a save location must be chosen before a download. The profile preview
+ * is built before a URL exists, so it reads the "Ask every time" control, which
+ * mirrors settings.askDownloadLocation.
+ */
+function locationAskedFor(): boolean {
+  const toggle = document.getElementById('askDownloadLocationToggle');
+  return toggle instanceof HTMLInputElement && toggle.checked;
+}
+
 export function refreshEffectiveOptionsSummary(force = false) {
   const summary = document.getElementById('downloadOutputSummary');
   if (!(summary instanceof HTMLElement)) return;
 
   const readiness = requestBuilder();
-  const key = JSON.stringify(readiness);
+  // The location flag is not part of the readiness object, so it joins the key here.
+  const key =
+    JSON.stringify(readiness) +
+    (readiness.state === 'profile-preview' ? `|location:${locationAskedFor()}` : '');
   if (!force && key === lastRequestKey) return;
   lastRequestKey = key;
   requestGeneration += 1;
@@ -237,7 +261,9 @@ export function refreshEffectiveOptionsSummary(force = false) {
     const text =
       readiness.state === 'profile-preview'
         ? UI_MESSAGES.options.profilePreview(
-            describeProfileOutput(readiness.profile, readiness.audioFormat)
+            describeProfileOutput(readiness.profile, readiness.audioFormat),
+            true,
+            locationAskedFor()
           )
         : messages[readiness.state];
     setSummaryState(summary, readiness.state, text);
@@ -250,12 +276,6 @@ export function refreshEffectiveOptionsSummary(force = false) {
     if (JSON.stringify(requestBuilder()) !== key) {
       lastRequestKey = null;
       refreshEffectiveOptionsSummary();
-      return;
-    }
-    if (typeof api.resolveDownloadOptions !== 'function') {
-      if (generation === requestGeneration) {
-        setSummaryState(summary, 'unavailable', UI_MESSAGES.options.unavailable);
-      }
       return;
     }
     void api.resolveDownloadOptions(readiness.request).then(

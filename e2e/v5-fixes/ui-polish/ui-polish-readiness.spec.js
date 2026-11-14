@@ -227,7 +227,7 @@ async function waitForSummaryState(state, timeout = 10_000) {
       (want) =>
         document.getElementById("downloadOutputSummary")?.dataset.state ===
         want,
-      `effective options never reached ${state}`,
+      `options summary never reached ${state}`,
       timeout,
       state,
     );

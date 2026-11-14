@@ -1,8 +1,10 @@
 //! yt-dlp format listing (`-F`) and metadata previews (`--dump-single-json`).
 
 use crate::constants::*;
+use crate::download_options::browser_choice_for_platform;
 use crate::ipc::{
-    self, FalliblePayload, IpcResult, INTERNAL_ERROR, INVALID_URL, NOT_AVAILABLE, VALIDATION_ERROR,
+    self, FalliblePayload, IpcError, IpcResult, INTERNAL_ERROR, INVALID_URL, NOT_AVAILABLE,
+    VALIDATION_ERROR,
 };
 use crate::process_util::{TrackedError, TrackedReservation, TrackedSlot};
 use crate::types::{FormatEntry, FormatList, StreamKind, VideoInfo};
@@ -11,6 +13,83 @@ use serde_json::{Map, Value};
 
 static FORMATS: TrackedSlot = TrackedSlot::new();
 static VIDEO_INFO: TrackedSlot = TrackedSlot::new();
+
+/// Cookie choice a format listing or preview uses in place of the saved
+/// settings. The renderer sends the choice the next download would resolve. An
+/// absent field keeps the saved value, and no field means the saved settings.
+#[derive(Clone, Debug, Default)]
+pub struct CookieChoice {
+    pub hook_browser: Option<bool>,
+    pub browser_choice: Option<String>,
+}
+
+impl CookieChoice {
+    fn cookie_args(&self, settings: &crate::types::Settings) -> Vec<String> {
+        let hook_browser = self.hook_browser.unwrap_or(settings.hook_browser);
+        let browser = self
+            .browser_choice
+            .as_deref()
+            .unwrap_or(&settings.browser_choice);
+        crate::command_builders::build_browser_cookie_args(hook_browser, browser)
+    }
+}
+
+fn cookie_choice_from_args(
+    hook_browser: Option<FalliblePayload<bool>>,
+    browser_choice: Option<FalliblePayload<String>>,
+) -> Result<CookieChoice, IpcError> {
+    let hook_browser = match hook_browser {
+        None => None,
+        Some(value) => {
+            Some(value.into_typed(VALIDATION_ERROR, "hookBrowser must be true or false.")?)
+        }
+    };
+    let browser_choice = match browser_choice {
+        None => None,
+        Some(value) => Some(browser_choice_for_platform(
+            &value.into_typed(VALIDATION_ERROR, "browserChoice must be a string.")?,
+        )),
+    };
+    Ok(CookieChoice {
+        hook_browser,
+        browser_choice,
+    })
+}
+
+/// E2E builds with `ROSI_E2E_YTDLP_ARGS_LOG` set append each yt-dlp argument
+/// list to that file as one JSON line, with the proxy value redacted, and then
+/// stop before yt-dlp starts. Specs read the file to check the cookie arguments
+/// without a browser profile. Returns the message to report, or None when
+/// capture is off.
+#[cfg(feature = "e2e")]
+fn e2e_capture_ytdlp_args(command: &str, args: &[String]) -> Option<String> {
+    use std::io::Write;
+    let path = std::env::var_os("ROSI_E2E_YTDLP_ARGS_LOG").filter(|value| !value.is_empty())?;
+    let mut redacted: Vec<&str> = Vec::with_capacity(args.len());
+    let mut hide_next = false;
+    for argument in args {
+        if hide_next {
+            redacted.push("<redacted>");
+            hide_next = false;
+            continue;
+        }
+        hide_next = argument == "--proxy";
+        redacted.push(argument.as_str());
+    }
+    let line = serde_json::json!({ "command": command, "args": redacted }).to_string();
+    let written = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut file| writeln!(file, "{line}"));
+    Some(match written {
+        Ok(()) => format!("E2E capture recorded the {command} yt-dlp arguments."),
+        Err(error) => format!(
+            "E2E capture could not write {}: {error}",
+            path.to_string_lossy()
+        ),
+    })
+}
 
 fn pick_string(value: Option<&Value>) -> Option<String> {
     value
@@ -351,6 +430,7 @@ fn resolve_playlist_mode(url: &str, requested: Option<&str>) -> &'static str {
 fn insert_common_args(
     args: &mut Vec<String>,
     settings: &crate::types::Settings,
+    cookies: &CookieChoice,
     guard: &crate::network_security::NetworkSecurityGuard,
     ffmpeg_guard: &crate::ffmpeg_guard::FfmpegToolGuard,
 ) {
@@ -359,10 +439,7 @@ fn insert_common_args(
         .position(|argument| argument == "--")
         .unwrap_or(args.len());
     let mut common = crate::command_builders::build_ytdlp_runtime_args();
-    common.extend(crate::command_builders::build_browser_cookie_args(
-        settings.hook_browser,
-        &settings.browser_choice,
-    ));
+    common.extend(cookies.cookie_args(settings));
     common.extend(["--proxy".into(), guard.proxy_url().to_string()]);
     common.extend([
         "--ffmpeg-location".into(),
@@ -390,6 +467,7 @@ fn error_result<T: serde::Serialize>(message: String) -> IpcResult<T> {
 
 fn fetch_formats(
     url: String,
+    cookies: CookieChoice,
     reservation: TrackedReservation<'static>,
 ) -> Result<FormatList, String> {
     if reservation.is_cancelled() {
@@ -436,16 +514,28 @@ fn fetch_formats(
         "--".into(),
         url,
     ];
-    insert_common_args(&mut args, &settings, &guard, &ffmpeg_guard);
+    insert_common_args(&mut args, &settings, &cookies, &guard, &ffmpeg_guard);
+    #[cfg(feature = "e2e")]
+    {
+        if let Some(message) = e2e_capture_ytdlp_args("get_formats", &args) {
+            return Err(message);
+        }
+    }
     let command = ytdlp_command(args);
     match FORMATS.run_reserved_with(
         reservation,
         command,
         FORMAT_FETCH_TIMEOUT,
-        MAX_OUTPUT_BUFFER * 4,
+        // Same cap as video info, so both lookups accept the same metadata.
+        MAX_OUTPUT_BUFFER * 20,
         MAX_ERROR_BUFFER,
         |output| {
             if output.code == Some(0) {
+                if output.stdout_truncated {
+                    return Err(
+                        "Format metadata is larger than 10 MB and could not be read.".into(),
+                    );
+                }
                 parse_format_list(&output.stdout)
             } else {
                 Err(format!(
@@ -476,6 +566,7 @@ fn fetch_formats(
 fn fetch_video_info(
     url: String,
     playlist_mode: Option<String>,
+    cookies: CookieChoice,
     reservation: TrackedReservation<'static>,
 ) -> Result<VideoInfo, String> {
     if reservation.is_cancelled() {
@@ -533,7 +624,13 @@ fn fetch_video_info(
         "--".to_string(),
         url,
     ]);
-    insert_common_args(&mut args, &settings, &guard, &ffmpeg_guard);
+    insert_common_args(&mut args, &settings, &cookies, &guard, &ffmpeg_guard);
+    #[cfg(feature = "e2e")]
+    {
+        if let Some(message) = e2e_capture_ytdlp_args("get_video_info", &args) {
+            return Err(message);
+        }
+    }
     match VIDEO_INFO.run_reserved_with(
         reservation,
         ytdlp_command(args),
@@ -543,6 +640,9 @@ fn fetch_video_info(
         |output| {
             if *cancellation.borrow() {
                 return Err("Video info request cancelled.".into());
+            }
+            if output.code == Some(0) && output.stdout_truncated {
+                return Err("Video information is larger than 10 MB and could not be read.".into());
             }
             if output.code != Some(0) {
                 return Err(format!(
@@ -601,7 +701,11 @@ impl PlaylistPreviewMode {
 }
 
 #[tauri::command]
-pub async fn get_formats(url: FalliblePayload<String>) -> IpcResult<FormatList> {
+pub async fn get_formats(
+    url: FalliblePayload<String>,
+    hook_browser: Option<FalliblePayload<bool>>,
+    browser_choice: Option<FalliblePayload<String>>,
+) -> IpcResult<FormatList> {
     let reservation = FORMATS.reserve();
     let Some(url) = url
         .into_typed(INVALID_URL, "Invalid URL provided.")
@@ -610,7 +714,13 @@ pub async fn get_formats(url: FalliblePayload<String>) -> IpcResult<FormatList> 
     else {
         return ipc::err(INVALID_URL, "Invalid URL provided.");
     };
-    match tauri::async_runtime::spawn_blocking(move || fetch_formats(url, reservation)).await {
+    let cookies = match cookie_choice_from_args(hook_browser, browser_choice) {
+        Ok(cookies) => cookies,
+        Err(error) => return ipc::from_error(error),
+    };
+    match tauri::async_runtime::spawn_blocking(move || fetch_formats(url, cookies, reservation))
+        .await
+    {
         Ok(Ok(formats)) => ipc::ok(formats),
         Ok(Err(message)) => error_result(message),
         Err(error) => ipc::err(INTERNAL_ERROR, error.to_string()),
@@ -626,6 +736,8 @@ pub fn cancel_formats() {
 pub async fn get_video_info(
     url: FalliblePayload<String>,
     playlist_mode: Option<FalliblePayload<PlaylistPreviewMode>>,
+    hook_browser: Option<FalliblePayload<bool>>,
+    browser_choice: Option<FalliblePayload<String>>,
 ) -> IpcResult<VideoInfo> {
     let reservation = VIDEO_INFO.reserve();
     let Some(url) = url
@@ -646,8 +758,12 @@ pub async fn get_video_info(
             Err(error) => return ipc::from_error(error),
         },
     };
+    let cookies = match cookie_choice_from_args(hook_browser, browser_choice) {
+        Ok(cookies) => cookies,
+        Err(error) => return ipc::from_error(error),
+    };
     match tauri::async_runtime::spawn_blocking(move || {
-        fetch_video_info(url, playlist_mode, reservation)
+        fetch_video_info(url, playlist_mode, cookies, reservation)
     })
     .await
     {

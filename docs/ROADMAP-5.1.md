@@ -97,11 +97,12 @@ The settings enums are present in `src-tauri/src/types.rs`. `serde_json::Value`
 still appears in backend helpers and command/probe code; no claim is made that
 the old acceptance criteria are complete.
 
-**Problem.** Several settings are free-form strings: `theme`
-(`src-tauri/src/types.rs:61`), `dock_tab` (`:63`), `download_mode` (`:65`),
-`gpu_type` (`:82`), and `update_channel` (`:88`). `src-tauri/src/validation.rs`
-is 1,057 lines and checks them by hand. There are 12 `serde_json::Value` uses in
-`src-tauri/src/`, which bypass the struct types.
+**Problem.** These settings were free-form strings: `theme`, `dock_tab`,
+`download_mode`, `gpu_type`, and `update_channel`. They are typed enums now
+(`src-tauri/src/types.rs:135`, `:137`, `:139`, `:156`, `:163`). Re-measured on
+2026-11-14 (uncommitted tree): `src-tauri/src/validation.rs` is 1,178 lines and
+checks URLs, paths, and command input by hand, and 17 `serde_json::Value` uses
+remain in `src-tauri/src/` across 9 files, which bypass the struct types.
 
 `validation.rs` is the security boundary for URLs, paths, and command input.
 Migration must stay lenient: ROSI 4 and older ROSI 5 settings files can hold
@@ -449,11 +450,15 @@ dropped, and no results from these checks are claimed as passing evidence.
   have failed. Either make background mode reliable, or require
   `ROSI_E2E_FOREGROUND=1` for release evidence and state that in `e2e/README.md`
   and `docs/RELEASE-STABLE.md`.
-- **ui-polish triage (workstream D0).** The audit recorded 4 of 8 failing
-  assertions in background mode and 5 of 8 in foreground mode on `6f244bd`
-  (`e2e/v5-fixes/ui-polish/ui-polish.spec.js`). Classify each as a spec
-  assumption or a product defect before fixing either. Workstream D1 to D7 depend
-  on that triage and have not been re-verified.
+- **ui-polish triage (workstream D0): triage done, one row open.** The audit
+  recorded 4 of 8 failing assertions in background mode and 5 of 8 in foreground
+  mode on `6f244bd`. Each row is classified in
+  `e2e/v5-fixes/ui-polish/failure-modes.md` (the D0 section and the
+  background-mode section after it). Only T4 is open: the first `addToQueue`
+  timeout in `dependent-controls-and-queue-focus`, not yet classified as a spec
+  or product defect. It passed in the 2026-11-13 Windows x64 rerun, so its cause
+  is still unexplained. The ui-polish group passed 10 of 10 spec files on Windows
+  x64 on 2026-11-14 (uncommitted tree).
 - **DNS resolver pool (roadmap item 5 residue).** The DNS pool in
   `network_security.rs` uses blocking threads with a condvar, and
   `resolve_system_dns_with_cancel` checks its reply every 25 ms
@@ -463,8 +468,8 @@ dropped, and no results from these checks are claimed as passing evidence.
   (`MINIMAL_SETTINGS_VERSION` and the object beside it) keeps a hand-written
   settings object used only when `get_default_settings` fails. Keep it as a
   documented fallback or remove it.
-- **Downloader split (workstream B10).** `src-tauri/src/downloader.rs` is 1,676
-  lines, down from 3,207. Conversion, publication, and session ownership already
+- **Downloader split (workstream B10).** `src-tauri/src/downloader.rs` is 1,710
+  lines on 2026-11-14 (uncommitted tree), down from 3,207. Conversion, publication, and session ownership already
   live in `downloader/`. The rest of the split is not a 5.1.0 blocker.
 
 ### B7: Finish coordinator ownership (roadmap item 4)
@@ -483,15 +488,15 @@ only on macOS arm64. Before the port, write failure-mode rows for
 | --------------------------------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `QUEUE`: `OnceLock<Mutex<QueueState>>`, read by `state()` | `queue.rs:42`, `queue.rs:197` | **Done (B7 part A).** Removed. `QueueState` is a local in `coordinator::run`; reads are `Snapshot` and `IsRunning` requests.                                    |
 | `PERSISTENCE` (inside `persistence()`)                    | `queue.rs:188`                | **Kept.** Configuration only: file paths and the writer's channel. Revision state lives on the writer thread, not behind a lock.                                |
-| `WRITER` (inside `writer()`)                              | `queue.rs:328`                | **Kept.** A `OnceLock` holding the writer's channel sender, not shared state.                                                                                   |
+| `WRITER` (inside `writer()`)                              | `queue.rs:326`                | **Kept.** A `OnceLock` holding the writer's channel sender, not shared state.                                                                                   |
 | `ACTIVE`: `Mutex<Option<Session>>`, read by `lock()`      | `downloader.rs` (was `:82`)   | **Done (B7 part B).** Removed. The session lives on the session owner thread (`downloader/session_owner.rs`). Reads and changes are tasks run in arrival order. |
 | `ACTIVE_PRESENT`: `AtomicBool`                            | `downloader.rs` (was `:85`)   | **Done (B7 part B).** Replaced by the owner's read-only `SLOT_OWNER` hint, which `is_busy` and `can_start` read. The install task decides.                      |
 | `STARTUP`: `Mutex<()>`                                    | `downloader.rs` (was `:87`)   | **Done (B7 part B).** Removed. `install` makes the one authoritative check. A same-owner start cancels the occupant by id, awaits it, and retries.              |
 | `EVENT_PUBLISH`: `Mutex<()>`                              | `downloader.rs` (was `:88`)   | **Done (B7 part B).** Removed. The owner runs every event emit in arrival order, so a replaced session's events are dropped.                                    |
-| `COUNTER`: `AtomicU64`                                    | `downloader.rs:94`            | **Kept with reason.** Mints session ids before install, so no owner round trip is needed. It is an atomic counter, not shared state.                            |
+| `COUNTER`: `AtomicU64`                                    | `downloader.rs:81`            | **Kept with reason.** Mints session ids before install, so no owner round trip is needed. It is an atomic counter, not shared state.                            |
 
 The `downloader/conversion.rs` and `downloader/publication.rs` modules declare no
-statics. Test-only statics (`SERIAL` at `downloader.rs:1631`) are excluded.
+statics. Test-only statics (`SERIAL` at `downloader.rs:1658`) are excluded.
 Outside this list: `coordinator.rs` `COORDINATOR` holds a channel sender, not
 state, and `activity.rs` `state()` is outside the queue and downloader scope.
 

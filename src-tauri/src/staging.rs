@@ -492,7 +492,6 @@ pub(crate) fn file_identity(path: &Path) -> Option<FileIdentity> {
     }
     #[cfg(windows)]
     {
-        use std::os::windows::ffi::OsStrExt;
         use std::ptr::{null, null_mut};
         use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
         use windows_sys::Win32::Storage::FileSystem::{
@@ -501,7 +500,7 @@ pub(crate) fn file_identity(path: &Path) -> Option<FileIdentity> {
             FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
         };
 
-        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let wide = win32_path(path);
         let handle = unsafe {
             CreateFileW(
                 wide.as_ptr(),
@@ -784,10 +783,63 @@ pub(crate) fn install_without_flags(temp: &Path, destination: &Path) -> std::io:
     result
 }
 
+/// NUL-terminated UTF-16 path for a raw Win32 call. The binary has no
+/// long-path manifest, so Win32 limits a plain path to MAX_PATH. A path at or
+/// over that limit becomes verbatim (`\\?\`, or `\\?\UNC\` for a share), which
+/// lifts the limit. Shorter and relative paths are passed through unchanged.
 #[cfg(windows)]
-pub(crate) fn install_no_replace(temp: &Path, destination: &Path) -> std::io::Result<()> {
+fn win32_path(path: &Path) -> Vec<u16> {
     use std::os::windows::ffi::OsStrExt;
 
+    const MAX_PATH_UNITS: usize = 260;
+    fn units(text: &str) -> Vec<u16> {
+        text.encode_utf16().collect()
+    }
+    let plain: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let verbatim = units(r"\\?\");
+    let device = units(r"\\.\");
+    let unc_prefix = units(r"\\");
+    let is_absolute_drive = plain.len() >= 3
+        && plain[0] < 128
+        && (plain[0] as u8).is_ascii_alphabetic()
+        && plain[1] == u16::from(b':')
+        && plain[2] == u16::from(b'\\');
+    let mut result = if plain.len() < MAX_PATH_UNITS
+        || plain.starts_with(&verbatim)
+        || plain.starts_with(&device)
+    {
+        plain
+    } else {
+        // Verbatim paths take no forward slashes and no `.` or `..` parts.
+        // Paths reaching here come from `resolve_path`, which removes those.
+        let normalized: Vec<u16> = plain
+            .iter()
+            .map(|&unit| {
+                if unit == u16::from(b'/') {
+                    u16::from(b'\\')
+                } else {
+                    unit
+                }
+            })
+            .collect();
+        if normalized.starts_with(&unc_prefix) {
+            let mut share = units(r"\\?\UNC\");
+            share.extend_from_slice(&normalized[2..]);
+            share
+        } else if is_absolute_drive {
+            let mut drive = verbatim.clone();
+            drive.extend_from_slice(&normalized);
+            drive
+        } else {
+            normalized
+        }
+    };
+    result.push(0);
+    result
+}
+
+#[cfg(windows)]
+pub(crate) fn install_no_replace(temp: &Path, destination: &Path) -> std::io::Result<()> {
     // `std::fs::rename` replaces an existing destination on Windows. Use the
     // Win32 move primitive without MOVEFILE_REPLACE_EXISTING so an output
     // collision fails atomically instead of overwriting a user's file.
@@ -797,12 +849,8 @@ pub(crate) fn install_no_replace(temp: &Path, destination: &Path) -> std::io::Re
     }
 
     const MOVEFILE_WRITE_THROUGH: u32 = 0x0000_0008;
-    let temp: Vec<u16> = temp.as_os_str().encode_wide().chain(Some(0)).collect();
-    let destination: Vec<u16> = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
+    let temp = win32_path(temp);
+    let destination = win32_path(destination);
     let result =
         unsafe { MoveFileExW(temp.as_ptr(), destination.as_ptr(), MOVEFILE_WRITE_THROUGH) };
     if result != 0 {

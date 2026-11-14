@@ -217,6 +217,12 @@ pub fn command<P: AsRef<OsStr>>(
     }
     #[cfg(unix)]
     {
+        // Known gap: release builds use `panic = "abort"`, so a ROSI abort
+        // skips every cleanup path. On Linux and macOS the helpers (yt-dlp,
+        // FFmpeg) can then outlive ROSI. Windows is covered by the kill-on-close
+        // job. Linux PR_SET_PDEATHSIG is the planned fix, but it tracks the
+        // spawning thread and so needs a process-lifetime spawner thread. Deferred
+        // until a Linux build can verify it; macOS has no equivalent.
         use std::os::unix::process::CommandExt;
         if new_group {
             command.process_group(0);
@@ -416,6 +422,11 @@ impl ManagedChild {
             drop(state);
             if cfg!(unix) {
                 std::thread::sleep(poll);
+            } else {
+                // The Windows poll already waited on the process. A short
+                // pause lets other lock users (such as `terminate_tree`) in;
+                // without it this loop can retake the unfair lock every time.
+                std::thread::sleep(Duration::from_millis(1));
             }
         }
     }
@@ -493,6 +504,12 @@ fn signal_group(pid: u32, signal: i32) -> bool {
 pub fn terminate_tree(child: &Arc<ManagedChild>) {
     #[cfg(unix)]
     let pid = child.id();
+    // A waiter in `wait_timeout` can hold the state lock for most of the time
+    // (Windows mutexes are not fair), so the kill must not wait for that lock.
+    // TerminateJobObject is safe to call concurrently with a wait and does
+    // nothing to an empty job.
+    #[cfg(windows)]
+    child.job.terminate();
     let mut state = child.state();
     if state.terminating {
         return;
@@ -557,34 +574,44 @@ pub fn terminate_tree(child: &Arc<ManagedChild>) {
     state.terminating = false;
 }
 
-fn drain<R: Read + Send + 'static>(reader: Option<R>, limit: usize) -> mpsc::Receiver<String> {
+/// Reads a pipe to its end, keeping at most `limit` bytes. The reply says
+/// whether any bytes were dropped, so a caller never parses a cut buffer.
+fn drain<R: Read + Send + 'static>(
+    reader: Option<R>,
+    limit: usize,
+) -> mpsc::Receiver<(String, bool)> {
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
         let Some(mut reader) = reader else {
-            let _ = sender.send(String::new());
+            let _ = sender.send((String::new(), false));
             return;
         };
         let mut kept = Vec::new();
+        let mut truncated = false;
         let mut chunk = [0u8; 8192];
         loop {
             match reader.read(&mut chunk) {
                 Ok(0) | Err(_) => break,
                 Ok(read) => {
                     let room = limit.saturating_sub(kept.len());
+                    truncated |= read > room;
                     kept.extend_from_slice(&chunk[..read.min(room)]);
                 }
             }
         }
-        let _ = sender.send(String::from_utf8_lossy(&kept).into_owned());
+        let _ = sender.send((String::from_utf8_lossy(&kept).into_owned(), truncated));
     });
     receiver
 }
 
-fn receive_drain(receiver: mpsc::Receiver<String>, deadline: std::time::Instant) -> (String, bool) {
+fn receive_drain(
+    receiver: mpsc::Receiver<(String, bool)>,
+    deadline: std::time::Instant,
+) -> ((String, bool), bool) {
     match receiver.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
         Ok(output) => (output, true),
-        Err(mpsc::RecvTimeoutError::Disconnected) => (String::new(), true),
-        Err(mpsc::RecvTimeoutError::Timeout) => (String::new(), false),
+        Err(mpsc::RecvTimeoutError::Disconnected) => ((String::new(), false), true),
+        Err(mpsc::RecvTimeoutError::Timeout) => ((String::new(), false), false),
     }
 }
 
@@ -593,6 +620,9 @@ pub struct Output {
     pub stdout: String,
     pub stderr: String,
     pub timed_out: bool,
+    /// True when stdout was longer than its capture limit; `stdout` then holds
+    /// only the first part of the stream.
+    pub stdout_truncated: bool,
 }
 
 /// Run a command to completion (or timeout), capturing bounded output.
@@ -630,8 +660,8 @@ pub fn wait_with_output(
         }
     };
     let drain_deadline = std::time::Instant::now() + PIPE_DRAIN_TIMEOUT;
-    let (stdout, stdout_drained) = receive_drain(stdout, drain_deadline);
-    let (stderr, stderr_drained) = receive_drain(stderr, drain_deadline);
+    let ((stdout, stdout_truncated), stdout_drained) = receive_drain(stdout, drain_deadline);
+    let ((stderr, _), stderr_drained) = receive_drain(stderr, drain_deadline);
     timed_out |= !stdout_drained || !stderr_drained;
     if let Some(error) = wait_error {
         return Err(error);
@@ -646,6 +676,7 @@ pub fn wait_with_output(
         stdout,
         stderr,
         timed_out,
+        stdout_truncated,
     };
     Ok(output)
 }

@@ -66,8 +66,18 @@ function getToastContainer(type: ToastType) {
   return document.getElementById('toast-container');
 }
 
+const TOAST_DEFAULT_MS = 4000;
+// Errors and warnings carry a reason the user may need to read, so they stay longer.
+const TOAST_ATTENTION_MS = 8000;
+// After a hover or focus pause ends, the toast stays at least this long.
+const TOAST_RESUME_MIN_MS = 2000;
+
+function defaultToastDuration(type: ToastType) {
+  return type === 'error' || type === 'warning' ? TOAST_ATTENTION_MS : TOAST_DEFAULT_MS;
+}
+
 export function showToast(message: unknown, options: ToastOptions = {}) {
-  const { type = 'info', duration = 4000 } = options;
+  const { type = 'info', duration = defaultToastDuration(type) } = options;
   const container = getToastContainer(type);
   if (!container) return;
 
@@ -78,12 +88,10 @@ export function showToast(message: unknown, options: ToastOptions = {}) {
     existing[0]?.remove();
   }
 
+  // The container owns the live region (see index.html), so the toast itself
+  // carries no role or aria-live: each message is announced once.
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
-  if (type === 'error' || type === 'warning') {
-    toast.setAttribute('role', 'alert');
-    toast.setAttribute('aria-live', 'assertive');
-  }
 
   const icon = document.createElement('span');
   icon.className = 'toast-icon';
@@ -107,12 +115,66 @@ export function showToast(message: unknown, options: ToastOptions = {}) {
 
   container.appendChild(toast);
 
+  let dismissed = false;
+  let dismissTimer: ReturnType<typeof setTimeout> | null = null;
+  let remainingMs = duration;
+  let timerStartedAt = 0;
+  let needsResumeFloor = false;
+  let hovered = false;
+  let focusWithin = false;
+  const autoDismiss = duration > 0;
+
   const dismiss = () => {
+    if (dismissed) return;
+    dismissed = true;
+    if (dismissTimer !== null) clearTimeout(dismissTimer);
+    dismissTimer = null;
     toast.classList.remove('visible');
     toast.classList.add('hiding');
     toast.addEventListener('transitionend', () => toast.remove(), { once: true });
     setTimeout(() => toast.remove(), 500);
   };
+
+  // Hover or keyboard focus inside the toast pauses the countdown; leaving resumes it.
+  const pauseDismissTimer = () => {
+    if (dismissTimer === null) return;
+    clearTimeout(dismissTimer);
+    dismissTimer = null;
+    remainingMs = Math.max(0, remainingMs - (Date.now() - timerStartedAt));
+    needsResumeFloor = true;
+  };
+  const startDismissTimer = () => {
+    if (dismissed || dismissTimer !== null) return;
+    if (needsResumeFloor) {
+      remainingMs = Math.max(remainingMs, TOAST_RESUME_MIN_MS);
+      needsResumeFloor = false;
+    }
+    timerStartedAt = Date.now();
+    dismissTimer = setTimeout(dismiss, remainingMs);
+  };
+  const syncDismissTimer = () => {
+    if (!autoDismiss) return;
+    if (hovered || focusWithin) pauseDismissTimer();
+    else startDismissTimer();
+  };
+
+  toast.addEventListener('mouseenter', () => {
+    hovered = true;
+    syncDismissTimer();
+  });
+  toast.addEventListener('mouseleave', () => {
+    hovered = false;
+    syncDismissTimer();
+  });
+  toast.addEventListener('focusin', () => {
+    focusWithin = true;
+    syncDismissTimer();
+  });
+  toast.addEventListener('focusout', (e: FocusEvent) => {
+    if (e.relatedTarget instanceof Node && toast.contains(e.relatedTarget)) return;
+    focusWithin = false;
+    syncDismissTimer();
+  });
 
   dismissBtn.addEventListener('click', dismiss);
   dismissBtn.addEventListener('keydown', (e: KeyboardEvent) => {
@@ -128,9 +190,7 @@ export function showToast(message: unknown, options: ToastOptions = {}) {
     });
   });
 
-  if (duration > 0) {
-    setTimeout(dismiss, duration);
-  }
+  if (autoDismiss) startDismissTimer();
 }
 
 /**

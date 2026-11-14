@@ -694,7 +694,7 @@ pub(crate) fn run_queue() {
                     if let Some(Some(notify)) = coordinator::request(|reply| {
                         Command::Queue(QueueCommand::SessionStarted { reply })
                     }) {
-                        downloader::cancel_active_session(notify);
+                        downloader::cancel_owned_session(Owner::Queue, notify);
                     }
                     break true;
                 }
@@ -1337,7 +1337,7 @@ fn clear_queue_blocking() -> IpcResult<()> {
     if was_running {
         // Completes the running session synchronously; its result reaches the
         // runner, which records the cancelled outcome.
-        downloader::cancel_active_session(true);
+        downloader::cancel_owned_session(Owner::Queue, true);
     }
     match coordinator::request(|reply| Command::Queue(QueueCommand::ClearItems { reply })) {
         Some(()) => ipc::ok(()),
@@ -1403,7 +1403,7 @@ fn cancel_queue_blocking() -> IpcResult<()> {
     if active {
         // Completes the running session synchronously; its result reaches the
         // runner, which records the item's single cancelled outcome.
-        downloader::cancel_active_session(true);
+        downloader::cancel_owned_session(Owner::Queue, true);
     }
     // A pending item belongs to no runner, so the handler records it here.
     let Some((_, items)) =

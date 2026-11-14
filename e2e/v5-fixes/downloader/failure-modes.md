@@ -201,3 +201,161 @@ identical sha256, symlink target untouched, and fresh entries untouched.
 20. A stale empty `.rosi-probe-<uuid>` file is left when the app dies during a
     rename-flag probe. Expected: removed like other bookkeeping; a non-empty file
     with that name is retained.
+
+## Wave 1 A2: cancel ownership (queue and manual sessions)
+
+Every cancel names the owner whose session it may end. `cancel_download` ends
+only a manual session. Queue cancel and queue clear end only a queue session.
+App stop and shutdown still end any session. A cancel that names an owner
+never waits on a session it did not match: that session belongs to the other
+owner, or has already left the slot and is routed by its own finish.
+
+Before this change, every cancel used the current session, so the manual
+Cancel button could end a queue item, and queue cancel or clear could end a
+manual download that held the slot.
+
+Failure modes:
+
+C1. Manual Cancel (`cancel_download`) during a queue item: the queue item keeps
+downloading and completes; no queue outcome is cancelled. Fails on the
+pre-fix code (the queue item became cancelled). E2E: cancel-ownership
+spec, case (a).
+C2. Manual Cancel during a manual download: the manual download is cancelled
+with outcome `cancelled`. Guards the positive case: a filter that matches
+nothing would also pass C1. Fails if `cancel_download` does not end the manual
+session (no `cancelled` outcome; the 60 s wait times out) or if the download
+finishes first (outcome `success`; same timeout). E2E: case (a2).
+C2a. The start reply is the IPC envelope `{ok, data: {started, sessionId}}`
+(`renderer-globals.d.ts` `RosiIpcResult`; `ipc.rs` `IpcResult`). The check must
+read `data`. Reading `value` gives `undefined` and fails at the start assertion
+before any cancel is sent. That is a spec defect, not a product result; it is
+the failure in the 2026-11-13 Windows run (spec line 185).
+C2b. The check passes on leftover state only if an activity entry for the
+manual URL already exists before the start. The check asserts that no such
+entry exists before it starts the download, so a stale entry fails it.
+C3. Manual Cancel with no session in the slot: returns at once and waits for
+nothing (no await on the queue or on finished sessions). Covered by C1: the
+command is fire-and-forget, and the queue run continues afterwards.
+C4. Queue cancel while a manual download holds the slot: the manual download
+keeps running and completes. E2E: case (b). Not discriminating: the queue
+cannot start while a manual session is in the slot (`start` refuses through
+`can_start`), and `download_video` refuses while the queue runs. The only
+state where the pre-fix code could hit the manual session is the race at
+`queue.rs` "A manual download that was accepted just before the queue
+started" (the runner's `blocking_session` branch). IPC ordering cannot
+reach that race deterministically, so the case is a regression guard.
+C5. Queue clear while a manual download holds the slot: same as C4. E2E: case (b).
+C6. Queue cancel or clear while the queue session is in the slot: that session
+is cancelled, its item gets one outcome, and the call returns after the
+terminal result is routed. Covered by the existing `cancels a running queue
+    with one outcome per item` scenario in `e2e/specs/main.spec.js`.
+C7. Queue cancel or clear with no session of any owner in the slot: returns
+without awaiting every registered session (the pre-fix code awaited all of
+them, so a manual download could block a queue cancel). Not reachable
+deterministically through IPC; checked by code review only.
+C8. A cancel that lands while the runner is starting its session
+(`SessionStarted`) ends only that queue session. Race-dependent; checked by
+code review only.
+C9. App stop and shutdown (`cancel_active_session` with no owner filter,
+`kill_all_processes`) still end whichever session is current. Unchanged by
+this fix; not separately added. Checked by code review only.
+C10. An owner-filtered cancel in the slot-empty case may let a queue session
+that has already left the slot finish routing after a queue clear or cancel
+snapshot. The item is removed or recorded by its own runner; no outcome is
+lost. Accepted; checked by code review.
+C11. Manual Cancel of a streamed manual download whose origin response is
+delayed (`security-release-checks.spec.js`, "closes a delayed guarded HTTP
+response promptly when its download is cancelled"): the origin socket closes
+within 3 s, then the download must settle as `cancelled` with `completedAt`
+within 10 s. When the manual session holds the slot, the owner-filtered cancel
+builds the same `CancelPlan` as the pre-A2 cancel (same notify flags, same
+termination order, same `await_finalized` on the session it matched). A2 must
+not drop the kill, the reader wait, or finalization for that session. Fails
+if the cancelled session never finalizes after yt-dlp is killed (no terminal
+result, no `completedAt`). Covered by the security spec; not reproducible by
+the cancel-ownership spec alone.
+C12. Windows only. The reader thread waits on yt-dlp through
+`ManagedChild::wait_timeout`, which holds the child's state lock for each
+50 ms poll and retakes it at once after releasing it. Windows mutexes are
+not fair, so the waiter can win every time and `terminate_tree`, which takes
+the same lock before it kills the job, waits until yt-dlp exits by itself.
+The network cancellation still closes the origin socket within milliseconds,
+so the symptom is a cancel that closes sockets but settles seconds late or
+never: C11 times out after 10 s with no activity entry, and
+"cancels metadata and manual-download IPC during delayed connection DNS"
+settles after about 3 s instead of under 1 s. Fix: `terminate_tree` kills the
+Windows job before it takes the state lock (TerminateJobObject is safe to
+call concurrently with a wait and is a no-op on an empty job), and the
+Windows poll loop yields between polls so other lock users are not starved.
+Proof: the security spec run alone five times in a row with both cases
+passing, then the full gate.
+
+## Wave 1 A4: post-install directory sync (Unix only)
+
+`install_download_output_named` no-replace installs the file, then syncs the
+download folder. Before this fix a sync error returned `Err`, so the caller
+reported the download as failed with the now-missing staging path, and the
+installed file was not recorded. The fix logs a warning and returns the
+installed path. Conversion already treats a post-install sync failure as
+installed (`publication.rs` `publish_staged_source`).
+
+Failure modes:
+
+D1. Sync fails after install (Unix): the download completes with the installed
+path, `completedPaths` and `outputPath` name that file, a warning is logged,
+and the staging directory is removed. NOT E2E-tested: there is no fault seam
+for `fsync` on a directory, and `sync_directory` on Windows always returns
+`Ok`, so this path cannot run on Windows. Unproven on Windows and on Linux
+CI; needs a Unix run with a fault injected at the sync call (not available
+without a new seam).
+D2. Install itself fails (destination exists or no-replace refused): unchanged;
+the staged original is preserved and the download fails. Covered by the
+Finding 1 install-fallback case on exFAT.
+D3. Caption sidecar install after a media sync failure: the media path is
+recorded as installed, and caption handling runs as before. Covered by D1's
+reasoning, not separately tested.
+
+## Wave 1 A6: long paths on Windows
+
+ROSI's output template is `%(title).150B [%(id)s].%(ext)s`. The staging
+directory is `<download folder>\.rosi-download-<uuid>`, 52 characters after the
+folder. The Windows binary has no `longPathAware` manifest (tauri-build's
+default manifest only declares common controls), so Win32 calls on plain paths
+are limited to MAX_PATH (260 UTF-16 units, including the terminator).
+
+Reading the code: no `\?\` or verbatim conversion exists anywhere in
+`src-tauri/src`. Paths reach `file_identity` (`CreateFileW`) and
+`install_no_replace` (`MoveFileExW`) as they are resolved (`resolve_path` keeps
+a prefix only when the input has one, and settings paths are plain). A
+150-byte title plus `" [id].mp4"` in a 120-character folder gives a final path
+near 282 characters (120 folder, a separator, 150 title bytes, " [page].mp4"), so `MoveFileExW` fails with `ERROR_FILENAME_EXCED_RANGE`.
+The staged file path (about 335 characters) also fails `CreateFileW`, which
+makes `snapshot_stage_entries` report "Could not verify staged entry". Both
+calls therefore need a verbatim path when the path is long.
+
+Failure modes:
+
+L1. Final destination over 260 characters (current code): `install_no_replace`
+fails and the download fails. This is the case the E2E discriminates on.
+E2E: long-path spec, case (c). Expected to fail on the pre-fix code; not
+run on Windows at the time of writing.
+L2. Staged file over 260 characters (current code): `file_identity` returns
+`None`, the stage snapshot fails, and the download fails. Fixed by the same
+conversion. Covered by case (c).
+L3. Path under 260 units: passed to the Win32 call unchanged (no prefix). Covered
+by every existing downloader case that runs on Windows.
+L4. Relative path: unchanged (a verbatim prefix needs an absolute path). Not
+reachable from settings; code review only.
+L5. UNC download folder (`\server\share\...`): converted to `\?\UNC\server\share`.
+NOT E2E-tested: no network share in the gate. Unproven.
+L6. Destination collision on a long path: the existing file keeps its bytes
+and the new file takes a numbered name (no-replace semantics survive the
+prefix). Code review only; the existing exFAT case covers the no-replace
+behavior on macOS.
+L7. yt-dlp itself cannot create a file over 260 characters (the sidecar may not
+be long-path aware). If it fails, case (c) fails for a reason outside
+ROSI's staging code. The activity error and rosi.log must show which side
+failed; the spec records the activity error in its report.
+L8. `hide_on_windows` on the staging directory uses a raw call too. The stage
+directory is about 177 characters, so the call is below MAX_PATH; its
+failure is already ignored. Not changed.

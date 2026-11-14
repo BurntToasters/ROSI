@@ -8,14 +8,51 @@ import {
   prepareManualDownloadStart,
   receiveManualDownloadStart,
 } from './manual-download';
+import { refreshEffectiveOptionsSummary } from './messages';
 import { resetPlaylistScope } from './playlist';
 import { hideVideoPreview } from './preview';
 import { cancelScheduledPreview, previewController, schedulePreview } from './preview-controller';
 import { downloadState, hideProgressBar } from './progress';
+import { queueController } from './queue-controller';
 import { refs } from './refs';
 import { settingsStore } from './settings-store';
 import { setButtonLoading, showToast } from './ui-helpers';
 import { api } from '../api';
+
+// ── Queue ownership of the download slot ────────────────────────────────────
+const QUEUE_RUNNING_REASON =
+  'A queue download is running. Download this link after the queue finishes.';
+let queueReasonTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Refuses a manual download while a queue item downloads. Returns true when
+ * refused. The reason goes to #downloadReadiness only, so callers must return
+ * before they touch the console or progress bar.
+ */
+export function refuseDuringQueueRun(): boolean {
+  if (!queueController.currentQueue.some((item) => item.status === 'downloading')) return false;
+  const hint = document.getElementById('downloadReadiness');
+  if (hint instanceof HTMLElement) {
+    hint.textContent = QUEUE_RUNNING_REASON;
+    hint.dataset.tone = 'blocked';
+    hint.hidden = false;
+    if (queueReasonTimer !== null) clearTimeout(queueReasonTimer);
+    queueReasonTimer = setTimeout(() => {
+      queueReasonTimer = null;
+      // Rebuild the readiness hint only if the reason is still the one showing.
+      if (hint.textContent === QUEUE_RUNNING_REASON) refreshEffectiveOptionsSummary(true);
+    }, 8000);
+  }
+  return true;
+}
+
+/** True when Enter or a click may start the idle Download action. */
+export function isDownloadButtonIdle(): boolean {
+  const button = refs.downloadBtn;
+  return (
+    !!button && !button.classList.contains('loading') && manualDownload.downloadResult === null
+  );
+}
 
 // ── Activity replay ─────────────────────────────────────────────────────────
 export async function replayActivityDownload(entry: RosiDownloadActivity) {
@@ -23,6 +60,7 @@ export async function replayActivityDownload(entry: RosiDownloadActivity) {
     showToast('Wait for the current download to finish first.', { type: 'warning' });
     return;
   }
+  if (refuseDuringQueueRun()) return;
   const request = { ...(entry.request || {}) } as Record<string, unknown>;
   if (typeof request.url !== 'string' || !request.url.trim()) request.url = entry.url;
   const outputPath =
@@ -142,8 +180,10 @@ export function syncPrimaryActionState() {
     }
   }
 
+  // The result state (Open File Location / Download complete) owns the button
+  // until clearDownloadResult runs, so a sync must not relabel it.
   const isLoading = refs.downloadBtn.classList.contains('loading');
-  if (!isLoading) {
+  if (!isLoading && manualDownload.downloadResult === null) {
     refs.downloadBtn.disabled = !validUrl;
     refs.downloadBtn.classList.toggle('is-disabled', !validUrl);
     setDownloadButtonLabel(

@@ -7,11 +7,16 @@ import {
 } from '../messages';
 import type { EffectiveOptionsReadiness } from '../messages';
 import { showModal } from '../overlays';
-import { isPlaylistScopeVisible, resolvePlaylistSelection } from '../playlist';
+import { isPlaylistScopeVisible, readPlaylistSelectionSilently } from '../playlist';
 import { buildRequestOverrides, readAdvancedFormatSelections } from '../presets';
 import { formatBytes, formatRelativeTime } from '../progress';
 import { refs } from '../refs';
-import { flushBeforeRestart, persistSettings, settingsStore } from '../settings-store';
+import {
+  flushBeforeRestart,
+  loadDefaultSettings,
+  persistSettings,
+  settingsStore,
+} from '../settings-store';
 import { applyDownloadProfile, bindExternalLink, updateUIFromSettings } from '../settings-view';
 import { applyTheme, updateBackgroundAnimation } from '../theme';
 import { notifyUpdateChannelChanged } from '../updater-ui';
@@ -48,7 +53,8 @@ function buildEffectiveOptionsReadiness(): EffectiveOptionsReadiness {
     return { state: 'formats' };
   }
 
-  const playlist = resolvePlaylistSelection();
+  // Passive refresh: validate without a toast. Download and Add to queue report.
+  const playlist = readPlaylistSelectionSilently();
   const playlistVisible = isPlaylistScopeVisible();
   if (playlistVisible && !playlist) return { state: 'playlist' };
 
@@ -125,24 +131,46 @@ function bindEffectiveOptionsSummary() {
     ?.addEventListener('click', () => window.setTimeout(refreshEffectiveOptionsSummary, 0));
 }
 
-/** Windows-only browser cookie choices. */
-export function bindWindowsBrowserChoice() {
+/**
+ * Windows allows only Firefox for browser cookies. Coerces the in-memory choice
+ * and the select; returns true when the stored choice changed and needs saving.
+ * Startup binding and section reset both call this, so the rule lives in one place.
+ */
+export function enforceWindowsBrowserChoice(): boolean {
   const { browserChoiceSelect } = refs;
   const isWindows = navigator.userAgent.includes('Windows');
-  if (isWindows && browserChoiceSelect) {
-    Array.from(browserChoiceSelect.options).forEach((opt) => {
-      if (opt.value !== 'firefox') {
-        browserChoiceSelect.removeChild(opt);
-      }
-    });
-    browserChoiceSelect.value = 'firefox';
-    if (settingsStore.settings.browserChoice?.toLowerCase() !== 'firefox') {
-      settingsStore.settings.browserChoice = 'firefox';
-      void persistSettings();
+  if (!isWindows || !browserChoiceSelect) return false;
+  Array.from(browserChoiceSelect.options).forEach((opt) => {
+    if (opt.value !== 'firefox') {
+      browserChoiceSelect.removeChild(opt);
     }
-    const browserWindowsHint = document.getElementById('browserWindowsHint');
-    if (browserWindowsHint) browserWindowsHint.classList.remove('hidden');
-  }
+  });
+  browserChoiceSelect.value = 'firefox';
+  const changed = settingsStore.settings.browserChoice?.toLowerCase() !== 'firefox';
+  if (changed) settingsStore.settings.browserChoice = 'firefox';
+  const browserWindowsHint = document.getElementById('browserWindowsHint');
+  if (browserWindowsHint) browserWindowsHint.classList.remove('hidden');
+  return changed;
+}
+
+/** Windows-only browser cookie choices. */
+export function bindWindowsBrowserChoice() {
+  if (enforceWindowsBrowserChoice()) void persistSettings();
+}
+
+/**
+ * Tells the updater about a channel change so a candidate from the old channel is
+ * retired. Microsoft Store builds have no channel setting, so they are skipped.
+ * Returns true when the updater was notified.
+ */
+export function notifyChannelIfChanged(
+  previous: RosiSettings['updateChannel'] | undefined,
+  next: RosiSettings['updateChannel'] | undefined
+): boolean {
+  if (!next || previous === next) return false;
+  if (api.getChannel() === 'msstore') return false;
+  notifyUpdateChannelChanged(next);
+  return true;
 }
 
 /** Settings toggles, selects, and inputs that save on change. */
@@ -497,19 +525,27 @@ export function bindSettingsActions() {
     resetSettingsBtn.addEventListener('click', () => {
       showModal({
         title: 'Confirm Reset',
-        message: 'Are you sure you want to reset all settings to default? Rosi will restart.',
+        message: 'Are you sure you want to reset all settings to default? ROSI will restart.',
         buttons: [
           { label: 'Cancel' },
           {
-            label: '⟳ Reset & Restart',
+            label: 'Reset & Restart',
+            icon: 'refresh-cw',
             danger: true,
             action: async () => {
               if (!(await flushBeforeRestart('Resetting settings'))) return;
               localStorage.removeItem('rosi-flat-ui');
               localStorage.removeItem('rosi-theme');
+              // The restart discards this renderer, so the channel notice goes first. If
+              // the reset then fails, the previous channel is sent back.
+              const previousChannel = settingsStore.settings.updateChannel;
+              const defaults = await loadDefaultSettings();
+              const defaultChannel = defaults?.updateChannel;
+              const channelNotified = notifyChannelIfChanged(previousChannel, defaultChannel);
               try {
                 await api.resetSettings();
               } catch (error) {
+                if (channelNotified) notifyChannelIfChanged(defaultChannel, previousChannel);
                 localStorage.setItem(
                   'rosi-flat-ui',
                   settingsStore.settings.flatUi ? 'true' : 'false'
@@ -535,8 +571,11 @@ export function bindSettingsActions() {
       try {
         if (!(await persistSettings(false, true))) return;
         const result = await api.exportSettings();
+        // A cancelled save dialog returns ok with exported: false; it is not an error.
         if (result && result.ok) {
-          showToast('Settings exported successfully.', { type: 'success' });
+          if (result.data.exported) {
+            showToast('Settings exported successfully.', { type: 'success' });
+          }
         } else if (result && !result.ok) {
           showToast(result.error?.message || 'Export failed.', { type: 'error' });
         }
@@ -560,8 +599,11 @@ export function bindSettingsActions() {
               try {
                 if (!(await persistSettings(false, true))) return;
                 const result = await api.importSettings();
+                // A cancelled open dialog returns ok with imported: false; no toast.
                 if (result && result.ok) {
-                  showToast('Settings imported successfully.', { type: 'success' });
+                  if (result.data.imported) {
+                    showToast('Settings imported successfully.', { type: 'success' });
+                  }
                 } else {
                   showToast(result?.error?.message || 'Import failed or was cancelled.', {
                     type: 'error',

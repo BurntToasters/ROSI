@@ -11,6 +11,7 @@ import {
 } from '../settings-view';
 import { applyTheme } from '../theme';
 import { showToast } from '../ui-helpers';
+import { enforceWindowsBrowserChoice, notifyChannelIfChanged } from './settings-controls';
 
 /** Settings search and per-section reset. */
 export function initSettingsSearch() {
@@ -55,7 +56,6 @@ export function initSettingsSearch() {
       'gpuAcceleration',
       'gpuType',
       'ffmpegPath',
-      'upstreamProxy',
     ],
     enhancements: [
       'embedMetadata',
@@ -73,7 +73,7 @@ export function initSettingsSearch() {
       'notifications',
       'showTaskbarProgress',
     ],
-    application: ['checkUpdatesOnStartup', 'updateChannel'],
+    application: ['checkUpdatesOnStartup', 'updateChannel', 'upstreamProxy'],
   };
 
   document.querySelectorAll<HTMLButtonElement>('.settings-section-reset').forEach((button) => {
@@ -115,11 +115,17 @@ async function applySectionReset(keys: string[]) {
   }
   const settingsRecord = settingsStore.settings as unknown as Record<string, unknown>;
   const defaultsRecord = defaults as unknown as Record<string, unknown>;
+  const previousChannel = settingsStore.settings.updateChannel;
   keys.forEach((key) => {
     settingsRecord[key] = defaultsRecord[key];
   });
+  // Windows allows only Firefox for cookies. Re-apply the rule so a default of
+  // chrome never reaches the select, which would show blank.
+  enforceWindowsBrowserChoice();
   updateUIFromSettings();
   applyTheme(settingsStore.settings.theme ?? 'system');
+  // Same notice as the channel select, so the updater retires a candidate from the old channel.
+  notifyChannelIfChanged(previousChannel, settingsStore.settings.updateChannel);
   const saved = await persistSettings(true, true);
   showToast(saved ? UI_MESSAGES.settings.resetSaved : UI_MESSAGES.settings.resetFailed, {
     type: saved ? 'success' : 'error',

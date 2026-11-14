@@ -1,5 +1,5 @@
 // Modal queue, focus trapping, overlay accessibility, and the licenses overlay.
-import { getModifierKeyName, setButtonIconLabel } from './core';
+import { getModifierKeyName, logError, setButtonIconLabel } from './core';
 import { appliedTheme, syncLicensesTheme } from './theme';
 
 export function setMainContentInert(isInert: boolean) {
@@ -84,6 +84,9 @@ export interface ModalData {
   priority?: boolean;
   busy?: boolean;
   extra?: (() => Node | null) | Node | null;
+  // Runs when the prompt is dismissed without a button (Escape). Never runs for
+  // a busy prompt, which cannot be dismissed.
+  onDismiss?: () => void;
 }
 
 export const modalQueue: ModalData[] = [];
@@ -111,13 +114,14 @@ export function cancelModalHide() {
   modalHidingData = null;
 }
 
+// An iframe is a tab stop in its own right; the licenses frame must be in the
+// trap order so keyboard users can reach its text.
+const FOCUSABLE_SELECTOR =
+  'button, input, select, textarea, a[href], iframe, [tabindex]:not([tabindex="-1"])';
+
 export function getFocusableElements(container: unknown): HTMLElement[] {
   if (!(container instanceof HTMLElement)) return [];
-  return Array.from(
-    container.querySelectorAll<HTMLElement>(
-      'button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])'
-    )
-  ).filter(
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
     (element) =>
       !element.hasAttribute('disabled') &&
       element.getAttribute('aria-hidden') !== 'true' &&
@@ -144,8 +148,18 @@ export function showModal({
   priority = false,
   busy = false,
   extra = null,
+  onDismiss,
 }: ModalData) {
-  const modalData: ModalData = { title, message, key, buttons, priority, busy, extra };
+  const modalData: ModalData = {
+    title,
+    message,
+    key,
+    buttons,
+    priority,
+    busy,
+    extra,
+    onDismiss,
+  };
   // A keyed prompt (for example an available update) that a priority modal
   // pushes aside is shown again afterwards instead of being lost.
   let displaced: ModalData | null = null;
@@ -263,7 +277,7 @@ export function displayNextModal() {
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      hideModal(modal, null);
+      dismissActiveModal();
       return;
     }
     if (e.key !== 'Tab') return;
@@ -322,6 +336,18 @@ export function displayNextModal() {
   });
 }
 
+/** Dismisses the visible prompt without a button (Escape). Busy prompts stay open. */
+export function dismissActiveModal(): boolean {
+  const modal = document.getElementById('app-modal');
+  const data = currentModalData;
+  if (!modal || !data || data.busy) return false;
+  hideModal(modal, data.onDismiss);
+  return true;
+}
+
+// The action runs when the button is pressed, not when the fade ends. A priority
+// modal that arrives during the fade cancels the teardown, so an action deferred
+// to the teardown would be dropped.
 export function hideModal(modal: HTMLElement, action: (() => void) | null | undefined) {
   if (!currentModalData || modalHideTimer !== null) return;
   const closingModalData = currentModalData;
@@ -339,7 +365,6 @@ export function hideModal(modal: HTMLElement, action: (() => void) | null | unde
     modal.removeAttribute('aria-busy');
     isModalActive = false;
     syncModalAccessibility();
-    if (typeof action === 'function') action();
     if (!isModalActive && modalQueue.length > 0) displayNextModal();
     if (!isModalActive && modalQueue.length === 0) {
       setMainContentInert(false);
@@ -347,6 +372,13 @@ export function hideModal(modal: HTMLElement, action: (() => void) | null | unde
       previousFocus = null;
     }
   }, 200);
+  if (typeof action === 'function') {
+    try {
+      action();
+    } catch (error) {
+      logError('Modal action failed', error);
+    }
+  }
 }
 
 export function retireModal(key: string) {
@@ -390,6 +422,49 @@ Alt+1 / Alt+2 / Alt+3 - Show Queue, Activity, or Console`,
 
 export let licensesPreviousFocus: Element | null = null;
 export let licensesTrapHandler: ((e: KeyboardEvent) => void) | null = null;
+
+// The licenses text lives in a same-origin frame. A key pressed inside the frame
+// reaches the frame's own document, not the overlay listener, so it is forwarded
+// here: Tab past the last link returns to the close button, Escape closes.
+function forwardLicensesFrameKey(event: KeyboardEvent) {
+  if (getTopActiveOverlayId() !== 'licenses-overlay') return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    hideLicenses();
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  const frameDoc = event.currentTarget as Document;
+  const frameFocusables = Array.from(
+    frameDoc.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
+  ).filter(
+    (element) =>
+      !element.hasAttribute('disabled') && element.tabIndex !== -1 && element.offsetParent !== null
+  );
+  const first = frameFocusables[0];
+  const last = frameFocusables[frameFocusables.length - 1];
+  const active = frameDoc.activeElement;
+  const closeBtn = document.getElementById('close-licenses');
+  // The close button comes before the frame in the trap order, so leaving the
+  // frame in either direction lands there.
+  if (
+    (!event.shiftKey && last && active === last) ||
+    (event.shiftKey && first && active === first)
+  ) {
+    event.preventDefault();
+    closeBtn?.focus();
+  }
+}
+
+function attachLicensesFrameKeys() {
+  const frame = document.getElementById('licenses-frame');
+  if (!(frame instanceof HTMLIFrameElement)) return;
+  // A new document after a load has no listener. The same function reference
+  // is added at most once per target, so repeated calls are harmless.
+  frame.addEventListener('load', attachLicensesFrameKeys);
+  frame.contentDocument?.addEventListener('keydown', forwardLicensesFrameKey);
+}
 
 export function showLicenses() {
   const licensesOverlay = document.getElementById('licenses-overlay');
@@ -458,6 +533,7 @@ export function showLicenses() {
       }
     };
     document.addEventListener('focusin', licensesFocusinHandler, true);
+    attachLicensesFrameKeys();
   }
 }
 

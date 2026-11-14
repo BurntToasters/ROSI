@@ -23,13 +23,33 @@
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   line-height: 1.45;
-  resize: vertical;
+  resize: none;
+  overflow-y: auto;
+}
+
+/* controls.css sets padding on textarea.field (0.45rem), which outranks the
+   rule above. The one-row box needs the 0.35rem padding to fit without scrolling. */
+textarea.queue-url-input {
+  padding-top: 0.35rem;
+  padding-bottom: 0.35rem;
+}
+
+/* The placeholder stays on one line, so the empty one-row box has nothing to
+   scroll and shows no scrollbar arrows. */
+.queue-url-input::placeholder {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* One line at rest; room for several links while in use. */
 .queue-url-input:focus,
 .queue-url-input:not(:placeholder-shown) {
   height: 64px;
+}
+
+.queue-url-input:placeholder-shown {
+  overflow: hidden;
 }
 
 .queue-url-input.drag-over {
@@ -150,11 +170,11 @@
 }
 
 .queue-completed .queue-item-title {
-  color: var(--success);
+  color: var(--success-text);
 }
 
 .queue-failed .queue-item-title {
-  color: var(--danger);
+  color: var(--danger-text);
 }
 
 .queue-cancelled .queue-item-title {
@@ -242,7 +262,7 @@
   max-width: 100%;
   margin: var(--spacing-xs) 0 0;
   font-size: var(--text-xs);
-  color: var(--danger);
+  color: var(--danger-text);
   overflow-wrap: anywhere;
 }
 

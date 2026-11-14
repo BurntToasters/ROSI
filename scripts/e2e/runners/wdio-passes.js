@@ -155,7 +155,7 @@ export function buildWdioPasses({ onlySpec, ownerEnabled, ffmpeg, v5Areas }) {
   const legacyPasses =
     onlySpec || !ownerEnabled("legacy-import")
       ? []
-      : ["import", "corrupt-settings"].map((legacyCase) => {
+      : ["import", "corrupt-settings", "preserve-v5"].map((legacyCase) => {
           const legacyProfile = createE2eProfile({ seedSettings: false });
           return {
             name: `legacy-import/${legacyCase}`,
@@ -163,8 +163,11 @@ export function buildWdioPasses({ onlySpec, ownerEnabled, ffmpeg, v5Areas }) {
             profile: legacyProfile,
             status: "pending",
             reason: null,
+            // preserve-v5 starts with ROSI 5 data and a finished import marker
+            // already in place, so its launch must not replace that data.
             seed: seedLegacyV4Data(legacyProfile, {
               corruptSettings: legacyCase === "corrupt-settings",
+              rosi5Data: legacyCase === "preserve-v5",
             }),
             resultsPath: path.join(legacyProfile.profileDir, "results.json"),
           };

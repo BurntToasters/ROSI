@@ -496,29 +496,50 @@ struct CancelPlan {
     meta: CompletionMeta,
 }
 
-/// Cancel the active session. `notify` controls whether the user-facing
-/// cancellation message and legacy `complete` event are sent for queue runs.
-/// Manual sessions always announce their cancellation.
+/// Cancel the session held by any owner. Only the app stop path uses this:
+/// stop must end whatever is running. `notify` controls whether the
+/// user-facing cancellation message and legacy `complete` event are sent for
+/// queue runs. Manual sessions always announce their cancellation.
 pub fn cancel_active_session(notify: bool) {
-    cancel_session(None, notify, true, false);
+    cancel_session(None, None, notify, true, false);
+}
+
+/// Cancel only the session that `owner` holds. A session held by the other
+/// owner is left running. Never waits on the other owner's session.
+pub fn cancel_owned_session(owner: Owner, notify: bool) {
+    cancel_session(None, Some(owner), notify, true, false);
 }
 
 /// Shutdown and stop path: never announces the cancellation, and kills yt-dlp
 /// before ffmpeg.
 pub fn kill_all_processes() {
-    cancel_session(None, false, false, true);
+    cancel_session(None, None, false, false, true);
 }
 
 /// Shared cancel body. `target` names one session, or the current one when
-/// `None`. `notify` and `notify_manual` decide whether the cancel is announced.
+/// `None`. `owner`, when set, restricts the cancel to sessions that owner
+/// holds. `notify` and `notify_manual` decide whether the cancel is announced.
 /// `ytdlp_first` sets the child termination order. Termination and waits run
 /// here, on the caller, never on the owner.
-fn cancel_session(target: Option<u64>, notify: bool, notify_manual: bool, ytdlp_first: bool) {
+fn cancel_session(
+    target: Option<u64>,
+    owner: Option<Owner>,
+    notify: bool,
+    notify_manual: bool,
+    ytdlp_first: bool,
+) {
     let plan = session_owner::run(move |slot| {
-        cancel_locked(slot, target, notify, notify_manual, ytdlp_first)
+        cancel_locked(slot, target, owner, notify, notify_manual, ytdlp_first)
     })
     .flatten();
     let Some(plan) = plan else {
+        // An owner-filtered cancel waits for nothing: the session it did not
+        // match belongs to the other owner, or already left the slot and is
+        // routed by its own finish. Waiting on "every registered session"
+        // here would let a manual download block a queue cancel.
+        if owner.is_some() {
+            return;
+        }
         // Nothing current matched. A named session that was already replaced
         // or finished is still awaited, so its terminal result is routed first.
         crate::coordinator::await_finalized(target);
@@ -539,13 +560,15 @@ fn cancel_session(target: Option<u64>, notify: bool, notify_manual: bool, ytdlp_
 fn cancel_locked(
     slot: &mut Option<Session>,
     target: Option<u64>,
+    owner: Option<Owner>,
     notify: bool,
     notify_manual: bool,
     ytdlp_first: bool,
 ) -> Option<CancelPlan> {
-    let session = slot
-        .as_mut()
-        .filter(|session| target.is_none_or(|id| session.id == id))?;
+    let session = slot.as_mut().filter(|session| {
+        target.is_none_or(|id| session.id == id)
+            && owner.is_none_or(|wanted| session.owner == wanted)
+    })?;
     session.cancelled = true;
     session.network_cancellation.send_replace(true);
     let show = notify || (notify_manual && session.owner == Owner::Manual);
@@ -775,7 +798,7 @@ pub fn start_download(
             }) => {
                 // Same owner: cancel the session that holds the slot, wait for
                 // its finalization, then install this one.
-                cancel_session(Some(session_id), false, true, false);
+                cancel_session(Some(session_id), None, false, true, false);
                 crate::coordinator::await_finalized(Some(session_id));
                 session = waiting;
                 session.started_at = crate::app_state::now_ms();
@@ -1549,15 +1572,24 @@ pub fn sanitize_filename(input: &str) -> String {
     if cleaned.chars().all(|c| c == '.') {
         cleaned.clear();
     }
-    let stem = cleaned.split('.').next().unwrap_or("").to_ascii_lowercase();
+    // Trim before the reserved-name test: Windows ignores trailing spaces and
+    // dots, so `con ` and `CON .txt` name the console device too.
+    let trimmed = cleaned.trim_end_matches(['.', ' ']);
+    let stem = trimmed
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .trim_end_matches(' ')
+        .to_ascii_lowercase();
     let reserved = matches!(stem.as_str(), "con" | "prn" | "aux" | "nul")
         || ((stem.starts_with("com") || stem.starts_with("lpt"))
             && stem.len() == 4
             && stem.as_bytes()[3].is_ascii_digit());
-    if reserved {
-        cleaned.clear();
-    }
-    let trimmed = cleaned.trim_end_matches(['.', ' ']).to_string();
+    let trimmed = if reserved {
+        String::new()
+    } else {
+        trimmed.to_string()
+    };
     let mut end = trimmed.len().min(255);
     while end > 0 && !trimmed.is_char_boundary(end) {
         end -= 1;
@@ -1612,8 +1644,10 @@ pub fn download_video(options: FalliblePayload<DownloadRequestInput>) -> IpcResu
 #[tauri::command]
 pub async fn cancel_download() {
     // Cancellation waits for helper exit and file publication; keep that off
-    // the async runtime's worker threads.
-    let _ = tauri::async_runtime::spawn_blocking(|| cancel_active_session(true)).await;
+    // the async runtime's worker threads. Only a manual session is cancelled:
+    // a queue item keeps running under the queue's own cancel.
+    let _ =
+        tauri::async_runtime::spawn_blocking(|| cancel_owned_session(Owner::Manual, true)).await;
 }
 
 #[cfg(test)]

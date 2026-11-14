@@ -161,6 +161,12 @@
       "allowedSkips": []
     },
     {
+      "name": "legacy-v4-preserve-v5",
+      "feature": "legacy-import",
+      "owner": "legacy-import",
+      "allowedSkips": []
+    },
+    {
       "name": "launch",
       "feature": "dock-ui",
       "owner": "main",
@@ -715,6 +721,24 @@
     {
       "name": "save-location",
       "feature": "dock-ui",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "queue-notify-drain",
+      "feature": "queue",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "queue-failure-details",
+      "feature": "queue",
+      "owner": "main",
+      "allowedSkips": []
+    },
+    {
+      "name": "settings-import-saved",
+      "feature": "settings",
       "owner": "main",
       "allowedSkips": []
     },

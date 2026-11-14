@@ -78,15 +78,18 @@ export function which(bin) {
   return result.stdout.split(/\r?\n/).find(Boolean)?.trim() ?? null;
 }
 
+/** Platforms with an implemented background mode. Linux has none. */
+const BACKGROUND_PLATFORMS = new Set(["darwin", "win32"]);
+
 /**
- * `ROSI_E2E_BACKGROUND` for the app launches of this run. Local macOS runs
- * default to "1" so ROSI never takes focus or covers other apps. CI and
- * `ROSI_E2E_FOREGROUND=1` keep the foreground behavior; an explicit value wins.
- * Failure modes: scripts/test-e2e-background.failure-modes.md.
+ * `ROSI_E2E_BACKGROUND` for the app launches of this run. Local macOS and
+ * Windows runs default to "1" so ROSI never takes focus or covers other apps.
+ * CI and `ROSI_E2E_FOREGROUND=1` keep the foreground behavior; an explicit
+ * value wins. Failure modes: scripts/test-e2e-background.failure-modes.md.
  */
 export function e2eBackgroundValue({ env, platform }) {
   if (env.ROSI_E2E_BACKGROUND !== undefined) return env.ROSI_E2E_BACKGROUND;
-  if (platform !== "darwin") return null;
+  if (!BACKGROUND_PLATFORMS.has(platform)) return null;
   if (env.ROSI_E2E_FOREGROUND === "1") return null;
   const ci = (env.CI ?? "").trim().toLowerCase();
   if (ci !== "" && ci !== "false" && ci !== "0") return null;

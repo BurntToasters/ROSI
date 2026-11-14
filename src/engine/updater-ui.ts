@@ -6,7 +6,7 @@ import { call, fire } from '../commands';
 import type { UpdaterProgressEvent, UpdaterStatusEvent } from '../generated/ipc-types';
 import { logError } from './core';
 import { formatUpdateProgressInfo } from '../modules/updates';
-import { retireModal, showModal } from './overlays';
+import { currentModalData, modalQueue, retireModal, showModal } from './overlays';
 import { formatBytes } from './progress';
 import { setButtonLoading } from './ui-helpers';
 import { api } from '../api';
@@ -143,6 +143,29 @@ export function hideUpdateBanner() {
   }
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Shows the "Update Error" prompt. A failed download arrives twice, as an error
+ * status event and as the command result, so an identical prompt that is
+ * already shown or queued is not repeated.
+ */
+function showUpdateError(message: string) {
+  const text = `An error occurred while checking or installing the update:\n${message}`;
+  const alreadyShown = [currentModalData, ...modalQueue].some(
+    (data) => data?.title === 'Update Error' && data.message === text
+  );
+  if (alreadyShown) return;
+  showModal({
+    title: 'Update Error',
+    message: text,
+    buttons: [{ label: 'OK', primary: true }],
+    priority: true,
+  });
+}
+
 export function showRestartFailure(error: unknown) {
   const detail = error instanceof Error ? error.message : String(error);
   showModal({
@@ -246,8 +269,21 @@ export function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boole
                 action: async () => {
                   if (updaterCandidateId !== candidateId) return;
                   showUpdateBanner();
-                  const result = await call('download_update', { candidateId });
-                  if (result.cancelled || result.error) hideUpdateBanner();
+                  try {
+                    const result = await call('download_update', { candidateId });
+                    if (result.cancelled) {
+                      // The cancelled status event owns the message.
+                      hideUpdateBanner();
+                    } else if (!result.success) {
+                      // Covers a refusal while a cancelled download is still stopping,
+                      // which arrives without a status event.
+                      hideUpdateBanner();
+                      showUpdateError(result.error ?? 'The update could not be downloaded.');
+                    }
+                  } catch (error) {
+                    hideUpdateBanner();
+                    showUpdateError(errorMessage(error));
+                  }
                 },
               },
               { label: 'Later' },
@@ -277,12 +313,7 @@ export function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boole
           retireModal('updater-downloaded');
           hideUpdateBanner();
           if (data.kind === 'feed' && !wasManualCheck) break;
-          showModal({
-            title: 'Update Error',
-            message: `An error occurred while checking or installing the update:\n${data.message}`,
-            buttons: [{ label: 'OK', primary: true }],
-            priority: true,
-          });
+          showUpdateError(data.message);
           break;
 
         case 'cancelled':
@@ -314,8 +345,13 @@ export function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boole
                 primary: true,
                 action: async () => {
                   if (updaterCandidateId !== candidateId) return;
-                  if (await flushSettingsBeforeRestart()) {
-                    await call('install_update', { candidateId });
+                  try {
+                    if (await flushSettingsBeforeRestart()) {
+                      await call('install_update', { candidateId });
+                    }
+                  } catch (error) {
+                    hideUpdateBanner();
+                    showUpdateError(errorMessage(error));
                   }
                 },
               },

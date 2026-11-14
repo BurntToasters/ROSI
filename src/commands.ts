@@ -17,10 +17,18 @@ export interface Commands {
   reset_stats: { args: void; result: Envelope<void> };
   get_download_activity: { args: void; result: Envelope<Ipc.DownloadCompletion[]> };
   clear_download_activity: { args: void; result: Envelope<void> };
-  get_formats: { args: { url: string }; result: Envelope<Ipc.FormatList> };
+  get_formats: {
+    args: { url: string; hookBrowser?: boolean; browserChoice?: string };
+    result: Envelope<Ipc.FormatList>;
+  };
   cancel_formats: { args: void; result: void };
   get_video_info: {
-    args: { url: string; playlistMode: 'current' | 'all' | null };
+    args: {
+      url: string;
+      playlistMode: 'current' | 'all' | null;
+      hookBrowser?: boolean;
+      browserChoice?: string;
+    };
     result: Envelope<Ipc.VideoInfo>;
   };
   cancel_video_info: { args: void; result: void };

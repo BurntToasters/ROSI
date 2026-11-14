@@ -1,14 +1,41 @@
 // Custom-profile format listing and its request state.
 import { isValidUrl, logError } from './core';
 import { showModal } from './overlays';
+import { refs } from './refs';
 import { setButtonLoading } from './ui-helpers';
-import { api } from '../api';
+import { api, type RosiCookieChoice } from '../api';
 
 export let isFetchingFormats = false;
 export let fetchFormatsAbort: (() => void) | null = null;
 
 export let formatRequestGeneration = 0;
 export let formatRequestUrl: string | null = null;
+
+/**
+ * The browser-cookie choice the next download would use. Rust resolves it from
+ * the same preset the download sends (the selected preset id), so listings and
+ * previews match the download. Returns null when it cannot be resolved; the
+ * caller then sends no choice and Rust uses the saved settings.
+ */
+export async function resolveNextDownloadCookieChoice(
+  url: string
+): Promise<RosiCookieChoice | null> {
+  const presetId = refs.downloadPresetSelect?.value || undefined;
+  try {
+    const resolved = await api.resolveDownloadOptions({
+      url,
+      ...(presetId ? { presetId } : {}),
+    });
+    if (!resolved || resolved.ok !== true) return null;
+    const choice: RosiCookieChoice = {
+      hookBrowser: resolved.data.hookBrowser ?? undefined,
+      browserChoice: resolved.data.browserChoice ?? undefined,
+    };
+    return choice.hookBrowser === undefined && choice.browserChoice === undefined ? null : choice;
+  } catch {
+    return null;
+  }
+}
 
 function setSelectMessage(select: HTMLSelectElement | null, message: string) {
   if (!select) return;
@@ -114,7 +141,11 @@ export async function fetchFormats() {
     setSelectMessage(audioSelect, 'Loading...');
 
     try {
-      const formatResult = await api.getFormats(videoUrl);
+      const cookies = await resolveNextDownloadCookieChoice(videoUrl);
+      if (wasCancelled || !isCurrentRequest()) return;
+      const formatResult = cookies
+        ? await api.getFormats(videoUrl, cookies)
+        : await api.getFormats(videoUrl);
       if (wasCancelled || !isCurrentRequest()) return;
       if (!formatResult || formatResult.ok !== true) {
         if (formatResult?.error?.code === 'NOT_AVAILABLE') {

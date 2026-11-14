@@ -140,24 +140,6 @@
                 FFmpeg is bundled with ROSI. Only set this to use a different FFmpeg installation.
               </p>
             </div>
-
-            <div class="setting-row">
-              <label class="select-label">
-                <span class="setting-label">Upstream proxy</span>
-                <input
-                  id="upstreamProxyInput"
-                  class="field"
-                  type="text"
-                  placeholder="http://proxy.example:8080"
-                  spellcheck="false"
-                  autocomplete="off"
-                />
-              </label>
-              <p class="settings-hint">
-                Optional. Only for networks that require an HTTP proxy. HTTP proxies only, with no
-                authentication. Leave blank for direct connections.
-              </p>
-            </div>
           </div>
         </section>
 
@@ -244,12 +226,7 @@
                   Language codes such as <code>en,es</code>, or <code>all</code> for every available
                   language.
                 </p>
-                <p
-                  id="subtitleLangsError"
-                  class="url-validation-message"
-                  role="alert"
-                  aria-live="polite"
-                ></p>
+                <p id="subtitleLangsError" class="url-validation-message" role="alert"></p>
               </div>
             </div>
           </div>
@@ -465,6 +442,24 @@
                   </span>
                 </label>
               </div>
+            </div>
+
+            <div class="setting-row">
+              <label class="select-label">
+                <span class="setting-label">Upstream proxy</span>
+                <input
+                  id="upstreamProxyInput"
+                  class="field"
+                  type="text"
+                  placeholder="http://proxy.example:8080"
+                  spellcheck="false"
+                  autocomplete="off"
+                />
+              </label>
+              <p class="settings-hint">
+                Optional. Only for networks that require an HTTP proxy. HTTP proxies only, with no
+                authentication. Leave blank for direct connections.
+              </p>
             </div>
 
             <div class="settings-actions">
@@ -849,7 +844,7 @@
                 </div>
               </section>
 
-              <div class="download-destination" aria-live="polite">
+              <div class="download-destination">
                 <span data-icon="folder" data-size="16" class="download-destination-icon"></span>
                 <div class="download-destination-copy">
                   <span class="download-destination-label">Save to</span>
@@ -941,12 +936,7 @@
                     inputmode="numeric"
                   />
                 </div>
-                <p
-                  id="playlistScopeError"
-                  class="playlist-scope-error"
-                  role="alert"
-                  aria-live="polite"
-                ></p>
+                <p id="playlistScopeError" class="playlist-scope-error" role="alert"></p>
               </fieldset>
 
               <div id="progress-container" class="progress-container">
@@ -1094,10 +1084,10 @@
                       id="cancelQueueBtn"
                       class="queue-action-btn queue-cancel-btn btn btn--neutral btn--sm"
                       title="Cancel queue"
-                      aria-label="Cancel active queue"
+                      aria-label="Cancel queue"
                     >
                       <span data-icon="square" data-size="12"></span>
-                      Stop
+                      Cancel queue
                     </button>
                     <button
                       type="button"
@@ -1176,7 +1166,7 @@
                     type="button"
                     id="clearHistory"
                     class="history-clear-btn btn btn--ghost btn--sm btn--icon btn--danger-hover"
-                    title="Clear activity"
+                    title="Clear history"
                     aria-label="Clear history"
                   >
                     <span data-icon="trash-2" data-size="14"></span>
@@ -1230,13 +1220,7 @@
             >
               <div id="update-banner-bar" class="update-banner-bar"></div>
             </div>
-            <span
-              id="update-banner-info"
-              class="update-banner-info"
-              role="status"
-              aria-live="polite"
-              aria-atomic="true"
-            ></span>
+            <span id="update-banner-info" class="update-banner-info"></span>
             <button
               type="button"
               id="update-banner-cancel"
@@ -1269,6 +1253,7 @@
       role="dialog"
       aria-modal="true"
       aria-labelledby="modal-title"
+      aria-describedby="modal-message"
       aria-hidden="true"
     >
       <div class="modal-box">

@@ -14,6 +14,16 @@ use tauri_plugin_dialog::DialogExt;
 
 static SETTINGS_LOCK: Mutex<()> = Mutex::new(());
 const MAX_SETTINGS_FILE_BYTES: u64 = 2 * 1024 * 1024;
+/// The Windows settings UI offers Firefox alone, so Windows never uses another browser.
+const WINDOWS_BROWSER_CHOICE: &str = "firefox";
+
+fn default_browser_choice() -> &'static str {
+    if cfg!(windows) {
+        WINDOWS_BROWSER_CHOICE
+    } else {
+        "chrome"
+    }
+}
 
 pub fn default_settings() -> Settings {
     Settings {
@@ -33,7 +43,7 @@ pub fn default_settings() -> Settings {
         keep_original_after_convert: true,
         first_launch: true,
         hook_browser: false,
-        browser_choice: "chrome".into(),
+        browser_choice: default_browser_choice().into(),
         animate_background: true,
         flat_ui: false,
         notifications: true,
@@ -103,7 +113,12 @@ fn truncate_chars(value: &str, max: usize) -> &str {
     }
 }
 
+/// On Windows every stored or imported value becomes Firefox, the only browser
+/// the settings UI can show. Other platforms keep the allowed-list check.
 fn read_browser_choice(raw: &Map<String, Value>, fallback: &str) -> String {
+    if cfg!(windows) {
+        return WINDOWS_BROWSER_CHOICE.to_string();
+    }
     let value = raw
         .get("browserChoice")
         .and_then(Value::as_str)
@@ -693,32 +708,98 @@ pub struct Imported {
     imported: bool,
 }
 
+/// Name of the E2E-only answer file in the data directory. Only E2E builds read it.
+#[cfg(feature = "e2e")]
+const E2E_DIALOG_ANSWER_FILE: &str = "e2e-settings-dialog.json";
+
+/// E2E-only answer to a native settings dialog, which WebDriver cannot drive.
+/// The spec writes `{"cancel": true}` or `{"path": "<absolute path>"}` before the
+/// click. The file is removed before it is parsed, so one answer serves one
+/// dialog. Returns `None` when no answer is queued, so the real dialog opens.
+#[cfg(feature = "e2e")]
+fn take_e2e_dialog_answer() -> Result<Option<Option<std::path::PathBuf>>, String> {
+    let file = crate::app_state::data_dir().join(E2E_DIALOG_ANSWER_FILE);
+    let raw = match std::fs::read_to_string(&file) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("Could not read the E2E dialog answer: {error}")),
+    };
+    std::fs::remove_file(&file)
+        .map_err(|error| format!("Could not consume the E2E dialog answer: {error}"))?;
+    let answer: Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("Invalid E2E dialog answer: {error}"))?;
+    match (answer.get("cancel"), answer.get("path")) {
+        (Some(Value::Bool(true)), None) => Ok(Some(None)),
+        (None, Some(Value::String(path))) if !path.is_empty() => {
+            Ok(Some(Some(std::path::PathBuf::from(path))))
+        }
+        _ => Err(
+            "Invalid E2E dialog answer: expected {\"cancel\": true} or {\"path\": \"...\"}.".into(),
+        ),
+    }
+}
+
+/// The file an export writes, or `None` when the user cancels.
+fn export_target(app: &tauri::AppHandle) -> Result<Option<std::path::PathBuf>, String> {
+    #[cfg(feature = "e2e")]
+    if let Some(answer) = take_e2e_dialog_answer()? {
+        return Ok(answer);
+    }
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_title("Export Settings")
+        .set_file_name("rosi-settings.json")
+        .add_filter("JSON", &["json"]);
+    if let Some(window) = crate::app_state::main_window() {
+        dialog = dialog.set_parent(&window);
+    }
+    let Some(path) = dialog.blocking_save_file() else {
+        return Ok(None);
+    };
+    path.into_path()
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+/// The file an import reads, or `None` when the user cancels.
+fn import_source(app: &tauri::AppHandle) -> Result<Option<std::path::PathBuf>, String> {
+    #[cfg(feature = "e2e")]
+    if let Some(answer) = take_e2e_dialog_answer()? {
+        return Ok(answer);
+    }
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_title("Import Settings")
+        .add_filter("JSON", &["json"]);
+    if let Some(window) = crate::app_state::main_window() {
+        dialog = dialog.set_parent(&window);
+    }
+    let Some(file) = dialog.blocking_pick_file() else {
+        return Ok(None);
+    };
+    file.into_path()
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+/// A cancelled dialog is `exported: false`, not an error. Real failures stay errors.
 #[tauri::command]
 pub async fn export_settings(app: tauri::AppHandle) -> IpcResult<Exported> {
-    let outcome = tauri::async_runtime::spawn_blocking(move || {
-        let mut dialog = app
-            .dialog()
-            .file()
-            .set_title("Export Settings")
-            .set_file_name("rosi-settings.json")
-            .add_filter("JSON", &["json"]);
-        if let Some(window) = crate::app_state::main_window() {
-            dialog = dialog.set_parent(&window);
-        }
-        let Some(path) = dialog.blocking_save_file() else {
-            return Err("Export cancelled or failed.".to_string());
+    let outcome = tauri::async_runtime::spawn_blocking(move || -> Result<bool, String> {
+        let Some(path) = export_target(&app)? else {
+            return Ok(false);
         };
-        let path = path.into_path().map_err(|error| error.to_string())?;
-        crate::fs_util::write_json(&path, &load())
+        crate::fs_util::write_json(&path, &load())?;
+        Ok(true)
     })
     .await;
     match outcome {
-        Ok(Ok(())) => ipc::ok(Exported { exported: true }),
+        Ok(Ok(exported)) => ipc::ok(Exported { exported }),
         Ok(Err(message)) => {
-            if message != "Export cancelled or failed." {
-                crate::logging::error(&format!("Failed to export settings: {message}"));
-            }
-            ipc::err(INTERNAL_ERROR, "Export cancelled or failed.")
+            crate::logging::error(&format!("Failed to export settings: {message}"));
+            ipc::err(INTERNAL_ERROR, "Failed to export settings.")
         }
         Err(error) => {
             crate::logging::error(&format!("Export settings worker failed: {error}"));
@@ -727,45 +808,36 @@ pub async fn export_settings(app: tauri::AppHandle) -> IpcResult<Exported> {
     }
 }
 
+/// A cancelled dialog is `imported: false` and changes nothing. Real failures stay errors.
 #[tauri::command]
 pub async fn import_settings(app: tauri::AppHandle) -> IpcResult<Imported> {
-    let outcome = tauri::async_runtime::spawn_blocking(move || {
-        let mut dialog = app
-            .dialog()
-            .file()
-            .set_title("Import Settings")
-            .add_filter("JSON", &["json"]);
-        if let Some(window) = crate::app_state::main_window() {
-            dialog = dialog.set_parent(&window);
-        }
-        let path = dialog
-            .blocking_pick_file()
-            .ok_or_else(|| "cancelled".to_string())?
-            .into_path()
-            .map_err(|error| error.to_string())?;
-        let raw = crate::fs_util::read_bounded(&path, MAX_SETTINGS_IMPORT_BYTES)?
-            .ok_or_else(|| "Import file disappeared.".to_string())?;
-        let parsed: Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
-        if !parsed.is_object() {
-            return Err("Imported settings file has invalid structure.".to_string());
-        }
-        check_schema(&parsed)?;
-        let migrated = normalized(migrate_settings(&parsed));
-        save_all(&migrated)?;
-        crate::gpu::clear_cache();
-        Ok(migrated)
-    })
-    .await;
+    let outcome =
+        tauri::async_runtime::spawn_blocking(move || -> Result<Option<Settings>, String> {
+            let Some(path) = import_source(&app)? else {
+                return Ok(None);
+            };
+            let raw = crate::fs_util::read_bounded(&path, MAX_SETTINGS_IMPORT_BYTES)?
+                .ok_or_else(|| "Import file disappeared.".to_string())?;
+            let parsed: Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+            if !parsed.is_object() {
+                return Err("Imported settings file has invalid structure.".to_string());
+            }
+            check_schema(&parsed)?;
+            let migrated = normalized(migrate_settings(&parsed));
+            save_all(&migrated)?;
+            crate::gpu::clear_cache();
+            Ok(Some(migrated))
+        })
+        .await;
     match outcome {
-        Ok(Ok(settings)) => {
+        Ok(Ok(Some(settings))) => {
             crate::app_state::emit("settings-imported", settings);
             ipc::ok(Imported { imported: true })
         }
+        Ok(Ok(None)) => ipc::ok(Imported { imported: false }),
         Ok(Err(message)) => {
-            if message != "cancelled" {
-                crate::logging::warn(&format!("Failed to import settings: {message}"));
-            }
-            ipc::err(INTERNAL_ERROR, "Import cancelled or failed.")
+            crate::logging::warn(&format!("Failed to import settings: {message}"));
+            ipc::err(INTERNAL_ERROR, "Failed to import settings.")
         }
         Err(error) => {
             crate::logging::error(&format!("Import settings worker failed: {error}"));

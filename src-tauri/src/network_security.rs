@@ -745,9 +745,6 @@ fn host_is_loopback(host: &url::Host<&str>) -> bool {
     }
 }
 
-/// Resolves a destination and applies the policy. Returns the vetted addresses
-/// only when every one is allowed; the caller must connect to those exact
-/// addresses (direct) or hand the hostname to the upstream proxy.
 fn parse_status_code(head: &[u8]) -> Option<u16> {
     let line_end = head
         .windows(2)

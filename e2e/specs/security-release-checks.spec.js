@@ -19,6 +19,56 @@ const tlsRequests = [];
 const untrustedTlsRequests = [];
 const stalledConnections = { hits: 0, closed: 0 };
 const stalledThumbnails = { hits: 0, closed: 0 };
+// Snapshot taken only when a cancelled stream fails to settle. It records the
+// full activity reply, queue state, stream counters, and the tail of the app's
+// rosi.log, and writes the activity reply next to the report when it can.
+async function settleTimeoutDiagnostic({
+  url,
+  cancellationStartedAt,
+  socketCloseLatencyMs,
+}) {
+  const activityReply = await api("getDownloadActivity").catch((error) => ({
+    error: String(error),
+  }));
+  const queue = await api("getQueue").catch((error) => ({
+    error: String(error),
+  }));
+  let logTail;
+  try {
+    logTail = fs
+      .readFileSync(
+        path.join(process.env.ROSI_E2E_DATA_DIR, "logs", "rosi.log"),
+        "utf8",
+      )
+      .split(/\r?\n/)
+      .slice(-200);
+  } catch (error) {
+    logTail = { error: String(error) };
+  }
+  const diagnostic = {
+    url,
+    elapsedSinceCancelMs: Date.now() - cancellationStartedAt,
+    socketCloseLatencyMs,
+    stream: {
+      getRequests: cancelledStream.getRequests,
+      closedGetRequests: cancelledStream.closedGetRequests,
+      activeGetRequests: cancelledStream.activeGetRequests,
+      completedGetRequests: cancelledStream.completedGetRequests,
+      bytesWritten: cancelledStream.bytesWritten,
+    },
+    activityForUrl: activityReply.data?.filter((item) => item.url === url),
+    queue,
+    rosiLogTail: logTail,
+  };
+  if (directory) {
+    fs.writeFileSync(
+      path.join(directory, "cancel-stream-settle-timeout.json"),
+      `${JSON.stringify({ diagnostic, activityReply }, null, 2)}\n`,
+    );
+  }
+  return diagnostic;
+}
+
 function createStreamState(size, seed) {
   return {
     body: deterministicBytes(size, seed),
@@ -684,18 +734,32 @@ describe("ROSI URL boundary and release proof repairs", () => {
     });
     const socketCloseLatencyMs = Date.now() - cancellationStartedAt;
     let activity;
-    await browser.waitUntil(
-      async () => {
-        const response = await api("getDownloadActivity");
-        activity = response.data?.find((item) => item.url === url);
-        return Boolean(activity?.completedAt);
-      },
-      {
-        timeout: 10_000,
-        interval: 50,
-        timeoutMsg: "cancelled streamed download did not settle",
-      },
-    );
+    try {
+      await browser.waitUntil(
+        async () => {
+          const response = await api("getDownloadActivity");
+          activity = response.data?.find((item) => item.url === url);
+          return Boolean(activity?.completedAt);
+        },
+        {
+          timeout: 10_000,
+          interval: 50,
+          timeoutMsg: "cancelled streamed download did not settle",
+        },
+      );
+    } catch (error) {
+      // Diagnostic only: record the app state at the timeout, then rethrow
+      // the original failure so the verdict is unchanged.
+      const diagnostic = await settleTimeoutDiagnostic({
+        url,
+        cancellationStartedAt,
+        socketCloseLatencyMs,
+      });
+      throw new Error(
+        `${error.message}; diagnostic ${JSON.stringify(diagnostic)}`,
+        { cause: error },
+      );
+    }
     const passed =
       activity.outcome === "cancelled" &&
       cancelledStream.closedGetRequests > priorClosedGetRequests &&

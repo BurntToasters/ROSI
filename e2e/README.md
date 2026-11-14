@@ -49,15 +49,14 @@ run reports. These measurements reflect that machine and its local caches; they
 do not predict runtimes on other hardware or operating systems. Core reports
 cannot be used as full release proof.
 
-On a local Mac the gate runs ROSI in background mode (`ROSI_E2E_BACKGROUND=1`):
-the E2E app has no Dock icon, never takes focus, and its window stays below
-other apps. Native alert dialogs that specs open on purpose still appear. The
-page keeps rendering in background mode: WebKit would otherwise report a window
-behind other apps as occluded and mark the page hidden, which stops animation
-frames and CSS transitions. The E2E build turns WebKit's occlusion detection
-off for the main webview (`src-tauri/src/window.rs`, `e2e_occlusion`), and the
-window's level, focus, and activation policy stay as described above. CI
-runs in the foreground; set `ROSI_E2E_FOREGROUND=1` to do the same locally.
+Background mode (`ROSI_E2E_BACKGROUND=1`) is the local default on macOS and
+Windows. CI and Linux do not use it; set `ROSI_E2E_FOREGROUND=1` to keep the
+foreground behavior locally. On macOS the E2E app has no Dock icon, never takes
+focus, and its window stays below other apps. WebKit's occlusion detection is
+turned off for the main webview (`src-tauri/src/window.rs`, `e2e_occlusion`) so
+the page keeps rendering. On Windows the window is shown without activation and
+kept at the bottom of the z-order (`e2e_windows`). Native alert dialogs that
+specs open on purpose still appear and still take focus.
 The gate report does not record the window mode. Release evidence from a Mac
 uses the default background mode unless `ROSI_E2E_FOREGROUND=1` is set, and
 the release record must state which mode produced the report. The
@@ -90,6 +89,19 @@ The report keeps the original flat `expectedScenarios` inventory for release
 checks and adds `scenarioGroups` so outcomes can be read by feature. Existing
 runner ownership, platform-specific skip allowances, fresh-report checks, and
 the E2E binary hash checks are described in the manifest and runner.
+
+### Windows skips for the process-repair suites
+
+`download-process-repairs` and `audit3-native-targeted` are both owned by
+`process-repairs`, and both may skip on `win32` (`allowedSkips` in
+`e2e/suites.json`). The reason is in the code. `scripts/e2e/runners/native.js`
+(`runDownloadProcessRepairs`) reports both as skipped on Windows before it starts
+anything. `e2e/run-download-process.mjs` also throws on Windows, because its owned
+helper wrappers need a Unix host. Those wrappers are Python 3 and POSIX shell
+scripts (`#!/usr/bin/env python3`, `#!/bin/sh`), and the probes stop processes
+with `SIGKILL` and process groups (`process.kill(-pid, "SIGKILL")`). No Windows
+port of these probes exists, and no decision to port them to Job Objects is
+recorded. Their behavior on Windows is unproven.
 
 ## ROSI 5.1 baseline capture
 
@@ -147,17 +159,38 @@ result is inferred from existing E2E report files.
 - Runner specs run with `ROSI_E2E_SPECS=./v5-fixes/<area>/<spec>`. WebdriverIO
   resolves that pattern relative to `e2e/`, the directory of the config file.
 
-### Manual and CI verifiers (not in the gate)
+### Manual verifiers and probes (not in the gate)
 
-These scripts are not named `run.mjs`, so the gate ignores them. Run them by
-hand or from CI. They need network access and do not start the app.
+The gate runs the suites in `e2e/suites.json` and the `*.spec.js` and `run.mjs`
+files under `e2e/v5-fixes/<area>/`. It does not run the scripts below. Run them
+by hand. Their reports are not gate evidence.
 
 - `e2e/v5-fixes/ytdlp/verify.mjs`: yt-dlp provenance checks against upstream
-  GitHub release data. Writes `e2e/artifacts/v5-fixes-ytdlp/<timestamp>/`.
+  GitHub release data. Needs network access. Writes
+  `e2e/artifacts/v5-fixes-ytdlp/<timestamp>/`.
   Usage: `node e2e/v5-fixes/ytdlp/verify.mjs`.
 - `e2e/v5-fixes/ci-vendor/verify-ci-vendor.mjs`: CI and vendored-updater checks,
-  some against crates.io. Writes `e2e/artifacts/v5-fixes-ci-vendor/<timestamp>/`.
+  some against crates.io. Needs network access. Writes
+  `e2e/artifacts/v5-fixes-ci-vendor/<timestamp>/`.
   Usage: `node e2e/v5-fixes/ci-vendor/verify-ci-vendor.mjs`.
+- `e2e/v5-fixes/media-dispatch/verify.mjs`: Windows integration check of private
+  FFmpeg and FFprobe alias dispatch. It launches the built app through the
+  bundled yt-dlp and writes a SHA-256 report under `e2e/artifacts/`.
+- `e2e/v5-fixes/media-tools/verify.mjs`: manual integration check for the media
+  findings. It compiles production functions with small stand-ins, runs the
+  bundled FFmpeg, and writes a hashed report. It does not launch the app.
+- `e2e/v5-fixes/persistence/queue-publication-verify.mjs`: reads
+  `src-tauri/src/queue.rs` and writes a hashed report under
+  `e2e/artifacts/v5-fixes-persistence/`.
+- `e2e/v5-fixes/proxy-sockets/verify.ps1`: PowerShell check of the proxy socket
+  code. It extracts exact Rust functions from the source and checks them. Run it
+  on Windows.
+- `e2e/webview2-lockout-probe.mjs`: temporary Windows probe for the WebView2
+  lockout workaround. It is removed with that workaround. See
+  `e2e/webview2-lockout.failure-modes.md`.
+- `e2e/deep-probes/run.mjs`: observational V5 beta 2 probes that drive the real
+  app with an isolated profile per mode. Run on macOS or Linux after a fresh E2E
+  build. See `e2e/deep-probes/README.md`.
 
 ## Rules for new coverage
 
@@ -182,7 +215,13 @@ hand or from CI. They need network access and do not start the app.
 
 ## Suites not wired into the gate
 
-None. Every suite in `e2e/` is wired, and none was judged obsolete. The
-audit-round documents remain as failure-mode records. The `audit3-native-targeted`
+Every suite listed in `e2e/suites.json` is wired into the gate. Eight verify or
+probe scripts are not: the two verifiers under "Manual verifiers and probes"
+that were documented before this change (`ytdlp/verify.mjs` and
+`ci-vendor/verify-ci-vendor.mjs`), and six that were not documented here
+(`media-dispatch/verify.mjs`, `media-tools/verify.mjs`,
+`persistence/queue-publication-verify.mjs`, `proxy-sockets/verify.ps1`,
+`webview2-lockout-probe.mjs`, and `deep-probes/run.mjs`). The gate does not
+check that they ran. The audit-round documents remain as failure-mode records. The `audit3-native-targeted`
 caption enumeration and identity-race cases are not in `download-process.spec.js`,
 so that suite is not a duplicate.

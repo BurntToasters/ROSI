@@ -5,9 +5,13 @@ use crate::ipc::{self, IpcResult, INTERNAL_ERROR};
 use crate::types::{DownloadCompletion, DownloadRequestOptions, Outcome, Owner};
 use crate::validation::{normalize_queue_url, validate_download_request, validate_file_location};
 use serde_json::Value;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 static ACTIVITY: OnceLock<Mutex<Vec<DownloadCompletion>>> = OnceLock::new();
+/// True while the in-memory list is newer than the file because a save failed.
+/// Written only under the `ACTIVITY` lock, so `flush_pending` sees it exactly.
+static PENDING: AtomicBool = AtomicBool::new(false);
 const ACTIVITY_READ_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ACTIVITY_DETAIL_PATHS: usize = 16;
 
@@ -332,15 +336,34 @@ pub fn record_batch(completions: &[DownloadCompletion]) {
         next.extend(entries.drain(..));
         next.truncate(MAX_DOWNLOAD_ACTIVITY);
         match persist(&next) {
-            Ok(persisted) => *entries = persisted,
+            Ok(persisted) => {
+                *entries = persisted;
+                PENDING.store(false, Ordering::SeqCst);
+            }
             Err(error) => {
                 crate::logging::error(&format!("Failed to persist download activity: {error}"));
                 *entries = next;
+                PENDING.store(true, Ordering::SeqCst);
             }
         }
         entries.clone()
     };
     crate::app_state::emit("download-activity-update", snapshot);
+}
+
+/// Saves activity that a failed write left only in memory. Shutdown calls this
+/// once more so a transient failure does not lose the newest records. The lock
+/// is held for one write, as the queue flush holds its own. Does nothing when
+/// nothing is pending.
+pub fn flush_pending() -> Result<(), String> {
+    let mut entries = state().lock().unwrap_or_else(|p| p.into_inner());
+    if !PENDING.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    let persisted = persist(&entries)?;
+    *entries = persisted;
+    PENDING.store(false, Ordering::SeqCst);
+    Ok(())
 }
 
 /// Folders that recorded downloads wrote to or targeted, for the startup
@@ -377,6 +400,7 @@ pub fn clear_download_activity() -> IpcResult<()> {
         return ipc::err(INTERNAL_ERROR, "Failed to clear download activity.");
     }
     entries.clear();
+    PENDING.store(false, Ordering::SeqCst);
     drop(entries);
     crate::app_state::emit("download-activity-update", Vec::<DownloadCompletion>::new());
     ipc::ok(())

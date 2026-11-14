@@ -97,6 +97,7 @@ function buildMockApi(overrides: Partial<MockApi> = {}): MockApi {
     cancelVideoInfo: vi.fn(),
     selectDownloadLocation: vi.fn(() => Promise.resolve(null)),
     downloadVideo: vi.fn(() => ok({ started: true })),
+    resolveDownloadOptions: vi.fn(() => ok({})),
     cancelDownload: vi.fn(),
     cancelFormats: vi.fn(),
     addToQueue: vi.fn(() => ok({ added: 1, skipped: 0 })),
@@ -125,9 +126,7 @@ function buildMockApi(overrides: Partial<MockApi> = {}): MockApi {
     exportSettings: vi.fn(() => ok({ exported: true })),
     importSettings: vi.fn(() => ok({ imported: true })),
     checkForUpdates: vi.fn(() => Promise.resolve(null)),
-    downloadUpdate: vi.fn(() => Promise.resolve({ success: true })),
     cancelUpdateDownload: vi.fn(),
-    installUpdate: vi.fn(),
     restartApp: vi.fn(),
     logError: vi.fn(),
     notifySettingsFlushed: vi.fn(),
@@ -141,7 +140,6 @@ function buildMockApi(overrides: Partial<MockApi> = {}): MockApi {
     onDownloadActivityUpdate: noop,
     onQueueUpdate: noop,
     onPrepareForClose: noop,
-    onUpdaterStatus: noop,
     onUpdaterProgress: noop,
     onSettingsImported: noop,
     ...overrides,
@@ -711,7 +709,11 @@ describe('rosiEngine DOM wiring', () => {
 
   it('renders queue updates pushed from the main process', async () => {
     let queueUpdateCb = null as
-      ((queue: Array<{ id: string; status: string; url: string; addedAt: number }>) => void) | null;
+      | ((snapshot: {
+          revision: number;
+          items: Array<{ id: string; status: string; url: string; addedAt: number }>;
+        }) => void)
+      | null;
     const api = buildMockApi({
       onQueueUpdate: ((cb: typeof queueUpdateCb) => {
         queueUpdateCb = cb;
@@ -720,14 +722,17 @@ describe('rosiEngine DOM wiring', () => {
     });
     await loadEngine(api);
 
-    queueUpdateCb?.([
-      {
-        id: 'q_1',
-        status: 'pending',
-        url: 'https://example.com/queued',
-        addedAt: Date.now(),
-      },
-    ]);
+    queueUpdateCb?.({
+      revision: 1,
+      items: [
+        {
+          id: 'q_1',
+          status: 'pending',
+          url: 'https://example.com/queued',
+          addedAt: Date.now(),
+        },
+      ],
+    });
     await flush();
 
     expect(document.getElementById('queueCount')?.textContent).toBe('1');

@@ -35,15 +35,19 @@ export function showPlaylistScope(itemCount: number | null) {
   syncPlaylistRangeVisibility();
 }
 
-/** Returns a validated typed selection, or null when the range is invalid. */
-export function resolvePlaylistSelection(): RosiPlaylistSelection | null {
+/**
+ * Validates the playlist scope. Updates the inline error text but never shows a
+ * toast, so passive refreshes (the options summary) can call it freely.
+ */
+export function validatePlaylistSelection():
+  { ok: true; selection: RosiPlaylistSelection } | { ok: false; message: string } {
   if (!refs.playlistScope || refs.playlistScope.classList.contains('hidden')) {
-    return { mode: 'current' };
+    return { ok: true, selection: { mode: 'current' } };
   }
   const mode = getPlaylistMode();
   if (mode !== 'range') {
     if (refs.playlistScopeError) refs.playlistScopeError.textContent = '';
-    return { mode };
+    return { ok: true, selection: { mode } };
   }
   const start = Number(refs.playlistRangeStart?.value);
   const end = Number(refs.playlistRangeEnd?.value);
@@ -56,11 +60,30 @@ export function resolvePlaylistSelection(): RosiPlaylistSelection | null {
   ) {
     const message = `Enter a playlist range using whole numbers from 1 to ${MAX_PLAYLIST_INDEX}, with the first value no larger than the second.`;
     if (refs.playlistScopeError) refs.playlistScopeError.textContent = message;
-    showToast(message, { type: 'warning' });
-    return null;
+    return { ok: false, message };
   }
   if (refs.playlistScopeError) refs.playlistScopeError.textContent = '';
-  return { mode: 'range', start, end };
+  return { ok: true, selection: { mode: 'range', start, end } };
+}
+
+/** Same result as resolvePlaylistSelection, with no toast. For passive refreshes. */
+export function readPlaylistSelectionSilently(): RosiPlaylistSelection | null {
+  const result = validatePlaylistSelection();
+  return result.ok ? result.selection : null;
+}
+
+/**
+ * Returns a validated typed selection, or null when the range is invalid. An
+ * invalid range also shows a warning toast; only user actions (Download, Add to
+ * queue, preset save) should call this.
+ */
+export function resolvePlaylistSelection(): RosiPlaylistSelection | null {
+  const result = validatePlaylistSelection();
+  if (!result.ok) {
+    showToast(result.message, { type: 'warning' });
+    return null;
+  }
+  return result.selection;
 }
 
 export function looksLikePlaylistUrl(url: string) {

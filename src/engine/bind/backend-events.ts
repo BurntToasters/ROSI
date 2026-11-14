@@ -3,8 +3,8 @@ import { logError } from '../core';
 import { handleManualDownloadCompletion, manualDownload } from '../manual-download';
 import { showLicenses } from '../overlays';
 import { renderPresetOptions } from '../presets';
-import { applyJobProgress, downloadState, showProgressBar } from '../progress';
-import { applyQueueItemProgress, renderQueue } from '../queue-controller';
+import { applyJobProgress, downloadState, hideProgressBar, showProgressBar } from '../progress';
+import { applyQueueItemProgress, queueController, renderQueue } from '../queue-controller';
 import { refs } from '../refs';
 import { reconcileSettingsInPlace, settingsStore } from '../settings-store';
 import { syncDockFromSettings, updateUIFromSettings } from '../settings-view';
@@ -12,6 +12,9 @@ import { applyTheme } from '../theme';
 import { appendConsoleOutput, toggleSidebar } from '../ui-helpers';
 import { checkForUpdates, notifyUpdateChannelChanged } from '../updater-ui';
 import { api } from '../../api';
+
+// Delay before a finished queue run hides the shared progress bar.
+const QUEUE_PROGRESS_HIDE_MS = 2000;
 
 /** Backend events: progress, completion, queue, activity, and menu actions. */
 export function bindBackendEvents() {
@@ -21,6 +24,26 @@ export function bindBackendEvents() {
   // Queue snapshots received so far. The startup read carries no revision, so
   // it is applied only if no snapshot arrived while it was in flight.
   let queueSnapshotsSeen = 0;
+  // Pending hide of the progress bar after a queue run's idle event.
+  let queueProgressHideTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const cancelQueueProgressHide = () => {
+    if (queueProgressHideTimer !== null) clearTimeout(queueProgressHideTimer);
+    queueProgressHideTimer = null;
+  };
+  // Re-checks at hide time: a queue item still downloading or a manual
+  // download in progress keeps the bar visible.
+  const scheduleQueueProgressHide = () => {
+    cancelQueueProgressHide();
+    queueProgressHideTimer = setTimeout(() => {
+      queueProgressHideTimer = null;
+      const queueBusy = queueController.currentQueue.some((item) => item.status === 'downloading');
+      const manualBusy =
+        Boolean(downloadState.isDownloading) || manualDownload.manualDownloadStartPending;
+      if (queueBusy || manualBusy) return;
+      hideProgressBar();
+    }, QUEUE_PROGRESS_HIDE_MS);
+  };
   ipcCleanupFunctions.push(
     api.onProgress((message) => {
       if (!outputEl) return;
@@ -46,12 +69,14 @@ export function bindBackendEvents() {
       ) {
         return;
       }
+      if (event.queueItemId && event.phase !== 'idle') cancelQueueProgressHide();
       const container = document.getElementById('progress-container');
       if (container && !container.classList.contains('visible') && event.phase !== 'idle') {
         showProgressBar(event.status);
       }
       applyQueueItemProgress(event);
       if (event.phase === 'idle') {
+        if (event.queueItemId) scheduleQueueProgressHide();
         return;
       }
       applyJobProgress(event);
@@ -93,22 +118,17 @@ export function bindBackendEvents() {
     })
   );
 
-  if (typeof api.onDownloadActivityUpdate === 'function') {
-    ipcCleanupFunctions.push(
-      api.onDownloadActivityUpdate((activity) => {
-        activityPanel?.setEntries(activity);
-      })
-    );
-  }
+  ipcCleanupFunctions.push(
+    api.onDownloadActivityUpdate((activity) => {
+      activityPanel?.setEntries(activity);
+    })
+  );
 
   ipcCleanupFunctions.push(
-    api.onQueueUpdate((payload) => {
-      // Older payloads are bare arrays without a revision; they are always applied.
-      const snapshot = Array.isArray(payload) ? { revision: null, items: payload } : payload;
-      if (snapshot.revision !== null) {
-        if (snapshot.revision < latestQueueRevision) return;
-        latestQueueRevision = snapshot.revision;
-      }
+    api.onQueueUpdate((snapshot) => {
+      // The coordinator always publishes a revisioned snapshot.
+      if (snapshot.revision < latestQueueRevision) return;
+      latestQueueRevision = snapshot.revision;
       queueSnapshotsSeen += 1;
       renderQueue(snapshot.items);
     })
@@ -118,6 +138,8 @@ export function bindBackendEvents() {
     api.onSettingsImported((importedSettings) => {
       settingsStore.settingsRevision += 1;
       reconcileSettingsInPlace(importedSettings);
+      // The backend saved the imported settings itself, so they are the saved state.
+      settingsStore.settingsSavedRevision = settingsStore.settingsRevision;
       if (api.getChannel() !== 'msstore') {
         notifyUpdateChannelChanged(settingsStore.settings.updateChannel ?? 'auto');
       }

@@ -24,9 +24,13 @@ export const updateUIFromSettings = () => {
     !refs.keepOriginalLabel
   )
     return;
+  // Flatpak: the sandbox cannot read browser profiles, so cookies never apply.
+  const isFlatpak = settingsStore.isFlatpakBuild === true;
   refs.consoleToggle.checked = settingsStore.settings.showConsoleOutput ?? false;
   refs.keepOriginalToggle.checked = settingsStore.settings.keepOriginalAfterConvert ?? true;
-  refs.hookBrowserToggle.checked = settingsStore.settings.hookBrowser ?? false;
+  refs.hookBrowserToggle.checked = isFlatpak
+    ? false
+    : (settingsStore.settings.hookBrowser ?? false);
   // Settings store yt-dlp's lowercase names; older builds sent TitleCase.
   refs.browserChoiceSelect.value = (settingsStore.settings.browserChoice ?? 'chrome').toLowerCase();
   refs.convertToggle.checked = settingsStore.settings.convertEnabled ?? false;
@@ -66,10 +70,16 @@ export const updateUIFromSettings = () => {
     refs.upstreamProxyInput.value = settingsStore.settings.upstreamProxy ?? '';
   }
 
-  if (settingsStore.settings.hookBrowser) {
+  if (settingsStore.settings.hookBrowser && !isFlatpak) {
     refs.browserChoiceContainer.classList.add('visible');
   } else {
     refs.browserChoiceContainer.classList.remove('visible');
+  }
+  if (isFlatpak) {
+    refs.hookBrowserToggle.disabled = true;
+    refs.hookBrowserToggle.closest('.toggle-switch')?.classList.add('disabled');
+    refs.browserChoiceContainer.classList.add('hidden');
+    document.getElementById('browserFlatpakHint')?.classList.remove('hidden');
   }
 
   updateConsoleVisibility(settingsStore.settings.showConsoleOutput);
@@ -257,14 +267,16 @@ export function applySettingsSearch(rawQuery: string) {
       section.querySelectorAll<HTMLElement>('.search-hidden').forEach((child) => {
         child.classList.remove('search-hidden');
       });
-      // Restore the collapse state the user had before searching.
+      // Restore the collapse state the user had before searching, through the same
+      // path as a header click so aria-expanded, aria-hidden, and inert agree.
       if (settingsViewState.collapseStateBeforeSearch) {
         const wasCollapsed = settingsViewState.collapseStateBeforeSearch[index] === true;
-        section.classList.toggle('collapsed', wasCollapsed);
         const header = section.querySelector<HTMLElement>('.settings-section-header');
-        header?.setAttribute('aria-expanded', String(!wasCollapsed));
-        const sectionBody = section.querySelector<HTMLElement>('.settings-section-body');
-        if (sectionBody) sectionBody.inert = wasCollapsed;
+        if (header) {
+          setSettingsSectionCollapsed(header, wasCollapsed);
+        } else {
+          section.classList.toggle('collapsed', wasCollapsed);
+        }
       }
     });
     settingsViewState.collapseStateBeforeSearch = null;
@@ -299,12 +311,12 @@ export function applySettingsSearch(rawQuery: string) {
     section.classList.toggle('search-hidden', !sectionMatches);
     if (sectionMatches) {
       matches += 1;
-      section.classList.remove('collapsed');
-      const sectionBody = section.querySelector<HTMLElement>('.settings-section-body');
-      if (sectionBody) sectionBody.inert = false;
-      section
-        .querySelector<HTMLElement>('.settings-section-header')
-        ?.setAttribute('aria-expanded', 'true');
+      const header = section.querySelector<HTMLElement>('.settings-section-header');
+      if (header) {
+        setSettingsSectionCollapsed(header, false);
+      } else {
+        section.classList.remove('collapsed');
+      }
     }
   });
 

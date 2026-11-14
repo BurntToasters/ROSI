@@ -96,8 +96,14 @@ export function round2NativeReportProblems(report, expected) {
         problems.push(`${name} reported ${matches.length} times`);
         continue;
       }
-      const passed = matches[0].passed ?? matches[0].invariantPassed;
-      if (passed !== true) {
+      if (matches[0].skipped === true) {
+        // A skipped record proves nothing, so it must report null, not a pass.
+        if (matches[0].invariantPassed !== null) {
+          problems.push(
+            `${name} skipped record must report invariantPassed null`,
+          );
+        }
+      } else if ((matches[0].passed ?? matches[0].invariantPassed) !== true) {
         problems.push(`${name} did not pass`);
       }
       if (

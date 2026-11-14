@@ -266,8 +266,10 @@ const reportBody = {
     wdio.status === 0 &&
     expectedObservations.every((name) => {
       const item = observed.find((observation) => observation.name === name);
-      if (!item || item.invariantPassed !== true) return false;
-      if (item.skipped !== true) return true;
+      if (!item) return false;
+      // A skipped record proves nothing, so it reports null instead of a pass.
+      if (item.skipped !== true) return item.invariantPassed === true;
+      if (item.invariantPassed !== null) return false;
       const windowsOnly = [
         "source-identity-preserves-replacement",
         "deno-version-probe",

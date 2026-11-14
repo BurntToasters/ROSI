@@ -2,6 +2,8 @@
 // Comparing the Vite define directly lets Rollup drop this chunk in
 // production builds.
 import { api, type RosiRendererApi } from './api';
+import * as overlaysModule from './engine/overlays';
+import * as settingsModule from './engine/settings-store';
 import * as dockModule from './modules/dock';
 import * as iconsModule from './modules/icons';
 import * as uiModule from './modules/ui';
@@ -14,12 +16,24 @@ export async function installE2eHookIfEnabled(): Promise<void> {
       __ROSI_E2E__?: {
         ready: boolean;
         api: RosiRendererApi;
-        modules: { dock: typeof dockModule; ui: typeof uiModule; icons: typeof iconsModule };
+        modules: {
+          dock: typeof dockModule;
+          ui: typeof uiModule;
+          icons: typeof iconsModule;
+          overlays: typeof overlaysModule;
+          settings: typeof settingsModule;
+        };
       };
     }
   ).__ROSI_E2E__ = {
     ready: true,
     api,
-    modules: { dock: dockModule, ui: uiModule, icons: iconsModule },
+    modules: {
+      dock: dockModule,
+      ui: uiModule,
+      icons: iconsModule,
+      overlays: overlaysModule,
+      settings: settingsModule,
+    },
   };
 }

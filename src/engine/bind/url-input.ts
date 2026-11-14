@@ -10,7 +10,12 @@ import {
 import { extractQueueLinks } from '../queue-controller';
 import { refs } from '../refs';
 import { showToast } from '../ui-helpers';
-import { syncPrimaryActionState, updateUrlButtons, urlActionState } from '../url-actions';
+import {
+  isDownloadButtonIdle,
+  syncPrimaryActionState,
+  updateUrlButtons,
+  urlActionState,
+} from '../url-actions';
 import { api } from '../../api';
 
 /** URL field: clear, paste, drop, and preview buttons. */
@@ -44,6 +49,9 @@ export function bindUrlInput() {
     urlInput.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return;
       e.preventDefault();
+      // Enter starts only the idle Download action. During a download the same
+      // button is Cancel, and after one it opens the folder, so Enter does nothing.
+      if (!isDownloadButtonIdle()) return;
       if (downloadBtn && !downloadBtn.disabled) {
         downloadBtn.click();
       } else {

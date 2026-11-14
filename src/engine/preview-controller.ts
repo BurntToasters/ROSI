@@ -1,6 +1,7 @@
 // Preview scheduling, caching, and request lifecycle.
 import { PREVIEW_CACHE_MAX, PREVIEW_CACHE_TTL_MS, PREVIEW_DEBOUNCE_MS } from './constants';
 import { isValidUrl, logError } from './core';
+import { resolveNextDownloadCookieChoice } from './formats';
 import { looksLikePlaylistUrl, resetPlaylistScope, showPlaylistScope } from './playlist';
 import { RosiVideoInfo, hideVideoPreview, previewState, renderVideoPreview } from './preview';
 import { refs } from './refs';
@@ -130,7 +131,12 @@ export async function runVideoPreview(auto = false) {
   );
 
   try {
-    const result = await api.getVideoInfo(url, looksLikePlaylistUrl(url) ? 'all' : 'current');
+    const playlistMode = looksLikePlaylistUrl(url) ? 'all' : 'current';
+    const cookies = await resolveNextDownloadCookieChoice(url);
+    if (wasCancelled || requestToken !== previewController.previewRequestToken) return;
+    const result = cookies
+      ? await api.getVideoInfo(url, playlistMode, cookies)
+      : await api.getVideoInfo(url, playlistMode);
     if (wasCancelled || requestToken !== previewController.previewRequestToken) return;
     if (!result || result.ok !== true) {
       const message = result?.error?.message || 'Could not load preview.';

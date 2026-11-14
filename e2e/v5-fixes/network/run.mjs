@@ -32,6 +32,8 @@ const sourceFiles = [
   "e2e/v5-fixes/network/run.mjs",
   "e2e/v5-fixes/network/network-policy.spec.js",
   "e2e/v5-fixes/network/network-policy.failure-modes.md",
+  "e2e/v5-fixes/network/preview-cookies.spec.js",
+  "e2e/v5-fixes/network/failure-modes.md",
   "src-tauri/src/ip_policy.rs",
   "src-tauri/src/validation.rs",
   "src-tauri/src/network_security.rs",
@@ -68,8 +70,12 @@ const result = spawnSync(
       ROSI_E2E_DOWNLOADS: profile.downloads,
       ROSI_E2E_XDG_DOWNLOADS: profile.xdgDownloads,
       ROSI_E2E_PROFILE: profile.profileDir,
-      ROSI_E2E_SPECS: "./v5-fixes/network/network-policy.spec.js",
+      ROSI_E2E_SPECS: [
+        "./v5-fixes/network/network-policy.spec.js",
+        "./v5-fixes/network/preview-cookies.spec.js",
+      ].join(","),
       ROSI_V5_NETWORK_RESULTS_DIR: resultsDirectory,
+      ROSI_E2E_YTDLP_ARGS_LOG: path.join(artifactRoot, "ytdlp-args.jsonl"),
     },
     encoding: "utf8",
     windowsHide: true,
@@ -94,6 +100,16 @@ try {
     fs.readFileSync(path.join(resultsDirectory, "observations.json"), "utf8"),
   );
 } catch {}
+// preview-cookies.spec.js writes its own observations next to the policy ones.
+let previewCookieObservations = [];
+try {
+  previewCookieObservations = JSON.parse(
+    fs.readFileSync(
+      path.join(resultsDirectory, "preview-cookies.observations.json"),
+      "utf8",
+    ),
+  );
+} catch {}
 const body = {
   suite: "v5-fixes-network-policy",
   startedAt: new Date().toISOString(),
@@ -113,11 +129,14 @@ const body = {
       sha256: hash(fs.readFileSync(path.join(artifactRoot, "sources", source))),
     })),
   observations,
+  previewCookieObservations,
 };
 const passed =
   result.status === 0 &&
   observations.length === 3 &&
-  observations.every((entry) => entry.invariantPassed === true);
+  observations.every((entry) => entry.invariantPassed === true) &&
+  previewCookieObservations.length === 7 &&
+  previewCookieObservations.every((entry) => entry.invariantPassed === true);
 const report = {
   ...body,
   passed,

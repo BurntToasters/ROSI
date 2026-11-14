@@ -17,7 +17,12 @@ import { persistSettings, settingsStore } from '../settings-store';
 import { updateUIFromSettings } from '../settings-view';
 import { appendConsoleOutput, setButtonLoading, showToast } from '../ui-helpers';
 import { checkForUpdates } from '../updater-ui';
-import { syncPrimaryActionState, updateUrlButtons, urlActionState } from '../url-actions';
+import {
+  refuseDuringQueueRun,
+  syncPrimaryActionState,
+  updateUrlButtons,
+  urlActionState,
+} from '../url-actions';
 import { api } from '../../api';
 
 /** Format fetching, the download button, and manual update checks. */
@@ -33,6 +38,10 @@ export function bindDownloadControls() {
       let operation = -1;
       try {
         if (downloadState.isDownloading) return;
+        // A running queue item owns the download slot. Refuse before the console,
+        // progress bar, or button are touched. A multi-link paste is a queue add,
+        // so it is still allowed; the extraction below decides that.
+        if (urlActionState.pendingBatchUrls.length <= 1 && refuseDuringQueueRun()) return;
 
         operation = beginManualDownloadOperation();
         downloadState.isDownloading = true;
@@ -61,6 +70,14 @@ export function bindDownloadControls() {
             urlActionState.hasUrlValidationIntent = false;
             updateUrlButtons();
           }
+          syncPrimaryActionState();
+          return;
+        }
+
+        // The queue may have started while the link was being read.
+        if (refuseDuringQueueRun()) {
+          failManualDownloadStart(operation);
+          downloadState.isDownloading = false;
           syncPrimaryActionState();
           return;
         }

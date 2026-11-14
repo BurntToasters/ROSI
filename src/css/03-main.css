@@ -36,7 +36,6 @@
   backdrop-filter: blur(var(--blur-sm));
   border-bottom: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent);
   box-shadow: 0 4px 16px var(--topbar-shadow-color);
-  -webkit-app-region: drag;
 }
 
 .top-bar > :first-child {
@@ -81,7 +80,6 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  -webkit-app-region: no-drag;
 }
 
 .top-bar-links .btn {
@@ -102,7 +100,6 @@
   cursor: pointer;
   user-select: none;
   transition: var(--transition-fast);
-  -webkit-app-region: no-drag;
 }
 
 .flat-ui-toggle-wrap:hover {
@@ -267,6 +264,15 @@
   display: flex;
   align-items: center;
   min-height: var(--control-height);
+  /* Width of the in-field buttons, so long URLs stop before them. Preview is
+     about 5.5rem at the small text size; paste and clear are 26px squares
+     (--btn-h of btn--xs); two 0.3rem gaps; the 0.55rem inset from the right edge. */
+  --url-preview-width: 5.5rem;
+  --url-icon-btn-size: 26px;
+  --url-actions-width: calc(
+    var(--url-preview-width) + 2 * var(--url-icon-btn-size) + 2 * 0.3rem + 0.55rem +
+      var(--spacing-xs)
+  );
 }
 
 .url-icon {
@@ -357,7 +363,7 @@
 .url-validation-message {
   margin-top: var(--spacing-xs);
   font-size: var(--text-sm);
-  color: var(--danger);
+  color: var(--danger-text);
 }
 
 .url-validation-message:empty {
@@ -365,7 +371,7 @@
 }
 
 .download-card.is-batch .url-validation-message {
-  color: var(--accent-light);
+  color: var(--accent-text);
 }
 
 .loader-icon {
@@ -436,7 +442,7 @@
 
 .download-output-summary[data-state='error'],
 .download-output-summary[data-state='invalid-url'] {
-  color: var(--danger);
+  color: var(--danger-text);
 }
 
 /* Download readiness hint: the reason and next action beside the Download button. */
@@ -450,11 +456,11 @@
 
 .download-readiness[data-tone='blocked'],
 .download-readiness[data-tone='error'] {
-  color: var(--danger);
+  color: var(--danger-text);
 }
 
 .download-readiness[data-tone='warning'] {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .download-readiness[hidden],
@@ -574,7 +580,7 @@
   margin: 0.4rem 0 0 0.8rem;
   font-size: var(--text-sm);
   line-height: 1.4;
-  color: var(--danger);
+  color: var(--danger-text);
   overflow-wrap: anywhere;
 }
 
@@ -798,7 +804,7 @@
   min-height: 1rem;
   margin: var(--spacing-xs) 0 0;
   font-size: var(--text-xs);
-  color: var(--danger);
+  color: var(--danger-text);
 }
 
 .playlist-scope-error:empty {
@@ -889,7 +895,7 @@
   font-size: var(--text-base);
   font-weight: var(--weight-semibold);
   font-variant-numeric: tabular-nums;
-  color: var(--accent-light);
+  color: var(--accent-text);
 }
 
 .progress-bar-wrapper {

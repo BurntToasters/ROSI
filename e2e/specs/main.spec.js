@@ -21,6 +21,33 @@ const UNICODE_FIXTURE = "日本語-Привет-café.mp4";
 
 const results = [];
 
+// OS clipboard access for the Activity copy check. Platforms without an entry
+// have no OS read-back here, so that check relies on the toast and the page.
+const OS_CLIPBOARD_TOOLS = {
+  darwin: {
+    write: (text) => spawnSync("pbcopy", { input: text, encoding: "utf8" }),
+    read: () => spawnSync("pbpaste", { encoding: "utf8" }),
+  },
+  win32: {
+    write: (text) =>
+      spawnSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-Command",
+          "Set-Clipboard -Value $env:ROSI_E2E_CLIPBOARD",
+        ],
+        { encoding: "utf8", env: { ...env, ROSI_E2E_CLIPBOARD: text } },
+      ),
+    read: () =>
+      spawnSync(
+        "powershell.exe",
+        ["-NoProfile", "-Command", "Get-Clipboard -Raw"],
+        { encoding: "utf8" },
+      ),
+  },
+};
+
 function record(name, details = {}) {
   results.push({ name, status: "passed", ...details });
 }
@@ -1441,21 +1468,21 @@ describe("ROSI main window", () => {
 
   it("cancels an in-flight download and stops the yt-dlp process", async () => {
     const url = `${MEDIA}/slow.mp4`;
+    // A yt-dlp left over from an earlier scenario would satisfy the wait below
+    // without this download ever starting, so require none before starting.
+    await waitForNoProcess(
+      "slow.mp4",
+      "a slow.mp4 yt-dlp from an earlier scenario was still running",
+    );
     const started = await api("downloadVideo", { url, outputPath: DOWNLOADS });
     assert.equal(started.ok, true);
-    await browser.waitUntil(
-      async () =>
-        browser.execute(() =>
-          document
-            .getElementById("progress-container")
-            ?.classList.contains("visible"),
-        ),
-      { timeout: 60_000, timeoutMsg: "download progress never appeared" },
-    );
-    assert.ok(
-      processesMatching("slow.mp4").length > 0,
-      "yt-dlp was not running for the in-flight download",
-    );
+    // The progress bar can be left visible by an earlier scenario, so the
+    // signal is this download's yt-dlp process. The wait fails if it never starts.
+    await browser.waitUntil(() => processesMatching("slow.mp4").length > 0, {
+      timeout: 60_000,
+      interval: 250,
+      timeoutMsg: "yt-dlp never started for the in-flight download",
+    });
     await api("cancelDownload");
     const entry = await waitForActivity(
       (item) => item.url === url,
@@ -2247,7 +2274,20 @@ describe("ROSI main window", () => {
     assert.equal(sizes.footer, true, "footer unreachable");
     assert.equal(sizes.pageScrolls, false, "the page scrolls at 900x560");
     assert.equal(sizes.pageScrollsLarge, false, "the page scrolls at 1200x900");
-    record("small-window", sizes);
+    if (sizes.resized) {
+      record("small-window", sizes);
+    } else {
+      // The 560px bound never ran, so this is not a pass. The gate fails an
+      // expected scenario that is not passed.
+      results.push({
+        name: "small-window",
+        status: "not-proven",
+        invariantPassed: null,
+        reason:
+          "The window did not change height to 560px on this platform; the minimum-height bound did not run.",
+        ...sizes,
+      });
+    }
   });
 
   it("shrinks the dock to its empty message and grows it for content", async () => {
@@ -2720,24 +2760,96 @@ describe("ROSI main window", () => {
       "Open folder used the wrong path",
     );
 
-    // Copy source: the real clipboard, read back through the OS on macOS.
-    assert.ok(await clickAction("link"), "row has no Copy source action");
-    let toast = null;
-    await browser.waitUntil(
-      async () => {
-        toast = await lastToast();
-        return /source link/i.test(toast ?? "");
-      },
-      { timeout: 5_000, timeoutMsg: "Copy source showed no toast" },
-    );
-    assert.equal(toast, "Source link copied.", `copy failed: ${toast}`);
-    if (process.platform === "darwin") {
-      const pasted = spawnSync("pbpaste", { encoding: "utf8" }).stdout;
-      assert.equal(
-        pasted,
-        target.url,
-        "clipboard does not hold the source URL",
+    // Copy source. WebView2 refuses clipboard writes from a page without
+    // document focus, and background runs (the Windows default) never focus
+    // the page. A focused page takes the real clipboard path, read back from
+    // the OS where a tool exists. An unfocused page records the text the
+    // product passes to navigator.clipboard.writeText for this one click, so
+    // the copy logic and the toast are still checked. Both routes are reported.
+    const pageFocused = await browser.execute(() => document.hasFocus());
+    const clipboardRoute = pageFocused ? "real" : "recorded-unfocused";
+    const osClipboard = OS_CLIPBOARD_TOOLS[process.platform] ?? null;
+    let clipboardWrites = null;
+    let clipboardOsText = null;
+    if (clipboardRoute === "real" && osClipboard) {
+      // A sentinel makes stale clipboard text fail the read-back below.
+      const seeded = osClipboard.write(
+        `rosi-e2e-sentinel-${process.pid}-${Date.now()}`,
       );
+      assert.equal(
+        seeded.status,
+        0,
+        `could not seed the OS clipboard: ${seeded.stderr}`,
+      );
+    }
+    try {
+      if (clipboardRoute === "recorded-unfocused") {
+        const installed = await browser.execute(() => {
+          const clipboard = navigator.clipboard;
+          if (!clipboard) return false;
+          window.__rosiClipboardSaved =
+            Object.getOwnPropertyDescriptor(clipboard, "writeText") ?? null;
+          window.__rosiClipboardWrites = [];
+          Object.defineProperty(clipboard, "writeText", {
+            configurable: true,
+            writable: true,
+            value: (text) => {
+              window.__rosiClipboardWrites.push(String(text));
+              return Promise.resolve();
+            },
+          });
+          return true;
+        });
+        assert.ok(installed, "page has no navigator.clipboard to record");
+      }
+      assert.ok(await clickAction("link"), "row has no Copy source action");
+      let toast = null;
+      await browser.waitUntil(
+        async () => {
+          toast = await lastToast();
+          return /source link|could not copy/i.test(toast ?? "");
+        },
+        { timeout: 5_000, timeoutMsg: "Copy source showed no toast" },
+      );
+      assert.equal(toast, "Source link copied.", `copy failed: ${toast}`);
+      if (clipboardRoute === "recorded-unfocused") {
+        clipboardWrites = await browser.execute(
+          () => window.__rosiClipboardWrites,
+        );
+        assert.deepEqual(
+          clipboardWrites,
+          [target.url],
+          `Copy source passed ${JSON.stringify(clipboardWrites)} to the clipboard, expected only the source URL`,
+        );
+      } else if (osClipboard) {
+        const read = osClipboard.read();
+        assert.equal(
+          read.status,
+          0,
+          `could not read the OS clipboard: ${read.stderr}`,
+        );
+        clipboardOsText = read.stdout.replace(/\r?\n$/, "");
+        assert.equal(
+          clipboardOsText,
+          target.url,
+          "clipboard does not hold the source URL",
+        );
+      }
+    } finally {
+      // Put the original writeText back, whether the copy passed or failed.
+      if (clipboardRoute === "recorded-unfocused") {
+        await browser.execute(() => {
+          if (navigator.clipboard) {
+            delete navigator.clipboard.writeText;
+            const saved = window.__rosiClipboardSaved;
+            if (saved) {
+              Object.defineProperty(navigator.clipboard, "writeText", saved);
+            }
+          }
+          delete window.__rosiClipboardSaved;
+          delete window.__rosiClipboardWrites;
+        });
+      }
     }
 
     // Download again: a new activity entry for the same URL.
@@ -2759,6 +2871,10 @@ describe("ROSI main window", () => {
     record("activity-action-clicks", {
       opened: path.basename(target.outputPath),
       replayed: path.basename(replay.outputPath ?? ""),
+      clipboardRoute,
+      pageFocused,
+      clipboardWrites,
+      clipboardOsText,
     });
   });
 
@@ -4278,6 +4394,12 @@ describe("ROSI main window", () => {
         timeoutMsg: "slow link was not queued",
       },
     );
+    // Hide the bar first, so the checks below see it shown again by this run.
+    await browser.execute(() =>
+      document
+        .getElementById("progress-container")
+        ?.classList.remove("visible"),
+    );
     await clickById("startQueueBtn");
     await browser.waitUntil(
       async () =>
@@ -4285,16 +4407,79 @@ describe("ROSI main window", () => {
         "downloading",
       { timeout: 30_000, timeoutMsg: "slow item never started" },
     );
+    await browser.waitUntil(
+      () =>
+        browser.execute(() =>
+          Boolean(
+            document
+              .getElementById("progress-container")
+              ?.classList.contains("visible"),
+          ),
+        ),
+      {
+        timeout: 30_000,
+        timeoutMsg: "queue run never showed the progress bar",
+      },
+    );
+    // Start stays disabled while an item downloads, even with another link pending.
+    const pendingNext = `${MEDIA}/clip-three.mp4?queue=ui-pending`;
+    await fillQueueInput(pendingNext);
+    await clickById("addToQueueBtn");
+    await browser.waitUntil(
+      async () =>
+        (await api("getQueue")).some((item) => item.url === pendingNext),
+      {
+        timeout: 10_000,
+        timeoutMsg: "pending link was not queued during the run",
+      },
+    );
+    const startWhileRunning = await browser.execute(
+      () => document.getElementById("startQueueBtn")?.disabled,
+    );
+    assert.equal(
+      startWhileRunning,
+      true,
+      "Start stayed enabled while an item downloads",
+    );
     await clickById("cancelQueueBtn");
     const stop = await waitForModal(true, "Stop asked nothing");
-    assert.equal(stop.title, "Cancel Queue");
-    await clickModalButton("Cancel Queue");
+    assert.equal(stop.title, "Cancel queue");
+    await clickModalButton("Cancel queue");
     await browser.waitUntil(
       async () =>
         (await api("getQueue")).find((item) => item.url === slow)?.status ===
         "cancelled",
       { timeout: 30_000, timeoutMsg: "Stop did not cancel the running item" },
     );
+    // The run ended on its own, so the bar must leave the screen shortly after.
+    await browser.waitUntil(
+      () =>
+        browser.execute(
+          () =>
+            !document
+              .getElementById("progress-container")
+              ?.classList.contains("visible"),
+        ),
+      {
+        timeout: 5_000,
+        interval: 250,
+        timeoutMsg: "progress bar stayed visible 5 s after the queue run ended",
+      },
+    );
+    // A pending link left after the stop lets Start run again.
+    if ((await api("getQueue")).some((item) => item.status === "pending")) {
+      await browser.waitUntil(
+        () =>
+          browser.execute(
+            () => !document.getElementById("startQueueBtn")?.disabled,
+          ),
+        {
+          timeout: 10_000,
+          timeoutMsg:
+            "Start stayed disabled after the run ended with a pending link",
+        },
+      );
+    }
 
     // Clear asks first, then empties the queue. The Cancel modal and the busy
     // lock can linger briefly after the backend reports the cancel, and a click
@@ -4320,6 +4505,242 @@ describe("ROSI main window", () => {
       timeoutMsg: "Clear did not empty the queue",
     });
     record("queue-controls", { completed: urls.length, cancelled: 1 });
+  });
+
+  it("sends one notification when a queue run drains and none after a user cancel", async () => {
+    await restoreApi();
+    await api("clearQueue");
+    const original = settingsOnDisk().notifications;
+    await setControlValue("notificationsToggle", true);
+    await waitForSavedSetting(
+      "notifications",
+      true,
+      "notifications were not saved",
+    );
+    await stubApi({ showNotification: { ok: true } });
+    let drainCalls = [];
+    let cancelCalls = [];
+    try {
+      // A run that drains on its own sends exactly one notification.
+      const drain = `${MEDIA}/clip-three.mp4?notify=drain`;
+      assert.equal((await api("addToQueue", [drain])).ok, true);
+      assert.equal((await api("startQueue")).ok, true);
+      await browser.waitUntil(
+        async () =>
+          (await api("getQueue")).find((item) => item.url === drain)?.status ===
+          "completed",
+        { timeout: 120_000, timeoutMsg: "drained queue item never completed" },
+      );
+      await browser.waitUntil(
+        async () => (await stubCalls("showNotification")).length > 0,
+        {
+          timeout: 10_000,
+          timeoutMsg: "drained queue run sent no notification",
+        },
+      );
+      // Give any duplicate from the drained snapshots time to arrive.
+      await settle(2_000);
+      drainCalls = await stubCalls("showNotification");
+      assert.equal(
+        drainCalls.length,
+        1,
+        `drained run sent ${drainCalls.length} notifications`,
+      );
+      assert.equal(drainCalls[0][0].title, "Queue Complete");
+      assert.equal(drainCalls[0][0].body, "1 completed, 0 failed.");
+
+      // A run the user cancels ends silently.
+      const slow = `${MEDIA}/slow.mp4?notify=cancel`;
+      assert.equal((await api("addToQueue", [slow])).ok, true);
+      assert.equal((await api("startQueue")).ok, true);
+      await browser.waitUntil(
+        async () =>
+          (await api("getQueue")).find((item) => item.url === slow)?.status ===
+          "downloading",
+        { timeout: 30_000, timeoutMsg: "cancel-run item never started" },
+      );
+      await browser.waitUntil(
+        () =>
+          browser.execute(
+            () => !document.getElementById("cancelQueueBtn")?.disabled,
+          ),
+        { timeout: 10_000, timeoutMsg: "Cancel queue stayed disabled" },
+      );
+      await clickById("cancelQueueBtn");
+      await waitForModal(true, "Cancel modal did not open");
+      await clickModalButton("Cancel queue");
+      await browser.waitUntil(
+        async () =>
+          (await api("getQueue")).find((item) => item.url === slow)?.status ===
+          "cancelled",
+        { timeout: 30_000, timeoutMsg: "user cancel did not stop the run" },
+      );
+      await settle(3_000);
+      cancelCalls = await stubCalls("showNotification");
+      assert.equal(
+        cancelCalls.length,
+        drainCalls.length,
+        `a user cancel sent ${cancelCalls.length - drainCalls.length} notification(s)`,
+      );
+      await api("clearQueue");
+    } finally {
+      await restoreApi();
+      await setControlValue("notificationsToggle", original);
+      await waitForSavedSetting(
+        "notifications",
+        original,
+        "notifications were not restored",
+      );
+    }
+    record("queue-notify-drain", {
+      drained: drainCalls.length,
+      afterUserCancel: cancelCalls.length,
+      title: drainCalls[0][0].title,
+    });
+  });
+
+  it("keeps Failure details open when the queue updates", async () => {
+    await api("clearQueue");
+    const missing = `${MEDIA}/missing.mp4`;
+    const next = `${MEDIA}/clip-two.mp4?details=next`;
+    assert.equal((await api("addToQueue", [missing])).ok, true);
+    assert.equal((await api("startQueue")).ok, true);
+    await browser.waitUntil(
+      async () =>
+        (await api("getQueue")).find((item) => item.url === missing)?.status ===
+        "failed",
+      { timeout: 120_000, timeoutMsg: "missing item never failed" },
+    );
+    await browser.execute(() =>
+      window.__ROSI_E2E__.modules.dock.selectTab("queue"),
+    );
+    await browser.waitUntil(
+      () =>
+        browser.execute(() =>
+          Boolean(
+            document.querySelector(
+              ".queue-item.queue-failed .queue-item-details > summary",
+            ),
+          ),
+        ),
+      { timeout: 10_000, timeoutMsg: "failed row never rendered its details" },
+    );
+    // Open the details as a user does. The probe marks this row node, so a
+    // later full re-render is visible as a new node.
+    await browser.execute(() => {
+      const row = document.querySelector(".queue-item.queue-failed");
+      row.querySelector(".queue-item-details > summary").click();
+      row.__probe = true;
+    });
+    await browser.waitUntil(
+      () =>
+        browser.execute(
+          () =>
+            document.querySelector(
+              ".queue-item.queue-failed .queue-item-details",
+            )?.open === true,
+        ),
+      { timeout: 5_000, timeoutMsg: "Failure details did not open" },
+    );
+
+    assert.equal((await api("addToQueue", [next])).ok, true);
+    await browser.waitUntil(
+      () =>
+        browser.execute(
+          () => document.querySelectorAll(".queue-item").length === 2,
+        ),
+      {
+        timeout: 10_000,
+        timeoutMsg: "queue update did not render the new link",
+      },
+    );
+    const after = await browser.execute(() => {
+      const row = document.querySelector(".queue-item.queue-failed");
+      return {
+        rebuilt: row?.__probe !== true,
+        open: row?.querySelector(".queue-item-details")?.open === true,
+      };
+    });
+    assert.equal(
+      after.rebuilt,
+      true,
+      "the failed row was not re-rendered by the update",
+    );
+    assert.equal(
+      after.open,
+      true,
+      "Failure details closed after a queue update",
+    );
+    // A pending link with no run leaves Start enabled.
+    await browser.waitUntil(
+      () =>
+        browser.execute(
+          () => !document.getElementById("startQueueBtn")?.disabled,
+        ),
+      {
+        timeout: 10_000,
+        timeoutMsg: "Start stayed disabled with a pending link and no run",
+      },
+    );
+    await api("clearQueue");
+    record("queue-failure-details", {
+      rebuilt: after.rebuilt,
+      open: after.open,
+    });
+  });
+
+  it("keeps settings marked saved after a settings import", async () => {
+    await browser.waitUntil(
+      () =>
+        browser.execute(() => {
+          const store = window.__ROSI_E2E__.modules.settings.settingsStore;
+          return store.settingsSavedRevision === store.settingsRevision;
+        }),
+      {
+        timeout: 15_000,
+        timeoutMsg: "settings were not saved before the import",
+      },
+    );
+    // The backend emits settings-imported with the saved settings after an import.
+    const emitted = await browser.executeAsync((done) => {
+      const store = window.__ROSI_E2E__.modules.settings.settingsStore;
+      window.__TAURI__.event
+        .emit("settings-imported", JSON.parse(JSON.stringify(store.settings)))
+        .then(
+          () => done(true),
+          (error) => done(String(error)),
+        );
+    });
+    assert.equal(emitted, true, "settings-imported was not emitted");
+    await settle(500);
+    const revisions = await browser.execute(() => {
+      const store = window.__ROSI_E2E__.modules.settings.settingsStore;
+      return {
+        saved: store.settingsSavedRevision,
+        current: store.settingsRevision,
+      };
+    });
+    assert.equal(
+      revisions.saved,
+      revisions.current,
+      "the import left the settings marked unsaved",
+    );
+    // A valid link makes the options summary read the settings state.
+    await typeUrl(`${MEDIA}/clip-one.mp4?import=1`);
+    await settle(1_500);
+    const summary = await browser.execute(
+      () => document.getElementById("downloadOutputSummary")?.textContent ?? "",
+    );
+    assert.doesNotMatch(
+      summary,
+      /Settings are not saved/,
+      `options summary after import: ${summary}`,
+    );
+    await typeUrl("");
+    record("settings-import-saved", {
+      saved: revisions.saved,
+      current: revisions.current,
+    });
   });
 
   it("splits a mixed paste through the backend and queues only the safe links", async () => {

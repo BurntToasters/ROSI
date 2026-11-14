@@ -17,11 +17,27 @@ const LEGACY_FOLDER: &str = "rosi";
 const SETTINGS_FILE: &str = "settings.json";
 const MARKER_FILE: &str = "legacy-v4-import.json";
 const MAX_SETTINGS_BYTES: u64 = 2 * 1024 * 1024;
+/// Skip reason for a ROSI 5 regular file that already exists. It is kept.
+const PRESERVED_REASON: &str =
+    "Existing ROSI 5 data was preserved; the ROSI 4 copy was not imported.";
+/// Skip reason for a non-regular entry at the destination. It is a copy failure.
+const BLOCKED_REASON: &str =
+    "A non-file entry sits at the ROSI 5 path; remove it so the ROSI 4 copy can be imported.";
 
 #[derive(Clone, Copy)]
 enum Shape {
     Array,
     Object,
+}
+
+/// What the stored marker allows this launch to do.
+enum Carry {
+    /// No usable marker, or one from another source: a first pass.
+    Fresh,
+    /// A retry of the components listed in `retry_files`.
+    Resume(Marker),
+    /// An earlier import finished: only a missing settings.json is restored.
+    Finished(Marker),
 }
 
 /// Copied before settings.json: settings are written last, so an import that
@@ -81,8 +97,10 @@ pub fn import_on_first_launch(app: &AppHandle) {
     let Some(source) = find_source(app, &data) else {
         return;
     };
-    // Early V5 markers called partial imports complete. Recover only known
-    // OS-error skips with valid source data and no existing V5 regular file.
+    // Early V5 markers called partial imports complete. Recover known skips
+    // with valid source data and no existing V5 regular file. A "preserved"
+    // skip is recovered only when a non-regular entry now blocks the path, and
+    // a "blocked" skip is recovered whenever the destination is not regular.
     if let Some(marker) = previous.as_mut().filter(|marker| {
         marker.version == 1
             && marker.source == source.to_string_lossy()
@@ -90,11 +108,14 @@ pub fn import_on_first_launch(app: &AppHandle) {
             && marker.retry_files.is_empty()
     }) {
         for &(name, max_bytes, shape) in DATA_FILES {
-            if !data.join(name).is_file()
-                && marker
-                    .skipped
-                    .iter()
-                    .any(|skip| skip.file == name && skip.reason.contains("os error"))
+            let destination = data.join(name);
+            if !regular_file(&destination)
+                && marker.skipped.iter().any(|skip| {
+                    skip.file == name
+                        && (skip.reason.contains("os error")
+                            || skip.reason == BLOCKED_REASON
+                            || (skip.reason == PRESERVED_REASON && occupied(&destination)))
+                })
                 && read_json(&source.join(name), max_bytes).is_ok_and(|value| match shape {
                     Shape::Array => value.is_array(),
                     Shape::Object => value.is_object(),
@@ -104,17 +125,19 @@ pub fn import_on_first_launch(app: &AppHandle) {
             }
         }
     }
-    let resume = previous.filter(|marker| {
-        marker.version == 1
-            && marker.source == source.to_string_lossy()
-            && !marker.retry_files.is_empty()
-    });
+    let carried =
+        previous.filter(|marker| marker.version == 1 && marker.source == source.to_string_lossy());
+    let carry = match carried {
+        Some(marker) if !marker.retry_files.is_empty() => Carry::Resume(marker),
+        Some(marker) if marker.outcome == "imported" => Carry::Finished(marker),
+        _ => Carry::Fresh,
+    };
     // Never use a stored marker to read arbitrary paths or re-import over an
     // existing V5 profile after the original legacy source disappears.
-    if settings_exist && resume.is_none() {
+    if settings_exist && !matches!(carry, Carry::Resume(_)) {
         return;
     }
-    let marker = import_from(&source, &data, resume, settings_exist);
+    let marker = import_from(&source, &data, carry, settings_exist);
     match marker.outcome.as_str() {
         "imported" => crate::logging::info(&format!(
             "Imported ROSI 4 data from {}: {}",
@@ -203,28 +226,50 @@ fn read_json(path: &Path, max_bytes: u64) -> Result<Value, String> {
     serde_json::from_str(&raw).map_err(|error| format!("invalid JSON ({error})"))
 }
 
-fn import_from(
-    source: &Path,
-    data: &Path,
-    previous: Option<Marker>,
-    settings_exist: bool,
-) -> Marker {
-    let retry = previous.as_ref().map(|marker| marker.retry_files.clone());
-    let mut marker = previous.unwrap_or_else(|| Marker {
-        version: 1,
-        outcome: "skipped".into(),
-        source: source.to_string_lossy().into_owned(),
-        imported_at: crate::app_state::now_ms(),
-        imported: Vec::new(),
-        skipped: Vec::new(),
-        retry_files: Vec::new(),
-        reason: None,
-    });
-    if let Some(files) = &retry {
-        marker
-            .skipped
-            .retain(|skipped| !files.contains(&skipped.file));
-    }
+/// True when any entry sits at `path`, including a directory, a symlink, or a
+/// dangling link. Such a path is never written through.
+fn occupied(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
+}
+
+/// True only for an existing regular file, which is the only preserved ROSI 5
+/// data. Symlinks are not followed: a symlink to a regular file is not regular,
+/// so the import neither reads through it nor writes over it. Any other entry
+/// at a destination is a copy failure that stays in `retryFiles` until the
+/// user removes it.
+fn regular_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_file())
+}
+
+fn import_from(source: &Path, data: &Path, carry: Carry, settings_exist: bool) -> Marker {
+    let (mut marker, retry, finished) = match carry {
+        Carry::Fresh => (
+            Marker {
+                version: 1,
+                outcome: "skipped".into(),
+                source: source.to_string_lossy().into_owned(),
+                imported_at: crate::app_state::now_ms(),
+                imported: Vec::new(),
+                skipped: Vec::new(),
+                retry_files: Vec::new(),
+                reason: None,
+            },
+            None,
+            false,
+        ),
+        Carry::Resume(mut marker) => {
+            let files = marker.retry_files.clone();
+            marker
+                .skipped
+                .retain(|skipped| !files.contains(&skipped.file));
+            (marker, Some(files), false)
+        }
+        Carry::Finished(mut marker) => {
+            // Until the settings restore succeeds, this pass is not an import.
+            marker.outcome = "skipped".into();
+            (marker, None, true)
+        }
+    };
     // settings.json is required: without it this is not a usable ROSI 4
     // profile, and importing only stats or a queue would be confusing.
     let raw_settings = if settings_exist {
@@ -244,61 +289,76 @@ fn import_from(
             }
         }
     };
-    // Persist intent before settings or components. If the final journal
-    // update fails or the process exits, this record still permits a safe
-    // restart that preserves already-created V5 files.
-    marker.retry_files = DATA_FILES
-        .iter()
-        .filter(|(name, _, _)| {
-            retry
+    // A finished import is never repeated for its data files: a later launch
+    // only restores settings.json, so ROSI 5 files cannot be replaced.
+    if !finished {
+        // Persist intent before settings or components. If the final journal
+        // update fails or the process exits, this record still permits a safe
+        // restart that preserves already-created V5 files.
+        marker.retry_files = DATA_FILES
+            .iter()
+            .filter(|(name, _, _)| {
+                retry
+                    .as_ref()
+                    .is_none_or(|files| files.iter().any(|file| file == name))
+                    && source.join(name).exists()
+                    && !regular_file(&data.join(name))
+            })
+            .map(|(name, _, _)| (*name).to_string())
+            .collect();
+        marker.outcome = "partial".into();
+        if let Err(error) = write_json(&data.join(MARKER_FILE), &marker) {
+            marker.outcome = "failed".into();
+            marker.reason = Some(format!("Could not preserve migration intent: {error}"));
+            return marker;
+        }
+        marker.retry_files.clear();
+        for (name, max_bytes, shape) in DATA_FILES {
+            if retry
                 .as_ref()
-                .is_none_or(|files| files.iter().any(|file| file == name))
-                && source.join(name).exists()
-        })
-        .map(|(name, _, _)| (*name).to_string())
-        .collect();
-    marker.outcome = "partial".into();
-    if let Err(error) = write_json(&data.join(MARKER_FILE), &marker) {
-        marker.outcome = "failed".into();
-        marker.reason = Some(format!("Could not preserve migration intent: {error}"));
-        return marker;
-    }
-    marker.retry_files.clear();
-    for (name, max_bytes, shape) in DATA_FILES {
-        if retry
-            .as_ref()
-            .is_some_and(|files| !files.iter().any(|file| file == name))
-        {
-            continue;
-        }
-        let path = source.join(name);
-        if !path.exists() {
-            continue;
-        }
-        let outcome = read_json(&path, *max_bytes).and_then(|value| {
-            let matches = match shape {
-                Shape::Array => value.is_array(),
-                Shape::Object => value.is_object(),
-            };
-            if !matches {
-                return Err("unexpected JSON structure".into());
+                .is_some_and(|files| !files.iter().any(|file| file == name))
+            {
+                continue;
+            }
+            let path = source.join(name);
+            if !path.exists() {
+                continue;
             }
             let destination = data.join(name);
-            if retry.is_some() && destination.is_file() {
-                return Err(
-                    "Existing ROSI 5 data was preserved instead of retrying this component.".into(),
-                );
+            // Checked on every pass, not only on a retry: a fresh pass after
+            // settings.json went missing must not replace ROSI 5 data. Only a
+            // regular file is preserved; any other entry is a copy failure.
+            if regular_file(&destination) {
+                marker.skipped.push(Skipped {
+                    file: (*name).to_string(),
+                    reason: PRESERVED_REASON.into(),
+                });
+                continue;
             }
-            write_json(&destination, &value).inspect_err(|_| {
+            let outcome = if occupied(&destination) {
                 marker.retry_files.push((*name).to_string());
-            })
-        });
-        match outcome {
-            Ok(()) => marker.imported.push((*name).to_string()),
-            Err(reason) => marker.skipped.push(Skipped {
-                file: (*name).to_string(),
-                reason,
-            }),
+                Err(BLOCKED_REASON.into())
+            } else {
+                read_json(&path, *max_bytes).and_then(|value| {
+                    let matches = match shape {
+                        Shape::Array => value.is_array(),
+                        Shape::Object => value.is_object(),
+                    };
+                    if !matches {
+                        return Err("unexpected JSON structure".into());
+                    }
+                    write_json(&destination, &value).inspect_err(|_| {
+                        marker.retry_files.push((*name).to_string());
+                    })
+                })
+            };
+            match outcome {
+                Ok(()) => marker.imported.push((*name).to_string()),
+                Err(reason) => marker.skipped.push(Skipped {
+                    file: (*name).to_string(),
+                    reason,
+                }),
+            }
         }
     }
     let settings_result = if settings_exist {

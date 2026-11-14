@@ -3,6 +3,7 @@ import { setButtonIconLabel } from './core';
 import {
   downloadState,
   hideProgressBar,
+  revealFileLocation,
   showProgressComplete,
   updateProgressBar,
 } from './progress';
@@ -12,20 +13,37 @@ import { setButtonLoading } from './ui-helpers';
 import { syncPrimaryActionState } from './url-actions';
 import { api } from '../api';
 
+/**
+ * What the Download button shows after a download. Label, icon, and click
+ * handler live in one value so they always change together. A null handler
+ * leaves the button disabled.
+ */
+export interface DownloadResultState {
+  label: string;
+  icon: string;
+  onActivate: (() => void) | null;
+}
+
 // After a download the button briefly offers the result ("Open File
-// Location" / "Download complete") with its own click handler.
+// Location" / "Download complete") until clearDownloadResult puts Download back.
 export function beginManualDownloadOperation(): number {
   manualDownload.manualDownloadOperation += 1;
   manualDownload.manualDownloadSessionId = null;
   manualDownload.manualSessionIdentityReceived = false;
   manualDownload.manualDownloadStartPending = true;
   refs.pendingManualCompletions.clear();
-  if (manualDownload.downloadResultTimer !== null) clearTimeout(manualDownload.downloadResultTimer);
   if (manualDownload.progressHideTimer !== null) clearTimeout(manualDownload.progressHideTimer);
-  manualDownload.downloadResultTimer = null;
   manualDownload.progressHideTimer = null;
+  const hadResult = manualDownload.downloadResult !== null;
+  dropDownloadResult();
   downloadState.lastDownloadedFilePath = null;
   downloadState.downloadAbort = null;
+  if (hadResult && refs.downloadBtn) {
+    // The result button is still on screen. Put the idle Download button back
+    // before the new operation touches it.
+    setButtonLoading(refs.downloadBtn, false);
+    syncPrimaryActionState();
+  }
   if (refs.downloadBtn) refs.downloadBtn.onclick = refs.downloadBtn._originalClick ?? null;
   return manualDownload.manualDownloadOperation;
 }
@@ -63,10 +81,28 @@ export function failManualDownloadStart(operation: number) {
   refs.pendingManualCompletions.clear();
 }
 
-export function showDownloadResult(ms: number, operation: number) {
-  if (operation !== manualDownload.manualDownloadOperation) return;
+/** Forget the result state and its timer. The button itself is not touched. */
+function dropDownloadResult() {
   if (manualDownload.downloadResultTimer !== null) clearTimeout(manualDownload.downloadResultTimer);
+  manualDownload.downloadResultTimer = null;
+  manualDownload.downloadResult = null;
+}
+
+function applyDownloadResult(result: DownloadResultState) {
+  const button = refs.downloadBtn;
+  if (!button) return;
+  setButtonIconLabel(button, result.icon, result.label);
+  button.disabled = result.onActivate === null;
+  button.classList.toggle('is-disabled', result.onActivate === null);
+  button.onclick = result.onActivate;
+}
+
+function showDownloadResult(result: DownloadResultState, ms: number, operation: number) {
+  if (operation !== manualDownload.manualDownloadOperation) return;
+  dropDownloadResult();
+  manualDownload.downloadResult = result;
   manualDownload.downloadResultTimer = setTimeout(() => clearDownloadResult(operation), ms);
+  applyDownloadResult(result);
 }
 
 export function scheduleProgressHide(operation: number) {
@@ -82,11 +118,10 @@ export function scheduleProgressHide(operation: number) {
 export function clearDownloadResult(operation = manualDownload.manualDownloadOperation) {
   if (
     operation !== manualDownload.manualDownloadOperation ||
-    manualDownload.downloadResultTimer === null
+    manualDownload.downloadResult === null
   )
     return;
-  clearTimeout(manualDownload.downloadResultTimer);
-  manualDownload.downloadResultTimer = null;
+  dropDownloadResult();
   downloadState.lastDownloadedFilePath = null;
   setButtonLoading(refs.downloadBtn, false);
   syncPrimaryActionState();
@@ -95,7 +130,7 @@ export function clearDownloadResult(operation = manualDownload.manualDownloadOpe
 export function showManualDownloadCompletion(
   completion: Pick<
     RosiDownloadCompletion,
-    'outcome' | 'statusMessage' | 'outputPath' | 'outputPaths'
+    'outcome' | 'statusMessage' | 'error' | 'outputPath' | 'outputPaths'
   >,
   operation: number
 ) {
@@ -104,6 +139,7 @@ export function showManualDownloadCompletion(
   downloadState.isDownloading = false;
   manualDownload.manualDownloadStartPending = false;
   downloadState.downloadAbort = null;
+  dropDownloadResult();
   setButtonLoading(refs.downloadBtn, false);
   syncPrimaryActionState();
 
@@ -128,22 +164,52 @@ export function showManualDownloadCompletion(
     }
 
     if (outputPath) {
-      setButtonIconLabel(refs.downloadBtn, 'folder-open', 'Open File Location');
-      refs.downloadBtn.disabled = false;
-      refs.downloadBtn.onclick = () => {
-        void api.openFileLocation(outputPath);
-      };
-      showDownloadResult(8000, operation);
+      showDownloadResult(
+        {
+          label: 'Open File Location',
+          icon: 'folder-open',
+          onActivate: () => {
+            void revealFileLocation(outputPath);
+          },
+        },
+        8000,
+        operation
+      );
     } else {
-      setButtonIconLabel(refs.downloadBtn, 'check', 'Download complete');
-      refs.downloadBtn.disabled = false;
-      showDownloadResult(2500, operation);
+      // No path to open, so this result only reports the outcome.
+      showDownloadResult(
+        { label: 'Download complete', icon: 'check', onActivate: null },
+        2500,
+        operation
+      );
     }
   } else {
     downloadState.lastDownloadedFilePath = null;
     refs.downloadBtn.onclick = refs.downloadBtn._originalClick ?? null;
+    // A user cancel is not a failure, so only a failed outcome notifies.
+    if (completion.outcome === 'failed' && settingsStore.settings.notifications) {
+      void api.showNotification({
+        title: 'Download Failed',
+        body: failureNotificationBody(completion.error || completion.statusMessage),
+      });
+    }
   }
   scheduleProgressHide(operation);
+}
+
+const FAILURE_BODY_MAX = 160;
+
+/** One line of the reason, shortened so the OS notification stays readable. */
+function failureNotificationBody(reason: string | null | undefined) {
+  const firstLine =
+    (reason ?? '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) ?? '';
+  if (!firstLine) return 'The download could not be completed.';
+  return firstLine.length > FAILURE_BODY_MAX
+    ? `${firstLine.slice(0, FAILURE_BODY_MAX - 1).trimEnd()}…`
+    : firstLine;
 }
 
 export function handleManualDownloadCompletion(completion: RosiDownloadCompletion) {
@@ -175,6 +241,7 @@ export const manualDownload: {
   manualDownloadSessionId: number | null;
   manualSessionIdentityReceived: boolean;
   manualDownloadStartPending: boolean;
+  downloadResult: DownloadResultState | null;
   downloadResultTimer: ReturnType<typeof setTimeout> | null;
   progressHideTimer: ReturnType<typeof setTimeout> | null;
 } = {
@@ -182,6 +249,7 @@ export const manualDownload: {
   manualDownloadSessionId: null,
   manualSessionIdentityReceived: false,
   manualDownloadStartPending: false,
+  downloadResult: null,
   downloadResultTimer: null,
   progressHideTimer: null,
 };

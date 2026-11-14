@@ -1,5 +1,6 @@
 // Queue rendering, actions, and status messages.
 import { RosiJobProgressEvent, logError } from './core';
+import { copyText } from '../modules/clipboard';
 import { selectTab as selectDockTab } from '../modules/dock';
 import {
   renderQueue as renderQueueRows,
@@ -140,7 +141,8 @@ export function updateQueueButtonStates(queue: RosiQueueItem[]) {
   const hasPending = queue.some((item) => item.status === 'pending');
   const isRunning = queue.some((item) => item.status === 'downloading');
   if (refs.startQueueBtn) {
-    refs.startQueueBtn.disabled = queueController.queueActionLocks > 0 || !hasPending;
+    // Starting while an item downloads would only queue a second runner.
+    refs.startQueueBtn.disabled = queueController.queueActionLocks > 0 || !hasPending || isRunning;
   }
   if (refs.cancelQueueBtn) {
     refs.cancelQueueBtn.disabled = queueController.queueActionLocks > 0 || !isRunning;
@@ -175,8 +177,65 @@ function clearQueueRowError(id: string) {
   if (refs.queueList) setQueueItemError(refs.queueList, id, null);
 }
 
+/**
+ * Called by the queue controls when the user confirms Cancel queue or Clear.
+ * Only a run that is still active is marked, so the drain that follows stays
+ * silent. The marker is dropped when the run ends, so it cannot leak into
+ * the next run.
+ */
+export function noteQueueStoppedByUser() {
+  if (queueController.queueRun.phase === 'running') queueController.queueRun.phase = 'stopping';
+}
+
+/**
+ * Tracks a queue run from the snapshots alone and sends one notification when
+ * it drains on its own: a downloading item was seen, then nothing is
+ * downloading and nothing is pending. Runs the user stopped end silently.
+ */
+function observeQueueRun(queue: RosiQueueItem[]) {
+  const run = queueController.queueRun;
+  const isDownloading = queue.some((item) => item.status === 'downloading');
+  const hasPending = queue.some((item) => item.status === 'pending');
+  if (isDownloading && run.phase === 'idle') {
+    run.phase = 'running';
+    run.outcomes.clear();
+  }
+
+  // Outcomes count only items whose status changed to completed or failed
+  // while a run is in progress, so items finished by earlier runs are not counted.
+  const previous = run.lastStatus;
+  if (run.phase !== 'idle') {
+    for (const item of queue) {
+      if (
+        (item.status === 'completed' || item.status === 'failed') &&
+        previous.get(item.id) !== item.status
+      ) {
+        run.outcomes.set(item.id, item.status);
+      }
+    }
+  }
+  run.lastStatus = new Map(queue.map((item) => [item.id, item.status]));
+
+  if (run.phase === 'idle' || isDownloading) return;
+  // Between two items of a running queue nothing downloads for a moment.
+  if (run.phase === 'running' && hasPending) return;
+
+  const notify = run.phase === 'running';
+  run.phase = 'idle';
+  const outcomes = Array.from(run.outcomes.values());
+  run.outcomes.clear();
+  if (!notify || !settingsStore.settings.notifications) return;
+  const completed = outcomes.filter((status) => status === 'completed').length;
+  const failed = outcomes.length - completed;
+  void api.showNotification({
+    title: 'Queue Complete',
+    body: `${completed} completed, ${failed} failed.`,
+  });
+}
+
 export function renderQueue(queue: RosiQueueItem[]) {
   queueController.currentQueue = queue;
+  observeQueueRun(queue);
   // Forget errors for items that have left the queue.
   for (const id of queueController.rowErrors.keys()) {
     if (!queue.some((item) => item.id === id)) queueController.rowErrors.delete(id);
@@ -188,7 +247,6 @@ export function renderQueue(queue: RosiQueueItem[]) {
     {
       focusQueueItemId: queueController.focusQueueItemId,
       retryQueueItem: async (id: string) => {
-        if (typeof api.retryQueueItem !== 'function') return;
         queueController.focusQueueItemId = id;
         const endQueueAction = beginQueueAction();
         try {
@@ -223,7 +281,6 @@ export function renderQueue(queue: RosiQueueItem[]) {
         }
       },
       reorderQueueItem: async (id: string, direction: 'up' | 'down') => {
-        if (typeof api.reorderQueueItem !== 'function') return;
         queueController.focusQueueItemId = id;
         const endQueueAction = beginQueueAction();
         try {
@@ -254,10 +311,9 @@ export function renderQueue(queue: RosiQueueItem[]) {
         ]
           .filter(Boolean)
           .join('\n');
-        try {
-          await navigator.clipboard.writeText(diagnostics);
+        if (await copyText(diagnostics)) {
           setQueueStatusMessage('Copied diagnostics to the clipboard.');
-        } catch {
+        } else {
           showToast('Could not copy diagnostics to the clipboard.', { type: 'warning' });
         }
       },
@@ -405,10 +461,17 @@ export const queueController: {
   queueStatusTimer: ReturnType<typeof setTimeout> | null;
   queueActionLocks: number;
   rowErrors: Map<string, QueueRowError>;
+  // Run tracking for the drain notification. See observeQueueRun.
+  queueRun: {
+    phase: 'idle' | 'running' | 'stopping';
+    outcomes: Map<string, 'completed' | 'failed'>;
+    lastStatus: Map<string, RosiQueueItem['status']>;
+  };
 } = {
   focusQueueItemId: null,
   currentQueue: [],
   queueStatusTimer: null,
   queueActionLocks: 0,
   rowErrors: new Map(),
+  queueRun: { phase: 'idle', outcomes: new Map(), lastStatus: new Map() },
 };

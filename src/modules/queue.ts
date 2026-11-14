@@ -28,6 +28,10 @@ const STATUS_LABELS: Record<QueueStatus, string> = {
   cancelled: 'Cancelled',
 };
 
+// Item ids whose failure or cancellation details the user opened. Broadcasts
+// rebuild every row, so the open state lives here and is applied on each render.
+const openDetailIds = new Set<string>();
+
 // window.rosiMessages is published by engine/messages.ts before any render runs.
 const uiMessages = () => window.rosiMessages as NonNullable<Window['rosiMessages']>;
 
@@ -238,6 +242,13 @@ export function renderQueue(queue: QueueItem[], elements: QueueElements, deps: Q
   } = deps;
 
   if (!queueList || !queueSection) return;
+  // Forget open state for items that no longer show details.
+  for (const id of Array.from(openDetailIds)) {
+    const stillShowsDetails = queue.some(
+      (item) => item.id === id && (item.status === 'failed' || item.status === 'cancelled')
+    );
+    if (!stillShowsDetails) openDetailIds.delete(id);
+  }
   // Broadcasts re-render the whole list; keep keyboard focus on the same
   // control when it still exists afterwards.
   const focused = document.activeElement;
@@ -384,6 +395,12 @@ export function renderQueue(queue: QueueItem[], elements: QueueElements, deps: Q
     if (item.status === 'failed' || item.status === 'cancelled') {
       const details = document.createElement('details');
       details.className = 'queue-item-details';
+      details.open = openDetailIds.has(item.id);
+      const itemId = item.id;
+      details.addEventListener('toggle', () => {
+        if (details.open) openDetailIds.add(itemId);
+        else openDetailIds.delete(itemId);
+      });
       const summary = document.createElement('summary');
       summary.textContent = item.status === 'failed' ? 'Failure details' : 'Cancellation details';
       const message = document.createElement('p');

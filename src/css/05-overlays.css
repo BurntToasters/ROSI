@@ -32,8 +32,13 @@
 }
 
 .modal-box {
+  display: flex;
+  flex-direction: column;
   width: 90%;
   max-width: 480px;
+  /* Keep the whole dialog inside the window. The message and extra areas scroll;
+     the buttons never shrink, so they stay visible at the minimum window size. */
+  max-height: calc(100vh - 2rem);
   padding: 1.6rem 1.6rem 1.3rem;
   background: color-mix(in srgb, var(--modal-bg-start) 80%, transparent);
   -webkit-backdrop-filter: blur(var(--blur-lg));
@@ -67,6 +72,7 @@
 }
 
 .modal-box h3 {
+  flex-shrink: 0;
   margin-bottom: 0.6rem;
   font-size: var(--text-lg);
   font-weight: var(--weight-bold);
@@ -74,18 +80,30 @@
 }
 
 .modal-message {
+  flex: 0 1 auto;
+  min-height: 0;
   margin-bottom: 1.4rem;
   line-height: 1.65;
   color: var(--text-secondary);
   text-align: center;
   white-space: pre-line;
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .modal-extra:empty {
   display: none;
 }
 
+.modal-extra {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .modal-buttons {
+  flex-shrink: 0;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -236,6 +254,24 @@
 
 .toast-container-assertive {
   bottom: calc(var(--footer-height) + var(--spacing-md) + 80px);
+}
+
+/* Short windows (the 900x560 minimum). Info and success toasts sit in the
+   strip between the top bar and the URL row, at the right, clear of the
+   Download button (its top is about 114px) as long as a toast is one line.
+   Error and warning toasts stay at the bottom, so they never stack on the
+   top toasts. A bottom toast can reach the dock toolbar when a taller card
+   shrinks the dock, which is the one case this placement does not clear. */
+@media (max-height: 700px) {
+  .toast-container {
+    top: calc(var(--top-bar-height) + var(--spacing-xs));
+    bottom: auto;
+  }
+
+  .toast-container-assertive {
+    top: auto;
+    bottom: calc(var(--footer-height) + var(--spacing-md));
+  }
 }
 
 .toast {

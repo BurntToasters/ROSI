@@ -14,9 +14,7 @@ export { getModifierKeyName, isMac, isValidUrl } from '../modules/ui';
 export function logError(context: string, error?: unknown) {
   const msg = error instanceof Error ? error.message : String(error || '');
   const text = msg ? `${context}: ${msg}` : context;
-  if (typeof api.logError === 'function') {
-    api.logError(text);
-  }
+  api.logError(text);
 }
 
 // IPC shapes come from the Rust types (src/generated/ipc-types.ts).

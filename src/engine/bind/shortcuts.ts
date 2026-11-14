@@ -2,9 +2,9 @@
 import { isMac } from '../core';
 import { selectTab as selectDockTab } from '../../modules/dock';
 import {
+  dismissActiveModal,
   getTopActiveOverlayId,
   hideLicenses,
-  hideModal,
   isModalActive,
   showModal,
 } from '../overlays';
@@ -24,8 +24,9 @@ export function bindKeyboardShortcuts() {
     if (event.key === 'Escape') {
       const topOverlayId = getTopActiveOverlayId();
       if (topOverlayId === 'app-modal') {
-        const appModal = document.getElementById('app-modal');
-        if (appModal) hideModal(appModal, null);
+        // A busy prompt ignores Escape; the handler still stops here so the
+        // overlay underneath is not dismissed.
+        dismissActiveModal();
         return;
       }
       if (topOverlayId === 'licenses-overlay') {

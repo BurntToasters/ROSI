@@ -159,8 +159,10 @@ async function initializeRenderer() {
     logError('Could not get app version', e);
     const versionLink = document.getElementById('versionLink');
     if (versionLink) {
+      // No release to open, so drop the link: plain text, not a focusable "#" anchor.
+      versionLink.removeAttribute('href');
+      versionLink.removeAttribute('aria-label');
       versionLink.textContent = 'Version unknown';
-      versionLink.setAttribute('aria-label', 'View release notes (opens externally)');
     }
   }
 
@@ -184,18 +186,7 @@ async function initializeRenderer() {
   } catch (e) {
     logError('Could not detect the Flatpak build', e);
   }
-  if (settingsStore.isFlatpakBuild) {
-    // The sandbox cannot read browser profiles, so cookies cannot work here.
-    const cookieToggle = document.getElementById('hookBrowserToggle') as HTMLInputElement | null;
-    if (cookieToggle) {
-      cookieToggle.checked = false;
-      cookieToggle.disabled = true;
-      cookieToggle.closest('.toggle-switch')?.classList.add('disabled');
-    }
-    document.getElementById('browserChoiceContainer')?.classList.add('hidden');
-    document.getElementById('browserFlatpakHint')?.classList.remove('hidden');
-  }
-
+  // The Flatpak cookie rule is applied by updateUIFromSettings, so it survives later refreshes.
   if (api.getChannel() !== 'msstore') {
     try {
       setupAutoUpdater(() => flushBeforeRestart('Installing the update'));

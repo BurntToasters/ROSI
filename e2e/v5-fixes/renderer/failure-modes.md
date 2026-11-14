@@ -1,6 +1,11 @@
 # Renderer refactor: failure modes (written before the change)
 
-## Map of src/rosiEngine.ts (6045 lines)
+## Map of the pre-refactor src/rosiEngine.ts (6045 lines when written)
+
+Measured 2026-11-14 on the uncommitted tree: `src/rosiEngine.ts` is 430 lines.
+Much of the code below has since moved out of the file (for example into
+`src/engine/*`). The line ranges describe the file before the refactor and are
+not current.
 
 Module-level `let`s: 37 total. Most logic lives in `initializeRenderer()` (lines ~2645-6030) as closures.
 

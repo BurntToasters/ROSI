@@ -31,6 +31,7 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 
 ## Changes in `v5.1.0-beta.1:`
 
+- **YT-DLP:** Updated the bundled `yt-dlp` to `2026.10.26`.
 - **Updater:** macOS in-app updates now download compact per-architecture archives (`.app.tar.zst`), reducing update sizes from ~141 MB to ~60 MB using zstd compression.
 - **Updater:** Added seamless fallback to universal updates if per-architecture manifests are missing.
 - **Updater:** Architecture verification ensures downloaded macOS updates match the host machine before installation.

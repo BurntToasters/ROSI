@@ -40,6 +40,7 @@ function createNativeReport() {
       invariantPassed: true,
       ...(name === "windows-job-object-leader-exit"
         ? {
+            invariantPassed: null,
             skipped: true,
             skipReason:
               "No owned descendant-pipe fixture exercises leader exit yet.",

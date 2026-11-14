@@ -7,14 +7,12 @@ import { api } from '../../api';
 /** Activity loading, history clearing, and the console clear button. */
 export function bindActivityControls() {
   const { activityPanel, clearConsoleBtn, clearHistoryBtn, outputEl } = refs;
-  if (typeof api.getDownloadActivity === 'function') {
-    api
-      .getDownloadActivity()
-      .then((result) => {
-        if (result && result.ok) activityPanel?.setEntries(result.data);
-      })
-      .catch(() => {});
-  }
+  api
+    .getDownloadActivity()
+    .then((result) => {
+      if (result && result.ok) activityPanel?.setEntries(result.data);
+    })
+    .catch(() => {});
 
   if (clearHistoryBtn) {
     clearHistoryBtn.addEventListener('click', (e) => {

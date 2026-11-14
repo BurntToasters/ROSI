@@ -24,6 +24,27 @@ function readMarker() {
   return JSON.parse(fs.readFileSync(MARKER, "utf8"));
 }
 
+/** The ROSI 4 settings values ROSI 5 must report after an import. */
+async function assertRosi4Settings() {
+  const settings = await api("getSettings");
+  for (const [key, want] of Object.entries(SEED.expected.settings)) {
+    const got = settings[key];
+    if (key === "downloadFolder") {
+      assert.equal(real(got), real(want), "settings.downloadFolder");
+    } else {
+      assert.deepEqual(got, want, `settings.${key}`);
+    }
+  }
+  assert.deepEqual(
+    settings.downloadPresets.map((preset) => preset.name),
+    SEED.expected.presets,
+  );
+}
+
+function idsIn(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, "utf8")).map((item) => item.id);
+}
+
 function sha256File(filePath) {
   return crypto
     .createHash("sha256")
@@ -94,19 +115,7 @@ describe("ROSI 4 data import", () => {
       ["download-queue.json"],
     );
 
-    const settings = await api("getSettings");
-    for (const [key, want] of Object.entries(SEED.expected.settings)) {
-      const got = settings[key];
-      if (key === "downloadFolder") {
-        assert.equal(real(got), real(want), "settings.downloadFolder");
-      } else {
-        assert.deepEqual(got, want, `settings.${key}`);
-      }
-    }
-    assert.deepEqual(
-      settings.downloadPresets.map((preset) => preset.name),
-      SEED.expected.presets,
-    );
+    await assertRosi4Settings();
     assert.equal(await wizardActive(), false, "first-run wizard reappeared");
 
     const queue = await api("getQueue");
@@ -221,6 +230,77 @@ describe("ROSI 4 data import", () => {
       status: "passed",
       covers: ["corrupt-settings", "mutates-v4"],
       reason: marker.reason,
+    });
+  });
+
+  // Seeded before launch by the pass builder: a finished import marker, ROSI 5
+  // queue, backup, stats, and activity that differ from ROSI 4, and no
+  // settings.json. SEED.v5 holds the expected ROSI 5 values and ids.
+  it("keeps ROSI 5 data when settings.json is missing after a finished import", async function () {
+    if (CASE !== "preserve-v5") this.skip();
+
+    const v5 = SEED.v5;
+    assert.ok(v5, "ROSI_E2E_LEGACY_V4 has no ROSI 5 seed");
+    const marker = readMarker();
+    assert.equal(marker.outcome, "imported", JSON.stringify(marker));
+    assert.deepEqual(marker.retryFiles, [], "a finished import gained retries");
+    assert.equal(real(marker.source), real(SEED.dir));
+
+    // A finished import restores settings only, so the ROSI 4 settings return.
+    await assertRosi4Settings();
+
+    const rosi4Ids = [
+      ...SEED.expected.queue.map((item) => item.id),
+      ...SEED.expected.activityIds,
+    ];
+    for (const name of [
+      "download-queue.json",
+      "download-queue.backup.json",
+      "download-stats.json",
+      "download-activity.json",
+    ]) {
+      const text = fs.readFileSync(path.join(DATA_DIR, name), "utf8");
+      for (const id of rosi4Ids) {
+        assert.equal(text.includes(id), false, `${name} holds ROSI 4 id ${id}`);
+      }
+    }
+    assert.deepEqual(
+      idsIn(path.join(DATA_DIR, "download-queue.json")),
+      v5.queue,
+      "ROSI 5 queue changed",
+    );
+    assert.deepEqual(
+      idsIn(path.join(DATA_DIR, "download-queue.backup.json")),
+      v5.queueBackup,
+      "ROSI 5 queue backup was replaced",
+    );
+    assert.deepEqual(
+      (await api("getQueue")).map((item) => item.id),
+      v5.queue,
+      "ROSI 5 queue is not the one loaded",
+    );
+    const stats = await api("getStats");
+    assert.equal(
+      stats.totalDownloads,
+      v5.statsTotalDownloads,
+      "stats replaced",
+    );
+    const activity = (await api("getDownloadActivity")).data ?? [];
+    assert.deepEqual(
+      activity.map((entry) => entry.id),
+      v5.activityIds,
+      "ROSI 5 activity was replaced",
+    );
+    assert.deepEqual(snapshotDir(SEED.dir), SEED.snapshot, "ROSI 4 changed");
+
+    results.push({
+      name: "legacy-v4-preserve-v5",
+      status: "passed",
+      covers: ["overwrites-v5", "mutates-v4"],
+      queue: v5.queue,
+      queueBackup: v5.queueBackup,
+      totalDownloads: stats.totalDownloads,
+      activity: v5.activityIds,
     });
   });
 });

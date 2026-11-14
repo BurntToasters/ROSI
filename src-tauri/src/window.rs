@@ -144,6 +144,8 @@ fn build_main(app: &AppHandle) -> Result<WebviewWindow, String> {
     let builder =
         WebviewWindowBuilder::from_config(app, &config).map_err(|error| error.to_string())?;
     // E2E specs keep sampling the page while the window sits behind other apps.
+    // Windows ignores `focused` for a window created hidden; `e2e_windows`
+    // keeps the reveal from activating it there.
     #[cfg(feature = "e2e")]
     let builder = builder
         .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
@@ -203,12 +205,56 @@ fn fit_to_work_area(window: &WebviewWindow) {
     let _ = window.center();
 }
 
-/// Background E2E runs on macOS: the app never takes focus and its window
-/// stays below other apps. scripts/test-e2e.js sets `ROSI_E2E_BACKGROUND=1`
-/// unless CI or `ROSI_E2E_FOREGROUND=1` is set.
+/// Background E2E runs on macOS and Windows: the app never takes focus and its
+/// window stays below other apps. scripts/test-e2e.js sets
+/// `ROSI_E2E_BACKGROUND=1` unless CI or `ROSI_E2E_FOREGROUND=1` is set.
 #[cfg(feature = "e2e")]
 pub fn e2e_background() -> bool {
-    cfg!(target_os = "macos") && std::env::var("ROSI_E2E_BACKGROUND").as_deref() == Ok("1")
+    (cfg!(target_os = "macos") || cfg!(target_os = "windows"))
+        && std::env::var("ROSI_E2E_BACKGROUND").as_deref() == Ok("1")
+}
+
+/// Win32 reveal for Windows background runs. tao cannot show a window that was
+/// created hidden without activating it: it removes its no-activate marker when
+/// creation ends, so its `show` calls `ShowWindow(SW_SHOW)`, and `unminimize`
+/// restores with activation. This path therefore uses Win32 directly.
+///
+/// tao's VISIBLE flag stays clear on purpose. With it set, every later tao flag
+/// change runs `ShowWindow(SW_SHOW)` and activates the window. With it clear,
+/// every later tao flag change runs `ShowWindow(SW_HIDE)` and hides it. So the
+/// background path makes no tao flag setter calls after the reveal, and it does
+/// not call tao's `set_always_on_bottom`, which goes through the same path.
+/// `is_visible` reads `IsWindowVisible`, so it still reports the real state.
+#[cfg(all(feature = "e2e", target_os = "windows"))]
+mod e2e_windows {
+    use tauri::WebviewWindow;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, ShowWindow, HWND_BOTTOM, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        SW_SHOWNOACTIVATE,
+    };
+
+    pub fn reveal_without_activation(window: &WebviewWindow) {
+        let hwnd = match window.hwnd() {
+            Ok(hwnd) => hwnd.0,
+            Err(error) => {
+                crate::logging::warn(&format!(
+                    "E2E background: could not reach the main window ({error}); it stays hidden."
+                ));
+                return;
+            }
+        };
+        let flags = SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE;
+        // SAFETY: `hwnd` is the live main-window handle from tauri. These calls
+        // only change z-order and show state; none of them activates a window.
+        unsafe {
+            // Move to the bottom while hidden, so the first visible frame is
+            // already below other windows.
+            let _ = SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, flags);
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            // A newly shown window may land on top, so move it down again.
+            let _ = SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, flags);
+        }
+    }
 }
 
 /// E2E background runs keep the main page rendering while the window sits
@@ -289,15 +335,28 @@ mod e2e_occlusion {
 }
 
 fn reveal(window: &WebviewWindow) {
-    let _ = window.unminimize();
     #[cfg(feature = "e2e")]
     if e2e_background() {
-        let _ = window.set_always_on_bottom(true);
-        let _ = window.show();
+        reveal_e2e_background(window);
         return;
     }
+    let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
+}
+
+/// macOS keeps its tao-based reveal. Windows never calls tao's `unminimize`,
+/// `show`, or `set_focus` here; see `e2e_windows`.
+#[cfg(feature = "e2e")]
+fn reveal_e2e_background(window: &WebviewWindow) {
+    #[cfg(target_os = "windows")]
+    e2e_windows::reveal_without_activation(window);
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window.unminimize();
+        let _ = window.set_always_on_bottom(true);
+        let _ = window.show();
+    }
 }
 
 /// Create the (hidden) main window if needed, or focus the existing one.
@@ -684,6 +743,11 @@ fn force_close(app: AppHandle) {
             "Best-effort queue save before forced close failed: {error}"
         ));
     }
+    if let Err(error) = crate::activity::flush_pending() {
+        crate::logging::error(&format!(
+            "Best-effort activity save before forced close failed: {error}"
+        ));
+    }
     {
         let _state = CLOSE_STATE_LOCK
             .lock()
@@ -724,6 +788,12 @@ fn shutdown_with_close_generation(generation: Option<u64>) -> Result<(), String>
     stop_active_work();
     crate::queue::flush().map_err(|error| {
         crate::logging::error(&format!("Could not confirm the final queue state: {error}"));
+        error
+    })?;
+    // Activity is saved last: completions from the stop above are recorded
+    // as they arrive, and a failed earlier save is retried here.
+    crate::activity::flush_pending().map_err(|error| {
+        crate::logging::error(&format!("Could not save download activity: {error}"));
         error
     })
 }

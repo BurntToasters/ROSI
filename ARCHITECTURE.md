@@ -75,9 +75,10 @@ normal loaders validate everything, and the result is recorded in
 - `engine/updater-ui.ts` draws update state. It calls the updater commands in
   `commands.ts` and renders the `updater-status` and `updater-progress` events;
   it makes no update decisions. The webview has no updater plugin permissions.
-- `main.ts` is the entry point. It imports `api.ts` first, then the renderer
-  modules, then `rosiEngine.ts`. After the renderer reports startup readiness it
-  calls `mark_main_window_ready`, which lets the backend close the splash.
+- Vite bundles `src/` (`vite.config.ts`). `main.ts` is the entry point. It
+  imports `api.ts` first, then `modules/icons.ts` for its side effect, then
+  `rosiEngine.ts`. After the renderer reports startup readiness it calls
+  `mark_main_window_ready`, which lets the backend close the splash.
 - `rosiEngine.ts` is the renderer controller's startup: it loads settings,
   looks up the DOM, and calls the `engine/bind/*` functions in order, which bind
   each feature's controls and the backend events. It uses the same API contract
@@ -94,12 +95,14 @@ normal loaders validate everything, and the result is recorded in
   completions, progress events). The `ts_bindings` test in
   `src-tauri/src/types.rs` renders it from the Rust types and fails when it is
   stale; refresh it with `ROSI_UPDATE_IPC_TYPES=1 cargo test ts_bindings`.
-- `modules/*` are self-contained IIFE modules that attach to `window` and
-  are loaded by `main.ts`. `ui.ts` holds toasts and shared UI helpers, `queue.ts`
-  renders the queue, `dock.ts` the queue, activity, and console tabs,
-  `downloads.ts` parses yt-dlp progress lines, `updates.ts` shows updater
-  progress, `settings.ts` binds external links, and `icons.ts` swaps Lucide
-  icon placeholders for SVG markup.
+- `modules/*` are ES modules with named exports, imported by `engine/*` and
+  `rosiEngine.ts`; they are not IIFEs. `ui.ts` holds toasts and shared UI
+  helpers, `queue.ts` renders the queue, `activity.ts` renders the activity
+  list, `dock.ts` tracks the queue, activity, and console tabs, `clipboard.ts`
+  copies text, `downloads.ts` formats byte counts, `updates.ts` formats updater
+  progress, `settings.ts` binds external links, and `icons.ts` swaps Lucide icon
+  placeholders for SVG markup when it loads (`main.ts` imports it for that side
+  effect).
 - `e2e-hook.ts` is compiled only into unpackaged E2E builds. Production
   bundles drop it.
 - `public/` holds files served as-is: theme/splash init scripts, the licenses
@@ -195,8 +198,9 @@ expected to shut down around October 2027 after its acquisition, and yt-dlp
 has not chosen a replacement yet; follow
 [yt-dlp#17799](https://github.com/yt-dlp/yt-dlp/issues/17799). ROSI's Deno
 code is `src-tauri/src/deno.rs` (detection and winget/Homebrew install), the
-Deno entries in `process_util::enhanced_path`, the startup reminder and the
-setup wizard step in `rosiEngine.ts`. Keep new runtime work generic until
+Deno entries in `process_util::enhanced_path`, the startup check
+(`checkDenoInstallation` in `engine/deno.ts`, called from `rosiEngine.ts`), and
+the setup wizard step in `engine/wizard.ts`. Keep new runtime work generic until
 yt-dlp decides, and replace these pieces when it does.
 
 The Flatpak sandbox cannot use a host Deno, so the Flatpak installs the

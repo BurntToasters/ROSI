@@ -508,7 +508,7 @@
   height: 20px;
   font-size: 0.7rem;
   font-weight: var(--weight-bold);
-  color: var(--accent-light);
+  color: var(--accent-text);
   text-decoration: none;
   background: var(--accent-subtle);
   border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
@@ -571,11 +571,11 @@
 }
 
 .settings-save-feedback[data-state='error'] {
-  color: var(--danger);
+  color: var(--danger-text);
 }
 
 .settings-save-feedback[data-state='saved'] {
-  color: var(--success);
+  color: var(--success-text);
 }
 
 .settings-save-feedback[data-state='saving'] {
@@ -612,11 +612,11 @@
 }
 
 .version-info a.beta-version {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .version-info a.beta-version:hover {
-  color: var(--warning-light);
+  color: var(--warning-text);
 }
 
 .beta-badge {

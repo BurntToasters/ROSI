@@ -216,7 +216,7 @@ export async function drainSettingsSaves() {
       false
     );
   } else if (preserved && snapshotRevision === latestRevision) {
-    showSettingsSaveError(UI_MESSAGES.settings.conflict, false);
+    showSettingsSaveError(UI_MESSAGES.settings.newerVersion, false);
   } else if (saved && snapshotRevision === latestRevision) {
     setSettingsSaveFeedback('saved', UI_MESSAGES.settings.saved);
   } else if (!saved && snapshotRevision === latestRevision) {
@@ -239,7 +239,9 @@ export async function drainSettingsSaves() {
   }
 }
 
-export async function persistSettings(silent = false, immediate = false): Promise<boolean> {
+// The first argument is unused. It is kept so callers that pass
+// (true, true) in other modules still compile; only `immediate` is read.
+export async function persistSettings(_unused = false, immediate = false): Promise<boolean> {
   setSettingsSaveFeedback('saving', UI_MESSAGES.settings.saving);
   if (settingsStore.persistDebounceTimer) {
     clearTimeout(settingsStore.persistDebounceTimer);
@@ -249,7 +251,6 @@ export async function persistSettings(silent = false, immediate = false): Promis
     settingsStore.settingsSaveWaiters.push({
       revision: settingsStore.settingsRevision,
       immediate,
-      silent,
       resolve,
     });
   });
@@ -282,6 +283,8 @@ export function confirmInterruptActiveWork(action: string): Promise<boolean> {
         { label: 'Keep Downloading', primary: true, action: () => resolve(false) },
         { label: 'Stop and Continue', danger: true, action: () => resolve(true) },
       ],
+      // Escape keeps the current work, the same as the Keep Downloading button.
+      onDismiss: () => resolve(false),
     });
   });
 }
@@ -308,7 +311,6 @@ export function getPresets(): RosiDownloadPreset[] {
 
 export async function loadDefaultSettings(): Promise<RosiSettings | null> {
   if (settingsStore.defaultSettingsCache) return settingsStore.defaultSettingsCache;
-  if (typeof api.getDefaultSettings !== 'function') return null;
   try {
     const result = await api.getDefaultSettings();
     if (result && result.ok) {
@@ -344,7 +346,6 @@ export const settingsStore: {
   settingsSavedRevision: number;
   settings: RosiSettings;
   reconcilingSettings: boolean;
-  settingsSaveErrorShownAt: number;
   persistDebounceTimer: ReturnType<typeof setTimeout> | null;
   settingsSaveInFlight: boolean;
   lastSettingsSaveErrorCode: string | null;
@@ -354,7 +355,6 @@ export const settingsStore: {
   settingsSaveWaiters: Array<{
     revision: number;
     immediate: boolean;
-    silent: boolean;
     resolve: (saved: boolean) => void;
   }>;
   defaultSettingsCache: RosiSettings | null;
@@ -364,7 +364,6 @@ export const settingsStore: {
   settingsSavedRevision: 0,
   settings: undefined as unknown as RosiSettings,
   reconcilingSettings: false,
-  settingsSaveErrorShownAt: 0,
   persistDebounceTimer: null,
   settingsSaveInFlight: false,
   lastSettingsSaveErrorCode: null,

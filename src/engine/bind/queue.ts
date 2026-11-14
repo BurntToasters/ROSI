@@ -6,6 +6,7 @@ import {
   announceQueueAction,
   beginQueueAction,
   extractQueueLinks,
+  noteQueueStoppedByUser,
   queueController,
   queueMessageForCount,
   setQueueStatusMessage,
@@ -145,6 +146,7 @@ export function bindQueueControls() {
             danger: true,
             action: async () => {
               const endQueueAction = beginQueueAction();
+              noteQueueStoppedByUser();
               try {
                 const result = await api.clearQueue();
                 if (result && result.ok) {
@@ -201,15 +203,16 @@ export function bindQueueControls() {
     cancelQueueBtn.addEventListener('click', () => {
       if (queueController.queueActionLocks > 0) return;
       showModal({
-        title: 'Cancel Queue',
-        message: 'Stop processing the active download queue?',
+        title: 'Cancel queue',
+        message: 'Stops the active download and marks every pending item as cancelled.',
         buttons: [
           { label: 'Keep Running' },
           {
-            label: 'Cancel Queue',
+            label: 'Cancel queue',
             danger: true,
             action: async () => {
               const endQueueAction = beginQueueAction();
+              noteQueueStoppedByUser();
               try {
                 const result = await api.cancelQueue();
                 if (result && result.ok) {

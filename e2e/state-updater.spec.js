@@ -941,7 +941,8 @@ describe("state and updater repair E2E", () => {
           ? "linux"
           : "windows";
     const betaTarget = "darwin-beta-aarch64-app";
-    const stableTarget = `${platformOs}-aarch64`;
+    const platformArch = { arm64: "aarch64", x64: "x86_64" }[process.arch];
+    const stableTarget = `${platformOs}-${platformArch}`;
     let priorBackup = null;
     // Released in finally too, so a failed step never leaves the held B
     // response open (the server could not close and the engine stays busy).

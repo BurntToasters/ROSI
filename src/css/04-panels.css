@@ -212,7 +212,7 @@
 
 .history-error {
   font-size: var(--text-xs);
-  color: var(--danger);
+  color: var(--danger-text);
   word-break: break-word;
   overflow-wrap: anywhere;
 }
@@ -259,17 +259,17 @@
 }
 
 .history-status.success {
-  color: var(--success);
+  color: var(--success-text);
   background: var(--success-subtle);
 }
 
 .history-status.failed {
-  color: var(--danger);
+  color: var(--danger-text);
   background: var(--danger-subtle);
 }
 
 .history-status.cancelled {
-  color: var(--warning);
+  color: var(--warning-text);
   background: var(--warning-subtle);
 }
 

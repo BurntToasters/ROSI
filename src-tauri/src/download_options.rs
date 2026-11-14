@@ -17,6 +17,18 @@ pub struct ResolvedDownloadOptions {
     pub effective_settings: Settings,
 }
 
+/// The browser a cookie choice uses on this platform. Windows offers Firefox
+/// alone, so any other per-request value becomes Firefox, as stored and
+/// imported values do in `settings::read_browser_choice`. Keep the two rules in
+/// step. Other platforms keep the value; `build_browser_cookie_args` checks it.
+pub fn browser_choice_for_platform(browser: &str) -> String {
+    if cfg!(windows) {
+        "firefox".to_string()
+    } else {
+        browser.to_string()
+    }
+}
+
 fn to_map(value: &impl serde::Serialize) -> Map<String, Value> {
     match serde_json::to_value(value) {
         Ok(Value::Object(map)) => map,
@@ -69,7 +81,7 @@ fn apply_request_to_settings(settings: &Settings, options: &DownloadRequestOptio
         .as_ref()
         .filter(|value| !value.is_empty())
     {
-        effective.browser_choice = value.clone();
+        effective.browser_choice = browser_choice_for_platform(value);
     }
     if let Some(value) = options.gpu_acceleration {
         effective.gpu_acceleration = value;
@@ -265,7 +277,7 @@ pub fn resolve_queue_request(
     resolve_value(settings, &value, Some(url)).map(|resolved| resolved.request)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn resolve_download_options(
     options: FalliblePayload<DownloadRequestInput>,
 ) -> IpcResult<DownloadRequestOptions> {
@@ -276,7 +288,7 @@ pub fn resolve_download_options(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn resolve_preset_options(
     options: FalliblePayload<PresetOptionsInput>,
 ) -> IpcResult<DownloadRequestOptions> {

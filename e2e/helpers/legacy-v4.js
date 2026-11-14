@@ -135,11 +135,100 @@ export function expectedImportedSettings({ downloadFolder }) {
 const T0 = Date.UTC(2026, 5, 1);
 
 /**
+ * ROSI 5 data that differs from ROSI 4, written beside a finished import
+ * marker with no settings.json. A later launch must keep these files.
+ * Ids avoid the ROSI 4 ids (v4-pending, v4-done, v4-activity-1).
+ */
+export function seedRosi5Data(profile, legacyDir) {
+  const T1 = Date.UTC(2026, 9, 1);
+  const url = "https://example.com/watch?v=rosi5-queue-item";
+  const write = (name, value) =>
+    fs.writeFileSync(
+      path.join(profile.dataDir, name),
+      JSON.stringify(value, null, 2),
+    );
+  write("download-queue.json", [
+    {
+      id: "v5-queue-item",
+      url,
+      status: "completed",
+      addedAt: T1,
+      startedAt: T1 + 1000,
+      completedAt: T1 + 2000,
+      filename: "v5-queue.mp4",
+    },
+  ]);
+  write("download-queue.backup.json", [
+    {
+      id: "v5-backup-item",
+      url: "https://example.com/watch?v=rosi5-backup-item",
+      status: "completed",
+      addedAt: T1,
+      completedAt: T1 + 3000,
+      filename: "v5-backup.mp4",
+    },
+  ]);
+  write("download-stats.json", {
+    schemaVersion: 1,
+    totalDownloads: 7,
+    successfulDownloads: 7,
+    failedDownloads: 0,
+    cancelledDownloads: 0,
+    totalBytesDownloaded: 555,
+    formatCounts: { mp4: 7 },
+    firstDownloadAt: T1,
+    lastDownloadAt: T1 + 3000,
+  });
+  write("download-activity.json", [
+    {
+      id: "v5-activity-1",
+      owner: "manual",
+      outcome: "success",
+      statusMessage: "Download complete.",
+      url,
+      request: { url, outputPath: profile.downloads },
+      filename: "v5-activity.mp4",
+      sizeBytes: 500,
+      format: "mp4",
+      startedAt: T1,
+      completedAt: T1 + 1000,
+    },
+  ]);
+  // The marker a finished import leaves behind: settings was imported, the
+  // ROSI 4 primary queue was skipped as invalid, and nothing is pending retry.
+  write("legacy-v4-import.json", {
+    version: 1,
+    outcome: "imported",
+    source: legacyDir,
+    importedAt: T1,
+    imported: [
+      "download-activity.json",
+      "download-queue.backup.json",
+      "download-stats.json",
+      "settings.json",
+    ],
+    skipped: [{ file: "download-queue.json", reason: "invalid JSON" }],
+    retryFiles: [],
+  });
+  return {
+    queue: ["v5-queue-item"],
+    queueBackup: ["v5-backup-item"],
+    statsTotalDownloads: 7,
+    activityIds: ["v5-activity-1"],
+  };
+}
+
+/**
  * Write a ROSI 4 profile: settings, a corrupt primary queue with a valid
  * backup, lifetime stats, and activity with one record ROSI 5 must drop.
  * `corruptSettings` replaces settings.json with invalid JSON instead.
+ * `rosi5Data` also plants ROSI 5 data and a finished marker (see seedRosi5Data)
+ * and returns its expected values as `v5`.
  */
-export function seedLegacyV4Data(profile, { corruptSettings = false } = {}) {
+export function seedLegacyV4Data(
+  profile,
+  { corruptSettings = false, rosi5Data = false } = {},
+) {
   const dir = legacyV4Dir(profile);
   const downloadFolder = path.join(profile.home, "Downloads", "ROSI 4");
   const missingFfmpeg = path.join(
@@ -219,6 +308,7 @@ export function seedLegacyV4Data(profile, { corruptSettings = false } = {}) {
     dir,
     downloadFolder,
     snapshot: snapshotDir(dir),
+    v5: rosi5Data ? seedRosi5Data(profile, dir) : undefined,
     expected: {
       settings: expectedImportedSettings({ downloadFolder }),
       presets: ["Podcast MP3"],

@@ -6,13 +6,26 @@ import { getVersion } from '@tauri-apps/api/app';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { call, fire } from './commands';
 
+/**
+ * Browser-cookie choice for a listing or preview. An absent field keeps the
+ * saved setting; no choice at all means the saved settings.
+ */
+export interface RosiCookieChoice {
+  hookBrowser?: boolean;
+  browserChoice?: string;
+}
+
 export interface RosiRendererApi {
   restartApp: () => Promise<void>;
   getChannel: () => 'github' | 'msstore';
-  getFormats: (url: string) => Promise<RosiIpcResult<import('./generated/ipc-types').FormatList>>;
+  getFormats: (
+    url: string,
+    cookies?: RosiCookieChoice
+  ) => Promise<RosiIpcResult<import('./generated/ipc-types').FormatList>>;
   getVideoInfo: (
     url: string,
-    playlistMode?: 'current' | 'all'
+    playlistMode?: 'current' | 'all',
+    cookies?: RosiCookieChoice
   ) => Promise<RosiIpcResult<import('./generated/ipc-types').VideoInfo>>;
   cancelVideoInfo: () => void;
   selectDownloadLocation: () => Promise<string | null>;
@@ -79,7 +92,7 @@ export interface RosiRendererApi {
   startQueue: () => Promise<RosiIpcResult<{ started: boolean }>>;
   cancelQueue: () => Promise<RosiIpcResult<void>>;
   onPrepareForClose: (callback: (generation: number) => void | Promise<void>) => () => void;
-  onQueueUpdate: (callback: (snapshot: RosiQueueSnapshot | RosiQueueItem[]) => void) => () => void;
+  onQueueUpdate: (callback: (snapshot: RosiQueueSnapshot) => void) => () => void;
   onSettingsImported: (callback: (settings: RosiSettings) => void) => () => void;
 }
 
@@ -124,12 +137,25 @@ export function waitForPrepareForCloseListener(): Promise<void> {
   return prepareForCloseRegistration;
 }
 
+// Only the choices the caller gave are sent, so a call without one is the same
+// IPC payload as before and Rust falls back to the saved settings.
+function cookieArgs(cookies?: RosiCookieChoice): RosiCookieChoice {
+  const args: RosiCookieChoice = {};
+  if (cookies?.hookBrowser !== undefined) args.hookBrowser = cookies.hookBrowser;
+  if (cookies?.browserChoice !== undefined) args.browserChoice = cookies.browserChoice;
+  return args;
+}
+
 export const api: RosiRendererApi = {
   restartApp: () => call('restart_app'),
   getChannel: () => CHANNEL,
-  getFormats: (url) => call('get_formats', { url }),
-  getVideoInfo: (url, playlistMode) =>
-    call('get_video_info', { url, playlistMode: playlistMode ?? null }),
+  getFormats: (url, cookies) => call('get_formats', { url, ...cookieArgs(cookies) }),
+  getVideoInfo: (url, playlistMode, cookies) =>
+    call('get_video_info', {
+      url,
+      playlistMode: playlistMode ?? null,
+      ...cookieArgs(cookies),
+    }),
   cancelVideoInfo: () => fire('cancel_video_info'),
   selectDownloadLocation: () => call('select_download_location'),
   getSettings: () => call('get_settings'),
