@@ -88,9 +88,11 @@ Tauri ships three `externalBin` sidecars next to the ROSI executable:
   `release:*` command) runs `npm run ffmpeg:ensure`, which fetches only the
   missing host targets, so each release VM needs `FFMPEG_DL_SERVER` in `.env`
   and 7-Zip (`7zz`/`7z` on PATH, or the default 7-Zip install on Windows).
-  When the FFmpeg builder publishes new binaries, run `npm run get:ffmpeg:all`
-  (which regenerates the checksums), review, and commit
-  `resources/ffmpeg/checksums.json`.
+  When the FFmpeg builder publishes new binaries, run
+  `npm run get:ffmpeg:update`: it backs up `resources/ffmpeg/`, downloads all
+  six targets, regenerates and re-verifies the checksums, prints the hash diff,
+  and restores the backup on any failure or Ctrl+C. Cross-check a few hashes,
+  then commit `resources/ffmpeg/checksums.json`.
 
 `npm run prepare:rust-tests` (development and CI) writes non-functional FFmpeg
 stubs when FFmpeg is absent. `build.rs` re-hashes the prepared sidecars and
