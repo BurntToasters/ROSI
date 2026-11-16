@@ -3,11 +3,11 @@
     "binaries": {
       "ffmpeg": {
         "path": "resources/ffmpeg/win/x64/ffmpeg.exe",
-        "sha256": "bab401577ee146aa1715e255fb17c12fd16d375d95f696d5b89b9c5fdcab4cc1"
+        "sha256": "4edb84e9d37646801584944369e7bac0b3c8b7bac562027cac2905776d5ecb10"
       },
       "ffprobe": {
         "path": "resources/ffmpeg/win/x64/ffprobe.exe",
-        "sha256": "7609ee648dbd44898013497303db2835f54fdc0398efc5a7b3a81b1f77609a09"
+        "sha256": "c58b35971c70accad4f4e0b1d707d0c349ca692669074c9e008a5daac4c4d623"
       }
     }
   },
@@ -15,11 +15,11 @@
     "binaries": {
       "ffmpeg": {
         "path": "resources/ffmpeg/win/arm64/ffmpeg.exe",
-        "sha256": "50909fcbd35934e8f1a837bdeb0e5ba11ef7fcadfc2689dfcc80f3ca9b97c4b3"
+        "sha256": "37becea9832b4071b519f840592ee2837edc61ab318d826e317270ead8c7569f"
       },
       "ffprobe": {
         "path": "resources/ffmpeg/win/arm64/ffprobe.exe",
-        "sha256": "fd8af0dd09182c0c646c5ef590cd909e07dbf812839b410d742dbecef15d9b52"
+        "sha256": "89440763c42afa29435c9f59c76182d945e7a15f8f19476a7dfeec13470df567"
       }
     }
   },
@@ -27,11 +27,11 @@
     "binaries": {
       "ffmpeg": {
         "path": "resources/ffmpeg/mac/x64/ffmpeg",
-        "sha256": "c03e1253701a37f22ec1ac768b1f9f0a45ed4b47a86d8174c2ce1ed57a09e91b"
+        "sha256": "c9be80f471c7cf1d83f1aae698f7e0f109756dc779959d88789f888587196e98"
       },
       "ffprobe": {
         "path": "resources/ffmpeg/mac/x64/ffprobe",
-        "sha256": "2371637c1a727c86ec9a446f834bd0eafd0bccdfce345400d91e27d3911d8b9d"
+        "sha256": "6d833cf8cc3d6e0a3055c88336aa9487eb1adc9c3e3904cbfcb17f1dc06efa5a"
       }
     }
   },
@@ -39,11 +39,11 @@
     "binaries": {
       "ffmpeg": {
         "path": "resources/ffmpeg/mac/arm64/ffmpeg",
-        "sha256": "397ac83b4e219c7eadbd85144fcc0010d1fe76f6d168698d8d186c8e9304db0b"
+        "sha256": "a220a449b3ed660194a8d5804b44cdc06106bf45d90710e53c6c993b18f569c0"
       },
       "ffprobe": {
         "path": "resources/ffmpeg/mac/arm64/ffprobe",
-        "sha256": "474461e5a413d0f58c3bc6495de096b713d72affdc5ae5f6e6293f22bf283b14"
+        "sha256": "d15c94c3801b95be89a2bd19293adf2940cd9d5491dda9342cd174737a888e83"
       }
     }
   },
@@ -51,11 +51,11 @@
     "binaries": {
       "ffmpeg": {
         "path": "resources/ffmpeg/linux/x64/ffmpeg",
-        "sha256": "34b0a4ca484ab26fe003b028c0592ee3e2af2a268c698ec52231688916d06622"
+        "sha256": "7b5bbb15b1fd3a6fefb4cc1391b588b26c121bfc8818ae3e1f39124d85d7f5be"
       },
       "ffprobe": {
         "path": "resources/ffmpeg/linux/x64/ffprobe",
-        "sha256": "98412f167ea26c2918bf6cc6d0a0965e4be7a9e6b40f159c660095dd1ea4a0cc"
+        "sha256": "26ab69b1a3225f363def4874c3e02e06b7a06da5ae876a63fa7592c0830d9c24"
       }
     }
   },
@@ -63,11 +63,11 @@
     "binaries": {
       "ffmpeg": {
         "path": "resources/ffmpeg/linux/arm64/ffmpeg",
-        "sha256": "2cd166818601f110c4e12f8882fc95ce4fe529a2a1d5a94a1f9cde4989d296a8"
+        "sha256": "23c2783da9336b89cedce0d8be695d59f36a338989b5cc34734eac280780f198"
       },
       "ffprobe": {
         "path": "resources/ffmpeg/linux/arm64/ffprobe",
-        "sha256": "144627fd3ecd0f56ed581258bd85cefc58d90b3b5b33c36ae3c27386192d6abc"
+        "sha256": "70e190f7766f115a7bf423a62011b5082152fcc34e6b14fc8502c4da03b119ee"
       }
     }
   }
