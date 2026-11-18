@@ -18,15 +18,15 @@ reason (`.github/dependabot.yml`).
 | Field | Value |
 | --- | --- |
 | Crate | `tauri-plugin-updater` |
-| Base version | `2.14.0` |
-| Source | `https://crates.io/api/v1/crates/tauri-plugin-updater/2.14.0/download` |
-| crates.io sha256 | `7259989d4fe11b2bf51f7d671642249b1837c4ae2da1430dc713ae38f98ceeec` |
-| Upstream git sha1 | `44293a5722efcaf27060504e63b17aeba721b40f` (`.cargo_vcs_info.json`, path `plugins/updater`) |
-| Newest stable 2.x seen | `2.14.1` (seen 2026-10-28 in the local crates.io cache). Dependency-only: `base64` 0.22 to 0.23 and `zip` 4 to 9 in `Cargo.toml`, `src/` byte-identical to 2.14.0. Not adopted; the base stays `2.14.0`. Before that, `2.14.0` was the newest (checked 2026-10-17; `2.13.3` and `2.13.2` are older) |
+| Base version | `2.14.1` |
+| Source | `https://crates.io/api/v1/crates/tauri-plugin-updater/2.14.1/download` |
+| crates.io sha256 | `d957abbcb3f9f6c76d22a3a0f012f30880640d0bccb5634d2b12a9937e4c872b` |
+| Upstream git sha1 | `128190689dbe59b59d344e01bf07b00862aa3791` (`.cargo_vcs_info.json`, path `plugins/updater`) |
+| Newest stable 2.x seen | `2.14.1` (checked 2026-11-18 in the crates.io sparse index). |
 
 `Cargo.toml.orig`, `README.md`, `build.rs`, `permissions/`,
 `CHANGELOG.md`, `SECURITY.md`, `api-iife.js`, the `LICENSE*` files and
-`.cargo_vcs_info.json` are byte-identical to upstream 2.14.0. Upstream 2.14.0
+`.cargo_vcs_info.json` are byte-identical to upstream 2.14.1. Upstream 2.14.x
 excludes `guest-js/`, `package.json`, `rollup.config.js`, `tsconfig.json` and
 `banner.png` from the crate, so they are not vendored any more.
 ROSI changes are under `src/`, plus one dependency in `Cargo.toml`.
@@ -37,7 +37,7 @@ excluding `target/`, `Cargo.lock`, `.cargo-ok`, `.cargo_vcs_info.json`,
 Apply the patch to a pristine copy with:
 
 ```sh
-patch -p1 -d <pristine-2.14.0-dir> -i ROSI.patch
+patch -p1 -d <pristine-2.14.1-dir> -i ROSI.patch
 ```
 
 ## Patched files
@@ -90,6 +90,11 @@ patch -p1 -d <pristine-2.14.0-dir> -i ROSI.patch
   `appimage_install`.
 - Tests: `#[cfg(test)]` modules in `updater.rs`, `install_safety.rs`, `appimage_install.rs` and
   `appimage_archive.rs` are ROSI additions. They run under `cargo test` in the `rust-check` CI job.
+- Rebased onto 2.14.1 (2026-11-18). 2.14.1 changes only `Cargo.toml`: `base64` 0.22 to 0.23
+  and `zip` 4 to 9, which clears RUSTSEC-2026-0429, -0545 and -0548 against zip 4.6.1. Its `src/`
+  is byte-identical to 2.14.0. `extract_zip` uses only `ZipArchive::new`, `extract` and
+  `ZipError`, which zip 9 keeps. The root lock pins zip 9.5.1 and nix 0.31.3 (zip 9.6+ and
+  nix 0.31.4 were under the 3-day minimum age on that date).
 - Rebased onto 2.14.0 (2026-10-17). Upstream 2.14.0 features kept: `Update::verify`,
   `restore_update`, `require_signed_version` and the signed-version checks,
   `configure_client`, `restart_after_install`, and the `updater_parameters` installer argument
@@ -144,7 +149,7 @@ more in test code (`appimage_install.rs`, `appimage_archive.rs`, `install_safety
 - The 2.14.0 rebase was checked on Windows only. Cross-target checks for Linux and macOS
   need a C toolchain (`ring`, `libdbus-sys`, `objc2-exception-helper`), which the rebase host
   lacked. The Linux and macOS code was merged by hand and needs CI (`rust-check`, `smoke-build`).
-- The vendored crate has its own `Cargo.lock`, regenerated for 2.14.0 with the lock from
+- The vendored crate has its own `Cargo.lock`, regenerated for 2.14.1 with the lock from
   `src-tauri` as the seed. It is a standalone root package, so its unit tests run with
   `cargo test --locked --manifest-path src-tauri/vendor/tauri-plugin-updater/Cargo.toml --lib`
   (CI gate `vendorUpdater` in `scripts/test-all.js`). The root `cargo test --all-targets`

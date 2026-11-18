@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.90"
 name = "tauri-plugin-updater"
-version = "2.14.0"
+version = "2.14.1"
 authors = ["Tauri Programme within The Commons Conservancy"]
 build = "build.rs"
 links = "tauri-plugin-updater"
@@ -83,7 +83,7 @@ name = "tauri_plugin_updater"
 path = "src/lib.rs"
 
 [dependencies.base64]
-version = "0.22"
+version = "0.23"
 
 [dependencies.futures-util]
 version = "0.3"
@@ -200,6 +200,6 @@ features = [
 ]
 
 [target.'cfg(target_os = "windows")'.dependencies.zip]
-version = "4"
+version = "9"
 optional = true
 default-features = false

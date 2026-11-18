@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const REVIEW_EXPIRES = "2026-12-01";
+const REVIEW_EXPIRES = "2027-03-01";
 const EXPECTED_IGNORES = new Set([
   "RUSTSEC-2024-0411",
   "RUSTSEC-2024-0412",
@@ -26,9 +26,6 @@ const EXPECTED_IGNORES = new Set([
   "RUSTSEC-2026-0370",
   "RUSTSEC-2026-0371",
   "RUSTSEC-2026-0372",
-  "RUSTSEC-2026-0367",
-  "RUSTSEC-2026-0368",
-  "RUSTSEC-2026-0369",
 ]);
 
 function ignoredAdvisories(text) {

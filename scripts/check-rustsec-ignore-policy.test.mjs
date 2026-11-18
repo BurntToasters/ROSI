@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   EXPECTED_IGNORES,
+  REVIEW_EXPIRES,
   evaluateIgnorePolicy,
 } from "./check-rustsec-ignore-policy.mjs";
 
@@ -35,7 +36,7 @@ test("RustSec IDs in comments do not count as ignored advisories", () => {
 test("reviewed RustSec debt expires", () => {
   const errors = evaluateIgnorePolicy(
     reviewedConfig,
-    new Date("2026-12-01T00:00:00Z"),
+    new Date(`${REVIEW_EXPIRES}T00:00:00Z`),
   );
   assert.match(errors.join("\n"), /review expired/);
 });

@@ -1,6 +1,7 @@
 # Vendored tauri-plugin-updater
 
-Path-patched from crates.io `tauri-plugin-updater` 2.10.1.
+Path-patched from crates.io `tauri-plugin-updater` 2.14.1. See
+`tauri-plugin-updater/PATCHES.md` for the base, patch, and rebase procedure.
 
 ## Why
 
