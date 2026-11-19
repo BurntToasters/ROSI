@@ -23,6 +23,7 @@ import {
   e2eBackgroundValue,
   gitCommit,
   gitSourceTree,
+  gitWorktreeState,
   relativeToRepo,
   which,
 } from "./e2e/common.js";
@@ -38,9 +39,10 @@ import {
 } from "./e2e/fixtures.js";
 import {
   buildCoreRunPlan,
-  coreArtifactPaths,
   createE2eRunId,
   parseE2eProfile,
+  partialRunKind,
+  runArtifactPaths,
 } from "./e2e/core.js";
 import {
   e2eOnlySpec,
@@ -93,6 +95,7 @@ export { buildE2eBinary, mayReuseE2eBinary } from "./e2e/build.js";
 export { round2NativeReportProblems } from "./e2e/runners/native.js";
 export { discoverV5Fixes, findRunnerReport } from "./e2e/runners/v5-fixes.js";
 export { parseRepeat, summarizeStability } from "./e2e/stability.js";
+export { writeEvidence };
 
 function needsXvfb() {
   return (
@@ -128,30 +131,44 @@ function reexecUnderXvfb() {
   process.exit(result.status ?? 1);
 }
 
-function writeEvidence(report, { corePaths = null } = {}) {
-  fs.mkdirSync(corePaths?.hostDirectory ?? ARTIFACT_DIR, { recursive: true });
+/**
+ * Write the gate report. Only a full-suite run may write the canonical
+ * e2e-report-<platform>-<arch>.json; every partial run (core, ROSI_E2E_ONLY,
+ * or --group) must pass its own `runPaths` and never touches the canonical file.
+ */
+function writeEvidence(
+  report,
+  { runPaths = null, artifactDir = ARTIFACT_DIR } = {},
+) {
+  if (!report.fullSuite && !runPaths) {
+    throw new Error(
+      "partial E2E runs must write evidence to a per-run directory, not the canonical report",
+    );
+  }
+  fs.mkdirSync(runPaths?.hostDirectory ?? artifactDir, { recursive: true });
   const body = { ...report };
   const canonical = JSON.stringify(body, null, 2);
   body.reportSha256 = crypto
     .createHash("sha256")
     .update(canonical)
     .digest("hex");
-  const file = corePaths
-    ? corePaths.reportPath
+  const file = runPaths
+    ? runPaths.reportPath
     : path.join(
-        ARTIFACT_DIR,
+        artifactDir,
         `e2e-report-${process.platform}-${process.arch}.json`,
       );
   const contents = `${JSON.stringify(body, null, 2)}\n`;
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, contents);
-  if (corePaths) {
-    const temporaryLatest = `${corePaths.latestReportPath}.${body.runId}.tmp`;
+  if (runPaths) {
+    const temporaryLatest = `${runPaths.latestReportPath}.${body.runId}.tmp`;
     fs.writeFileSync(temporaryLatest, contents);
-    fs.rmSync(corePaths.latestReportPath, { force: true });
-    fs.renameSync(temporaryLatest, corePaths.latestReportPath);
+    fs.rmSync(runPaths.latestReportPath, { force: true });
+    fs.renameSync(temporaryLatest, runPaths.latestReportPath);
+    const label = report.profile ? "Core" : "Partial";
     console.log(
-      `Core E2E evidence written to ${path.relative(REPO_ROOT, file)} (latest: ${path.relative(REPO_ROOT, corePaths.latestReportPath)})`,
+      `${label} E2E evidence written to ${path.relative(REPO_ROOT, file)} (latest: ${path.relative(REPO_ROOT, runPaths.latestReportPath)})`,
     );
   } else {
     console.log(`E2E evidence written to ${path.relative(REPO_ROOT, file)}`);
@@ -234,7 +251,6 @@ async function runE2e(timing, options = {}) {
   const selectedGroups = parseE2eGroups(process.argv.slice(2), process.env);
   const runId =
     options.runId ?? (process.env.ROSI_E2E_RUN_ID?.trim() || createE2eRunId());
-  const corePaths = profileName ? coreArtifactPaths({ runId }) : null;
   const availableV5Areas = onlySpec || profileName ? [] : discoverV5Fixes();
   const runPlan = profileName
     ? buildCoreRunPlan()
@@ -243,6 +259,15 @@ async function runE2e(timing, options = {}) {
         selectedGroups,
         v5AreaNames: availableV5Areas.map((area) => area.area),
       });
+  // Partial runs get unique per-run evidence; only the full suite writes the
+  // canonical report and clears the canonical screenshot folder.
+  const partialKind = partialRunKind({
+    profileName,
+    fullSuite: runPlan.fullSuite,
+  });
+  const runPaths = partialKind
+    ? runArtifactPaths({ kind: partialKind, runId })
+    : null;
   const v5Areas = availableV5Areas.filter((area) =>
     runPlan.v5AreaNames.includes(area.area),
   );
@@ -256,6 +281,8 @@ async function runE2e(timing, options = {}) {
   if (background !== null) process.env.ROSI_E2E_BACKGROUND = background;
   reexecUnderXvfb();
   const startedAt = new Date().toISOString();
+  // Recorded before the build so it describes the source the binary came from.
+  const worktree = gitWorktreeState();
   // The full suite is release evidence and must always run against a freshly
   // compiled binary. Reuse is limited to an explicitly selected ad-hoc spec.
   const reuseRequested = process.env.ROSI_E2E_REUSE === "1";
@@ -306,15 +333,15 @@ async function runE2e(timing, options = {}) {
           "ROSI_E2E_REQUIRE_FFMPEG=1 but no FFmpeg was found (bundled, ROSI_E2E_FFMPEG, or PATH).",
         );
       }
-      screenshotDir = corePaths
-        ? corePaths.screenshotDir
+      screenshotDir = runPaths
+        ? runPaths.screenshotDir
         : path.join(
             ARTIFACT_DIR,
             "screenshots",
             `${process.platform}-${process.arch}`,
           );
-      // Full-run screenshots start empty; core paths are unique per invocation.
-      if (!corePaths) {
+      // Full-run screenshots start empty; partial run paths are unique per invocation.
+      if (!runPaths) {
         fs.rmSync(screenshotDir, { recursive: true, force: true });
       }
       fs.mkdirSync(screenshotDir, { recursive: true });
@@ -532,8 +559,8 @@ async function runE2e(timing, options = {}) {
     auditScenarios.push(
       await timedStage(timing, "runner:round3-renderer", () =>
         runRound3Renderer({
-          snapshotPath: corePaths
-            ? path.join(corePaths.runDir, "renderer-dom-checks.json")
+          snapshotPath: runPaths
+            ? path.join(runPaths.runDir, "renderer-dom-checks.json")
             : null,
         }),
       ),
@@ -645,10 +672,10 @@ async function runE2e(timing, options = {}) {
       fullSuite,
       runId,
       ...(profileName ? { profile: profileName } : {}),
-      ...(corePaths
+      ...(runPaths
         ? {
-            runDirectory: relativeToRepo(corePaths.runDir),
-            reportPath: relativeToRepo(corePaths.reportPath),
+            runDirectory: relativeToRepo(runPaths.runDir),
+            reportPath: relativeToRepo(runPaths.reportPath),
           }
         : {}),
       // Present only on partial runs, so full-gate evidence keeps its shape.
@@ -663,6 +690,7 @@ async function runE2e(timing, options = {}) {
       version: packageJson.version,
       commit: gitCommit(),
       sourceTree: gitSourceTree(),
+      ...worktree,
       packageLockSha256: sha256(
         fs.readFileSync(path.join(REPO_ROOT, "package-lock.json")),
       ),
@@ -712,7 +740,7 @@ async function runE2e(timing, options = {}) {
       finishedAt: new Date().toISOString(),
       timings: timingReport(timing),
     },
-    { corePaths },
+    { runPaths },
   );
   printTimingSummary(
     timing,
@@ -755,7 +783,13 @@ if (
     .then(() => {
       const times = parseRepeat(process.argv.slice(2));
       const profile = parseE2eProfile(process.argv.slice(2), process.env);
-      return times > 1 ? runStability(times, main, { profile }) : main();
+      // Ad-hoc and group repeats write per-run evidence; stability reads that path.
+      const fullSuite =
+        e2eOnlySpec(process.env.ROSI_E2E_ONLY) === null &&
+        parseE2eGroups(process.argv.slice(2), process.env).length === 0;
+      return times > 1
+        ? runStability(times, main, { profile, fullSuite })
+        : main();
     })
     .catch((error) => {
       console.error(error instanceof Error ? error.message : String(error));

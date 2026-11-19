@@ -3,7 +3,13 @@ import { PREVIEW_CACHE_MAX, PREVIEW_CACHE_TTL_MS, PREVIEW_DEBOUNCE_MS } from './
 import { isValidUrl, logError } from './core';
 import { resolveNextDownloadCookieChoice } from './formats';
 import { looksLikePlaylistUrl, resetPlaylistScope, showPlaylistScope } from './playlist';
-import { RosiVideoInfo, hideVideoPreview, previewState, renderVideoPreview } from './preview';
+import {
+  RosiVideoInfo,
+  hideVideoPreview,
+  previewState,
+  renderVideoPreview,
+  showPreviewLoading,
+} from './preview';
 import { refs } from './refs';
 import { setButtonLoading, showToast } from './ui-helpers';
 import { api } from '../api';
@@ -106,8 +112,7 @@ export async function runVideoPreview(auto = false) {
   previewController.activePreviewRequestToken = requestToken;
   previewState.isFetchingPreview = true;
 
-  const card = document.getElementById('preview-card');
-  if (card) card.classList.add('visible', 'loading');
+  showPreviewLoading();
 
   let wasCancelled = false;
   previewState.previewAbort = () => {
@@ -140,7 +145,9 @@ export async function runVideoPreview(auto = false) {
     if (wasCancelled || requestToken !== previewController.previewRequestToken) return;
     if (!result || result.ok !== true) {
       const message = result?.error?.message || 'Could not load preview.';
-      if (typeof message === 'string' && message.toLowerCase().includes('cancel')) return;
+      // Only the backend's NOT_AVAILABLE marks a cancel. Matching the message text
+      // would also hide real failures whose message happens to contain "cancel".
+      if (result?.error?.code === 'NOT_AVAILABLE') return;
       hideVideoPreview();
       if (auto) {
         setPreviewButtonLabel('Retry preview');

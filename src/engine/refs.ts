@@ -49,7 +49,6 @@ export const refs = {} as {
   downloadBtn: HTMLButtonElement | null;
   downloadCard: HTMLElement | null;
   downloadFolderSummary: HTMLElement | null;
-  downloadOutputSummary: HTMLElement | null;
   downloadPresetSelect: HTMLSelectElement | null;
   embedMetadataToggle: HTMLInputElement | null;
   embedThumbnailToggle: HTMLInputElement | null;

@@ -6,6 +6,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+#[cfg(windows)]
+use crate::fs_util::win32_path;
+
 const STALE_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
 const MAX_BOOKKEEPING_BYTES: u64 = 64 * 1024;
 const RECOVERY_ATTEMPTS: u32 = 100;
@@ -40,9 +43,15 @@ fn sweep_folders() -> Vec<PathBuf> {
         .chain(crate::queue::queued_output_folders());
     let mut folders = vec![configured_download_folder()];
     let mut seen: HashSet<PathBuf> = folders.iter().cloned().collect();
+    // Raw duplicates are skipped before validation; `seen` still drops entries
+    // that differ as text but validate to the same folder.
+    let mut seen_raw: HashSet<PathBuf> = HashSet::new();
     for folder in recorded {
         if folders.len() >= MAX_SWEEP_FOLDERS {
             break;
+        }
+        if !seen_raw.insert(folder.clone()) {
+            continue;
         }
         let Some(text) = folder.to_str() else {
             continue;
@@ -783,81 +792,14 @@ pub(crate) fn install_without_flags(temp: &Path, destination: &Path) -> std::io:
     result
 }
 
-/// NUL-terminated UTF-16 path for a raw Win32 call. The binary has no
-/// long-path manifest, so Win32 limits a plain path to MAX_PATH. A path at or
-/// over that limit becomes verbatim (`\\?\`, or `\\?\UNC\` for a share), which
-/// lifts the limit. Shorter and relative paths are passed through unchanged.
-#[cfg(windows)]
-fn win32_path(path: &Path) -> Vec<u16> {
-    use std::os::windows::ffi::OsStrExt;
-
-    const MAX_PATH_UNITS: usize = 260;
-    fn units(text: &str) -> Vec<u16> {
-        text.encode_utf16().collect()
-    }
-    let plain: Vec<u16> = path.as_os_str().encode_wide().collect();
-    let verbatim = units(r"\\?\");
-    let device = units(r"\\.\");
-    let unc_prefix = units(r"\\");
-    let is_absolute_drive = plain.len() >= 3
-        && plain[0] < 128
-        && (plain[0] as u8).is_ascii_alphabetic()
-        && plain[1] == u16::from(b':')
-        && plain[2] == u16::from(b'\\');
-    let mut result = if plain.len() < MAX_PATH_UNITS
-        || plain.starts_with(&verbatim)
-        || plain.starts_with(&device)
-    {
-        plain
-    } else {
-        // Verbatim paths take no forward slashes and no `.` or `..` parts.
-        // Paths reaching here come from `resolve_path`, which removes those.
-        let normalized: Vec<u16> = plain
-            .iter()
-            .map(|&unit| {
-                if unit == u16::from(b'/') {
-                    u16::from(b'\\')
-                } else {
-                    unit
-                }
-            })
-            .collect();
-        if normalized.starts_with(&unc_prefix) {
-            let mut share = units(r"\\?\UNC\");
-            share.extend_from_slice(&normalized[2..]);
-            share
-        } else if is_absolute_drive {
-            let mut drive = verbatim.clone();
-            drive.extend_from_slice(&normalized);
-            drive
-        } else {
-            normalized
-        }
-    };
-    result.push(0);
-    result
-}
-
 #[cfg(windows)]
 pub(crate) fn install_no_replace(temp: &Path, destination: &Path) -> std::io::Result<()> {
     // `std::fs::rename` replaces an existing destination on Windows. Use the
     // Win32 move primitive without MOVEFILE_REPLACE_EXISTING so an output
     // collision fails atomically instead of overwriting a user's file.
-    #[link(name = "Kernel32")]
-    extern "system" {
-        fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
-    }
+    use windows_sys::Win32::Storage::FileSystem::MOVEFILE_WRITE_THROUGH;
 
-    const MOVEFILE_WRITE_THROUGH: u32 = 0x0000_0008;
-    let temp = win32_path(temp);
-    let destination = win32_path(destination);
-    let result =
-        unsafe { MoveFileExW(temp.as_ptr(), destination.as_ptr(), MOVEFILE_WRITE_THROUGH) };
-    if result != 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
-    }
+    crate::fs_util::windows_move_file(temp, destination, MOVEFILE_WRITE_THROUGH)
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
@@ -887,4 +829,145 @@ pub fn hide_on_windows(path: &Path) {
     }
     #[cfg(not(windows))]
     let _ = path;
+}
+
+/// Removes stale AppImage update directories from the vendored updater. Each
+/// successful update leaves its previous image behind, so only the newest one
+/// is kept as the recovery copy. Links are never followed, and a directory
+/// with any other content is left alone.
+#[cfg(unix)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn sweep_appimage_update_backups() {
+    use std::os::unix::fs::MetadataExt;
+
+    let own_pid = std::process::id();
+    let mut seen: HashSet<(u64, u64)> = HashSet::new();
+    let mut candidates: Vec<(SystemTime, PathBuf)> = Vec::new();
+    for root in appimage_update_roots() {
+        let Ok(entries) = std::fs::read_dir(&root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            match appimage_update_dir_pid(&name) {
+                Some(pid) if pid != own_pid => {}
+                _ => continue,
+            }
+            let path = entry.path();
+            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if !metadata.is_dir() || metadata.uid() != unsafe { libc::geteuid() } {
+                continue;
+            }
+            // The same directory can be reached through two roots.
+            if !seen.insert((metadata.dev(), metadata.ino())) {
+                continue;
+            }
+            if recovery_files(&path).is_none() {
+                continue;
+            }
+            let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+            candidates.push((modified, path));
+        }
+    }
+    // Newest first. The first candidate is the recovery copy and is kept.
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.0));
+    for (_, path) in candidates.into_iter().skip(1) {
+        remove_appimage_update_dir(&path);
+    }
+}
+
+/// Roots the vendored updater may use: the AppImage's parent, the cache dir,
+/// then the temp dir. A relative cache path is ignored.
+#[cfg(unix)]
+fn appimage_update_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(appimage) = std::env::var_os("APPIMAGE") {
+        if let Some(parent) = Path::new(&appimage).parent() {
+            roots.push(parent.to_path_buf());
+        }
+    }
+    let cache = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .filter(|home| home.is_absolute())
+                .map(|home| home.join(".cache"))
+        });
+    roots.extend(cache);
+    roots.push(std::env::temp_dir());
+    roots
+}
+
+/// The pid from a `.tauri-appimage-update-<pid>-<sequence>` name, or None for
+/// any other shape.
+#[cfg(unix)]
+fn appimage_update_dir_pid(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix(".tauri-appimage-update-")?;
+    let (pid, sequence) = rest.split_once('-')?;
+    let digits = |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
+    if digits(pid) && digits(sequence) {
+        pid.parse().ok()
+    } else {
+        None
+    }
+}
+
+/// The files in an update directory, or None when it holds anything besides
+/// regular `current_app.AppImage` and `next_app.AppImage` files. Links count
+/// as other content. An empty directory returns an empty list.
+#[cfg(unix)]
+fn recovery_files(directory: &Path) -> Option<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for child in std::fs::read_dir(directory).ok()? {
+        let child = child.ok()?;
+        let known = matches!(
+            child.file_name().to_str(),
+            Some("current_app.AppImage" | "next_app.AppImage")
+        );
+        let path = child.path();
+        if !known || !std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()) {
+            return None;
+        }
+        files.push(path);
+    }
+    Some(files)
+}
+
+/// Re-checks the contents right before removal, then removes the files and the
+/// directory. Nothing is removed if the directory has changed to hold other
+/// content.
+#[cfg(unix)]
+fn remove_appimage_update_dir(directory: &Path) {
+    let Some(files) = recovery_files(directory) else {
+        crate::logging::warn(&format!(
+            "Retaining AppImage update directory {}: unexpected contents",
+            directory.display()
+        ));
+        return;
+    };
+    for file in files {
+        if let Err(error) = std::fs::remove_file(&file) {
+            crate::logging::warn(&format!(
+                "Could not remove AppImage update file {}: {error}",
+                file.display()
+            ));
+            return;
+        }
+    }
+    match std::fs::remove_dir(directory) {
+        Ok(()) => crate::logging::info(&format!(
+            "Removed stale AppImage update directory {}",
+            directory.display()
+        )),
+        Err(error) => crate::logging::warn(&format!(
+            "Could not remove AppImage update directory {}: {error}",
+            directory.display()
+        )),
+    }
 }

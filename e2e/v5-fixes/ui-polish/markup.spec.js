@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import { api, clickById, waitForAppReady } from "../../helpers/app-bridge.js";
 import { REPO_ROOT } from "../../helpers/profile.js";
 
 const MEDIA = process.env.ROSI_E2E_MEDIA_URL;
@@ -121,14 +121,6 @@ async function waitFor(
     interval: 100,
     timeoutMsg: message,
   });
-}
-
-async function clickById(id) {
-  await browser.execute((target) => {
-    const element = document.getElementById(target);
-    if (!element) throw new Error(`missing element ${target}`);
-    element.click();
-  }, id);
 }
 
 async function setControl(id, value) {

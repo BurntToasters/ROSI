@@ -10,6 +10,7 @@ const STABLE_FORBIDDEN_ENV = [
   "ALLOW_ASSET_REPLACE",
   "SKIP_E2E",
   "ROSI_ALLOW_STUB_SIDECARS",
+  "ROSI_RELEASE_ALLOW_UNVERIFIED_CI",
 ];
 
 // Stable uploads must target the canonical repository only; env retargeting

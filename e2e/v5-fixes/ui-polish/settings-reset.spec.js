@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import { api, clickById, waitForAppReady } from "../../helpers/app-bridge.js";
 import { REPO_ROOT } from "../../helpers/profile.js";
 
 const MEDIA = process.env.ROSI_E2E_MEDIA_URL;
@@ -123,14 +123,6 @@ async function waitForBackendSetting(key, value, message) {
   );
 }
 
-async function clickById(id) {
-  await browser.execute((target) => {
-    const element = document.getElementById(target);
-    if (!element) throw new Error(`missing element ${target}`);
-    element.click();
-  }, id);
-}
-
 async function setControl(id, value) {
   await browser.execute(
     (target, next) => {
@@ -216,91 +208,55 @@ async function openSectionReset(section) {
   await waitForModal(true);
 }
 
-// Records every set_update_channel command the renderer sends to Rust. Tauri
-// has two invoke transports: a custom-protocol fetch (macOS and Linux) and a
-// native postMessage (window.ipc.postMessage, else chrome.webview.postMessage,
-// on Windows). window.__TAURI_INTERNALS__.invoke is non-writable, so both
-// transports are wrapped. Every message passes through unchanged. Each hook is
-// accepted only after reading it back, and a restore is recorded with it.
+// Records every set_update_channel command the renderer sends to Rust, through
+// the E2E IPC seam (window.__ROSI_E2E_IPC_STUBS__, read by call() in
+// src/commands.ts). The entry passes each call through to the real invoke, so
+// the backend still saves the value. The seam does not depend on the Tauri
+// transport, which differs by platform (custom-protocol fetch, or the native
+// postMessage that the app CSP leaves in use on macOS).
 async function installChannelCallLog() {
-  return browser.execute(() => {
-    if (window.__settingsResetLog) return window.__settingsResetLog.hooks;
-    const log = { channels: [], hooks: [], restores: [] };
+  await browser.execute(() => {
+    const log = window.__settingsResetLog ?? { channels: [] };
     window.__settingsResetLog = log;
-    const record = (command, args) => {
-      if (command === "set_update_channel") {
-        log.channels.push(args?.channel ?? null);
-      }
+    if (!window.__ROSI_E2E_IPC_STUBS__) window.__ROSI_E2E_IPC_STUBS__ = {};
+    window.__ROSI_E2E_IPC_STUBS__.set_update_channel = (args, next) => {
+      log.channels.push(args?.channel ?? null);
+      return next();
     };
-    const originalFetch = window.fetch;
-    window.fetch = function (input, init) {
-      const headers = new Headers((init && init.headers) || {});
-      if (headers.has("Tauri-Callback")) {
-        const url = new URL(typeof input === "string" ? input : input.url);
-        let args = null;
-        try {
-          args = JSON.parse(init.body);
-        } catch {
-          args = null;
-        }
-        record(decodeURIComponent(url.pathname.replace(/^\//, "")), args);
-      }
-      return originalFetch.apply(window, arguments);
-    };
-    if (window.fetch !== originalFetch) {
-      log.hooks.push("fetch");
-      log.restores.push(() => {
-        window.fetch = originalFetch;
-      });
-    }
-    const hookPost = (owner, label) => {
-      if (!owner || typeof owner.postMessage !== "function") return false;
-      const original = owner.postMessage;
-      const hadOwn = Object.prototype.hasOwnProperty.call(owner, "postMessage");
-      owner.postMessage = function (message) {
-        let parsed = null;
-        try {
-          parsed = JSON.parse(message);
-        } catch {
-          parsed = null;
-        }
-        if (parsed && typeof parsed.cmd === "string") {
-          record(parsed.cmd, parsed.payload);
-        }
-        return original.apply(owner, arguments);
-      };
-      if (owner.postMessage === original) return false;
-      log.hooks.push(label);
-      log.restores.push(() => {
-        if (hadOwn) owner.postMessage = original;
-        else delete owner.postMessage;
-      });
-      return true;
-    };
-    if (!hookPost(window.ipc, "ipc.postMessage")) {
-      hookPost(window.chrome?.webview, "chrome.webview.postMessage");
-    }
-    return log.hooks;
   });
 }
 
+// Reads the registry back: the entry must be a function, not just assigned.
+async function channelCallLogInstalled() {
+  return browser.execute(
+    () =>
+      typeof window.__ROSI_E2E_IPC_STUBS__?.set_update_channel === "function",
+  );
+}
+
+// Removes only this observer's key, and the registry only when it is then empty,
+// so a stub that another spec registered is left in place.
 async function uninstallChannelCallLog() {
   await browser.execute(() => {
-    const log = window.__settingsResetLog;
-    if (!log) return;
-    for (const restore of log.restores.reverse()) restore();
     delete window.__settingsResetLog;
+    const registry = window.__ROSI_E2E_IPC_STUBS__;
+    if (!registry) return;
+    delete registry.set_update_channel;
+    if (Object.keys(registry).length === 0)
+      delete window.__ROSI_E2E_IPC_STUBS__;
   });
 }
 
 // Runs body with the observer installed and always removes it afterwards. An
-// observer that no transport accepted fails the case instead of recording nothing.
+// observer whose registry entry does not read back fails the case instead of
+// recording nothing.
 async function withChannelCallLog(body) {
-  const hooks = await installChannelCallLog();
   try {
-    assert.ok(
-      hooks.length > 0,
-      "no IPC transport accepted the set_update_channel observer",
+    await installChannelCallLog();
+    assert.equal(
+      await channelCallLogInstalled(),
+      true,
+      "the set_update_channel entry is not in the IPC stub registry",
     );
     return await body();
   } finally {

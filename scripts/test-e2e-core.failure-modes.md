@@ -47,3 +47,19 @@ Before adding the profile, protect these failure cases:
     or dynamic v5-fixes area is enabled.
 15. **The warm-time goal is presented as measured evidence.** Documentation
     labels under ten minutes as a target until a manager records actual runs.
+16. **A hung native child blocks the gate forever.** `run()` with a `timeout`
+    option kills the child and throws `<command> timed out after N ms`. A
+    missing timeout keeps the old unbounded behavior; a zero, negative,
+    fractional, or string timeout is rejected before spawning.
+17. **Evidence from a dirty or unreadable worktree looks clean.** Every report
+    records `worktreeDirty` and `worktreeStatusSha256` (hash of
+    `git status --porcelain=v1 -uall`), captured before the build. An
+    unreadable status records dirty with a null hash, never clean.
+18. **A partial run overwrites the canonical report or clears canonical
+    screenshots.** `partialRunKind` sends core, ad-hoc, and group runs to
+    unique per-run directories. `writeEvidence` refuses a partial report with
+    no per-run directory; only the full suite clears the canonical screenshots.
+19. **Profile rules drift between two validators.** Shape checks live only in
+    `validateSuiteManifest`, which rejects a null profile body and a core
+    profile without FFmpeg and FFprobe. `profileDefinition` only reports an
+    unknown profile name.

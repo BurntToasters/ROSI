@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import { api, clickById, waitForAppReady } from "../../helpers/app-bridge.js";
 import { e2eBinaryPath, REPO_ROOT } from "../../helpers/profile.js";
 
 // Readiness hint next to Download, folder feedback, long content, and the
@@ -117,14 +117,6 @@ async function scenario(name, body) {
     writeReport();
     throw error;
   }
-}
-
-async function clickById(id) {
-  await browser.execute((target) => {
-    const element = document.getElementById(target);
-    if (!element) throw new Error(`missing element ${target}`);
-    element.click();
-  }, id);
 }
 
 async function setControl(id, value) {

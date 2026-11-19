@@ -688,10 +688,13 @@ describe("ROSI contrast, layout, and toast placement", () => {
     await scenario("dark-theme-text-values-unchanged", [2], async () => {
       const dark = measured.find((entry) => entry.selection === "dark");
       assert.ok(dark, "dark theme was not measured");
+      // Danger text is #fa8888 in dark (U9): the old #ef4444 failed AA on the
+      // tinted dark surfaces. Purple's danger token is #fa8888 too, but no scenario
+      // pins purple's exact color; the 4.5:1 check above covers it.
       const expectedColors = {
         success: "rgb(34, 197, 94)",
         warning: "rgb(245, 158, 11)",
-        danger: "rgb(239, 68, 68)",
+        danger: "rgb(250, 136, 136)",
         accent: "rgb(103, 232, 249)",
       };
       for (const result of dark.results) {

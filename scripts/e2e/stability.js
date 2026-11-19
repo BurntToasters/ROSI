@@ -5,8 +5,34 @@ import fs from "node:fs";
 import path from "node:path";
 import { REPO_ROOT } from "../../e2e/helpers/profile.js";
 import { ARTIFACT_DIR, gitCommit } from "./common.js";
-import { buildCoreRunPlan, coreArtifactPaths, createE2eRunId } from "./core.js";
+import {
+  buildCoreRunPlan,
+  coreArtifactPaths,
+  createE2eRunId,
+  partialRunKind,
+  runArtifactPaths,
+} from "./core.js";
 import { EXPECTED_SCENARIOS } from "./manifest.js";
+
+/**
+ * The report file the gate writes for one run: the canonical full-suite report,
+ * or the latest-report path of the core or ad-hoc evidence directory.
+ */
+export function gateReportFile({
+  profile = null,
+  fullSuite,
+  platform,
+  arch,
+  root = ARTIFACT_DIR,
+  runId,
+}) {
+  const kind = partialRunKind({ profileName: profile, fullSuite });
+  if (kind) {
+    return runArtifactPaths({ kind, root, platform, arch, runId })
+      .latestReportPath;
+  }
+  return path.join(root, `e2e-report-${platform}-${arch}.json`);
+}
 
 /** `--repeat N` (or ROSI_E2E_REPEAT=N) reruns the whole suite N times. */
 export function parseRepeat(argv, env = process.env) {
@@ -70,19 +96,21 @@ export function summarizeStability(runs) {
   };
 }
 
-export async function runStability(times, runGate, { profile = null } = {}) {
+export async function runStability(
+  times,
+  runGate,
+  { profile = null, fullSuite = true } = {},
+) {
+  const stabilityId = `stability-${createE2eRunId()}`;
   const corePaths =
-    profile === "core"
-      ? coreArtifactPaths({
-          runId: `stability-${createE2eRunId()}`,
-        })
-      : null;
-  const reportFile = corePaths
-    ? corePaths.latestReportPath
-    : path.join(
-        ARTIFACT_DIR,
-        `e2e-report-${process.platform}-${process.arch}.json`,
-      );
+    profile === "core" ? coreArtifactPaths({ runId: stabilityId }) : null;
+  const reportFile = gateReportFile({
+    profile,
+    fullSuite,
+    platform: process.platform,
+    arch: process.arch,
+    runId: stabilityId,
+  });
   const runDir = corePaths
     ? path.join(corePaths.runDir, "runs")
     : path.join(

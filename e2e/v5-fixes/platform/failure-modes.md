@@ -64,3 +64,24 @@ listed below are why a partial change is unsafe.
    check is `grep` for the path, which must return nothing.
 6. The evidence statement must match `.github/workflows/ci.yml` (`e2e-*`
    artifact name and `e2e/artifacts` path). Mitigation: grep before writing.
+
+## Finding H1: open_file_location opens only directories
+
+The missing-path branch and the reveal-failure fallback opened `path.parent()`
+when it merely existed. A file parent would then be handed to the opener.
+
+1. A file used as the parent must never reach the opener, in the missing-path
+   branch. Guard: `is_dir()` replaces `exists()` there. Not automated in E2E.
+2. A reveal failure whose parent is a file must not open that file. The handler
+   returns the existing `INTERNAL_ERROR` ("Failed to open file location."). Guard:
+   `is_dir()` in the fallback. Not automated in E2E.
+3. A missing path inside a real directory must still open that directory. The
+   behaviour is unchanged for directories. Not automated in E2E yet.
+4. A parent whose metadata cannot be read is now not opened. The missing-path
+   branch then returns `INVALID_PATH` with the existing message, which is
+   slightly misleading but fails closed. Not automated in E2E.
+5. A symlink to a directory still counts as a directory, because `is_dir()`
+   follows links, as `exists()` did. Not automated in E2E.
+6. Windows drive roots and UNC share roots are not verified with `is_dir()` on
+   a Windows build here. A Windows run must confirm that the folder still opens.
+   Not automated in E2E.

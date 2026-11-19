@@ -16,6 +16,19 @@ import {
   mayReuseE2eBinary,
   scenarioOutcomeProblems,
 } from "./test-e2e.js";
+import {
+  buildCommitAssetName,
+  buildCommitRecord,
+  buildUploadList,
+  writeBuildCommitRecords,
+} from "./gpg-sign.js";
+import {
+  assertBuildCommitRecords,
+  assertDraftReleaseShape,
+  requiredDraftAssetNames,
+  requiredDraftBuildCommitNames,
+  requiredDraftChecksumNames,
+} from "./verify-release-draft.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const now = Date.parse("2026-10-03T12:00:00Z");
@@ -280,6 +293,17 @@ function writeFullE2eFixture(directory, mutate = () => {}) {
   fs.writeFileSync(binaryPath, "fixture app binary");
   const screenshotBytes = Buffer.from("fixture screenshot bytes");
   fs.writeFileSync(screenshotPath, screenshotBytes);
+  const wizardBytes = Buffer.from("fixture wizard screenshot bytes");
+  fs.writeFileSync(
+    path.join(path.dirname(screenshotPath), "wizard-welcome.png"),
+    wizardBytes,
+  );
+  const wizardShot = {
+    name: "wizard-welcome",
+    file: "wizard-welcome.png",
+    sha256: hash(wizardBytes),
+    bytes: wizardBytes.length,
+  };
   const startedAt = new Date(now - 120_000).toISOString();
   const finishedAt = new Date(now - 60_000).toISOString();
   const identity = {
@@ -299,6 +323,8 @@ function writeFullE2eFixture(directory, mutate = () => {}) {
     startedAt,
     finishedAt,
     passed: true,
+    worktreeDirty: false,
+    worktreeStatusSha256: hash(""),
     expectedScenarios: [...EXPECTED_SCENARIOS],
     scenarios: EXPECTED_SCENARIOS.map((name) => ({
       name,
@@ -314,6 +340,7 @@ function writeFullE2eFixture(directory, mutate = () => {}) {
             ],
           }
         : {}),
+      ...(name === "setup-wizard" ? { shots: [wizardShot] } : {}),
     })),
     missingScenarios: [],
     scenarioProblems: [],
@@ -324,6 +351,12 @@ function writeFullE2eFixture(directory, mutate = () => {}) {
         path: "e2e/artifacts/screenshots/darwin-arm64/proof.png",
         sha256: hash(screenshotBytes),
         bytes: screenshotBytes.length,
+      },
+      {
+        name: "wizard-welcome",
+        path: "e2e/artifacts/screenshots/darwin-arm64/wizard-welcome.png",
+        sha256: wizardShot.sha256,
+        bytes: wizardBytes.length,
       },
     ],
     screenshotProblems: [],
@@ -389,6 +422,9 @@ test("full E2E proof checks the canonical suite, successful outcomes, and exact 
       (report) => {
         report.binarySha256 = "0".repeat(64);
       },
+      (report) => {
+        report.screenshots.pop();
+      },
     ]) {
       fs.rmSync(directory, { recursive: true, force: true });
       fs.mkdirSync(directory, { recursive: true });
@@ -397,6 +433,56 @@ test("full E2E proof checks the canonical suite, successful outcomes, and exact 
         verifyFullE2eEvidence(altered.proof, altered.root, altered.identity),
       );
     }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("full E2E proof rejects evidence from a dirty or unrecorded worktree", () => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "rosi-full-e2e-worktree-"),
+  );
+  try {
+    const cases = [
+      [
+        "dirty worktree",
+        (report) => {
+          report.worktreeDirty = true;
+        },
+        /dirty worktree/,
+      ],
+      [
+        "missing dirty flag",
+        (report) => {
+          delete report.worktreeDirty;
+        },
+        /worktree state/,
+      ],
+      [
+        "missing status hash",
+        (report) => {
+          delete report.worktreeStatusSha256;
+        },
+        /worktree state/,
+      ],
+    ];
+    for (const [label, mutate, pattern] of cases) {
+      fs.rmSync(directory, { recursive: true, force: true });
+      fs.mkdirSync(directory, { recursive: true });
+      const altered = writeFullE2eFixture(directory, mutate);
+      assert.throws(
+        () =>
+          verifyFullE2eEvidence(altered.proof, altered.root, altered.identity),
+        pattern,
+        label,
+      );
+    }
+    fs.rmSync(directory, { recursive: true, force: true });
+    fs.mkdirSync(directory, { recursive: true });
+    const clean = writeFullE2eFixture(directory);
+    assert.doesNotThrow(() =>
+      verifyFullE2eEvidence(clean.proof, clean.root, clean.identity),
+    );
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -422,4 +508,332 @@ test("the two beta-2 unreviewed dev advisories no longer resolve to affected loc
   assert.match(audit, /GHSA-VFJ7-8CJW-P6XM/);
   assert.match(audit, /deeply nested brace|stack overflow/i);
   assert.match(audit, /2026-12-01/);
+});
+
+const BUILD_COMMIT = "c".repeat(40);
+const BUILD_VERSION = "5.1.0-beta.3";
+const BUILD_TAG = `v${BUILD_VERSION}`;
+const PLATFORM_KEYS = requiredDraftChecksumNames()
+  .filter((name) => name.endsWith(".txt"))
+  .map((name) => name.slice("SHA256SUMS-".length, -".txt".length));
+
+function buildRecordsFor(keys, commit = BUILD_COMMIT) {
+  return new Map(
+    keys.map((key) => [
+      buildCommitAssetName(`SHA256SUMS-${key}.txt`),
+      JSON.stringify({
+        commit,
+        version: BUILD_VERSION,
+        tag: BUILD_TAG,
+        platform: key,
+      }),
+    ]),
+  );
+}
+
+test("R2: every per-platform checksum key has a build record and GPG signature in the draft", () => {
+  const names = new Set(requiredDraftAssetNames());
+  const expected = PLATFORM_KEYS.map(
+    (key) => `build-commit-${key}.json`,
+  ).sort();
+  assert.deepEqual(requiredDraftBuildCommitNames(), expected);
+  for (const name of expected) {
+    assert.ok(names.has(name), `${name} must be a required draft asset`);
+    assert.ok(names.has(`${name}.asc`), `${name} needs a GPG signature`);
+  }
+});
+
+test("R2: build record names follow the platform checksum keys and reject other names", () => {
+  assert.equal(
+    buildCommitAssetName("SHA256SUMS-windows-x86_64.txt"),
+    "build-commit-windows-x86_64.json",
+  );
+  assert.equal(
+    buildCommitAssetName("SHA256SUMS-darwin-beta-aarch64.txt"),
+    "build-commit-darwin-beta-aarch64.json",
+  );
+  for (const bad of [
+    "latest-windows-x86_64.json",
+    "SHA256SUMS-windows-x86_64.txt.asc",
+    "SHA256SUMS-.txt",
+    "SHA256SUMS-win dows.txt",
+  ]) {
+    assert.throws(() => buildCommitAssetName(bad), /SHA256SUMS/, bad);
+  }
+});
+
+test("R2: a build record carries exactly commit, version, tag and platform, and needs a real SHA", () => {
+  assert.deepEqual(
+    buildCommitRecord({
+      commit: BUILD_COMMIT,
+      version: BUILD_VERSION,
+      tag: BUILD_TAG,
+      platform: "linux-x86_64",
+    }),
+    {
+      commit: BUILD_COMMIT,
+      version: BUILD_VERSION,
+      tag: BUILD_TAG,
+      platform: "linux-x86_64",
+    },
+  );
+  for (const commit of ["", "abc", "g".repeat(40), "c".repeat(41), undefined]) {
+    assert.throws(
+      () =>
+        buildCommitRecord({
+          commit,
+          version: BUILD_VERSION,
+          tag: BUILD_TAG,
+          platform: "linux-x86_64",
+        }),
+      /commit/i,
+      String(commit),
+    );
+  }
+});
+
+test("R2: writing build records uses the commit passed in, one file per checksum key", () => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "rosi-build-commit-"),
+  );
+  try {
+    const checksumFiles = [
+      "SHA256SUMS-windows-x86_64.txt",
+      "SHA256SUMS-linux-x86_64.txt",
+    ].map((name) => path.join(directory, name));
+    for (const file of checksumFiles) fs.writeFileSync(file, "");
+    const written = writeBuildCommitRecords({
+      checksumFiles,
+      commit: BUILD_COMMIT,
+      version: BUILD_VERSION,
+      tag: BUILD_TAG,
+      directory,
+    });
+    assert.deepEqual(written.map((file) => path.basename(file)).sort(), [
+      "build-commit-linux-x86_64.json",
+      "build-commit-windows-x86_64.json",
+    ]);
+    assert.deepEqual(
+      JSON.parse(
+        fs.readFileSync(
+          path.join(directory, "build-commit-windows-x86_64.json"),
+          "utf8",
+        ),
+      ),
+      {
+        commit: BUILD_COMMIT,
+        version: BUILD_VERSION,
+        tag: BUILD_TAG,
+        platform: "windows-x86_64",
+      },
+    );
+    assert.throws(
+      () =>
+        writeBuildCommitRecords({
+          checksumFiles: [path.join(directory, "latest-linux-x86_64.json")],
+          commit: BUILD_COMMIT,
+          version: BUILD_VERSION,
+          tag: BUILD_TAG,
+          directory,
+        }),
+      /SHA256SUMS/,
+    );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("R2: the upload list admits build records and their signatures only from staging", () => {
+  const stagingDirectory = path.join(os.tmpdir(), "rosi-upload-staging");
+  const record = path.join(stagingDirectory, "build-commit-linux-x86_64.json");
+  const signature = `${record}.asc`;
+  assert.deepEqual(
+    buildUploadList({
+      artifacts: [],
+      checksumFiles: [],
+      buildCommitFiles: [record],
+      signatureFiles: [signature],
+      stagingDirectory,
+    }),
+    [record, signature],
+  );
+  assert.throws(
+    () =>
+      buildUploadList({
+        artifacts: [],
+        checksumFiles: [],
+        buildCommitFiles: [
+          path.join(os.tmpdir(), "elsewhere", "build-commit-linux-x86_64.json"),
+        ],
+        signatureFiles: [],
+        stagingDirectory,
+      }),
+    /Refusing unvetted/,
+  );
+  assert.throws(
+    () =>
+      buildUploadList({
+        artifacts: [record],
+        checksumFiles: [],
+        signatureFiles: [],
+        stagingDirectory,
+      }),
+    /Refusing unvetted/,
+  );
+  assert.throws(
+    () =>
+      buildUploadList({
+        artifacts: [],
+        checksumFiles: [],
+        buildCommitFiles: [],
+        signatureFiles: [signature],
+        stagingDirectory,
+      }),
+    /Refusing unvetted/,
+  );
+});
+
+test("R2: the draft gate requires one build record per platform at the draft target commit", () => {
+  const complete = buildRecordsFor(PLATFORM_KEYS);
+  assert.doesNotThrow(() =>
+    assertBuildCommitRecords({
+      targetCommitish: BUILD_COMMIT,
+      records: complete,
+    }),
+  );
+
+  const staleName = buildCommitAssetName(`SHA256SUMS-${PLATFORM_KEYS[0]}.txt`);
+  const stale = new Map(complete);
+  stale.set(
+    staleName,
+    JSON.stringify({
+      commit: "d".repeat(40),
+      version: BUILD_VERSION,
+      tag: BUILD_TAG,
+      platform: PLATFORM_KEYS[0],
+    }),
+  );
+  assert.throws(
+    () =>
+      assertBuildCommitRecords({
+        targetCommitish: BUILD_COMMIT,
+        records: stale,
+      }),
+    (error) =>
+      error.message.includes(staleName) && /commit/i.test(error.message),
+    "a record from another commit",
+  );
+
+  const extra = new Map(complete);
+  extra.set(
+    "build-commit-generic.json",
+    JSON.stringify({
+      commit: "d".repeat(40),
+      version: BUILD_VERSION,
+      tag: BUILD_TAG,
+      platform: "generic",
+    }),
+  );
+  assert.throws(
+    () =>
+      assertBuildCommitRecords({
+        targetCommitish: BUILD_COMMIT,
+        records: extra,
+      }),
+    /build-commit-generic\.json/,
+    "an extra record from another commit",
+  );
+
+  const missing = new Map(complete);
+  missing.delete(staleName);
+  assert.throws(
+    () =>
+      assertBuildCommitRecords({
+        targetCommitish: BUILD_COMMIT,
+        records: missing,
+      }),
+    (error) => error.message.includes(staleName),
+    "a missing platform record",
+  );
+
+  for (const [label, text] of [
+    ["malformed JSON", "{not json"],
+    ["no commit field", JSON.stringify({ version: BUILD_VERSION })],
+    [
+      "platform that does not match the file name",
+      JSON.stringify({
+        commit: BUILD_COMMIT,
+        version: BUILD_VERSION,
+        tag: BUILD_TAG,
+        platform: "some-other-key",
+      }),
+    ],
+  ]) {
+    const broken = new Map(complete);
+    broken.set(staleName, text);
+    assert.throws(
+      () =>
+        assertBuildCommitRecords({
+          targetCommitish: BUILD_COMMIT,
+          records: broken,
+        }),
+      (error) => error.message.includes(staleName),
+      label,
+    );
+  }
+
+  for (const target of ["main", "", undefined]) {
+    assert.throws(
+      () =>
+        assertBuildCommitRecords({
+          targetCommitish: target,
+          records: complete,
+        }),
+      /target/i,
+      String(target),
+    );
+  }
+});
+
+test("R2: the draft shape gate fails when a platform build record is absent", () => {
+  const target = BUILD_COMMIT;
+  const dropped = buildCommitAssetName(`SHA256SUMS-${PLATFORM_KEYS[0]}.txt`);
+  assert.throws(
+    () =>
+      assertDraftReleaseShape({
+        release: { draft: true, prerelease: true, target_commitish: target },
+        assetNames: requiredDraftAssetNames().filter(
+          (name) => name !== dropped,
+        ),
+        version: BUILD_VERSION,
+        headCommit: target,
+      }),
+    (error) => error.message.includes(dropped),
+  );
+});
+
+test("R2: the type declarations export the build-record API", () => {
+  const gpgTypes = fs.readFileSync(
+    path.join(root, "scripts", "gpg-sign.d.ts"),
+    "utf8",
+  );
+  for (const name of [
+    "buildCommitAssetName",
+    "buildCommitRecord",
+    "writeBuildCommitRecords",
+  ]) {
+    assert.match(gpgTypes, new RegExp(`export function ${name}\\b`), name);
+  }
+  assert.match(gpgTypes, /buildCommitFiles\?: string\[\]/);
+
+  const verifyTypes = fs.readFileSync(
+    path.join(root, "scripts", "verify-release-draft.d.ts"),
+    "utf8",
+  );
+  for (const name of [
+    "requiredDraftBuildCommitNames",
+    "assertBuildCommitRecords",
+  ]) {
+    assert.match(verifyTypes, new RegExp(`export function ${name}\\b`), name);
+  }
 });

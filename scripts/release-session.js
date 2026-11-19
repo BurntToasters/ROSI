@@ -239,6 +239,19 @@ export function verifyFullE2eEvidence(proof, root, identity) {
     );
   }
   const { reportSha256: embeddedSha, ...reportBody } = report;
+  if (report.worktreeDirty === true) {
+    throw new Error(
+      "Full E2E evidence was recorded from a dirty worktree; rerun the E2E gate from a clean checkout.",
+    );
+  }
+  if (
+    report.worktreeDirty !== false ||
+    !HEX_SHA256.test(report.worktreeStatusSha256 || "")
+  ) {
+    throw new Error(
+      "Full E2E evidence has no worktree state; rerun the E2E gate with this version of the gate.",
+    );
+  }
   // The same full-suite inventory the gate builds: the manifest scenarios plus
   // one scenario per discovered v5-fixes area.
   const expectedScenarios = fullSuiteExpectedScenarios(root);

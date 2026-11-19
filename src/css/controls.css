@@ -201,6 +201,31 @@
 
 .btn.loading {
   pointer-events: auto;
+  gap: 0.4rem;
+}
+
+/* Busy spinner: a ring drawn in currentColor, so it follows the button's text
+   color in every theme. The label beside it says what a click does. */
+.btn-spinner {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.btn-busy-label {
+  white-space: nowrap;
+}
+
+/* Reduced motion keeps the ring as a static arc; it still reads as busy. */
+@media (prefers-reduced-motion: reduce) {
+  .btn.loading .btn-spinner {
+    animation: none;
+  }
 }
 
 /* ── Wells: inset surfaces for text inputs and selects ── */
@@ -240,7 +265,9 @@ textarea.field {
 
 .field:focus,
 .field:focus-visible {
-  outline: none;
+  /* Forced-colors mode drops box-shadow, so the transparent outline becomes visible there. */
+  outline: 2px solid transparent;
+  outline-offset: 3px;
   border-color: var(--accent);
   box-shadow:
     var(--well-shadow),

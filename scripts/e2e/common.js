@@ -1,5 +1,6 @@
 // Process, environment, and git helpers shared by the E2E gate and its runners.
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -25,7 +26,17 @@ export function e2eChildEnv(extra = {}) {
   return env;
 }
 
+/**
+ * Run a child process to completion. `options.timeout` (ms) bounds it; without
+ * one the child may run for as long as it needs, as before.
+ */
 export function run(command, args, options = {}) {
+  const timeout = options.timeout;
+  if (timeout !== undefined && (!Number.isInteger(timeout) || timeout <= 0)) {
+    throw new Error(
+      `run timeout must be a positive whole number of milliseconds, got ${timeout}`,
+    );
+  }
   const result = spawnSync(command, args, {
     cwd: options.cwd ?? REPO_ROOT,
     env: e2eChildEnv(options.env),
@@ -33,7 +44,13 @@ export function run(command, args, options = {}) {
     windowsHide: true,
     encoding: "utf8",
     shell: usesWindowsCmdShell(command),
+    ...(timeout === undefined ? {} : { timeout }),
   });
+  if (result.error?.code === "ETIMEDOUT") {
+    throw new Error(
+      `${command} ${args.join(" ")} timed out after ${timeout} ms`,
+    );
+  }
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(
@@ -110,6 +127,27 @@ export function gitSourceTree() {
     encoding: "utf8",
   });
   return result.status === 0 ? result.stdout.trim() : null;
+}
+
+/**
+ * Whether the working tree differs from HEAD, plus a hash of the exact status
+ * listing. An unreadable status fails closed: it counts as dirty, with no hash.
+ */
+export function gitWorktreeState(cwd = REPO_ROOT) {
+  const result = spawnSync("git", ["status", "--porcelain=v1", "-uall"], {
+    cwd,
+    encoding: "utf8",
+  });
+  if (result.status !== 0 || typeof result.stdout !== "string") {
+    return { worktreeDirty: true, worktreeStatusSha256: null };
+  }
+  return {
+    worktreeDirty: result.stdout.length > 0,
+    worktreeStatusSha256: crypto
+      .createHash("sha256")
+      .update(result.stdout)
+      .digest("hex"),
+  };
 }
 
 export function cleanupProfile(profileDir) {

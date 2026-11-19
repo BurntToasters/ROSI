@@ -192,6 +192,14 @@ by hand. Their reports are not gate evidence.
   app with an isolated profile per mode. Run on macOS or Linux after a fresh E2E
   build. See `e2e/deep-probes/README.md`.
 
+## Screenshots are evidence, not visual tests
+
+E2E screenshots are evidence only. The gate records each one with a hash and
+re-hashes it on verification to confirm the file was not changed after the run.
+It never compares a screenshot against a baseline image, so a visual regression
+(layout, color, or text drift) passes the gate. Review screenshots by hand when
+a UI change is in scope.
+
 ## Rules for new coverage
 
 - Add coverage to an existing area suite, or to `e2e/v5-fixes/<area>/`. Do not

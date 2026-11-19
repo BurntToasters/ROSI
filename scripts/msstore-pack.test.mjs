@@ -544,10 +544,11 @@ test("the package.json Store scripts build no-bundle with the Store channel, the
   assert.match(s["build:msstore"], /msstore-pack\.js$/);
 });
 
-test("the cargo-safe-update test list includes this file and the e2e-only test", () => {
-  const list = scripts()["test:cargo-safe-update"];
-  assert.ok(list.includes("scripts/msstore-pack.test.mjs"));
-  assert.ok(list.includes("scripts/test-e2e-only.test.mjs"));
+test("the test:scripts glob matches this file and the e2e-only test", () => {
+  assert.equal(scripts()["test:scripts"], 'node --test "scripts/*.test.*"');
+  assert.equal(scripts()["test:cargo-safe-update"], "npm run test:scripts");
+  assert.ok(fs.existsSync(path.join(here, "msstore-pack.test.mjs")));
+  assert.ok(fs.existsSync(path.join(here, "test-e2e-only.test.mjs")));
 });
 
 test("the Cargo package name is the exe name (rosi)", () => {

@@ -887,9 +887,10 @@ async fn check_target(
         return Ok(None);
     }
     // Beta manifests are swapped onto the stable release through two adjacent
-    // asset renames; a second lookup masks that short window.
+    // asset renames; a second lookup masks that short window. A failure here
+    // keeps the "no update" answer from the first lookup.
     if update.is_none() && target.is_some() {
-        update = updater.check().await.map_err(|error| error.to_string())?;
+        update = updater.check().await.ok().flatten();
     }
     Ok(update)
 }

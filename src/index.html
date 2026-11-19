@@ -17,6 +17,7 @@
       aria-modal="true"
       aria-labelledby="sidebarTitle"
       aria-hidden="true"
+      inert
     >
       <div class="sidebar-header">
         <h2 id="sidebarTitle">Settings</h2>
@@ -849,7 +850,7 @@
                 <div class="download-destination-copy">
                   <span class="download-destination-label">Save to</span>
                   <span id="downloadFolderSummary" class="download-destination-path"
-                    >Choose a folder</span
+                    >Downloads folder (default)</span
                   >
                 </div>
                 <label class="ask-download-location check">
@@ -1206,7 +1207,7 @@
           </section>
         </div>
 
-        <div id="update-banner" class="update-banner">
+        <div id="update-banner" class="update-banner" inert>
           <div class="update-banner-content">
             <span id="update-banner-text" class="update-banner-text">Downloading update…</span>
             <div
@@ -1288,12 +1289,15 @@
       </div>
     </div>
 
-    <div id="toast-container" class="toast-container" aria-live="polite"></div>
-    <div
-      id="toast-container-assertive"
-      class="toast-container toast-container-assertive"
-      aria-live="assertive"
-    ></div>
+    <!-- One fixed stack: assertive (errors, warnings) sits above polite (info, success). -->
+    <div class="toast-stack">
+      <div
+        id="toast-container-assertive"
+        class="toast-container toast-container-assertive"
+        aria-live="assertive"
+      ></div>
+      <div id="toast-container" class="toast-container" aria-live="polite"></div>
+    </div>
 
     <!-- Setup Wizard Overlay -->
     <div
@@ -1339,7 +1343,7 @@
         <div class="wizard-step" data-step="1">
           <h2 class="wizard-heading">Choose Your Theme</h2>
           <p class="wizard-description">Pick the look that suits you best.</p>
-          <div class="wizard-theme-grid">
+          <div class="wizard-theme-grid" role="radiogroup" aria-label="Theme">
             <label class="wizard-theme-option">
               <input type="radio" name="wizard-theme" value="system" checked />
               <span class="wizard-theme-card">
@@ -1586,7 +1590,6 @@
           >
             Back
           </button>
-          <div class="wizard-dots" id="wizard-dots"></div>
           <button
             id="wizard-next"
             class="wizard-btn wizard-btn-primary btn btn--primary"

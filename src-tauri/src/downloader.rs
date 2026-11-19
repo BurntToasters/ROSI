@@ -236,7 +236,7 @@ fn handle_progress_line(id: u64, line: &str) -> bool {
             } else {
                 progress::json_to_phase_percent(&json)
             };
-            let (status, details) = progress::format_summary(&json, percent);
+            let (status, details) = progress::format_summary(&json);
             // A second format (bestvideo+bestaudio) downloads inside the merge
             // span so overall progress keeps moving forward.
             let label = if phase == Phase::Merge {
@@ -1286,6 +1286,31 @@ fn recover_staged_downloads(exit: &mut YtdlpExit) -> (Vec<PathBuf>, Vec<PathBuf>
     )
 }
 
+const YTDLP_FAILURE_REASON_MAX_CHARS: usize = 300;
+
+/// The last yt-dlp `ERROR:` line in stderr, without the prefix, capped for
+/// display. Returns `None` when no such line has text after the prefix.
+fn ytdlp_failure_reason(stderr: &str) -> Option<String> {
+    let line = stderr
+        .lines()
+        .rev()
+        .map(str::trim_start)
+        .find(|line| line.starts_with("ERROR:"))?;
+    let reason = line.strip_prefix("ERROR:")?.trim();
+    if reason.is_empty() {
+        return None;
+    }
+    if reason.chars().count() <= YTDLP_FAILURE_REASON_MAX_CHARS {
+        return Some(reason.to_string());
+    }
+    let mut capped: String = reason
+        .chars()
+        .take(YTDLP_FAILURE_REASON_MAX_CHARS - 1)
+        .collect();
+    capped.push('…');
+    Some(capped)
+}
+
 fn on_ytdlp_exit(mut exit: YtdlpExit) {
     if let Err(error) = exit.stage.snapshot_owned_contents() {
         crate::logging::error(&format!(
@@ -1342,7 +1367,7 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
     // A playlist run exits non-zero when any entry fails, even after the other
     // entries downloaded. Keep going for the files it produced (including
     // conversion) and report the run as partially failed at the end.
-    if exit.code != Some(0) && exit.code.is_some() && !cancelled {
+    if exit.code != Some(0) && exit.code.is_some() {
         let playlist_run = with_session(id, |session| {
             session
                 .request
@@ -1382,13 +1407,14 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
             .collect();
         let tail = tail[tail.len().saturating_sub(12)..].join(" | ");
         crate::logging::warn(&format!("yt-dlp exited with code {code}: {tail}"));
+        let failure = match ytdlp_failure_reason(&exit.stderr) {
+            Some(reason) => format!("{reason} (yt-dlp exited with code {code})"),
+            None => format!("yt-dlp process exited with code {code}"),
+        };
         let (paths, failed, mut errors) = recover_staged_downloads(&mut exit);
-        errors.insert(0, format!("yt-dlp process exited with code {code}"));
+        errors.insert(0, failure.clone());
         cleanup();
-        send_progress(
-            id,
-            format!("❌ Download failed: yt-dlp process exited with code {code}"),
-        );
+        send_progress(id, format!("❌ Download failed: {failure}"));
         if exit.stderr.contains("different Team IDs")
             || exit.stderr.contains("[PYI-")
             || exit.stderr.contains("Failed to load Python shared library")
@@ -1454,7 +1480,13 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
         })
         .unwrap_or(false);
         if !handed_off {
-            let (paths, failed, errors) = recover_staged_downloads(&mut exit);
+            // The path file was deleted above, so install the paths already read.
+            let (paths, failed, errors) = install_downloaded_file_paths(
+                staged_downloads,
+                &exit.download_dir,
+                &mut exit.stage,
+                exit.effective.write_subtitles,
+            );
             complete_session(
                 id,
                 CANCELLED_STATUS,
@@ -1524,24 +1556,7 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
         Phase::Download
     };
     emit_phase(id, phase, 100.0, "Download complete", Some(false));
-    let Some(final_path) = downloaded.last().cloned() else {
-        complete_session(
-            id,
-            "❌ Failed (No installed file).",
-            Outcome::Failed,
-            completion_meta_for_paths(downloaded, failed_paths, None),
-        );
-        return;
-    };
-    let format = final_path
-        .extension()
-        .map(|ext| ext.to_string_lossy().to_lowercase())
-        .filter(|ext| !ext.is_empty());
     let mut meta = completion_meta_for_paths(downloaded, Vec::new(), None);
-    if meta.format.is_none() {
-        meta.format = format;
-        meta.file_path = Some(final_path);
-    }
     let (cancelled, cancel_notify) =
         with_session(id, |session| (session.cancelled, session.cancel_notify))
             .unwrap_or((true, false));
@@ -1706,5 +1721,64 @@ mod audit4_tests {
                 .as_deref(),
             Some("Recovery at /tmp/staging")
         );
+    }
+
+    #[test]
+    fn ytdlp_failure_reason_is_none_without_error_line() {
+        assert_eq!(ytdlp_failure_reason(""), None);
+        assert_eq!(
+            ytdlp_failure_reason("WARNING: slow network\n[download] 10.0%\n"),
+            None
+        );
+        // Only the exact "ERROR:" prefix counts.
+        assert_eq!(ytdlp_failure_reason("ERRORS: not yt-dlp\n"), None);
+    }
+
+    #[test]
+    fn ytdlp_failure_reason_uses_last_error_line() {
+        let stderr = "ERROR: first failure\n[info] retrying\nERROR: HTTP Error 404: Not Found\n";
+        assert_eq!(
+            ytdlp_failure_reason(stderr).as_deref(),
+            Some("HTTP Error 404: Not Found")
+        );
+    }
+
+    #[test]
+    fn ytdlp_failure_reason_accepts_leading_whitespace() {
+        assert_eq!(
+            ytdlp_failure_reason("   \tERROR: Unsupported URL: x\n").as_deref(),
+            Some("Unsupported URL: x")
+        );
+    }
+
+    #[test]
+    fn ytdlp_failure_reason_strips_prefix_and_surrounding_whitespace() {
+        assert_eq!(
+            ytdlp_failure_reason("ERROR:    [youtube] abc: Video unavailable   \n").as_deref(),
+            Some("[youtube] abc: Video unavailable")
+        );
+    }
+
+    #[test]
+    fn ytdlp_failure_reason_is_none_when_error_prefix_has_no_text() {
+        assert_eq!(ytdlp_failure_reason("ERROR:"), None);
+        assert_eq!(ytdlp_failure_reason("ERROR:    \n"), None);
+        // The last ERROR line decides, even when an earlier one has text.
+        assert_eq!(ytdlp_failure_reason("ERROR: earlier\nERROR:\n"), None);
+    }
+
+    #[test]
+    fn ytdlp_failure_reason_caps_long_multibyte_text_on_char_boundary() {
+        let long = format!("ERROR: {}", "é".repeat(400));
+        let reason = ytdlp_failure_reason(&long).expect("reason");
+        assert_eq!(reason.chars().count(), 300);
+        assert!(reason.ends_with('…'));
+        assert!(reason.starts_with("ééé"));
+
+        // Exactly at the cap is kept whole, without an ellipsis.
+        let exact = format!("ERROR: {}", "é".repeat(300));
+        let reason = ytdlp_failure_reason(&exact).expect("reason");
+        assert_eq!(reason.chars().count(), 300);
+        assert!(!reason.ends_with('…'));
     }
 }

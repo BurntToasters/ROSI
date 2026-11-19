@@ -197,7 +197,7 @@ async function initializeRenderer() {
 
   setPrepareForCloseHandler(async (generation) => {
     try {
-      const saved = await persistSettings(false, true);
+      const saved = await persistSettings({ immediate: true });
       // A settings file from a newer ROSI is preserved on purpose; it must not
       // keep the app from closing.
       if (!saved && settingsStore.lastSettingsSaveErrorCode !== 'NEWER_VERSION') return;
@@ -245,7 +245,6 @@ async function initializeRenderer() {
   refs.downloadFolderSummary = byId('downloadFolderSummary');
   refs.changeDownloadFolderBtn = byId<HTMLButtonElement>('changeDownloadFolderBtn');
   refs.askDownloadLocationToggle = byId<HTMLInputElement>('askDownloadLocationToggle');
-  refs.downloadOutputSummary = byId('downloadOutputSummary');
   refs.notificationsToggle = byId<HTMLInputElement>('notificationsToggle');
   refs.taskbarProgressToggle = byId<HTMLInputElement>('taskbarProgressToggle');
   refs.checkUpdatesOnStartupToggle = byId<HTMLInputElement>('checkUpdatesOnStartupToggle');
@@ -380,7 +379,8 @@ async function initializeRenderer() {
     launchSetupWizard(
       settingsStore.settings,
       applyTheme,
-      persistSettings,
+      // The wizard's dependency keeps its (silent, immediate) shape.
+      (_silent, immediate) => persistSettings({ immediate }),
       (outcome) => {
         updateUIFromSettings();
         if (!outcome.denoReviewed) {

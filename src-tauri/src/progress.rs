@@ -153,17 +153,14 @@ pub fn json_to_phase_percent(data: &YtdlpProgress) -> f64 {
     f64::NAN
 }
 
-pub fn format_summary(data: &YtdlpProgress, phase_percent: f64) -> (String, String) {
+/// Status and detail line for the UI. The UI shows the percentage on its own,
+/// so the detail line carries only size, speed and ETA.
+pub fn format_summary(data: &YtdlpProgress) -> (String, String) {
     let total = data.total_bytes.or(data.total_bytes_estimate);
-    let percent_label = if phase_percent.is_finite() {
-        format!("{phase_percent:.1}%")
-    } else {
-        "…".to_string()
-    };
     let total_label = total
         .map(format_bytes)
         .unwrap_or_else(|| "unknown size".to_string());
-    let mut details = format!("{percent_label} of {total_label}");
+    let mut details = total_label;
     if let Some(speed) = data.speed.filter(|speed| *speed > 0.0) {
         details.push_str(&format!(" at {}/s", format_bytes(speed)));
     }
@@ -196,13 +193,26 @@ pub fn summarize_for_console(data: &YtdlpProgress) -> Option<String> {
     if status != "downloading" && status != "finished" {
         return None;
     }
-    let (_, details) = format_summary(data, json_to_phase_percent(data));
+    let phase_percent = json_to_phase_percent(data);
+    let (_, details) = format_summary(data);
     let prefix = if status == "finished" {
         "[download] Complete"
     } else {
         "[download]"
     };
-    Some(format!("{prefix} {details}"))
+    Some(format!(
+        "{prefix} {} of {details}",
+        percent_label(phase_percent)
+    ))
+}
+
+/// Percentage text for the console line. Non-finite values show an ellipsis.
+fn percent_label(phase_percent: f64) -> String {
+    if phase_percent.is_finite() {
+        format!("{phase_percent:.1}%")
+    } else {
+        "…".to_string()
+    }
 }
 
 fn span(start: f64, end: f64, percent: f64) -> f64 {
@@ -404,5 +414,90 @@ impl Reporter {
         self.last_emit = Some(Instant::now());
         self.last_overall = rounded;
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MIB: f64 = 1024.0 * 1024.0;
+
+    fn sized_progress(status: &str) -> YtdlpProgress {
+        YtdlpProgress {
+            status: Some(status.to_string()),
+            downloaded_bytes: Some(8.0 * MIB),
+            total_bytes: Some(32.0 * MIB),
+            speed: Some(1.2 * MIB),
+            eta: Some(10.0),
+            ..YtdlpProgress::default()
+        }
+    }
+
+    #[test]
+    fn format_summary_details_omit_percent() {
+        let data = sized_progress("downloading");
+        let (status, details) = format_summary(&data);
+        assert_eq!(status, "Downloading...");
+        assert_eq!(details, "32 MB at 1.2 MB/s ETA 00:10");
+        assert!(!details.contains('%'));
+    }
+
+    #[test]
+    fn format_summary_unknown_size_omits_percent() {
+        let data = YtdlpProgress {
+            speed: Some(1.2 * MIB),
+            eta: Some(10.0),
+            ..YtdlpProgress::default()
+        };
+        let (_, details) = format_summary(&data);
+        assert_eq!(details, "unknown size at 1.2 MB/s ETA 00:10");
+        assert!(!details.contains('%'));
+    }
+
+    #[test]
+    fn console_summary_text_is_unchanged() {
+        assert_eq!(
+            summarize_for_console(&sized_progress("downloading")).as_deref(),
+            Some("[download] 25.0% of 32 MB at 1.2 MB/s ETA 00:10")
+        );
+        let finished = YtdlpProgress {
+            status: Some("finished".to_string()),
+            total_bytes: Some(32.0 * MIB),
+            ..YtdlpProgress::default()
+        };
+        assert_eq!(
+            summarize_for_console(&finished).as_deref(),
+            Some("[download] Complete 100.0% of 32 MB")
+        );
+    }
+
+    #[test]
+    fn console_summary_unknown_size_keeps_percent_prefix() {
+        let data = YtdlpProgress {
+            status: Some("downloading".to_string()),
+            fragment_index: Some(1.0),
+            fragment_count: Some(4.0),
+            ..YtdlpProgress::default()
+        };
+        assert_eq!(
+            summarize_for_console(&data).as_deref(),
+            Some("[download] 25.0% of unknown size")
+        );
+    }
+
+    #[test]
+    fn console_summary_non_finite_percent_uses_ellipsis() {
+        let data = YtdlpProgress {
+            status: Some("downloading".to_string()),
+            ..YtdlpProgress::default()
+        };
+        assert_eq!(
+            summarize_for_console(&data).as_deref(),
+            Some("[download] … of unknown size")
+        );
+        assert_eq!(percent_label(f64::NAN), "…");
+        assert_eq!(percent_label(f64::INFINITY), "…");
+        assert_eq!(percent_label(50.0), "50.0%");
     }
 }

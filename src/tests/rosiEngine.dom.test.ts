@@ -377,6 +377,8 @@ describe('rosiEngine DOM wiring', () => {
     ) as HTMLInputElement;
     currentRadio.checked = true;
 
+    // The visible scope applies only to the main URL, so the link is also the main URL.
+    (document.getElementById('url') as HTMLInputElement).value = 'https://example.com/watch';
     const queueInput = document.getElementById('queueUrlInput') as HTMLTextAreaElement;
     queueInput.value = 'https://example.com/watch';
     (document.getElementById('addToQueueBtn') as HTMLButtonElement).click();

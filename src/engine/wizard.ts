@@ -53,12 +53,11 @@ export function launchSetupWizard(
   const progressBar = document.getElementById('wizard-progress-bar') as HTMLElement | null;
   const backBtn = document.getElementById('wizard-back') as HTMLButtonElement | null;
   const nextBtn = document.getElementById('wizard-next');
-  const dotsContainer = document.getElementById('wizard-dots');
   const steps = overlay
     ? overlay.querySelectorAll<HTMLElement>('.wizard-step')
     : ([] as unknown as NodeListOf<HTMLElement>);
 
-  if (!overlay || !progressBar || !backBtn || !nextBtn || !dotsContainer || steps.length === 0) {
+  if (!overlay || !progressBar || !backBtn || !nextBtn || steps.length === 0) {
     settings.firstLaunch = false;
     void persistSettingsFn(false, true).then((saved) => {
       if (saved) onComplete({ skipped: true, denoReviewed: false });
@@ -75,15 +74,6 @@ export function launchSetupWizard(
   const stepAnnounce = document.getElementById('wizard-step-announce');
   const backBtnEl = backBtn;
   const nextBtnEl = nextBtn;
-  const dotsContainerEl = dotsContainer;
-
-  // Build dots
-  dotsContainerEl.innerHTML = '';
-  for (let i = 0; i < TOTAL_STEPS; i++) {
-    const dot = document.createElement('span');
-    dot.className = 'wizard-dot' + (i === 0 ? ' active' : '');
-    dotsContainerEl.appendChild(dot);
-  }
 
   // Live theme preview
   const themeRadios = overlayEl.querySelectorAll<HTMLInputElement>('input[name="wizard-theme"]');
@@ -341,11 +331,6 @@ export function launchSetupWizard(
     if (stepAnnounce) {
       stepAnnounce.textContent = `Step ${currentStep + 1} of ${TOTAL_STEPS}`;
     }
-
-    const dots = dotsContainerEl.querySelectorAll('.wizard-dot');
-    dots.forEach((dot, i) => {
-      dot.classList.toggle('active', i === currentStep);
-    });
 
     if (currentStep === 0) {
       backBtnEl.setAttribute('hidden', '');

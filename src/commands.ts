@@ -71,9 +71,6 @@ export interface Commands {
   is_packaged: { args: void; result: boolean };
   is_flatpak: { args: void; result: boolean };
   get_app_platform: { args: void; result: NodeJS.Platform };
-  get_distribution_channel: { args: void; result: string };
-  get_beta_updater_target: { args: void; result: string };
-  get_compact_updater_target: { args: { beta: boolean }; result: string | null };
   check_for_updates: { args: void; result: Ipc.CheckRefusal | null };
   download_update: { args: { candidateId: number }; result: Ipc.DownloadOutcome };
   install_update: { args: { candidateId: number }; result: void };
@@ -90,15 +87,35 @@ export type CommandArgs<K extends CommandName> = Commands[K]['args'] extends voi
   ? []
   : [Commands[K]['args']];
 
+// E2E-only seam: the WebDriver probe registers stubs here. A stub receives the
+// command arguments and `next`, which performs the real invoke with the same
+// arguments. A stub answers the call (resolve or reject) or passes it through.
+type E2eIpcStub = (args: unknown, next: () => Promise<unknown>) => Promise<unknown>;
+type E2eWindow = Window & {
+  __ROSI_E2E_IPC_STUBS__?: Partial<Record<CommandName, E2eIpcStub>>;
+};
+
+function e2eStubFor(command: CommandName): E2eIpcStub | null {
+  const stub = (window as E2eWindow).__ROSI_E2E_IPC_STUBS__?.[command];
+  return typeof stub === 'function' ? stub : null;
+}
+
 /** Calls a Rust command with its typed arguments and result. */
 export function call<K extends CommandName>(
   command: K,
   ...args: CommandArgs<K>
 ): Promise<Commands[K]['result']> {
   const [payload] = args;
-  return payload === undefined
-    ? invoke<Commands[K]['result']>(command)
-    : invoke<Commands[K]['result']>(command, payload as Record<string, unknown>);
+  const invokeCommand = (): Promise<Commands[K]['result']> =>
+    payload === undefined
+      ? invoke<Commands[K]['result']>(command)
+      : invoke<Commands[K]['result']>(command, payload as Record<string, unknown>);
+  // Compared against the Vite define directly, so production builds drop this branch.
+  if (import.meta.env.VITE_ROSI_E2E === '1') {
+    const stub = e2eStubFor(command);
+    if (stub) return stub(payload, invokeCommand) as Promise<Commands[K]['result']>;
+  }
+  return invokeCommand();
 }
 
 /** Calls a Rust command without waiting; failures are logged to the console. */

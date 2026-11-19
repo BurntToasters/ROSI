@@ -175,9 +175,6 @@ macro_rules! generate_app_handler {
             platform::is_packaged,
             platform::is_flatpak,
             platform::get_app_platform,
-            platform::get_distribution_channel,
-            platform::get_beta_updater_target,
-            platform::get_compact_updater_target,
             updater::check_for_updates,
             updater::download_update,
             updater::install_update,
@@ -285,6 +282,11 @@ fn main() {
             }
             queue::init();
             std::thread::spawn(staging::sweep_orphans_on_startup);
+            std::thread::spawn(ffmpeg_guard::sweep_stale_launchers);
+            #[cfg(target_os = "linux")]
+            if std::env::var_os("APPIMAGE").is_some() {
+                std::thread::spawn(staging::sweep_appimage_update_backups);
+            }
             std::thread::spawn(|| {
                 let _ = sidecars::ytdlp_path();
                 sidecars::verify_bundled();

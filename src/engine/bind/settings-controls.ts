@@ -18,7 +18,7 @@ import {
   settingsStore,
 } from '../settings-store';
 import { applyDownloadProfile, bindExternalLink, updateUIFromSettings } from '../settings-view';
-import { applyTheme, updateBackgroundAnimation } from '../theme';
+import { applyFlatUi, applyTheme, updateBackgroundAnimation } from '../theme';
 import { notifyUpdateChannelChanged } from '../updater-ui';
 import { showToast, updateConsoleVisibility } from '../ui-helpers';
 import { api } from '../../api';
@@ -221,14 +221,14 @@ export function bindSettingsControls() {
     button?.addEventListener('click', () => {
       applyDownloadProfile(mode);
       updateUIFromSettings();
-      void persistSettings(true, true);
+      void persistSettings({ immediate: true });
     });
   });
   if (profileAudioFormatSelect) {
     profileAudioFormatSelect.addEventListener('change', (e) => {
       settingsStore.settings.audioFormat = (e.target as HTMLSelectElement).value;
       updateUIFromSettings();
-      void persistSettings(true, true);
+      void persistSettings({ immediate: true });
     });
   }
   if (askDownloadLocationToggle) {
@@ -245,7 +245,7 @@ export function bindSettingsControls() {
           settingsStore.settings.downloadFolder = savePath;
           updateUIFromSettings();
           refreshEffectiveOptionsSummary();
-          void persistSettings(true, true);
+          void persistSettings({ immediate: true });
         });
       }
     });
@@ -257,7 +257,7 @@ export function bindSettingsControls() {
       settingsStore.settings.downloadFolder = savePath;
       updateUIFromSettings();
       refreshEffectiveOptionsSummary();
-      void persistSettings(true, true);
+      void persistSettings({ immediate: true });
     });
   }
   if (keepOriginalToggle)
@@ -295,6 +295,13 @@ export function bindSettingsControls() {
         convertFormatContainer?.classList.add('visible');
         keepOriginalLabel?.classList.add('visible');
         if (gpuAccelerationLabel) gpuAccelerationLabel.classList.add('visible');
+        // The GPU select was hidden when Convert went off. Show it again only when
+        // GPU acceleration is still on.
+        if (gpuTypeContainer)
+          gpuTypeContainer.classList.toggle(
+            'visible',
+            Boolean(settingsStore.settings.gpuAcceleration)
+          );
       } else {
         convertFormatContainer?.classList.remove('visible');
         keepOriginalLabel?.classList.remove('visible');
@@ -372,13 +379,7 @@ export function bindSettingsControls() {
     flatUiToggle.addEventListener('change', (e) => {
       const checked = (e.target as HTMLInputElement).checked;
       settingsStore.settings.flatUi = checked;
-      if (checked) {
-        document.documentElement.dataset.flatUi = 'true';
-        localStorage.setItem('rosi-flat-ui', 'true');
-      } else {
-        delete document.documentElement.dataset.flatUi;
-        localStorage.setItem('rosi-flat-ui', 'false');
-      }
+      applyFlatUi(checked);
       void persistSettings();
     });
   }
@@ -479,7 +480,7 @@ export function bindSettingsControls() {
 export function bindSettingsActions() {
   const retrySettingsSave = document.getElementById('retrySettingsSave');
   retrySettingsSave?.addEventListener('click', () => {
-    void persistSettings(false, true);
+    void persistSettings({ immediate: true });
   });
   const {
     exportSettingsBtn,
@@ -511,7 +512,7 @@ export function bindSettingsActions() {
     updateChannelSelect.addEventListener('change', (e) => {
       settingsStore.settings.updateChannel = (e.target as HTMLSelectElement)
         .value as RosiSettings['updateChannel'];
-      persistSettings(false, true).catch((error: unknown) =>
+      persistSettings({ immediate: true }).catch((error: unknown) =>
         logError('Could not save the update channel', error)
       );
       // Rust saves the channel itself and retires the old update identity first.
@@ -569,7 +570,7 @@ export function bindSettingsActions() {
   if (exportSettingsBtn) {
     exportSettingsBtn.addEventListener('click', async () => {
       try {
-        if (!(await persistSettings(false, true))) return;
+        if (!(await persistSettings({ immediate: true }))) return;
         const result = await api.exportSettings();
         // A cancelled save dialog returns ok with exported: false; it is not an error.
         if (result && result.ok) {
@@ -597,7 +598,7 @@ export function bindSettingsActions() {
             primary: true,
             action: async () => {
               try {
-                if (!(await persistSettings(false, true))) return;
+                if (!(await persistSettings({ immediate: true }))) return;
                 const result = await api.importSettings();
                 // A cancelled open dialog returns ok with imported: false; no toast.
                 if (result && result.ok) {

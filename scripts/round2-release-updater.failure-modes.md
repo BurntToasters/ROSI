@@ -114,3 +114,34 @@ vendored updater install entry point and platform-safe cleanup ordering.
 30. A legitimate SquashFS image stores its root as an extended directory inode
     (SQUASHFS_LDIR_TYPE, value 8). Accept both standard and extended directory
     inode types after checking the root inode's file-backed metadata bounds.
+
+## Hosted CI gate and build-commit binding (release-safety repairs)
+
+31. `release:preflight` finds no `ci-gate` check run for HEAD, or the newest
+    run is queued, in progress, failed, cancelled, skipped, or from another
+    app. Refuse the release and name `ROSI_RELEASE_ALLOW_UNVERIFIED_CI`.
+32. A GitHub API error while reading check runs fails closed unless the
+    override is explicitly truthy. With the override, print an UNVERIFIED
+    warning that includes the error and continue. `0`, `false`, `no`, `off`,
+    and empty values never enable it.
+33. A stable release (`main`) sets the unverified-CI override. Refuse it through
+    `assertStableReleaseOverridesAllowed`, because the variable is listed in
+    `STABLE_FORBIDDEN_ENV`.
+34. A re-run of `ci-gate` fails after an earlier success on the same SHA. The
+    newest run decides. A later successful re-run passes.
+35. A build-record asset name does not map from a `SHA256SUMS-<key>.txt`
+    checksum name, or the key is not `[a-z0-9_-]+`. Reject it before writing.
+36. `gpg-sign` records a commit that is not a 40-character hex SHA. Reject it.
+    The record must hold the real build commit even when FORCE_UPLOAD bypasses
+    the draft target check.
+37. A build record is staged outside the release directory, is passed as an
+    artifact, or has a signature whose signed file is not vetted. Reject it in
+    `buildUploadList`.
+38. The draft is missing a `build-commit-<key>.json` or its `.asc` for any
+    required platform key. Fail the draft shape gate and name the asset.
+39. A build record is malformed JSON, lacks `commit`, names a platform that
+    does not match its file name, or records a commit other than the draft's
+    `target_commitish`. This includes records that are not required. Fail
+    and name the asset.
+40. The draft `target_commitish` is a branch name or otherwise not a 40-hex
+    SHA. Refuse the check instead of comparing loosely.

@@ -126,7 +126,7 @@ async function applySectionReset(keys: string[]) {
   applyTheme(settingsStore.settings.theme ?? 'system');
   // Same notice as the channel select, so the updater retires a candidate from the old channel.
   notifyChannelIfChanged(previousChannel, settingsStore.settings.updateChannel);
-  const saved = await persistSettings(true, true);
+  const saved = await persistSettings({ immediate: true });
   showToast(saved ? UI_MESSAGES.settings.resetSaved : UI_MESSAGES.settings.resetFailed, {
     type: saved ? 'success' : 'error',
   });

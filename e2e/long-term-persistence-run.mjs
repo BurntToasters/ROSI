@@ -9,6 +9,7 @@ import {
   e2eSettings,
   REPO_ROOT,
 } from "./helpers/profile.js";
+import { pruneRunnerArtifacts } from "../scripts/e2e/prune-artifacts.js";
 
 const artifactRoot = path.resolve(
   REPO_ROOT,
@@ -40,6 +41,13 @@ if (!artifactRoot.startsWith(`${ownedRoot}${path.sep}`)) {
     "Repair artifacts must use a new child directory under e2e/artifacts/long-term-persistence.",
   );
 }
+// Gate runs are gate-<ms>-<pid>; direct runs use an ISO time with - for :.
+pruneRunnerArtifacts({
+  artifactsDir: ownedRoot,
+  pattern: /^(?:gate-\d+|\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z)-\d+$/,
+  keep: 20,
+  currentRunDir: artifactRoot,
+});
 fs.mkdirSync(path.dirname(artifactRoot), { recursive: true });
 fs.mkdirSync(artifactRoot);
 const sourceFiles = [

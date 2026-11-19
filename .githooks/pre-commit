@@ -18,12 +18,21 @@ run_npm() {
   fi
 }
 
+staged_files="$(git diff --cached --name-only --diff-filter=ACM)"
+
 # Only run JS tooling when staged files touch the frontend/tooling surface.
-if git diff --cached --name-only --diff-filter=ACM | grep -qE '\.(ts|css|html|js)$'; then
+# .mjs and .cjs cover most of scripts/ and e2e/, so they are included.
+if printf '%s\n' "$staged_files" | grep -qE '\.(ts|css|html|js|mjs|cjs)$'; then
   echo "pre-commit: prettier --check"
   run_npm run --silent format:check
   echo "pre-commit: eslint"
   run_npm run --silent lint
   echo "pre-commit: tsc --noEmit"
   run_npm run --silent typecheck
+fi
+
+# Rust formatting runs only when staged Rust sources exist.
+if printf '%s\n' "$staged_files" | grep -qE '\.rs$'; then
+  echo "pre-commit: cargo fmt --check"
+  cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 fi

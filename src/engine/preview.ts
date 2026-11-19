@@ -42,14 +42,41 @@ export function isSafePreviewThumbnail(value: string | null): value is string {
   return decodedBytes <= MAX_PREVIEW_THUMBNAIL_BYTES;
 }
 
-export function hideVideoPreview() {
-  const card = document.getElementById('preview-card');
+/** Drops the previous video's text so a new lookup never shows stale fields. */
+function clearPreviewFields() {
   const thumb = document.getElementById('preview-thumb') as HTMLImageElement | null;
-  if (card) card.classList.remove('visible', 'loading', 'is-playlist');
+  const titleEl = document.getElementById('preview-title');
+  const subEl = document.getElementById('preview-sub');
+  const durationEl = document.getElementById('preview-duration');
+  if (titleEl) titleEl.textContent = '';
+  if (subEl) subEl.textContent = '';
+  if (durationEl) {
+    durationEl.textContent = '';
+    durationEl.style.display = 'none';
+  }
   if (thumb) {
     thumb.removeAttribute('src');
     thumb.alt = '';
   }
+}
+
+/** Shown while a lookup runs; the previous video's fields are cleared first. */
+export function showPreviewLoading() {
+  const card = document.getElementById('preview-card');
+  if (!card) return;
+  clearPreviewFields();
+  const titleEl = document.getElementById('preview-title');
+  if (titleEl) titleEl.textContent = 'Loading preview…';
+  const thumbWrap = document.getElementById('preview-thumb')?.parentElement;
+  if (thumbWrap) thumbWrap.style.display = 'none';
+  card.classList.remove('is-playlist');
+  card.classList.add('visible', 'loading');
+}
+
+export function hideVideoPreview() {
+  const card = document.getElementById('preview-card');
+  if (card) card.classList.remove('visible', 'loading', 'is-playlist');
+  clearPreviewFields();
 }
 
 export function renderVideoPreview(info: RosiVideoInfo) {

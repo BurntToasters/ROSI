@@ -26,3 +26,21 @@ Record these before writing the verifier or changing product code.
 - Process version, GPU encoder, codec-probe, conversion, and guarded yt-dlp FFmpeg calls must all use the centralized selected executable; fixing only one call site leaves the mismatch observable.
 
 The manual verifier must compile the relevant production functions, exercise real bundled FFmpeg MOV and MP4 conversions, inspect resulting codecs with FFprobe, probe selected executable identities using PATH fixtures, and always write a SHA-256 manifest report. It must report that the native application was not launched.
+
+## C4: leaked media-tool launcher directories
+
+Not automated in E2E. Guard: `ffmpeg_guard::sweep_stale_launchers`. Checked by reading the code and the call site in `main.rs`.
+
+- The sweep removes a launcher that a live operation still uses. Guard: only directories whose mtime is more than 24 hours old are removed. A single operation that runs longer than 24 hours could still lose its launcher.
+- A symlink named `rosi-media-tools-<uuid>` is followed and the folder it points at is deleted. Guard: `symlink_metadata` plus a real-directory check.
+- A link swapped in between the check and the removal is followed. Guard: `remove_dir_all` removes a top-level link as a link and does not descend into its target.
+- A directory owned by another user in a shared temp folder is removed. Guard: unix uid must equal `geteuid()`.
+- A lookalike name (`rosi-media-tools-` plus non-UUID text, or extra suffix) is removed. Guard: exact 8-4-4-4-12 hex shape check.
+- Startup creates the launcher root on a fresh install. Guard: the sweep reads the root and never calls `create_dir_all`.
+- Windows: a leaked directory holds a hard link to `ROSI.exe` that is still running in another ROSI process. Removal fails on the sharing lock; the error is logged and the directory is retried at a later start.
+- Windows: no owner check. The roots are the per-user data folder and `%TEMP%`, both owned by the user, so this is accepted.
+- Linux with a noexec temp folder: `executable_temp_dir()` can create `data_dir/tmp` as a side effect. That is the folder the launcher would use anyway.
+- An unreadable entry, failed metadata call, or failed removal panics the startup thread. Guard: every fallible call is logged or skipped; no `unwrap`.
+- The sweep blocks startup or a session. Guard: it runs on a spawned startup thread, never on the coordinator or session-owner threads.
+- A future-dated mtime makes the directory look fresh and it is kept. This is the safe outcome.
+- `Drop` for `FfmpegToolGuard` races the sweep. Both use `remove_dir_all`; a failure in either is ignored or logged, and neither corrupts another directory.

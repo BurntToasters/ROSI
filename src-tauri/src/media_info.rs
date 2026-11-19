@@ -14,6 +14,29 @@ use serde_json::{Map, Value};
 static FORMATS: TrackedSlot = TrackedSlot::new();
 static VIDEO_INFO: TrackedSlot = TrackedSlot::new();
 
+// Messages sent to the renderer for each lookup. Cancellation and timeouts are
+// carried by FetchError variants, never recognized from message text.
+const FORMAT_FETCH_CANCELLED: &str = "Format fetch cancelled.";
+const FORMAT_FETCH_TIMED_OUT: &str =
+    "Format fetch timed out after 60 seconds. The server may be slow or unresponsive.";
+const VIDEO_INFO_CANCELLED: &str = "Video info request cancelled.";
+const VIDEO_INFO_TIMED_OUT: &str =
+    "Video info request timed out. The server may be slow or unresponsive.";
+
+/// Why a metadata lookup failed. Only `Cancelled` maps to NOT_AVAILABLE.
+#[derive(Debug)]
+enum FetchError {
+    Cancelled(&'static str),
+    TimedOut(&'static str),
+    Other(String),
+}
+
+impl From<String> for FetchError {
+    fn from(message: String) -> Self {
+        Self::Other(message)
+    }
+}
+
 /// Cookie choice a format listing or preview uses in place of the saved
 /// settings. The renderer sends the choice the next download would resolve. An
 /// absent field keeps the saved value, and no field means the saved settings.
@@ -457,28 +480,42 @@ fn ytdlp_command(args: Vec<String>) -> std::process::Command {
     crate::process_util::command(crate::sidecars::ytdlp_path(), &args, &extra_env, true)
 }
 
-fn error_result<T: serde::Serialize>(message: String) -> IpcResult<T> {
-    if message.to_lowercase().contains("cancel") {
-        ipc::err(NOT_AVAILABLE, message)
-    } else {
-        ipc::err(INTERNAL_ERROR, message)
+fn tracked_error(
+    error: TrackedError,
+    cancelled: &'static str,
+    timed_out: &'static str,
+) -> FetchError {
+    match error {
+        TrackedError::Cancelled => FetchError::Cancelled(cancelled),
+        TrackedError::TimedOut => FetchError::TimedOut(timed_out),
+        TrackedError::Spawn(error) => FetchError::Other(format!("Failed to start yt-dlp: {error}")),
     }
+}
+
+/// The only place a lookup failure becomes an IPC error.
+fn ipc_error<T: serde::Serialize>(error: FetchError) -> IpcResult<T> {
+    let (code, message) = match error {
+        FetchError::Cancelled(message) => (NOT_AVAILABLE, message.to_string()),
+        FetchError::TimedOut(message) => (INTERNAL_ERROR, message.to_string()),
+        FetchError::Other(message) => (INTERNAL_ERROR, message),
+    };
+    ipc::err(code, message)
 }
 
 fn fetch_formats(
     url: String,
     cookies: CookieChoice,
     reservation: TrackedReservation<'static>,
-) -> Result<FormatList, String> {
+) -> Result<FormatList, FetchError> {
     if reservation.is_cancelled() {
-        return Err("Format fetch cancelled.".into());
+        return Err(FetchError::Cancelled(FORMAT_FETCH_CANCELLED));
     }
     let ytdlp = crate::sidecars::ytdlp_path();
     if reservation.is_cancelled() {
-        return Err("Format fetch cancelled.".into());
+        return Err(FetchError::Cancelled(FORMAT_FETCH_CANCELLED));
     }
     if !ytdlp.exists() {
-        return Err(format!("yt-dlp binary not found at {}", ytdlp.display()));
+        return Err(format!("yt-dlp binary not found at {}", ytdlp.display()).into());
     }
     let settings = crate::settings::load();
     let guard = crate::network_security::NetworkSecurityGuard::start_with_cancel_signal(
@@ -487,24 +524,24 @@ fn fetch_formats(
     )
     .map_err(|error| {
         if reservation.is_cancelled() {
-            "Format fetch cancelled.".to_string()
+            FetchError::Cancelled(FORMAT_FETCH_CANCELLED)
         } else {
-            error
+            FetchError::Other(error)
         }
     })?;
     if reservation.is_cancelled() {
-        return Err("Format fetch cancelled.".into());
+        return Err(FetchError::Cancelled(FORMAT_FETCH_CANCELLED));
     }
     let ffmpeg_guard = crate::ffmpeg_guard::FfmpegToolGuard::create(Some(&settings.ffmpeg_path))
         .map_err(|error| {
             if reservation.is_cancelled() {
-                "Format fetch cancelled.".to_string()
+                FetchError::Cancelled(FORMAT_FETCH_CANCELLED)
             } else {
-                error
+                FetchError::Other(error)
             }
         })?;
     if reservation.is_cancelled() {
-        return Err("Format fetch cancelled.".into());
+        return Err(FetchError::Cancelled(FORMAT_FETCH_CANCELLED));
     }
     let mut args = vec![
         "--dump-single-json".into(),
@@ -518,7 +555,7 @@ fn fetch_formats(
     #[cfg(feature = "e2e")]
     {
         if let Some(message) = e2e_capture_ytdlp_args("get_formats", &args) {
-            return Err(message);
+            return Err(message.into());
         }
     }
     let command = ytdlp_command(args);
@@ -553,13 +590,12 @@ fn fetch_formats(
             }
         },
     ) {
-        Ok(result) => result,
-        Err(TrackedError::Cancelled) => Err("Format fetch cancelled.".into()),
-        Err(TrackedError::TimedOut) => Err(
-            "Format fetch timed out after 60 seconds. The server may be slow or unresponsive."
-                .into(),
-        ),
-        Err(TrackedError::Spawn(error)) => Err(format!("Failed to start yt-dlp: {error}")),
+        Ok(result) => result.map_err(FetchError::Other),
+        Err(error) => Err(tracked_error(
+            error,
+            FORMAT_FETCH_CANCELLED,
+            FORMAT_FETCH_TIMED_OUT,
+        )),
     }
 }
 
@@ -568,16 +604,16 @@ fn fetch_video_info(
     playlist_mode: Option<String>,
     cookies: CookieChoice,
     reservation: TrackedReservation<'static>,
-) -> Result<VideoInfo, String> {
+) -> Result<VideoInfo, FetchError> {
     if reservation.is_cancelled() {
-        return Err("Video info request cancelled.".into());
+        return Err(FetchError::Cancelled(VIDEO_INFO_CANCELLED));
     }
     let ytdlp = crate::sidecars::ytdlp_path();
     if reservation.is_cancelled() {
-        return Err("Video info request cancelled.".into());
+        return Err(FetchError::Cancelled(VIDEO_INFO_CANCELLED));
     }
     if !ytdlp.exists() {
-        return Err(format!("yt-dlp binary not found at {}", ytdlp.display()));
+        return Err(format!("yt-dlp binary not found at {}", ytdlp.display()).into());
     }
     let mode = resolve_playlist_mode(&url, playlist_mode.as_deref());
     let cancellation = reservation.cancellation_flag();
@@ -588,24 +624,24 @@ fn fetch_video_info(
     )
     .map_err(|error| {
         if reservation.is_cancelled() {
-            "Video info request cancelled.".to_string()
+            FetchError::Cancelled(VIDEO_INFO_CANCELLED)
         } else {
-            error
+            FetchError::Other(error)
         }
     })?;
     if reservation.is_cancelled() {
-        return Err("Video info request cancelled.".into());
+        return Err(FetchError::Cancelled(VIDEO_INFO_CANCELLED));
     }
     let ffmpeg_guard = crate::ffmpeg_guard::FfmpegToolGuard::create(Some(&settings.ffmpeg_path))
         .map_err(|error| {
             if reservation.is_cancelled() {
-                "Video info request cancelled.".to_string()
+                FetchError::Cancelled(VIDEO_INFO_CANCELLED)
             } else {
-                error
+                FetchError::Other(error)
             }
         })?;
     if reservation.is_cancelled() {
-        return Err("Video info request cancelled.".into());
+        return Err(FetchError::Cancelled(VIDEO_INFO_CANCELLED));
     }
     let mut args = vec!["--dump-single-json".to_string()];
     if mode == "all" {
@@ -628,7 +664,7 @@ fn fetch_video_info(
     #[cfg(feature = "e2e")]
     {
         if let Some(message) = e2e_capture_ytdlp_args("get_video_info", &args) {
-            return Err(message);
+            return Err(message.into());
         }
     }
     match VIDEO_INFO.run_reserved_with(
@@ -639,13 +675,15 @@ fn fetch_video_info(
         MAX_ERROR_BUFFER,
         |output| {
             if *cancellation.borrow() {
-                return Err("Video info request cancelled.".into());
+                return Err(FetchError::Cancelled(VIDEO_INFO_CANCELLED));
             }
             if output.code == Some(0) && output.stdout_truncated {
-                return Err("Video information is larger than 10 MB and could not be read.".into());
+                return Err(FetchError::Other(
+                    "Video information is larger than 10 MB and could not be read.".into(),
+                ));
             }
             if output.code != Some(0) {
-                return Err(format!(
+                return Err(FetchError::Other(format!(
                     "yt-dlp exited with code {}.\n{}",
                     output
                         .code
@@ -653,10 +691,10 @@ fn fetch_video_info(
                     output
                         .stderr
                         .replace(guard.proxy_url(), "<ephemeral proxy credentials>")
-                ));
+                )));
             }
             let mut info = parse_video_info(&output.stdout, PLAYLIST_PREVIEW_ENTRY_LIMIT)
-                .ok_or_else(|| "Could not parse video information.".to_string())?;
+                .ok_or_else(|| FetchError::Other("Could not parse video information.".into()))?;
             if let Some(thumbnail_url) = info.thumbnail.as_deref() {
                 // This metadata worker is itself a Tokio blocking task. Drive
                 // the async thumbnail client from a plain scoped thread so it
@@ -675,11 +713,11 @@ fn fetch_video_info(
         },
     ) {
         Ok(result) => result,
-        Err(TrackedError::Cancelled) => Err("Video info request cancelled.".into()),
-        Err(TrackedError::TimedOut) => {
-            Err("Video info request timed out. The server may be slow or unresponsive.".into())
-        }
-        Err(TrackedError::Spawn(error)) => Err(format!("Failed to start yt-dlp: {error}")),
+        Err(error) => Err(tracked_error(
+            error,
+            VIDEO_INFO_CANCELLED,
+            VIDEO_INFO_TIMED_OUT,
+        )),
     }
 }
 
@@ -722,7 +760,7 @@ pub async fn get_formats(
         .await
     {
         Ok(Ok(formats)) => ipc::ok(formats),
-        Ok(Err(message)) => error_result(message),
+        Ok(Err(error)) => ipc_error(error),
         Err(error) => ipc::err(INTERNAL_ERROR, error.to_string()),
     }
 }
@@ -768,7 +806,7 @@ pub async fn get_video_info(
     .await
     {
         Ok(Ok(info)) => ipc::ok(info),
-        Ok(Err(message)) => error_result(message),
+        Ok(Err(error)) => ipc_error(error),
         Err(error) => ipc::err(INTERNAL_ERROR, error.to_string()),
     }
 }
@@ -781,4 +819,77 @@ pub fn cancel_video_info() {
 pub fn cancel_all() {
     FORMATS.cancel();
     VIDEO_INFO.cancel();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ipc_json(error: FetchError) -> Value {
+        serde_json::to_value(ipc_error::<()>(error)).expect("serialize IPC result")
+    }
+
+    #[test]
+    fn cancelled_requests_map_to_not_available_with_operation_message() {
+        let formats = ipc_json(FetchError::Cancelled(FORMAT_FETCH_CANCELLED));
+        assert_eq!(formats["error"]["code"], "NOT_AVAILABLE");
+        assert_eq!(formats["error"]["message"], "Format fetch cancelled.");
+
+        let info = ipc_json(FetchError::Cancelled(VIDEO_INFO_CANCELLED));
+        assert_eq!(info["error"]["code"], "NOT_AVAILABLE");
+        assert_eq!(info["error"]["message"], "Video info request cancelled.");
+    }
+
+    #[test]
+    fn timeouts_map_to_internal_error_with_their_message() {
+        let value = ipc_json(FetchError::TimedOut(VIDEO_INFO_TIMED_OUT));
+        assert_eq!(value["error"]["code"], "INTERNAL_ERROR");
+        assert_eq!(
+            value["error"]["message"],
+            "Video info request timed out. The server may be slow or unresponsive."
+        );
+    }
+
+    #[test]
+    fn other_errors_stay_internal_even_when_text_mentions_cancel() {
+        let value = ipc_json(FetchError::Other("Format fetch cancelled.".into()));
+        assert_eq!(value["error"]["code"], "INTERNAL_ERROR");
+        assert_eq!(value["error"]["message"], "Format fetch cancelled.");
+    }
+
+    #[test]
+    fn tracked_cancel_and_timeout_map_to_operation_messages() {
+        let cancelled = tracked_error(
+            TrackedError::Cancelled,
+            VIDEO_INFO_CANCELLED,
+            VIDEO_INFO_TIMED_OUT,
+        );
+        match cancelled {
+            FetchError::Cancelled(message) => assert_eq!(message, VIDEO_INFO_CANCELLED),
+            _ => panic!("cancel must map to Cancelled"),
+        }
+
+        let timed_out = tracked_error(
+            TrackedError::TimedOut,
+            FORMAT_FETCH_CANCELLED,
+            FORMAT_FETCH_TIMED_OUT,
+        );
+        match timed_out {
+            FetchError::TimedOut(message) => assert_eq!(message, FORMAT_FETCH_TIMED_OUT),
+            _ => panic!("timeout must map to TimedOut"),
+        }
+    }
+
+    #[test]
+    fn tracked_spawn_failure_is_other_with_start_message() {
+        let spawn = tracked_error(
+            TrackedError::Spawn("permission denied".into()),
+            FORMAT_FETCH_CANCELLED,
+            FORMAT_FETCH_TIMED_OUT,
+        );
+        let FetchError::Other(message) = spawn else {
+            panic!("spawn failure must be an Other error");
+        };
+        assert_eq!(message, "Failed to start yt-dlp: permission denied");
+    }
 }

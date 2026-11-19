@@ -24,3 +24,7 @@ The E2E scenario `queue-paste-extraction` pastes a mixed block that covers rows
 1 to 4, 8 and 9 through the real queue input. It asserts the queue receives
 exactly the normalized safe links in first-seen order, and it records the
 `extract_queue_urls` result as the repeatable proof.
+The status text "3 ignored as invalid." is written by the renderer only after
+`api.addToQueue` resolves, so the check waits for it (up to 10 s) before asserting. A
+read taken right after the queue length matches sees an empty status, which is a test
+timing fault, not a missing count.

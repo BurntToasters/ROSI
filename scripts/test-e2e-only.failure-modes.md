@@ -48,3 +48,10 @@ never let that run pass as full proof. These failures must be caught:
     they already are.
 17. **Stability runs carry the flag.** `--repeat` with ONLY set reports full
     coverage. Check: each repeated run uses the same ONLY rules.
+18. **An ad-hoc run replaces the full-suite report.** `ROSI_E2E_ONLY` writes
+    `e2e-report-<platform>-<arch>.json` and clears its screenshots. Check:
+    ad-hoc runs write `adhoc/<platform>-<arch>/<run-id>/` with a
+    `latest-report.json`, and the canonical report and screenshots are untouched.
+    Known gap: `scripts/e2e/stability.js` (outside this change) still reads the
+    canonical report for non-core `--repeat`, so those repeats report missing
+    evidence until it reads the per-run path.

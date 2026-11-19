@@ -260,7 +260,7 @@ export function buildRequestOverrides(input: {
  */
 export async function applyPresetToControls(preset: RosiDownloadPreset): Promise<boolean> {
   // Flush first so the resolution reads the controls' current settings from disk.
-  if (!(await persistSettings(true, true))) return false;
+  if (!(await persistSettings({ immediate: true }))) return false;
   let resolved: Awaited<ReturnType<typeof api.resolvePresetOptions>>;
   try {
     resolved = await api.resolvePresetOptions(preset.id);
@@ -294,7 +294,7 @@ export async function applyPresetToControls(preset: RosiDownloadPreset): Promise
       isPlaylistScopeVisible() ? (resolvePlaylistSelection() ?? undefined) : undefined
     ),
   };
-  void persistSettings(true, true);
+  void persistSettings({ immediate: true });
   return true;
 }
 

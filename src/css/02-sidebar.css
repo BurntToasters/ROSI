@@ -21,7 +21,9 @@
   left: 12px;
   width: min(360px, calc(100vw - 24px));
   height: calc(100vh - 24px);
-  background: color-mix(in srgb, var(--sidebar-bg-start) 62%, transparent);
+  /* Near-opaque so the settings panel stays readable where backdrop blur does
+     not render. Effective alpha is 0.98 (token) x 96% = 0.94. */
+  background: color-mix(in srgb, var(--sidebar-bg-start) 96%, transparent);
   -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(160%);
   backdrop-filter: blur(var(--blur-lg)) saturate(160%);
   border: 1px solid var(--border-default);
@@ -208,6 +210,12 @@
 .settings-section-reset {
   flex-shrink: 0;
   opacity: 0.75;
+}
+
+/* The ghost reset takes --text-tertiary (0.7 alpha). With the 0.75 opacity
+   that measured 3.4-3.6:1 on light. 0.9 alpha passes 4.5:1 on the panel. */
+:root[data-theme='light'] .settings-section-reset {
+  --btn-fg: rgba(15, 23, 42, 0.9);
 }
 
 .settings-section-head:hover .settings-section-reset,

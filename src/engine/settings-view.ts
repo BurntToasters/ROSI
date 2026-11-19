@@ -6,7 +6,7 @@ import { refreshEffectiveOptionsSummary, UI_MESSAGES } from './messages';
 import { isModalActive, modalQueue, showModal } from './overlays';
 import { refs } from './refs';
 import { persistSettings, settingsStore } from './settings-store';
-import { applyTheme, updateBackgroundAnimation } from './theme';
+import { applyFlatUi, applyTheme, updateBackgroundAnimation } from './theme';
 import { toggleAdvancedUI, updateConsoleVisibility } from './ui-helpers';
 import { api } from '../api';
 
@@ -98,13 +98,7 @@ export const updateUIFromSettings = () => {
         : localStorage.getItem('rosi-flat-ui') === 'true';
     settingsStore.settings.flatUi = isFlat;
     refs.flatUiToggle.checked = isFlat;
-    if (isFlat) {
-      document.documentElement.dataset.flatUi = 'true';
-      localStorage.setItem('rosi-flat-ui', 'true');
-    } else {
-      delete document.documentElement.dataset.flatUi;
-      localStorage.setItem('rosi-flat-ui', 'false');
-    }
+    applyFlatUi(isFlat);
   }
   if (refs.themeSelect) {
     const nextTheme =

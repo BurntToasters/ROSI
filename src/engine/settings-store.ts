@@ -239,9 +239,9 @@ export async function drainSettingsSaves() {
   }
 }
 
-// The first argument is unused. It is kept so callers that pass
-// (true, true) in other modules still compile; only `immediate` is read.
-export async function persistSettings(_unused = false, immediate = false): Promise<boolean> {
+// `immediate` skips the debounce and drains the save queue now.
+export async function persistSettings(options: { immediate?: boolean } = {}): Promise<boolean> {
+  const immediate = options.immediate === true;
   setSettingsSaveFeedback('saving', UI_MESSAGES.settings.saving);
   if (settingsStore.persistDebounceTimer) {
     clearTimeout(settingsStore.persistDebounceTimer);
@@ -291,7 +291,7 @@ export function confirmInterruptActiveWork(action: string): Promise<boolean> {
 
 export async function flushBeforeRestart(action: string) {
   if (!(await confirmInterruptActiveWork(action))) return false;
-  return persistSettings(false, true);
+  return persistSettings({ immediate: true });
 }
 
 export async function restartAfterSettingsFlush() {

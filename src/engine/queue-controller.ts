@@ -18,14 +18,16 @@ import { api } from '../api';
  * Per-job overrides sent with queue additions, built by the same builder as
  * manual downloads. Returns `{ ok: false }` when the visible playlist range is
  * invalid so nothing is queued. Playlist is omitted while its radios are hidden,
- * so a preset saved as All/Range can apply.
+ * so a preset saved as All/Range can apply. The visible range belongs to the main
+ * URL only, so it is read only when `usesMainPlaylist` is true.
  */
 export function buildQueueRequestOverrides(
   outputPath?: string,
-  formatSelections?: { videoFormat?: string; audioFormat?: string }
+  formatSelections?: { videoFormat?: string; audioFormat?: string },
+  usesMainPlaylist = false
 ): { ok: false } | { ok: true; overrides?: Record<string, unknown> } {
-  const scopeVisible = isPlaylistScopeVisible();
-  const playlist = resolvePlaylistSelection();
+  const scopeVisible = usesMainPlaylist && isPlaylistScopeVisible();
+  const playlist = usesMainPlaylist ? resolvePlaylistSelection() : null;
   if (scopeVisible && !playlist) return { ok: false };
 
   const overrides: Record<string, unknown> = {
@@ -67,12 +69,12 @@ export async function addUrlsToQueue(urls: string[], rejected = 0) {
   const endQueueAction = beginQueueAction();
   const currentUrl =
     (document.getElementById('url') as HTMLInputElement | null)?.value.trim() ?? '';
-  const formatSelections =
-    urls.length === 1 && urls[0]?.trim() === currentUrl
-      ? readAdvancedFormatSelections(currentUrl)
-      : {};
+  // Format and playlist settings belong to the main URL, so they apply only when
+  // the queue holds that one link and nothing else.
+  const isMainUrl = urls.length === 1 && urls[0]?.trim() === currentUrl;
+  const formatSelections = isMainUrl ? readAdvancedFormatSelections(currentUrl) : {};
   try {
-    const built = buildQueueRequestOverrides(undefined, formatSelections);
+    const built = buildQueueRequestOverrides(undefined, formatSelections, isMainUrl);
     if (!built.ok) {
       setQueueStatusMessage('Fix the playlist range before adding to the queue.');
       return false;
@@ -84,7 +86,7 @@ export async function addUrlsToQueue(urls: string[], rejected = 0) {
     }
     // Main snapshots from disk. Flush the 300ms settings debounce so convert,
     // GPU, and profile toggles made just before Queue are what get stored.
-    const saved = await persistSettings(true, true);
+    const saved = await persistSettings({ immediate: true });
     if (!saved) {
       const message = 'Could not save download settings. Please try again.';
       setQueueStatusMessage(message);

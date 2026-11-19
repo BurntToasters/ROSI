@@ -158,7 +158,7 @@ export function bindDownloadControls() {
         }
         // Rust reads settings from disk when the download starts, so flush the
         // 300ms debounce on every path, not only when a folder was chosen.
-        const saved = await persistSettings(true, true);
+        const saved = await persistSettings({ immediate: true });
         if (!saved) {
           failManualDownloadStart(operation);
           downloadState.isDownloading = false;

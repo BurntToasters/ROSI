@@ -122,18 +122,39 @@ and the native bridge on the built E2E binary.
 30. **The IPC observer is never installed.** Tauri defines
     `window.__TAURI_INTERNALS__.invoke` as non-writable, so assigning to it does
     nothing and the recorded `set_update_channel` calls stay empty. Checks that
-    read that record (rows 1 and 2) would then pass on an empty record. Tauri
-    uses two transports, so the observer hooks both: `window.fetch` (custom
-    protocol, macOS and Linux) and the native `window.ipc.postMessage`, or
-    `window.chrome.webview.postMessage` when `ipc` is absent (Windows). Each hook
-    is read back, and the case fails if no transport accepted it. Each check that
-    depends on the observer first asserts that it saw at least one known call
-    (`set_update_channel` with `beta`), so an uninstalled observer fails.
+    read that record (rows 1 and 2) would then pass on an empty record. The
+    observer now registers a `set_update_channel` entry in the E2E seam
+    (`window.__ROSI_E2E_IPC_STUBS__`, read by `call()` in `src/commands.ts`),
+    which does not depend on the Tauri transport. Each check that depends on the
+    observer first asserts that it saw at least one known call (`set_update_channel`
+    with `beta`), so an uninstalled observer fails.
+31. **The observer is transport-blind and its install check is vacuous.** The
+    old observer hooked `window.fetch` and `window.ipc.postMessage`. The app CSP
+    (`connect-src 'self'`) keeps Tauri's `ipc://` fetch from running, and
+    `window.ipc` is non-writable on macOS, so the hooks saw no calls. The install
+    check (`hooks.length > 0`) passed anyway, because the fetch wrap installed.
+    Check: the observer is confirmed by reading back the registry entry
+    (`window.__ROSI_E2E_IPC_STUBS__.set_update_channel` is a function), not by a
+    hook count, and the beta-call wait in the reset scenario fails if the entry
+    never fires.
+32. **Pass-through does not reach the backend.** The observer's entry calls
+    `next()`, which must perform the real `invoke` with the same payload. If it
+    returned without calling `next()`, or with a different payload, the setting
+    would not save. Check: after Reset Application, `waitForBackendSetting`
+    confirms the backend channel is the default (`getSettings`), and the beta
+    save in the same scenario confirms `beta` reached the backend before the
+    reset check runs.
+33. **The observer entry outlives the case or deletes another stub's entry.**
+    `uninstallChannelCallLog` must remove only the `set_update_channel` key and
+    delete the registry object only when it is empty, so a dialogs-spec stub or
+    a later observer is not wiped. Check: after uninstall, the registry entry is
+    absent; `readChannelCalls` throws for a stale observer; the next case's
+    install starts from an empty `set_update_channel` record.
 
 ## Coverage
 
 `settings-reset.spec.js` checks rows 1, 2, 4, 5, 6, 8, 9, 10, 11, 17, 18,
-19, 20, 21, 22, 24, 25, 28, and 30. Each case lists its rows in `failureModes`.
+19, 20, 21, 22, 24, 25, 28, 30, 31, 32, and 33. Each case lists its rows in `failureModes`.
 
 Not checked in E2E on this machine:
 

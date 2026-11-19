@@ -14,9 +14,12 @@ bounding rectangles from the live page.
    its effective background is at least 4.5:1, and the check fails if a token
    is missing (empty computed value).
 2. **The fix changes the dark theme.** Dark text tokens must keep the existing
-   look. Check: the dark-theme `--success-text`, `--warning-text`, `--danger-text`
-   and `--accent-text` values are at least 4.5:1 on the dark background and the
-   report records the resolved values.
+   look, except `--danger-text`, which the U9 fix moves to #fa8888 (rgb(250, 136, 136))
+   so it passes AA on tinted dark surfaces. Check `dark-theme-text-values-unchanged`
+   pins the four dark values to these exact colors, so any further change must update
+   the pin on purpose. The `text-tokens-contrast-4_5` check also requires each dark
+   token to be at least 4.5:1 on the dark background. Purple's `--danger-text` is also
+   #fa8888, but no check pins purple's exact color; only the 4.5:1 check covers it.
 3. **Effective background is read from the wrong layer.** Contrast is computed
    against `body` only, so translucent surfaces above it are ignored. Check: the
    background walk alpha-composites every ancestor background before measuring,
@@ -117,11 +120,11 @@ After (text tokens, per theme):
 | --- | --- | --- | --- |
 | dark | `--success-text` #22c55e | #0d0f14 / #10131a | 8.41 / 8.16 |
 | dark | `--warning-text` #f59e0b | #0d0f14 / #10131a | 8.93 / 8.65 |
-| dark | `--danger-text` #ef4444 | #0d0f14 / #10131a | 5.09 / 4.94 |
+| dark | `--danger-text` #fa8888 | #0d0f14 / #10131a | 8.16 / 7.91 |
 | dark | `--accent-text` #67e8f9 | #0d0f14 / #10131a | 13.22 / 12.82 |
 | purple | `--success-text` #22c55e | #18122a / #1e163a | 7.95 / 7.49 |
 | purple | `--warning-text` #f59e0b | #18122a / #1e163a | 8.44 / 7.94 |
-| purple | `--danger-text` #ef4444 | #18122a / #1e163a | 4.82 / 4.53 |
+| purple | `--danger-text` #fa8888 | #18122a / #1e163a | 7.72 / 7.26 |
 | purple | `--accent-text` #a78bfa | #18122a / #1e163a | 6.66 / 6.27 |
 | light | `--success-text` #166534 | #eef3f8 / #e7edf5 | 6.39 / 6.05 |
 | light | `--warning-text` #9a5a0a | #eef3f8 / #e7edf5 | 4.90 / 4.64 |
@@ -129,4 +132,4 @@ After (text tokens, per theme):
 | light | `--accent-text` #1d4ed8 | #eef3f8 / #e7edf5 | 6.00 / 5.69 |
 
 The `system` option resolves to dark or light and is measured as that theme.
-The dark values equal the previous fill colors, so the dark look is unchanged.
+The dark values equal the previous fill colors, except `--danger-text`, which is lighter (#fa8888, rgb(250, 136, 136)) so danger text passes AA on tinted dark surfaces. The `dark-theme-text-values-unchanged` check pins this value.

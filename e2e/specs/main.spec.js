@@ -1316,9 +1316,13 @@ describe("ROSI main window", () => {
   it("frosts the floating sidebar and keeps Flat UI opaque", async () => {
     await setSidebarOpen(true);
     const floating = await surfaceStyles();
+    // U7: the floating sidebar is near-opaque on purpose (0.941 measured), so it
+    // stays readable where backdrop blur does not render. It must still be
+    // frosted, not fully solid, so the alpha must sit in [0.92, 1).
     assert.ok(
-      floating.sidebarAlpha < 0.7,
-      `floating sidebar alpha ${floating.sidebarAlpha} is too opaque`,
+      floating.sidebarAlpha >= 0.92 && floating.sidebarAlpha < 1,
+      `floating sidebar alpha ${floating.sidebarAlpha} is outside [0.92, 1): ` +
+        "it must stay nearly opaque for readability and not be solid",
     );
     assert.match(floating.sidebarFilter, /blur\(/);
     assert.match(floating.sidebarFilter, /saturate\(/);
@@ -2984,7 +2988,12 @@ describe("ROSI main window", () => {
       fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
       const file = path.join(SCREENSHOT_DIR, `${name}.png`);
       await browser.saveScreenshot(file);
-      shots.push({ name, sha256: sha256File(file) });
+      shots.push({
+        name,
+        file: path.basename(file),
+        sha256: sha256File(file),
+        bytes: fs.statSync(file).size,
+      });
     };
     await shoot("wizard-welcome");
 
@@ -4788,9 +4797,21 @@ describe("ROSI main window", () => {
     );
     const queued = (await api("getQueue")).map((item) => item.url);
     assert.deepEqual(queued, kept, "queue differs from the safe links");
-    const status = await browser.execute(
-      () => document.getElementById("queueStatusMessage")?.textContent ?? "",
-    );
+    // The renderer writes this status only after api.addToQueue resolves, so
+    // wait for it rather than reading it as soon as the queue has the links.
+    let status = "";
+    await browser
+      .waitUntil(
+        async () => {
+          status = await browser.execute(
+            () =>
+              document.getElementById("queueStatusMessage")?.textContent ?? "",
+          );
+          return /3 ignored as invalid\./.test(status);
+        },
+        { timeout: 10_000, interval: 150, timeoutMsg: `status was: ${status}` },
+      )
+      .catch(() => {});
     assert.match(status, /3 ignored as invalid\./, `status was: ${status}`);
     record("queue-paste-extraction", {
       queued: queued.length,

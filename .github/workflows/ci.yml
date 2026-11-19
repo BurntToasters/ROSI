@@ -63,6 +63,7 @@ jobs:
   quality-gate:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -97,6 +98,8 @@ jobs:
             librsvg2-dev \
             patchelf \
             xvfb
+      - name: Print FFmpeg version
+        run: ffmpeg -version
       - run: npm ci --ignore-scripts
       - name: Fetch yt-dlp binaries
         run: npm run ytdlp:fetch:all
@@ -124,6 +127,8 @@ jobs:
       matrix:
         os: [windows-latest, macos-26]
     runs-on: ${{ matrix.os }}
+    # Runs the full native E2E gate on each OS.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -168,6 +173,9 @@ jobs:
             Windows) choco install ffmpeg --no-progress -y ;;
             macOS) brew install ffmpeg ;;
           esac
+      - name: Print FFmpeg version
+        shell: bash
+        run: ffmpeg -version
       - run: npm run test:e2e
         env:
           ROSI_E2E_REQUIRE_FFMPEG: "1"
@@ -196,6 +204,9 @@ jobs:
       # by release:verify:published; requiring it here makes version bumps
       # circular because build VMs cannot publish until this CI passes.
       - name: Published updater feed sanity
+        # The live feed can be down while a PR is open. Local validate:updater
+        # above stays blocking; push and schedule runs keep this step blocking.
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: npm run validate:updater:live
 
   # Unsigned compile smoke only: not a release. Signed NSIS/DMG/AppImage stay on

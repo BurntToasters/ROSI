@@ -489,28 +489,10 @@
           "markdownDescription": "Enables the get_app_platform command without any pre-configured scope."
         },
         {
-          "description": "Enables the get_beta_updater_target command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-get-beta-updater-target",
-          "markdownDescription": "Enables the get_beta_updater_target command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the get_compact_updater_target command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-get-compact-updater-target",
-          "markdownDescription": "Enables the get_compact_updater_target command without any pre-configured scope."
-        },
-        {
           "description": "Enables the get_default_settings command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-default-settings",
           "markdownDescription": "Enables the get_default_settings command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the get_distribution_channel command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-get-distribution-channel",
-          "markdownDescription": "Enables the get_distribution_channel command without any pre-configured scope."
         },
         {
           "description": "Enables the get_download_activity command without any pre-configured scope.",
@@ -831,28 +813,10 @@
           "markdownDescription": "Denies the get_app_platform command without any pre-configured scope."
         },
         {
-          "description": "Denies the get_beta_updater_target command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-get-beta-updater-target",
-          "markdownDescription": "Denies the get_beta_updater_target command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the get_compact_updater_target command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-get-compact-updater-target",
-          "markdownDescription": "Denies the get_compact_updater_target command without any pre-configured scope."
-        },
-        {
           "description": "Denies the get_default_settings command without any pre-configured scope.",
           "type": "string",
           "const": "deny-get-default-settings",
           "markdownDescription": "Denies the get_default_settings command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the get_distribution_channel command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-get-distribution-channel",
-          "markdownDescription": "Denies the get_distribution_channel command without any pre-configured scope."
         },
         {
           "description": "Denies the get_download_activity command without any pre-configured scope.",

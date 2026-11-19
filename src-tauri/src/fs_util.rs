@@ -135,25 +135,84 @@ pub fn sync_directory(directory: &Path) -> Result<(), String> {
 
 #[cfg(windows)]
 fn windows_rename_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
     };
 
-    let from: Vec<u16> = from.as_os_str().encode_wide().chain(Some(0)).collect();
-    let to: Vec<u16> = to.as_os_str().encode_wide().chain(Some(0)).collect();
-    let result = unsafe {
-        MoveFileExW(
-            from.as_ptr(),
-            to.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
+    windows_move_file(from, to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)
+}
+
+/// One `MoveFileExW` call with caller-chosen `flags`. Both paths go through
+/// `win32_path`, so long paths work. The caller owns the flag meaning and the
+/// error mapping; this returns the raw `last_os_error` on failure.
+#[cfg(windows)]
+pub(crate) fn windows_move_file(from: &Path, to: &Path, flags: u32) -> std::io::Result<()> {
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+
+    let from = win32_path(from);
+    let to = win32_path(to);
+    // SAFETY: both buffers are NUL-terminated and live across the call.
+    let result = unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), flags) };
     if result != 0 {
         Ok(())
     } else {
         Err(std::io::Error::last_os_error())
     }
+}
+
+/// NUL-terminated UTF-16 path for a raw Win32 call. The binary has no
+/// long-path manifest, so Win32 limits a plain path to MAX_PATH. A path at or
+/// over that limit becomes verbatim (`\\?\`, or `\\?\UNC\` for a share), which
+/// lifts the limit. Shorter and relative paths are passed through unchanged.
+#[cfg(windows)]
+pub(crate) fn win32_path(path: &Path) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+
+    const MAX_PATH_UNITS: usize = 260;
+    fn units(text: &str) -> Vec<u16> {
+        text.encode_utf16().collect()
+    }
+    let plain: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let verbatim = units(r"\\?\");
+    let device = units(r"\\.\");
+    let unc_prefix = units(r"\\");
+    let is_absolute_drive = plain.len() >= 3
+        && plain[0] < 128
+        && (plain[0] as u8).is_ascii_alphabetic()
+        && plain[1] == u16::from(b':')
+        && plain[2] == u16::from(b'\\');
+    let mut result = if plain.len() < MAX_PATH_UNITS
+        || plain.starts_with(&verbatim)
+        || plain.starts_with(&device)
+    {
+        plain
+    } else {
+        // Verbatim paths take no forward slashes and no `.` or `..` parts.
+        // Paths reaching here come from `resolve_path`, which removes those.
+        let normalized: Vec<u16> = plain
+            .iter()
+            .map(|&unit| {
+                if unit == u16::from(b'/') {
+                    u16::from(b'\\')
+                } else {
+                    unit
+                }
+            })
+            .collect();
+        if normalized.starts_with(&unc_prefix) {
+            let mut share = units(r"\\?\UNC\");
+            share.extend_from_slice(&normalized[2..]);
+            share
+        } else if is_absolute_drive {
+            let mut drive = verbatim.clone();
+            drive.extend_from_slice(&normalized);
+            drive
+        } else {
+            normalized
+        }
+    };
+    result.push(0);
+    result
 }
 
 pub fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), String> {

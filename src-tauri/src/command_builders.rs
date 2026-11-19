@@ -129,10 +129,7 @@ pub fn resolve_video_encoder(settings: &Settings) -> String {
     if !settings.gpu_acceleration {
         return "libx264".to_string();
     }
-    match resolve_gpu_video_encoder(settings) {
-        "libx264" => "libx264".to_string(),
-        encoder => encoder.to_string(),
-    }
+    resolve_gpu_video_encoder(settings).to_string()
 }
 
 /// Validated browser-cookie arguments shared by downloads and read-only

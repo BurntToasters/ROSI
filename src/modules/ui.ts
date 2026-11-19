@@ -29,10 +29,6 @@ export function isMac() {
   return navigator.platform.toLowerCase().includes('mac');
 }
 
-export function getModifierKey(): 'metaKey' | 'ctrlKey' {
-  return isMac() ? 'metaKey' : 'ctrlKey';
-}
-
 export function getModifierKeyName(): 'Cmd' | 'Ctrl' {
   return isMac() ? 'Cmd' : 'Ctrl';
 }
@@ -213,6 +209,20 @@ export function appendConsoleOutput(outputEl: HTMLElement | null, text: string) 
   outputEl.scrollTop = outputEl.scrollHeight;
 }
 
+/**
+ * Busy content: a decorative CSS spinner drawn in currentColor, then a visible
+ * label. The label says what the button does while it is busy.
+ */
+function busyContent(label: string): Node[] {
+  const spinner = document.createElement('span');
+  spinner.className = 'btn-spinner';
+  spinner.setAttribute('aria-hidden', 'true');
+  const text = document.createElement('span');
+  text.className = 'btn-busy-label';
+  text.textContent = label;
+  return [spinner, text];
+}
+
 export function setButtonLoading(
   button: UiButtonElement | null,
   isLoading: boolean,
@@ -230,8 +240,11 @@ export function setButtonLoading(
     if (button._originalClick === undefined) {
       button._originalClick = button.onclick;
     }
+    const cancellable = typeof onCancel === 'function';
     button.classList.add('loading');
-    button.innerHTML = '<img src="loader.svg" class="loader-icon" alt="Loading...">';
+    button.replaceChildren(
+      ...busyContent(cancellable ? 'Cancel' : button.dataset.defaultText || 'Loading')
+    );
     button.disabled = false;
     button.setAttribute('aria-busy', 'true');
     if (typeof onCancel === 'function') {
@@ -253,6 +266,13 @@ export function setButtonLoading(
 
 let sidebarTrapHandler: ((event: KeyboardEvent) => void) | null = null;
 let sidebarFocusinHandler: ((event: FocusEvent) => void) | null = null;
+
+/** A closed sidebar must leave the Tab order, not only the accessibility tree. */
+function setSidebarInert(sidebar: HTMLElement, isInert: boolean) {
+  if ('inert' in sidebar) {
+    (sidebar as HTMLElement & { inert: boolean }).inert = isInert;
+  }
+}
 
 function getTopActiveOverlayId() {
   for (const id of ['app-modal', 'licenses-overlay', 'setup-wizard', 'sidebar']) {
@@ -317,6 +337,7 @@ export function closeSidebar() {
   if (sidebar instanceof HTMLElement) {
     sidebar.classList.remove('open');
     sidebar.setAttribute('aria-hidden', 'true');
+    setSidebarInert(sidebar, true);
     if (sidebarTrapHandler) {
       sidebar.removeEventListener('keydown', sidebarTrapHandler);
     }
@@ -355,6 +376,7 @@ export function toggleSidebar() {
     document.activeElement instanceof HTMLElement ? document.activeElement : null;
   sidebar.classList.add('open');
   sidebar.setAttribute('aria-hidden', 'false');
+  setSidebarInert(sidebar, false);
   if (overlay) overlay.classList.add('active');
   document.body.classList.add('sidebar-open');
   setMainContentInert(true);

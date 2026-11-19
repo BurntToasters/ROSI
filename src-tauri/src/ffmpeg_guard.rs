@@ -8,11 +8,15 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::{Duration, SystemTime};
 
 const CONFIG_FILE: &str = "launcher.json";
 const CONFIG_LIMIT: u64 = 16 * 1024;
 const PATH_LIMIT: usize = 32 * 1024;
 const LOCAL_PROTOCOLS: &str = "file,pipe";
+const LAUNCHER_PREFIX: &str = "rosi-media-tools-";
+// Longer than any single operation, so a live launcher is never old enough.
+const STALE_LAUNCHER_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Debug, Serialize, Deserialize)]
 struct LauncherConfig {
@@ -42,12 +46,106 @@ fn e2e_ffprobe_mode() -> Option<String> {
 fn launcher_root() -> Result<PathBuf, String> {
     #[cfg(windows)]
     {
-        let root = crate::app_state::data_dir().join("media-tools");
+        let root = windows_launcher_root();
         if fs::create_dir_all(&root).is_ok() {
             return Ok(root);
         }
     }
     crate::process_util::executable_temp_dir()
+}
+
+#[cfg(windows)]
+fn windows_launcher_root() -> PathBuf {
+    crate::app_state::data_dir().join("media-tools")
+}
+
+/// Folders a launcher may have been created in. Nothing is created here.
+fn existing_launcher_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    #[cfg(windows)]
+    {
+        roots.push(windows_launcher_root());
+    }
+    if let Ok(root) = crate::process_util::executable_temp_dir() {
+        roots.push(root);
+    }
+    roots
+}
+
+/// Removes launcher directories left by a crash or force quit. Only a real
+/// directory with the exact launcher name, owned by this user and unmodified
+/// for 24 hours, is removed. Runs on a startup thread.
+pub fn sweep_stale_launchers() {
+    let now = SystemTime::now();
+    for root in existing_launcher_roots() {
+        let entries = match fs::read_dir(&root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                crate::logging::warn(&format!(
+                    "Could not list media-tool launchers in {}: {error}",
+                    root.display()
+                ));
+                continue;
+            }
+        };
+        for entry in entries.flatten() {
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if !is_launcher_dir_name(&name) {
+                continue;
+            }
+            let path = entry.path();
+            // symlink_metadata never follows links, so a link is not removed.
+            let Ok(metadata) = fs::symlink_metadata(&path) else {
+                continue;
+            };
+            let stale = metadata
+                .modified()
+                .ok()
+                .and_then(|modified| now.duration_since(modified).ok())
+                .is_some_and(|age| age > STALE_LAUNCHER_AGE);
+            if !metadata.is_dir() || !stale || !owned_by_current_user(&metadata) {
+                continue;
+            }
+            match fs::remove_dir_all(&path) {
+                Ok(()) => crate::logging::info(&format!(
+                    "Removed stale media-tool launcher {}",
+                    path.display()
+                )),
+                Err(error) => crate::logging::warn(&format!(
+                    "Could not remove stale media-tool launcher {}: {error}",
+                    path.display()
+                )),
+            }
+        }
+    }
+}
+
+/// True for `rosi-media-tools-<uuid>` in the 8-4-4-4-12 hex form.
+fn is_launcher_dir_name(name: &str) -> bool {
+    let Some(uuid) = name.strip_prefix(LAUNCHER_PREFIX) else {
+        return false;
+    };
+    uuid.len() == 36
+        && uuid.bytes().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => byte == b'-',
+            _ => byte.is_ascii_hexdigit(),
+        })
+}
+
+fn owned_by_current_user(metadata: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        metadata.uid() == unsafe { libc::geteuid() }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        true
+    }
 }
 
 /// Unique local launcher paths that remain present until the owning yt-dlp

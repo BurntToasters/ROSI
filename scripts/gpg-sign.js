@@ -921,6 +921,54 @@ function generateChecksums(files) {
   return outputs;
 }
 
+// Each platform run records the commit it built from. --skip-check can upload
+// assets that were built from another commit, and nothing else ties them to
+// the draft's target, so verify-release-draft compares these records to it.
+const BUILD_COMMIT_ASSET = /^build-commit-[a-z0-9_-]+\.json$/i;
+
+function buildCommitAssetName(checksumName) {
+  const match = String(checksumName || "").match(
+    /^SHA256SUMS-([a-z0-9_-]+)\.txt$/i,
+  );
+  if (!match) {
+    throw new Error(
+      `Cannot derive a build record for ${checksumName}; expected SHA256SUMS-<platform>.txt.`,
+    );
+  }
+  return `build-commit-${match[1]}.json`;
+}
+
+function buildCommitRecord({ commit, version, tag, platform }) {
+  if (!/^[0-9a-f]{40}$/i.test(String(commit || ""))) {
+    throw new Error(
+      "Build record commit must be a 40-character hexadecimal SHA.",
+    );
+  }
+  if (!version || !tag || !platform) {
+    throw new Error("Build record needs a version, tag, and platform.");
+  }
+  return { commit, version, tag, platform };
+}
+
+function writeBuildCommitRecords({
+  checksumFiles,
+  commit,
+  version,
+  tag,
+  directory = releaseDir,
+}) {
+  return checksumFiles.map((checksumFile) => {
+    const checksumName = path.basename(checksumFile);
+    const assetName = buildCommitAssetName(checksumName);
+    const platform = checksumName.slice("SHA256SUMS-".length, -".txt".length);
+    const record = buildCommitRecord({ commit, version, tag, platform });
+    const destination = path.join(directory, assetName);
+    fs.writeFileSync(destination, `${JSON.stringify(record, null, 2)}\n`);
+    console.log(`  + ${assetName}`);
+    return destination;
+  });
+}
+
 function signFile(filePath) {
   const asc = `${filePath}.asc`;
   const args = ["--batch", "--yes", "--armor", "--detach-sign"];
@@ -1629,16 +1677,24 @@ async function loadAndVerifyPublishedBetaManifests(currentRelease) {
 function buildUploadList({
   artifacts,
   checksumFiles,
+  buildCommitFiles = [],
   signatureFiles,
   stagingDirectory = releaseDir,
 }) {
   const resolvedStagingDirectory = path.resolve(stagingDirectory);
   const unsigned = new Set(
-    [...artifacts, ...checksumFiles].map((filePath) => path.resolve(filePath)),
+    [...artifacts, ...checksumFiles, ...buildCommitFiles].map((filePath) =>
+      path.resolve(filePath),
+    ),
   );
   const groups = [
     [artifacts, (name) => isArtifact(name), "artifact or manifest"],
     [checksumFiles, (name) => isChecksumTextName(name), "checksum manifest"],
+    [
+      buildCommitFiles,
+      (name) => BUILD_COMMIT_ASSET.test(name),
+      "build commit record",
+    ],
     [
       signatureFiles,
       (name, filePath) =>
@@ -1702,12 +1758,24 @@ async function main() {
 
   console.log("[3/5] Generating checksums...");
   const checksumFiles = generateChecksums(artifacts);
+  // The real checked-out commit, recorded even when FORCE_UPLOAD bypasses the
+  // draft target check in getOrCreateRelease.
+  const buildCommitFiles = writeBuildCommitRecords({
+    checksumFiles,
+    commit: currentReleaseCommit(),
+    version: VERSION,
+    tag: TAG,
+  });
 
   console.log("[4/5] Signing...");
   const ascFiles = signArtifacts(artifacts);
   for (const checksumFile of checksumFiles) {
     ascFiles.push(signFile(checksumFile));
     console.log(`  + ${path.basename(checksumFile)}.asc`);
+  }
+  for (const recordFile of buildCommitFiles) {
+    ascFiles.push(signFile(recordFile));
+    console.log(`  + ${path.basename(recordFile)}.asc`);
   }
 
   console.log("[5/5] Uploading to GitHub...");
@@ -1722,6 +1790,7 @@ async function main() {
   const everything = buildUploadList({
     artifacts,
     checksumFiles,
+    buildCommitFiles,
     signatureFiles: ascFiles,
   });
   for (const f of everything) {
@@ -1803,6 +1872,8 @@ export {
   isArtifact,
   isPerArchTauriAppArchive,
   assertReleaseTargetsCommit,
+  buildCommitAssetName,
+  buildCommitRecord,
   buildUploadList,
   checksumTargetKeysForArtifactName,
   checksumGroupsForArtifacts,
@@ -1821,4 +1892,5 @@ export {
   validatePublishedBetaManifest,
   syncBetaManifestsToLatestStable,
   updaterChannelVariants,
+  writeBuildCommitRecords,
 };

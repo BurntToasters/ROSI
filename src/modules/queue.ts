@@ -402,6 +402,9 @@ export function renderQueue(queue: QueueItem[], elements: QueueElements, deps: Q
         else openDetailIds.delete(itemId);
       });
       const summary = document.createElement('summary');
+      // The focus restore after a broadcast finds controls by these keys.
+      summary.dataset.queueId = item.id;
+      summary.dataset.queueAction = 'details';
       summary.textContent = item.status === 'failed' ? 'Failure details' : 'Cancellation details';
       const message = document.createElement('p');
       message.textContent =

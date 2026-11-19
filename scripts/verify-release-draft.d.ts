@@ -11,9 +11,17 @@ export function requiredDraftBetaManifestNames(options?: {
 export function requiredDraftChecksumNames(options?: {
   requireLinuxAarch64?: boolean;
 }): string[];
+export function requiredDraftBuildCommitNames(options?: {
+  requireLinuxAarch64?: boolean;
+}): string[];
 export function requiredDraftAssetNames(options?: {
   requireLinuxAarch64?: boolean;
 }): string[];
+export function assertBuildCommitRecords(options: {
+  targetCommitish: string | undefined;
+  records: Map<string, string> | Iterable<[string, string]>;
+  requireLinuxAarch64?: boolean;
+}): void;
 export function assertDraftReleaseShape(options: {
   release: {
     draft?: boolean;

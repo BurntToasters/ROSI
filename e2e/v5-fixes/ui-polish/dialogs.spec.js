@@ -5,10 +5,11 @@
 // Needs window.__ROSI_E2E__.modules to expose `overlays` (overlays.ts) and
 // `settings` (settings-store.ts) from src/e2e-hook.ts. The modal objects, the
 // interrupt confirm, and the licenses trap are driven through those modules.
-// Updater rows emit real updater-status events; the IPC boundary is wrapped
-// only for download_update, install_update, and check_for_updates. The wrap is
-// at window.fetch, the transport Tauri uses for every invoke: window.__TAURI_INTERNALS__
-// is non-writable, so its invoke cannot be replaced.
+// Updater rows emit real updater-status events. The IPC boundary is stubbed
+// only for download_update, install_update, and check_for_updates, through the
+// E2E-only registry window.__ROSI_E2E_IPC_STUBS__ that call() in src/commands.ts
+// reads before invoke. Tauri's own IPC (window.ipc, __TAURI_INTERNALS__) is not
+// hooked: it is non-writable in WKWebView and WebView2, so no hook there is reliable.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
@@ -143,24 +144,6 @@ function dialogsProbe(op, arg) {
   }
   const { overlays, settings } = modules;
   const state = window.__dialogsProbe;
-  // The response Tauri's IPC reads: the Tauri-Response header picks the
-  // callback (ok or error), and the JSON body is the value it passes on.
-  const ipcResponse = (ok, body) =>
-    new Response(JSON.stringify(body), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "Tauri-Response": ok ? "ok" : "error",
-      },
-    });
-  const parseIpcBody = (body) => {
-    if (typeof body !== "string") return null;
-    try {
-      return JSON.parse(body);
-    } catch {
-      return null;
-    }
-  };
   if (op !== "install" && op !== "restore" && !state) {
     return { error: "probe is not installed" };
   }
@@ -180,16 +163,40 @@ function dialogsProbe(op, arg) {
       bubbles: true,
       cancelable: true,
     });
+  // Mirrors the product rule in src/engine/overlays.ts (getFrameTabStops). The
+  // summary of a details is a tab stop. A closed <details> hides its content even
+  // when offsetParent is set, so checkVisibility() decides where it exists, and
+  // the closed-details walk is the fallback.
+  const insideClosedDetails = (element) => {
+    for (
+      let ancestor = element.parentElement;
+      ancestor;
+      ancestor = ancestor.parentElement
+    ) {
+      if (ancestor.tagName !== "DETAILS" || ancestor.hasAttribute("open"))
+        continue;
+      const ownSummary = [...ancestor.children].find(
+        (child) => child.tagName === "SUMMARY",
+      );
+      if (element !== ownSummary) return true;
+    }
+    return false;
+  };
   const frameFocusables = (doc) =>
     [
       ...doc.querySelectorAll(
-        'button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])',
+        'button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"]), summary',
       ),
     ].filter(
       (element) =>
         !element.hasAttribute("disabled") &&
         element.tabIndex !== -1 &&
-        element.offsetParent !== null,
+        element.offsetParent !== null &&
+        (element.tagName !== "SUMMARY" ||
+          element.parentElement?.tagName === "DETAILS") &&
+        (typeof element.checkVisibility === "function"
+          ? element.checkVisibility()
+          : !insideClosedDetails(element)),
     );
   const snapshotModal = () => {
     const element = document.getElementById("app-modal");
@@ -208,113 +215,20 @@ function dialogsProbe(op, arg) {
   switch (op) {
     case "install": {
       if (!window.__dialogsProbe) {
-        const originalFetch = window.fetch;
         const installed = {
-          originalFetch,
           calls: [],
           args: {},
+          // The registry call() in src/commands.ts reads (E2E builds only).
+          // Each entry is a function that records the call, then settles.
           stubs: {},
           counts: {},
           confirm: null,
           releaseDownload: null,
-          // Every request that reaches the fetch wrapper, Tauri or not.
-          seen: [],
-          // Native postMessage IPC messages (command names).
-          native: [],
-          nativeWrapped: false,
-          hook: null,
-          restoreNative: null,
           statuses: [],
           lastClick: null,
         };
         window.__dialogsProbe = installed;
-        // A stub resolves to { ok, value }; ok picks the invoke's callback.
-        const answer = (command, stub, args, settle) => {
-          installed.calls.push(command);
-          installed.args[command] = args;
-          return stub ? stub().then(settle) : null;
-        };
-        window.fetch = function (input, init) {
-          const url = typeof input === "string" ? input : input?.url;
-          const headers = new Headers((init && init.headers) || {});
-          const tauri = headers.has("Tauri-Callback");
-          if (installed.seen.length < 200) {
-            installed.seen.push(
-              `${init?.method ?? "GET"} ${String(url).slice(0, 120)} tauri=${tauri}`,
-            );
-          }
-          // Only Tauri invokes carry Tauri-Callback; other requests pass through.
-          if (!tauri) return originalFetch.apply(window, arguments);
-          const parsed = new URL(url);
-          const command = decodeURIComponent(
-            parsed.pathname.replace(/^\//, ""),
-          );
-          const stub = installed.stubs[command];
-          const answered = answer(
-            command,
-            stub,
-            parseIpcBody(init.body),
-            (result) => ipcResponse(result.ok, result.value),
-          );
-          return answered ?? originalFetch.apply(window, arguments);
-        };
-        // The native path: Tauri's ipc hands each message to a postMessage
-        // (window.ipc.postMessage, which wry forwards to chrome.webview). A stub
-        // settles through runCallback, using the callback and error ids the
-        // message carries. Each hook is accepted only if reading it back shows
-        // the wrapper, so a silently refused assignment is recorded, not trusted.
-        const nativeWrapper = (owner, original) =>
-          function (message) {
-            let parsed = null;
-            try {
-              parsed = JSON.parse(message);
-            } catch {
-              parsed = null;
-            }
-            if (parsed && typeof parsed.cmd === "string") {
-              installed.native.push(parsed.cmd);
-              const stub = installed.stubs[parsed.cmd];
-              if (stub) {
-                installed.calls.push(parsed.cmd);
-                installed.args[parsed.cmd] = parsed.payload ?? null;
-                stub().then((result) => {
-                  window.__TAURI_INTERNALS__.runCallback(
-                    result.ok ? parsed.callback : parsed.error,
-                    result.value,
-                  );
-                });
-                return undefined;
-              }
-            }
-            return original.apply(owner, arguments);
-          };
-        const hookOwner = (owner, label) => {
-          if (!owner || typeof owner.postMessage !== "function") return false;
-          const original = owner.postMessage;
-          try {
-            owner.postMessage = nativeWrapper(owner, original);
-          } catch (error) {
-            installed.nativeError = `${label}: ${String(error)}`;
-            return false;
-          }
-          if (owner.postMessage === original) return false;
-          installed.hook = label;
-          installed.restoreNative = () => {
-            owner.postMessage = original;
-          };
-          return true;
-        };
-        const descriptor = Object.getOwnPropertyDescriptor(window, "ipc");
-        installed.ipcDescriptor = descriptor
-          ? {
-              writable: descriptor.writable ?? null,
-              configurable: descriptor.configurable,
-            }
-          : null;
-        if (!hookOwner(window.ipc, "ipc.postMessage")) {
-          hookOwner(window.chrome?.webview, "chrome.webview.postMessage");
-        }
-        installed.nativeWrapped = Boolean(installed.hook);
+        window.__ROSI_E2E_IPC_STUBS__ = installed.stubs;
         // Status events are logged so a check can show which events arrived.
         window.__TAURI__?.event
           ?.listen?.("updater-status", (event) => {
@@ -330,16 +244,12 @@ function dialogsProbe(op, arg) {
       if (!state) return { installed: false };
       return {
         installed: true,
-        fetchWrapped: window.fetch !== state.originalFetch,
-        hook: state.hook,
-        nativeError: state.nativeError ?? null,
-        ipcDescriptor: state.ipcDescriptor,
-        lastClick: state.lastClick,
-        statuses: state.statuses.slice(-20),
+        registry: window.__ROSI_E2E_IPC_STUBS__ === state.stubs,
         stubs: Object.keys(state.stubs),
         calls: state.calls.slice(-30),
-        seen: state.seen.slice(-30),
-        native: state.native.slice(-30),
+        statuses: state.statuses.slice(-20),
+        lastClick: state.lastClick,
+        macPlatform: navigator.platform.toLowerCase().includes("mac"),
         hasFocus: document.hasFocus(),
         visibility: document.visibilityState,
         snapshot: snapshotModal(),
@@ -361,27 +271,35 @@ function dialogsProbe(op, arg) {
             error: null,
           });
         }
-        window.fetch = state.originalFetch;
-        if (state.restoreNative) state.restoreNative();
       }
+      // Removing the registry is what keeps a stub from answering a later row.
+      delete window.__ROSI_E2E_IPC_STUBS__;
       delete window.__dialogsProbe;
       return { restored: true };
     }
     case "stub": {
-      if (arg.mode === "clear") delete state.stubs[arg.cmd];
-      else if (arg.mode === "reject") {
-        state.stubs[arg.cmd] = () =>
-          Promise.resolve({ ok: false, value: arg.value });
+      const command = arg.cmd;
+      if (arg.mode === "clear") {
+        delete state.stubs[command];
+        return { cleared: command };
+      }
+      let settle;
+      if (arg.mode === "reject") {
+        settle = () => Promise.reject(arg.value);
       } else if (arg.mode === "resolve") {
-        state.stubs[arg.cmd] = () =>
-          Promise.resolve({ ok: true, value: arg.value });
+        settle = () => Promise.resolve(arg.value);
       } else if (arg.mode === "hold") {
-        state.stubs[arg.cmd] = () =>
+        settle = () =>
           new Promise((resolve) => {
-            state.releaseDownload = (value) => resolve({ ok: true, value });
+            state.releaseDownload = resolve;
           });
       } else throw new Error(`unknown stub mode ${arg.mode}`);
-      return { stubbed: arg.cmd };
+      state.stubs[command] = (args) => {
+        state.calls.push(command);
+        state.args[command] = args ?? null;
+        return settle();
+      };
+      return { stubbed: command };
     }
     case "release": {
       if (typeof state.releaseDownload !== "function") {
@@ -478,11 +396,15 @@ function dialogsProbe(op, arg) {
       return { started: true };
     }
     case "sidebarToggle": {
+      // The same platform test as isMac() in src/modules/ui.ts, so the probe
+      // sends the modifier that shortcuts.ts reads on this platform.
+      const mac = navigator.platform.toLowerCase().includes("mac");
       document.dispatchEvent(
         new KeyboardEvent("keydown", {
           key: ",",
           code: "Comma",
-          ctrlKey: true,
+          ctrlKey: !mac,
+          metaKey: mac,
           shiftKey: true,
           bubbles: true,
         }),
@@ -534,9 +456,7 @@ function dialogsProbe(op, arg) {
       const items = frameFocusables(doc);
       const last = items[items.length - 1];
       if (!last) throw new Error("licenses frame has no focusable link");
-      // Focus the frame element from the parent first, as a Tab into the frame
-      // does. In a window without OS focus, a link focused inside the frame
-      // alone does not become the frame document's active element.
+      // Focus the frame element from the parent first, as a Tab into the frame does.
       frame.focus();
       last.focus();
       const focusedLast = doc.activeElement === last;
@@ -552,7 +472,37 @@ function dialogsProbe(op, arg) {
       return {
         frameFocusableCount: items.length,
         focusedLast,
+        lastTag: last.tagName,
+        lastInClosedDetails: insideClosedDetails(last),
         diagnostics,
+        activeId: document.activeElement?.id ?? null,
+      };
+    }
+    case "frameShiftTab": {
+      const frame = document.getElementById("licenses-frame");
+      const doc = frame.contentDocument;
+      if (!doc) throw new Error("licenses frame has no same-origin document");
+      const items = frameFocusables(doc);
+      const first = items[0];
+      if (!first) throw new Error("licenses frame has no focusable tab stop");
+      frame.focus();
+      first.focus();
+      const focusedFirst = doc.activeElement === first;
+      if (focusedFirst) {
+        first.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Tab",
+            shiftKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      }
+      return {
+        frameFocusableCount: items.length,
+        focusedFirst,
+        firstTag: first.tagName,
+        firstInClosedDetails: insideClosedDetails(first),
         activeId: document.activeElement?.id ?? null,
       };
     }
@@ -709,6 +659,14 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
 
   beforeEach(async () => {
     await probe("install");
+    // A stub left over from an earlier row would answer this row's command.
+    const fresh = await probe("trace");
+    assert.deepEqual(fresh.stubs, [], "a stub survived the last teardown");
+    assert.equal(
+      fresh.registry,
+      true,
+      "the IPC stub registry is not installed",
+    );
     await resetQueue();
   });
 
@@ -1210,39 +1168,28 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
   it("C7-26 Tab and Escape inside the frame document stay in the trap", async () => {
     await scenario("frame-document-keys-stay-trapped", async () => {
       await openLicenses();
-      const { hasFocus } = await probe("trace");
-      if (!hasFocus) {
-        // Background run: the window has no OS focus, and focus cannot enter
-        // the frame document (the frame reports no focus after frame.focus()).
-        // Tab traversal is not observable here, so the row is not proven. The
-        // Escape half needs no focus, so it is still asserted.
-        const escape = await probe("frameEscape");
-        assert.equal(
-          escape.licensesActive,
-          false,
-          "Escape in the frame did not close licenses",
-        );
-        return {
-          notProven:
-            "Tab traversal from the frame needs the window to have OS focus; background runs cannot focus inside the frame document. Escape in the frame was asserted and held. Proven only in a foreground run.",
-          parentHasFocus: false,
-          escapeClosedLicenses: true,
-        };
-      }
+      // Runs in background and foreground alike. Visible frame links take focus
+      // without OS focus (the earlier not-proven branch was based on the hidden-link
+      // filter, not on focus).
       const tab = await probe("frameTab");
       assert.ok(
         tab.frameFocusableCount > 0,
-        "the frame has no focusable links",
+        "the frame has no focusable tab stop",
+      );
+      assert.equal(
+        tab.lastInClosedDetails,
+        false,
+        `the frame's last tab stop (${tab.lastTag}) is inside a closed details`,
       );
       assert.equal(
         tab.focusedLast,
         true,
-        `could not focus the last frame link (${JSON.stringify(tab.diagnostics)})`,
+        `could not focus the last frame tab stop (${JSON.stringify(tab.diagnostics)})`,
       );
       assert.equal(
         tab.activeId,
         "close-licenses",
-        `Tab from the frame went to ${tab.activeId}`,
+        `Tab from the frame's last stop went to ${tab.activeId}`,
       );
       const escape = await probe("frameEscape");
       assert.equal(
@@ -1250,7 +1197,42 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         false,
         "Escape in the frame did not close licenses",
       );
-      return { frameFocusableCount: tab.frameFocusableCount };
+      return {
+        frameFocusableCount: tab.frameFocusableCount,
+        lastTag: tab.lastTag,
+        parentHasFocus: tab.diagnostics.parentHasFocus,
+        frameHasFocus: tab.diagnostics.frameHasFocus,
+      };
+    });
+  });
+
+  it("C7-26b Shift+Tab on the frame's first real tab stop wraps to the close button", async () => {
+    await scenario("frame-shift-tab-wraps-to-close", async () => {
+      await openLicenses();
+      const shift = await probe("frameShiftTab");
+      assert.ok(
+        shift.frameFocusableCount > 0,
+        "the frame has no focusable tab stop",
+      );
+      assert.equal(
+        shift.firstInClosedDetails,
+        false,
+        `the frame's first tab stop (${shift.firstTag}) is inside a closed details`,
+      );
+      assert.equal(
+        shift.focusedFirst,
+        true,
+        "could not focus the first frame tab stop",
+      );
+      assert.equal(
+        shift.activeId,
+        "close-licenses",
+        `Shift+Tab from the frame's first stop went to ${shift.activeId}`,
+      );
+      return {
+        frameFocusableCount: shift.frameFocusableCount,
+        firstTag: shift.firstTag,
+      };
     });
   });
 

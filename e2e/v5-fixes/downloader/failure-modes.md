@@ -359,3 +359,58 @@ failed; the spec records the activity error in its report.
 L8. `hide_on_windows` on the staging directory uses a raw call too. The stage
 directory is about 177 characters, so the call is below MAX_PATH; its
 failure is already ignored. Not changed.
+
+## Audit 5.1 H: convert handoff after a cancel (on_ytdlp_exit)
+
+The convert branch reads the staged paths, deletes the yt-dlp path file, then
+checks the handoff. A cancel that lands between the read and the check takes
+the not-handed-off branch. That branch must install the paths it already read,
+not re-read the deleted path file.
+
+Failure modes:
+
+H1. Cancel lands after the paths are read and before the handoff check
+(convert enabled): the staged downloads are installed and the session completes
+as `cancelled` with the installed paths, as every other cancel path does. Before
+the fix the re-read found no path file, the fallback found nothing, and the
+files stayed in staging with "Staging retained". Guard:
+`install_downloaded_file_paths(staged_downloads, ...)` in the not-handed-off
+branch. Not automated in E2E: the window is a few lines of code with no seam.
+Checked by code review of that branch.
+H2. Cancel before the paths are read: the top `if cancelled` branch runs and
+recovers from the path file as before. Unchanged. Not separately added.
+H3. Cancel after the handoff (conversion already taken): `run_conversion`
+receives the paths and owns the cancel. Unchanged. Checked by code review.
+H4. Handoff check and `session.ytdlp_exit_pending` / `conversion_pending` update
+stay in one `with_session` call, so a cancel cannot fall between them. Checked
+by code review.
+H5. `cleanup()` on the handed-off path still runs before `run_conversion`, so
+conversion never sees a path file that a later step could read. Unchanged.
+H6. A staged file vanished before the not-handed-off install: the install reports
+it in `failed_paths` and `errors` (the same as the other install paths). The
+session still completes as `cancelled`, with the error text. Checked by code
+review; not E2E-tested (race only).
+H7. `cancel_notify` false (no progress message, `suppress_legacy_complete`):
+the not-handed-off completion keeps the same metadata flags. Checked by code
+review.
+
+## Audit 5.1 S: on_ytdlp_exit simplification
+
+Failure modes:
+
+S1. Removing the format/file_path fallback after `completion_meta_for_paths`:
+the fallback runs only when `meta.format` is `None`. That happens only when
+the final path has no extension, and then the fallback also gets `None`. Its
+`file_path` is the same `downloaded.last()` that `completion_meta_for_paths`
+already set. The output is identical for every input. Checked by reading.
+S2. The removed `final_path` and `format` bindings are no longer needed, and the
+`let Some(final_path) ... else` branch is unreachable: `downloaded.is_empty()`
+already returns earlier in the same block. Removing it changes no path.
+Checked by reading.
+S3. Removing `&& !cancelled` from the playlist partial-failure condition: the
+earlier `if cancelled { return; }` exits before this check, so `cancelled` is
+always false here. The playlist partial-failure path still runs for a non-zero
+exit. Checked by reading; the partial-failure message is covered by
+`e2e/download-process.spec.js` (existing).
+S4. Removing the same condition must not drop the `exit.code.is_some()` check or
+the `playlist_run` check. Both stay. Checked by reading.

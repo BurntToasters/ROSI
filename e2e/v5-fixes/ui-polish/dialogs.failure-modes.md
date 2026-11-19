@@ -13,11 +13,13 @@ Test seams used, and what they do not prove:
 - `window.__TAURI__.event.emit("updater-status", ...)` drives the real updater
   listener in `updater-ui.ts`. It does not prove the Rust updater emitted it.
 - `download_update`, `install_update`, and `check_for_updates` are intercepted
-  at the native IPC postMessage (`window.ipc.postMessage`, else
-  `window.chrome.webview.postMessage`), and at `window.fetch` for custom-protocol
-  requests (`Tauri-Callback` header). A stub answers with a `Tauri-Response` ok or error
-  response, so the renderer's own resolve and reject paths run. Other commands
-  pass through to Rust. The Rust decision is not exercised by these rows (the
+  in the renderer command layer. `call()` in `src/commands.ts` checks
+  `window.__ROSI_E2E_IPC_STUBS__` (E2E builds only) before `invoke`. A stub is a
+  function that resolves with the command result or rejects with its error, so
+  the renderer's own resolve and reject paths run. Other commands pass through to
+  Rust. The earlier fetch and postMessage hooks are gone: WKWebView (macOS) sends
+  Tauri invokes through `window.ipc.postMessage` and never through `fetch`, so
+  those hooks never fired there. The Rust decision is not exercised by these rows (the
   backend "still stopping" refusal is covered by the updater-engine suite once
   the backend change lands). A stubbed row fails when the stub was not reached:
   rows B5-14 to B5-18 assert `calls`, and B5-19 asserts the stub's own message,
@@ -71,21 +73,23 @@ Verdicts:
 - **B5-19 (check refusal shows message and ends spinner): spec defect.** Same
   root cause; the real check returned `null`, so the refusal modal never
   appeared.
-- **C7-26 (Tab and Escape in the frame stay trapped): not proven in background
-  mode; not a product defect.** C7-25 shows parent focus works. C7-27 and
-  C7-28 show the frame-document keydown listener is attached and reaches the
-  forwarder (Escape closes). Native runs (fg-full1 and fg-retry2) show the frame
-  document never takes focus in a window without OS focus:
-  `{"frameActive":"BODY","frameHasFocus":false,"parentActive":"licenses-frame","parentHasFocus":false}`
-  even after `frame.focus()` and `last.focus()`. Tab traversal from inside the
-  frame cannot be observed here. The spec now records the row as not proven
-  (`status: "not-proven"`, `invariantPassed: null`) when `document.hasFocus()`
-  is false. It keeps the Escape half, which needs no focus, as an assertion. The
-  full Tab check runs when the window has focus, so it is proven only in a
-  foreground run.
+- **C7-26 (Tab and Escape in the frame stay trapped): the earlier "not proven in
+  background mode" verdict was wrong. The cause is a product defect in
+  `overlays.ts`, the hidden-link filter.** C7-25 shows parent focus works. C7-27
+  and C7-28 show the frame-document keydown listener is attached and reaches the
+  forwarder (Escape closes). The earlier native runs (fg-full1, fg-retry2) read
+  `frameHasFocus: false` and were read as a background-window limit. A native
+  diagnostic on 2026-11-18 found the real cause: of 565 elements that pass the
+  `offsetParent !== null` filter in the frame, 550 are links inside closed
+  `<details>`. WebKit and Chromium give them a layout box, but `checkVisibility()`
+  is false and `focus()` is refused. The computed last stop was therefore a hidden
+  link, so Tab from the real last stop never wrapped to `close-licenses`. The same
+  diagnostic showed visible frame links take focus with `document.hasFocus()`
+  false (15 of 15), so the Tab half is asserted in background and foreground runs
+  alike. The `!hasFocus` not-proven branch is removed. Fix: rows 35-37.
 
-No product defect was found in `updater-ui.ts` or `overlays.ts`. Neither file
-is changed.
+`updater-ui.ts` is unchanged. `overlays.ts` has the licenses-frame defect in rows
+35-37; that is the only product defect in these verdicts.
 
 Outside this spec: `e2e/v5-fixes/ui-polish/settings-reset.spec.js` (around
 lines 220-232, `installChannelCallLog`) assigns `internals.invoke` the same way.
@@ -219,6 +223,72 @@ should move it to the same `fetch` interception.
     must be inert when licenses is not the top overlay; the prompt owns Escape. Check: with an app modal open, Escape in the
     frame document does nothing to the licenses state (the modal branch owns it).
 
+## Licenses frame tab stops (C7-26b, added before the code change)
+
+35. **A closed-`<details>` link is chosen as the last tab stop.** The old filter
+    (`offsetParent !== null`) keeps links inside a closed `<details>`, because
+    WebKit and Chromium give them a layout box. They are not focusable
+    (`checkVisibility()` is false, `focus()` is refused), so Tab from the real
+    last stop never wraps to the close button. Check: C7-26 asserts the frame's
+    last real tab stop is not inside a closed `<details>`, and that Tab on it moves
+    focus to `close-licenses`.
+36. **A `<summary>` is missing from the tab order.** Each `<details>` is reached
+    through its `<summary>`, which the old selector did not include, so the first
+    or last real stop can be a different element and the wrap happens at the
+    wrong edge. Check: C7-26b asserts Shift+Tab from the frame's first real stop
+    (a `summary` when the first details is closed) wraps to `close-licenses`, and
+    the helper includes `summary` elements that toggle a details. A `summary` inside
+    a closed outer details is excluded by the same rule.
+37. **The WebKit fallback (no `checkVisibility`) keeps hidden links or drops
+    reachable ones.** Linux WebKitGTK versions without `checkVisibility` use the
+    fallback: exclude elements inside a closed `<details>`, except its own direct
+    `<summary>`. A fallback that excludes an element in an open details, or keeps
+    a link in a closed one, gives the wrong edge. Check: the spec's
+    `frameFocusables` uses `checkVisibility` on macOS, so the fallback branch is
+    not run natively here. Static review: the fallback rule matches the
+    `checkVisibility` result for open, closed, and nested details. The fallback
+    is stated as unproven natively; no Linux WebKitGTK run is part of this change.
+
+## IPC stub seam and macOS shortcut (added before the seam change)
+
+29. **The stub seam is not reached on a platform.** A platform whose invoke
+    skips `call()` would let the real backend answer, and the update rows would
+    then see the real outcome (for example "cancelled") and pass or fail for the
+    wrong reason. Check: B5-14 to B5-18 assert the command is in `calls` and
+    B5-19 asserts the stub's own message, so a bypassed stub fails the row. The
+    `trace` op reports whether the registry is the one installed on `window`.
+    Static: `commands.contract.test.ts` (mode 4) fails if any other renderer file
+    calls `invoke()`.
+30. **The seam leaks into a production build.** The stub lookup must sit inside
+    an `import.meta.env.VITE_ROSI_E2E === '1'` branch in `call()`, so Vite folds
+    the test to `"" === '1'` and Rollup drops the branch and its helper. Check:
+    `npx vite build` into a scratch directory, then grep the output for
+    `__ROSI_E2E_IPC_STUBS__`; the grep must print nothing.
+31. **A stale stub survives the probe teardown.** A stub left on the registry by
+    a failed row would answer the next row's command. Check: `restore` deletes
+    `window.__ROSI_E2E_IPC_STUBS__` and settles any held promise as cancelled. The
+    `beforeEach` install then asserts the new registry is empty (`stubs` is `[]`
+    in `trace`) before the row runs.
+32. **The macOS shortcut modifier mismatch.** `shortcuts.ts` reads `metaKey` on
+    macOS and `ctrlKey` elsewhere. A probe that always sends `ctrlKey` never
+    opens the sidebar on macOS, so B4-2 fails at "sidebar did not open" before the
+    busy prompt is tested. Check: B4-2 asserts the sidebar is open before Escape
+    is pressed. The probe sends `metaKey` on macOS and `ctrlKey` elsewhere.
+33. **The probe's platform test drifts from the app's.** A different platform test
+    (for example `userAgent`) could pick another modifier than `isMac()` on some
+    hosts. Check: the probe uses `navigator.platform.toLowerCase().includes("mac")`,
+    the same expression as `isMac()` in `src/modules/ui.ts`. Code review of the two
+    expressions.
+34. **The DOM loader cannot evaluate `import.meta`, or evaluates it as E2E.**
+    `e2e/renderer-dom-checks/load-renderer.cjs` transpiles `src` to CommonJS and
+    evals it in jsdom, so the `import.meta.env` in `commands.ts` is a syntax error
+    and `run.cjs` fails. A loader that fixes this by reporting `VITE_ROSI_E2E` as
+    `"1"` would switch the stub seam on in the DOM checks. Check: the loader
+    replaces `import.meta.env.KEY` only for the known keys, with the non-E2E
+    values (`VITE_ROSI_E2E` is `""`, `VITE_ROSI_CHANNEL` is `""`). An unknown KEY,
+    or any `import.meta` left after that replacement, throws and names the file.
+    `node e2e/renderer-dom-checks/run.cjs` passes.
+
 ## What WebDriver cannot prove (stated, not checked)
 
 - Native Tab traversal: the browser moves focus into the iframe and out of its
@@ -238,7 +308,8 @@ should move it to the same `fetch` interception.
 - B5-17 was a vacuous pass before (the real backend answered); it now holds the
   download and asserts the banner is up while pending.
 - C7-26 is recorded as not-proven (status "not-proven", invariantPassed null)
-  on background runs, because document.hasFocus() is false. The Escape half is
-  asserted. The Tab half is proven only in a foreground run.
+  on background runs, because document.hasFocus() is false. Superseded: see the
+  C7-26 verdict above (hidden-link filter, rows 35-37). This historical result is
+  kept as recorded.
 - Spec result: 23 passed, 0 failed, 1 not-proven (C7-26). Report
   e2e/artifacts/v5-fixes-ui-polish/2026-11-13T07-45-43-258Z-dialogs-53720/report.json.

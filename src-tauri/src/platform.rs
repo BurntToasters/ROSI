@@ -29,11 +29,6 @@ pub fn distribution_channel() -> &'static str {
     }
 }
 
-#[tauri::command]
-pub fn get_distribution_channel() -> &'static str {
-    distribution_channel()
-}
-
 #[cfg(target_os = "macos")]
 fn is_rosetta_translated() -> bool {
     let mut ret: libc::c_int = 0;
@@ -56,7 +51,6 @@ fn is_rosetta_translated() -> bool {
     false
 }
 
-#[tauri::command]
 pub fn get_beta_updater_target() -> String {
     use tauri::utils::config::BundleType;
 
@@ -92,7 +86,6 @@ pub fn get_beta_updater_target() -> String {
 /// Packaged macOS apps update from per-arch `.app.tar.zst` archives
 /// (`scripts/pack-macos-updater-zst.js`). `None` everywhere else, so those
 /// builds keep the default or beta target.
-#[tauri::command]
 pub fn get_compact_updater_target(beta: bool) -> Option<String> {
     use tauri::utils::config::BundleType;
 
@@ -231,7 +224,7 @@ pub fn open_file_location(
         // Linux reveal needs org.freedesktop.FileManager1; the plugin's portal
         // fallback does not work, so open the containing folder instead.
         app.opener().reveal_item_in_dir(&path).or_else(|error| {
-            match path.parent().filter(|dir| dir.exists()) {
+            match path.parent().filter(|dir| dir.is_dir()) {
                 Some(dir) => {
                     crate::logging::warn(&format!(
                         "Reveal in file manager failed ({error}); opening the folder instead."
@@ -241,7 +234,7 @@ pub fn open_file_location(
                 None => Err(error),
             }
         })
-    } else if let Some(dir) = path.parent().filter(|dir| dir.exists()) {
+    } else if let Some(dir) = path.parent().filter(|dir| dir.is_dir()) {
         open_parent(dir)
     } else {
         return ipc::err(INVALID_PATH, "Path and containing directory do not exist.");

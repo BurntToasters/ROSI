@@ -9,9 +9,10 @@ import { sha256 } from "../../../e2e/helpers/media-server.js";
 import {
   ARTIFACT_DIR,
   e2eChildEnv,
+  gitCommit,
   relativeToRepo,
-  reportSelfHashMatches,
 } from "../common.js";
+import { verifyRunnerReport } from "../runner-report.js";
 
 // Each mode is a separate launch of the same binary, as documented in
 // e2e/platform-probes/README.md. The spec enables one describe block per mode.
@@ -29,6 +30,37 @@ const AUDIT_V5_MODES = Object.freeze([
     directory: ["audit-v5-beta2", "termination-probe"],
   },
 ]);
+
+/**
+ * Problems with one probe report, given the identity the gate expects. The
+ * probes exit zero once their observations complete, so a false invariant
+ * here is a reproduced product defect and fails the gate.
+ */
+export function probeReportProblems(report, expected) {
+  const label = expected.label;
+  const problems = verifyRunnerReport(report, {
+    label,
+    version: expected.version,
+    commit: expected.commit,
+    binarySha256: expected.binarySha256,
+    startedAfter: expected.suiteStartedAt,
+    selfHash: true,
+  });
+  const observations = Array.isArray(report?.observations)
+    ? report.observations
+    : [];
+  if (observations.length === 0) {
+    problems.push(`${label} recorded no observations`);
+  }
+  for (const item of observations) {
+    if (item?.invariantPassed === false) {
+      problems.push(
+        `${label}: ${item.name ?? item.id ?? "observation"} invariant failed`,
+      );
+    }
+  }
+  return problems;
+}
 
 export function runAuditV5Probes({ ffmpeg, binary, suiteStartedAt }) {
   const scenario = { name: "audit-v5-beta2", status: "failed" };
@@ -48,6 +80,10 @@ export function runAuditV5Probes({ ffmpeg, binary, suiteStartedAt }) {
     };
   }
   const binarySha256 = sha256(fs.readFileSync(binary));
+  const version = JSON.parse(
+    fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
+  ).version;
+  const commit = gitCommit();
   const problems = [];
   const reports = [];
   for (const mode of AUDIT_V5_MODES) {
@@ -80,30 +116,18 @@ export function runAuditV5Probes({ ffmpeg, binary, suiteStartedAt }) {
     }
     try {
       const report = JSON.parse(fs.readFileSync(reportFile, "utf8"));
-      if (!reportSelfHashMatches(report)) {
-        problems.push(`${mode.label} report self-hash differs`);
-      }
-      if (report.binarySha256 !== binarySha256) {
-        problems.push(`${mode.label} binary changed during probes`);
-      }
-      if (Date.parse(report.startedAt) < Date.parse(suiteStartedAt)) {
-        problems.push(`${mode.label} report predates this gate run`);
-      }
+      problems.push(
+        ...probeReportProblems(report, {
+          label: mode.label,
+          version,
+          commit,
+          binarySha256,
+          suiteStartedAt,
+        }),
+      );
       const observations = Array.isArray(report.observations)
         ? report.observations
         : [];
-      if (observations.length === 0) {
-        problems.push(`${mode.label} recorded no observations`);
-      }
-      // The probes exit zero once observations complete. A false invariant is
-      // a reproduced product defect, so it fails the gate.
-      for (const item of observations) {
-        if (item.invariantPassed === false) {
-          problems.push(
-            `${mode.label}: ${item.name ?? item.id ?? "observation"} invariant failed`,
-          );
-        }
-      }
       reports.push({
         mode: mode.label,
         reportPath: relativeToRepo(reportFile),

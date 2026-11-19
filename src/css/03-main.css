@@ -301,7 +301,9 @@
 }
 
 .url-input-container input:focus {
-  outline: none;
+  /* Forced-colors mode drops box-shadow, so the transparent outline becomes visible there. */
+  outline: 2px solid transparent;
+  outline-offset: 4px;
   border-color: var(--accent);
   box-shadow:
     var(--well-shadow),
@@ -339,11 +341,6 @@
   color: var(--text-secondary);
 }
 
-.preview-btn .loader-icon {
-  width: 14px;
-  height: 14px;
-}
-
 .download-btn {
   min-width: 168px;
 }
@@ -372,15 +369,6 @@
 
 .download-card.is-batch .url-validation-message {
   color: var(--accent-text);
-}
-
-.loader-icon {
-  display: block;
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
-  object-fit: contain;
-  animation: spin 1s linear infinite;
 }
 
 @keyframes spin {

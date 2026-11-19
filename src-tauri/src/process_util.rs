@@ -218,11 +218,13 @@ pub fn command<P: AsRef<OsStr>>(
     #[cfg(unix)]
     {
         // Known gap: release builds use `panic = "abort"`, so a ROSI abort
-        // skips every cleanup path. On Linux and macOS the helpers (yt-dlp,
-        // FFmpeg) can then outlive ROSI. Windows is covered by the kill-on-close
-        // job. Linux PR_SET_PDEATHSIG is the planned fix, but it tracks the
-        // spawning thread and so needs a process-lifetime spawner thread. Deferred
-        // until a Linux build can verify it; macOS has no equivalent.
+        // skips every cleanup path. Windows is covered by the kill-on-close
+        // job. Linux is covered by PR_SET_PDEATHSIG, set in `spawn` on the
+        // process-lifetime `rosi-spawner` thread (PDEATHSIG tracks the forking
+        // thread). Only direct children are covered: grandchildren that yt-dlp
+        // starts itself (e.g. its own FFmpeg) do not inherit PDEATHSIG. macOS
+        // remains a known gap: yt-dlp and FFmpeg can outlive ROSI after an
+        // abort there.
         use std::os::unix::process::CommandExt;
         if new_group {
             command.process_group(0);
@@ -323,17 +325,21 @@ fn assign_windows_job(pid: u32) -> std::io::Result<WindowsJob> {
 
     // CommandExt::creation_flags starts the primary thread suspended, so the
     // process cannot spawn descendants before it joins this owned job.
+    // NtResumeProcess is an undocumented ntdll export. It returns an NTSTATUS
+    // and does not set the thread's last error, so the status is reported.
     #[link(name = "ntdll")]
     extern "system" {
         fn NtResumeProcess(process_handle: HANDLE) -> i32;
     }
-    let resumed = unsafe { NtResumeProcess(process) } >= 0;
-    let resume_error = (!resumed).then(std::io::Error::last_os_error);
+    let status = unsafe { NtResumeProcess(process) };
     unsafe {
         CloseHandle(process);
     }
-    if let Some(error) = resume_error {
-        return Err(error);
+    if status < 0 {
+        return Err(std::io::Error::other(format!(
+            "NtResumeProcess failed with NTSTATUS 0x{:08X}",
+            status as u32
+        )));
     }
     Ok(owned_job)
 }
@@ -462,7 +468,106 @@ fn child_exit_observed(pid: u32) -> std::io::Result<bool> {
     }
 }
 
+/// One spawn request for the `rosi-spawner` thread. The sender blocks on
+/// `reply` until the spawner has finished with `command`.
+#[cfg(target_os = "linux")]
+struct SpawnJob {
+    command: *mut Command,
+    reply: mpsc::Sender<std::io::Result<SharedChild>>,
+}
+
+// SAFETY: `spawn_child` sends a job and then blocks on its reply, so the
+// `&mut Command` behind `command` stays valid and is used by only the spawner
+// until it sends the reply. The pointer is never used after that reply.
+#[cfg(target_os = "linux")]
+unsafe impl Send for SpawnJob {}
+
+/// Sender to the process-lifetime `rosi-spawner` thread, or None when that
+/// thread could not be started. PDEATHSIG fires when the thread that forked
+/// the child exits, so children must be forked from a thread that lives as
+/// long as ROSI does.
+#[cfg(target_os = "linux")]
+fn spawner() -> Option<&'static mpsc::Sender<SpawnJob>> {
+    static SPAWNER: std::sync::OnceLock<Option<mpsc::Sender<SpawnJob>>> =
+        std::sync::OnceLock::new();
+    SPAWNER
+        .get_or_init(|| {
+            let (sender, receiver) = mpsc::channel::<SpawnJob>();
+            std::thread::Builder::new()
+                .name("rosi-spawner".into())
+                .spawn(move || {
+                    for job in receiver {
+                        // SAFETY: see `unsafe impl Send for SpawnJob`.
+                        let result = spawn_with_death_signal(unsafe { &mut *job.command });
+                        let _ = job.reply.send(result);
+                    }
+                })
+                .ok()
+                .map(|_| sender)
+        })
+        .as_ref()
+}
+
+/// Forks `command` with PR_SET_PDEATHSIG(SIGKILL) so the child dies with ROSI,
+/// including when ROSI aborts without running its cleanup. Runs on the spawner.
+#[cfg(target_os = "linux")]
+fn spawn_with_death_signal(command: &mut Command) -> std::io::Result<SharedChild> {
+    use std::os::unix::process::CommandExt;
+
+    // SAFETY: getpid has no preconditions.
+    let parent = unsafe { libc::getpid() };
+    // SAFETY: the hook runs in the forked child before exec and makes only
+    // async-signal-safe calls: prctl, getppid, and building an error from
+    // errno without allocating.
+    unsafe {
+        command.pre_exec(move || {
+            // prctl is variadic and the kernel reads this argument as unsigned long.
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // ROSI may have died before prctl took effect. Then the child was
+            // re-parented and would never receive the signal, so fail the spawn.
+            if libc::getppid() != parent {
+                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+            }
+            Ok(())
+        });
+    }
+    SharedChild::spawn(command)
+}
+
+/// Spawns through the spawner thread so the child gets PDEATHSIG. If the
+/// spawner cannot be started or has stopped before taking the job, spawns on
+/// the calling thread without the hook.
+#[cfg(target_os = "linux")]
+fn spawn_child(command: &mut Command) -> std::io::Result<SharedChild> {
+    let Some(sender) = spawner() else {
+        return SharedChild::spawn(command);
+    };
+    let (reply, result) = mpsc::channel();
+    let job = SpawnJob {
+        command: std::ptr::from_mut(&mut *command),
+        reply,
+    };
+    if let Err(mpsc::SendError(_unsent)) = sender.send(job) {
+        // The job was never taken, so `command` is still exclusively ours.
+        return SharedChild::spawn(command);
+    }
+    // Blocking here keeps `command` borrowed until the spawner replies; see
+    // the SAFETY note on `SpawnJob`. A reply channel closed without a result
+    // means the spawner panicked after taking the job, so the child may
+    // already exist. Report an error rather than spawn a second child.
+    result.recv().unwrap_or_else(|_| {
+        Err(std::io::Error::other(
+            "rosi-spawner stopped before reporting the child process",
+        ))
+    })
+}
+
 pub fn spawn(command: &mut Command) -> std::io::Result<Arc<ManagedChild>> {
+    #[cfg(target_os = "linux")]
+    let child = spawn_child(command)?;
+    #[cfg(not(target_os = "linux"))]
     let child = SharedChild::spawn(command)?;
     #[cfg(windows)]
     let job = match assign_windows_job(child.id()) {

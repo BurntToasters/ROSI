@@ -462,13 +462,7 @@ function main({
   runner("changelog", npm, ["run", "validate:changelog"], null, results);
   runner("updater", npm, ["run", "validate:updater"], null, results);
   runner("flatpak", npm, ["run", "validate:flatpak"], null, results);
-  runner(
-    "cargoSafeUpdate",
-    npm,
-    ["run", "test:cargo-safe-update"],
-    null,
-    results,
-  );
+  runner("cargoSafeUpdate", npm, ["run", "test:scripts"], null, results);
   runner(
     "cargoUpdatePolicy",
     npm,

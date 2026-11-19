@@ -11,76 +11,75 @@ import {
   e2eChildEnv,
   gitCommit,
   relativeToRepo,
-  reportSelfHashMatches,
   run,
 } from "../common.js";
 import { companionFfprobe } from "../fixtures.js";
 import { ROUND2_NATIVE_OBSERVATIONS } from "../manifest.js";
+import { normalizeRunnerReport, verifyRunnerReport } from "../runner-report.js";
+import { pruneRunnerArtifacts } from "../prune-artifacts.js";
+
+// Upper bound for one native child. The round-two and process-repair runners
+// had none, so a hung child used to block the gate until the CI job timed out.
+export const NATIVE_RUNNER_TIMEOUT_MS = 900_000;
+const RETAINED_RUN_FOLDERS = 20;
+// Folder names these runners write: <ISO time, with - for : and .>-<pid>.
+const ROUND2_RUN_FOLDER = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-\d+$/;
+const LONG_TERM_GATE_FOLDER = /^gate-\d+-\d+$/;
+const AUDIT4_RUN_FOLDER = /^\d+-\d+$/;
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** A message when a child was stopped by its timeout, otherwise null. */
+function timeoutReason(error, label) {
+  if (error?.code !== "ETIMEDOUT") return null;
+  return `${label} timed out after ${NATIVE_RUNNER_TIMEOUT_MS} ms and was stopped`;
+}
 
 export function round2NativeReportProblems(report, expected) {
-  const problems = [];
   if (!report || typeof report !== "object") {
     return ["native report is not an object"];
   }
-  const suite = report.suite ?? report.scenario;
-  if (report.app !== "ROSI")
-    problems.push("native report app identity differs");
+  const problems = verifyRunnerReport(report, {
+    label: "native",
+    app: "ROSI",
+    suite: "round2-native",
+    version: expected.version,
+    platform: expected.platform,
+    arch: expected.arch,
+    binarySha256: expected.binarySha256,
+    startedAfter: expected.suiteStartedAt,
+    verdict: true,
+    selfHash: true,
+  });
+  const fields = normalizeRunnerReport(report);
   if (report.schemaVersion !== undefined && report.schemaVersion !== 1) {
     problems.push("native report schema version is unsupported");
-  }
-  if (suite !== "round2-native") {
-    problems.push("native report suite identity differs");
   }
   if (typeof report.runId !== "string" || report.runId.length === 0) {
     problems.push("native report run id is missing");
   }
-  if (report.version !== expected.version) {
-    problems.push("native report version differs");
-  }
-  if (report.platform !== expected.platform || report.arch !== expected.arch) {
-    problems.push("native report host identity differs");
-  }
   if (report.binary !== expected.binary) {
     problems.push("native report E2E binary path differs");
-  }
-  if (report.binarySha256 !== expected.binarySha256) {
-    problems.push("native report E2E binary hash differs");
   }
   if (report.ffmpegSha256 !== expected.ffmpegSha256) {
     problems.push("native report FFmpeg hash differs");
   }
-  const sourceHashes = report.probeSources ?? report.sourceHashes;
   for (const [file, hash] of Object.entries(expected.probeSources)) {
-    if (sourceHashes?.[file] !== hash) {
+    if (fields.probeSources?.[file] !== hash) {
       problems.push(`native report source hash differs for ${file}`);
     }
   }
-  if (
-    !/^[a-f0-9]{64}$/i.test(
-      report.toneFixtureSha256 ?? report.fixtureHash ?? "",
-    )
-  ) {
+  if (!/^[a-f0-9]{64}$/i.test(fields.toneFixtureSha256 ?? "")) {
     problems.push("native report tone fixture hash is missing or malformed");
   }
   if (typeof report.isolatedProfile !== "string" || !report.isolatedProfile) {
     problems.push("native report isolated profile is missing");
   }
-  const startedAt = Date.parse(report.startedAt);
-  const finishedAt = Date.parse(report.finishedAt);
-  const suiteStartedAt = Date.parse(expected.suiteStartedAt);
-  if (
-    !Number.isFinite(startedAt) ||
-    !Number.isFinite(finishedAt) ||
-    !Number.isFinite(suiteStartedAt) ||
-    startedAt < suiteStartedAt ||
-    finishedAt < startedAt
-  ) {
-    problems.push("native report timestamps are stale or invalid");
-  }
   if (report.wdioExitCode !== 0 || report.wdioError) {
     problems.push("native WebdriverIO run did not pass");
   }
-  if (report.passed !== true) problems.push("native report does not pass");
   if (!Array.isArray(report.failures) || report.failures.length > 0) {
     problems.push("native report lists failed observations");
   }
@@ -136,13 +135,6 @@ export function round2NativeReportProblems(report, expected) {
       }
     }
   }
-  const { reportSha256, ...reportBody } = report;
-  const actualReportSha256 = sha256(
-    Buffer.from(JSON.stringify(reportBody, null, 2)),
-  );
-  if (reportSha256 !== actualReportSha256) {
-    problems.push("native report self-hash differs");
-  }
   return problems;
 }
 
@@ -154,6 +146,12 @@ export function runLongTermPersistenceRepairs() {
     `gate-${Date.now()}-${process.pid}`,
   );
   const directory = path.join(REPO_ROOT, relative);
+  pruneRunnerArtifacts({
+    artifactsDir: path.join(ARTIFACT_DIR, "long-term-persistence"),
+    pattern: LONG_TERM_GATE_FOLDER,
+    keep: RETAINED_RUN_FOLDERS,
+    currentRunDir: directory,
+  });
   const scenario = {
     name: "long-term-persistence",
     status: "failed",
@@ -169,7 +167,7 @@ export function runLongTermPersistenceRepairs() {
       // This runner performs 15 isolated app launches. WebKitGTK startup on
       // hosted Linux takes roughly 30 seconds per launch, so four minutes
       // kills the runner mid-suite and leaves its WebDriver child behind.
-      timeout: 900_000,
+      timeout: NATIVE_RUNNER_TIMEOUT_MS,
       maxBuffer: 8 * 1024 * 1024,
     },
   );
@@ -178,34 +176,58 @@ export function runLongTermPersistenceRepairs() {
   try {
     const bytes = fs.readFileSync(path.join(directory, "report.json"));
     const report = JSON.parse(bytes);
-    const { reportSha256, ...body } = report;
-    if (
-      result.status !== 0 ||
-      report.suite !== "long-term-v5-audit" ||
-      report.observations.length !== 15 ||
-      report.observations.some(
-        (item) => item.runnerExitCode !== 0 || item.invariantPassed !== true,
-      ) ||
-      report.binarySha256 !== sha256(fs.readFileSync(e2eBinaryPath())) ||
-      reportSha256 !== sha256(Buffer.from(JSON.stringify(body, null, 2)))
-    ) {
-      throw new Error(
-        "Native persistence acceptance or report identity failed.",
-      );
+    const problems = verifyRunnerReport(report, {
+      label: "persistence",
+      suite: "long-term-v5-audit",
+      commit: gitCommit(),
+      binarySha256: sha256(fs.readFileSync(e2eBinaryPath())),
+      selfHash: true,
+    });
+    const timedOut = timeoutReason(
+      result.error,
+      "The long-term persistence runner",
+    );
+    if (timedOut) problems.push(timedOut);
+    else if (result.status !== 0) {
+      problems.push(`long-term runner exited with ${result.status}`);
     }
-    for (const [file, expected] of Object.entries(report.sourceSha256)) {
+    const observations = Array.isArray(report.observations)
+      ? report.observations
+      : [];
+    if (observations.length !== 15) {
+      problems.push("persistence report must record 15 observations");
+    }
+    if (
+      observations.some(
+        (item) => item?.runnerExitCode !== 0 || item?.invariantPassed !== true,
+      )
+    ) {
+      problems.push("persistence observation failed");
+    }
+    for (const [file, expected] of Object.entries(report.sourceSha256 ?? {})) {
       if (sha256(fs.readFileSync(path.join(REPO_ROOT, file))) !== expected) {
-        throw new Error(`Persistence source changed: ${file}`);
+        problems.push(`Persistence source changed: ${file}`);
       }
     }
-    for (const file of report.artifacts) {
+    for (const file of Array.isArray(report.artifacts)
+      ? report.artifacts
+      : []) {
       const artifact = path.resolve(directory, file.path);
-      if (!artifact.startsWith(`${directory}${path.sep}`))
-        throw new Error("Invalid persistence artifact path.");
+      if (!artifact.startsWith(`${directory}${path.sep}`)) {
+        problems.push("Invalid persistence artifact path.");
+        continue;
+      }
       const contents = fs.readFileSync(artifact);
       if (contents.length !== file.bytes || sha256(contents) !== file.sha256) {
-        throw new Error(`Persistence artifact changed: ${file.path}`);
+        problems.push(`Persistence artifact changed: ${file.path}`);
       }
+    }
+    if (problems.length > 0) {
+      return {
+        ...scenario,
+        reason: problems.join("; "),
+        runnerExitCode: result.status,
+      };
     }
     return {
       ...scenario,
@@ -222,7 +244,10 @@ export function runLongTermPersistenceRepairs() {
   }
 }
 
-export function runRound2NativeRepairs({ ffmpeg, binary, suiteStartedAt }) {
+export function runRound2NativeRepairs(
+  { ffmpeg, binary, suiteStartedAt },
+  { spawnCommand = spawnSync, artifactsDir = ARTIFACT_DIR } = {},
+) {
   const scenario = { name: "round2-native", status: "failed" };
   if (!ffmpeg) {
     return {
@@ -231,14 +256,21 @@ export function runRound2NativeRepairs({ ffmpeg, binary, suiteStartedAt }) {
     };
   }
 
+  const artifactsDirectory = path.resolve(artifactsDir, "round2-native");
+  pruneRunnerArtifacts({
+    artifactsDir: artifactsDirectory,
+    pattern: ROUND2_RUN_FOLDER,
+    keep: RETAINED_RUN_FOLDERS,
+  });
   const runnerPath = path.join(REPO_ROOT, "e2e", "native-downloads-run.mjs");
   let result;
   try {
-    result = spawnSync(process.execPath, [runnerPath], {
+    result = spawnCommand(process.execPath, [runnerPath], {
       cwd: REPO_ROOT,
       env: e2eChildEnv({ ROSI_ROUND2_NATIVE_FFMPEG: ffmpeg.binary }),
       encoding: "utf8",
       windowsHide: true,
+      timeout: NATIVE_RUNNER_TIMEOUT_MS,
       maxBuffer: 64 * 1024 * 1024,
     });
   } catch (error) {
@@ -249,11 +281,18 @@ export function runRound2NativeRepairs({ ffmpeg, binary, suiteStartedAt }) {
   }
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
+  const timedOut = timeoutReason(result.error, "The round-two native runner");
+  if (timedOut) {
+    return {
+      ...scenario,
+      reason: timedOut,
+      runnerExitCode: result.status,
+    };
+  }
   const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
   const reportedPath = output
     .match(/^Round 2 native evidence: (.+)$/m)?.[1]
     ?.trim();
-  const artifactsDirectory = path.resolve(ARTIFACT_DIR, "round2-native");
   if (!reportedPath) {
     return {
       ...scenario,
@@ -330,7 +369,7 @@ export function runRound2NativeRepairs({ ffmpeg, binary, suiteStartedAt }) {
       status: "passed",
       reportSha256: report.reportSha256,
       binarySha256: report.binarySha256,
-      sourceHashes: report.probeSources ?? report.sourceHashes,
+      sourceHashes: normalizeRunnerReport(report).probeSources,
       observations: report.observations.length,
       startedAt: report.startedAt,
       finishedAt: report.finishedAt,
@@ -348,18 +387,16 @@ export function runRound2NativeRepairs({ ffmpeg, binary, suiteStartedAt }) {
  * Runs one spec through the isolated process-repair wrapper. The wrapper
  * writes repair-report.json; the gate verifies its identity and result.
  */
-export function runDownloadProcessRepairs({
-  ffmpeg,
-  binary,
-  suiteStartedAt,
-  name = "download-process-repairs",
-  spec = "./download-process.spec.js",
-}) {
-  const repairArtifactDir = path.join(
-    ARTIFACT_DIR,
-    `${name}-${Date.now()}-${process.pid}`,
-  );
-  const reportPath = path.join(repairArtifactDir, "repair-report.json");
+export function runDownloadProcessRepairs(
+  {
+    ffmpeg,
+    binary,
+    suiteStartedAt,
+    name = "download-process-repairs",
+    spec = "./download-process.spec.js",
+  },
+  { run: runCommand = run, artifactsDir = ARTIFACT_DIR } = {},
+) {
   if (process.platform === "win32") {
     return {
       name,
@@ -369,18 +406,31 @@ export function runDownloadProcessRepairs({
       platform: process.platform,
     };
   }
+  pruneRunnerArtifacts({
+    artifactsDir,
+    pattern: new RegExp(`^${escapeRegExp(name)}-\\d+-\\d+$`),
+    keep: RETAINED_RUN_FOLDERS,
+  });
+  const repairArtifactDir = path.join(
+    artifactsDir,
+    `${name}-${Date.now()}-${process.pid}`,
+  );
+  const reportPath = path.join(repairArtifactDir, "repair-report.json");
 
   let runnerFailure = null;
   try {
-    run(process.execPath, ["e2e/run-download-process.mjs"], {
+    runCommand(process.execPath, ["e2e/run-download-process.mjs"], {
       env: {
         ROSI_REPAIRS_FFMPEG: ffmpeg?.binary ?? "",
         ROSI_AUDIT3_ARTIFACT_DIR: repairArtifactDir,
         ROSI_REPAIRS_SPEC: spec,
       },
+      timeout: NATIVE_RUNNER_TIMEOUT_MS,
     });
   } catch (error) {
-    runnerFailure = error instanceof Error ? error.message : String(error);
+    runnerFailure =
+      timeoutReason(error, `The ${name} runner`) ??
+      (error instanceof Error ? error.message : String(error));
   }
 
   const scenario = {
@@ -390,83 +440,79 @@ export function runDownloadProcessRepairs({
   };
   try {
     const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
-    const { reportSha256, ...reportBody } = report;
-    const actualReportSha256 = sha256(
-      Buffer.from(JSON.stringify(reportBody, null, 2)),
-    );
-    const startedAt = Date.parse(report.startedAt);
-    const finishedAt = Date.parse(report.finishedAt);
-    const suiteStart = Date.parse(suiteStartedAt);
     const binarySha256 = sha256(fs.readFileSync(binary));
     const selectedFfmpegSha256 = ffmpeg
       ? sha256(fs.readFileSync(fs.realpathSync(ffmpeg.binary)))
       : null;
-    const mismatch =
-      report.app !== "ROSI" ||
-      report.version !==
-        JSON.parse(
-          fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
-        ).version ||
-      report.commit !== gitCommit() ||
-      report.platform !== process.platform ||
-      report.arch !== process.arch ||
-      report.exitCode !== 0 ||
-      report.binarySha256 !== binarySha256 ||
-      report.probeSourceSha256?.runner !==
-        sha256(
-          fs.readFileSync(
-            path.join(REPO_ROOT, "e2e", "run-download-process.mjs"),
-          ),
-        ) ||
-      report.probeSourceSha256?.spec !==
-        sha256(
-          fs.readFileSync(
-            path.join(REPO_ROOT, "e2e", spec.replace(/^\.\//, "")),
-          ),
-        ) ||
-      report.probeSourceSha256?.failureModes !==
-        sha256(
-          fs.readFileSync(
-            path.join(REPO_ROOT, "e2e", "download-process.failures.md"),
-          ),
-        ) ||
-      report.probeSourceSha256?.audit3FailureModes !==
-        sha256(
-          fs.readFileSync(
-            path.join(
-              REPO_ROOT,
-              "e2e",
-              "download-process-targeted-failure-modes.md",
-            ),
-          ),
-        ) ||
-      (selectedFfmpegSha256 !== null &&
-        report.realFfmpegSha256 !== selectedFfmpegSha256) ||
-      !Number.isFinite(startedAt) ||
-      !Number.isFinite(finishedAt) ||
-      !Number.isFinite(suiteStart) ||
-      startedAt < suiteStart ||
-      finishedAt < startedAt ||
-      reportSha256 !== actualReportSha256;
-    if (mismatch) {
-      throw new Error(
-        "The process-repair report failed identity, freshness, result, or self-hash verification.",
-      );
+    const problems = verifyRunnerReport(report, {
+      label: "process-repair",
+      app: "ROSI",
+      version: JSON.parse(
+        fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
+      ).version,
+      commit: gitCommit(),
+      platform: process.platform,
+      arch: process.arch,
+      binarySha256,
+      startedAfter: suiteStartedAt,
+      selfHash: true,
+    });
+    if (report.exitCode !== 0) {
+      problems.push("process-repair spec reported a nonzero exit code");
     }
-    if (runnerFailure) throw new Error(runnerFailure);
+    const expectedSources = {
+      runner: sha256(
+        fs.readFileSync(
+          path.join(REPO_ROOT, "e2e", "run-download-process.mjs"),
+        ),
+      ),
+      spec: sha256(
+        fs.readFileSync(path.join(REPO_ROOT, "e2e", spec.replace(/^\.\//, ""))),
+      ),
+      failureModes: sha256(
+        fs.readFileSync(
+          path.join(REPO_ROOT, "e2e", "download-process.failures.md"),
+        ),
+      ),
+      audit3FailureModes: sha256(
+        fs.readFileSync(
+          path.join(
+            REPO_ROOT,
+            "e2e",
+            "download-process-targeted-failure-modes.md",
+          ),
+        ),
+      ),
+    };
+    for (const [key, hash] of Object.entries(expectedSources)) {
+      if (report.probeSourceSha256?.[key] !== hash) {
+        problems.push(`process-repair source hash differs: ${key}`);
+      }
+    }
+    if (
+      selectedFfmpegSha256 !== null &&
+      report.realFfmpegSha256 !== selectedFfmpegSha256
+    ) {
+      problems.push("process-repair FFmpeg hash differs");
+    }
+    if (runnerFailure) problems.push(runnerFailure);
+    if (problems.length > 0) {
+      return { ...scenario, reason: problems.join("; "), runnerFailure };
+    }
     return {
       ...scenario,
       status: "passed",
-      reportSha256,
+      reportSha256: report.reportSha256,
       binarySha256,
       startedAt: report.startedAt,
       finishedAt: report.finishedAt,
       observations: report.observations?.length ?? 0,
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     return {
       ...scenario,
-      reason: error instanceof Error ? error.message : String(error),
+      reason: [runnerFailure, message].filter(Boolean).join("; "),
       runnerFailure,
     };
   }
@@ -480,6 +526,11 @@ export function runAudit4Repairs({ ffmpeg, binary, suiteStartedAt }) {
       reason: "The audit four repair pass requires a real FFmpeg executable.",
     };
   }
+  pruneRunnerArtifacts({
+    artifactsDir: path.join(ARTIFACT_DIR, "audit4-repairs"),
+    pattern: AUDIT4_RUN_FOLDER,
+    keep: RETAINED_RUN_FOLDERS,
+  });
   const artifactRoot = path.join(
     ARTIFACT_DIR,
     "audit4-repairs",
@@ -505,13 +556,20 @@ export function runAudit4Repairs({ ffmpeg, binary, suiteStartedAt }) {
   const problems = [];
   if (result.error || result.status !== 0) {
     problems.push(
-      `audit four runner exited with ${result.status ?? result.signal ?? result.error?.message}`,
+      timeoutReason(result.error, "The audit four runner") ??
+        `audit four runner exited with ${result.status ?? result.signal ?? result.error?.message}`,
     );
   }
   try {
     const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
-    if (!reportSelfHashMatches(report))
-      problems.push("result self-hash differs");
+    problems.push(
+      ...verifyRunnerReport(report, {
+        label: "audit four",
+        binarySha256: sha256(fs.readFileSync(binary)),
+        startedAfter: suiteStartedAt,
+        selfHash: true,
+      }),
+    );
     if (report.exitCode !== 0 || report.timedOut) {
       problems.push(
         `audit four spec exited ${report.exitCode}${report.timedOut ? " after timeout" : ""}`,
@@ -519,9 +577,6 @@ export function runAudit4Repairs({ ffmpeg, binary, suiteStartedAt }) {
     }
     if (!report.observationsPresent) {
       problems.push("audit four spec wrote no native observations");
-    }
-    if (report.binarySha256 !== sha256(fs.readFileSync(binary))) {
-      problems.push("E2E binary changed during the audit four run");
     }
     if (
       report.specSha256 !==
@@ -532,9 +587,6 @@ export function runAudit4Repairs({ ffmpeg, binary, suiteStartedAt }) {
       )
     ) {
       problems.push("audit four spec changed during the run");
-    }
-    if (Date.parse(report.startedAt) < Date.parse(suiteStartedAt)) {
-      problems.push("audit four result predates this gate run");
     }
   } catch (error) {
     problems.push(

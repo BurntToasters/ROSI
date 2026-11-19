@@ -35,7 +35,6 @@ type RosiModules = {
     appendConsoleOutput: (outputEl: HTMLElement | null, text: string) => void;
     updateConsoleVisibility: (show: boolean) => void;
     toggleAdvancedUI: (show: boolean) => void;
-    getModifierKey: () => 'metaKey' | 'ctrlKey';
     getModifierKeyName: () => 'Cmd' | 'Ctrl';
   };
   updates?: {
@@ -179,7 +178,6 @@ describe('renderer modules', () => {
 
     it('reports platform modifier keys', () => {
       vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
-      expect(modules().ui!.getModifierKey()).toBe('metaKey');
       expect(modules().ui!.getModifierKeyName()).toBe('Cmd');
     });
 

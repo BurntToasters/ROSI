@@ -11,7 +11,7 @@ export const E2E_SUITE_MANIFEST = JSON.parse(
   fs.readFileSync(SUITE_MANIFEST_PATH, "utf8"),
 );
 
-function validateSuiteManifest(manifest) {
+export function validateSuiteManifest(manifest) {
   if (manifest?.schemaVersion !== 1) {
     throw new Error("e2e/suites.json has an unsupported schemaVersion");
   }
@@ -131,6 +131,9 @@ function validateSuiteManifest(manifest) {
       );
     }
     profileNames.add(profileId);
+    if (!profile || typeof profile !== "object") {
+      throw new Error(`e2e/suites.json profile ${profileId} is invalid`);
+    }
     const mainIds = profile.mainScenarioIds;
     const titles = profile.mainMochaTitles;
     if (
@@ -173,6 +176,17 @@ function validateSuiteManifest(manifest) {
     ) {
       throw new Error(
         `e2e/suites.json profile ${profileId} has invalid owners or required tools`,
+      );
+    }
+    // The core profile is partial but must still prove media decoding works.
+    if (
+      profileId === "core" &&
+      !["ffmpeg", "ffprobe"].every((tool) =>
+        profile.requiredTools.includes(tool),
+      )
+    ) {
+      throw new Error(
+        `e2e/suites.json profile ${profileId} must require FFmpeg and FFprobe`,
       );
     }
   }
@@ -438,11 +452,13 @@ export function onlyRunScenarioProblems({ onlySpec, scenarios, platform }) {
 }
 
 /**
- * Scenarios whose `shots` the gate verifies: the main UI pass, and the
- * v5-fixes/ui-polish area, whose shots come from its results file.
+ * Scenarios whose `shots` the gate verifies: the main UI pass, the setup
+ * wizard pass, and the v5-fixes/ui-polish area, whose shots come from its
+ * results file. Each shot needs `file` and `sha256`, as ui-screenshots records.
  */
 export const SCREENSHOT_SCENARIO_NAMES = Object.freeze([
   "ui-screenshots",
+  "setup-wizard",
   "v5-fixes/ui-polish",
 ]);
 
@@ -458,6 +474,10 @@ export function verifyScreenshots(scenarios, directory) {
     );
   const problems = [];
   const screenshots = reported.map((shot) => {
+    if (typeof shot?.file !== "string" || !shot.file) {
+      problems.push(`${shot?.name ?? "unnamed"} shot lacks a file name`);
+      return { ...shot };
+    }
     const file = path.join(directory, shot.file);
     if (!fs.existsSync(file)) {
       problems.push(`${shot.file} is missing`);

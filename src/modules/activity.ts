@@ -54,6 +54,31 @@ function hostFromUrl(url: string | null | undefined) {
   }
 }
 
+/** Last non-empty path segment, decoded when possible. Query and hash are never used. */
+function lastPathSegmentFromUrl(url: string | null | undefined) {
+  if (!url) return '';
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    return '';
+  }
+  const segments = pathname.split('/').filter((segment) => segment.length > 0);
+  const last = segments[segments.length - 1] ?? '';
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
+  }
+}
+
+/** Filename first, then the URL's last path segment, then its host, then the raw URL. */
+function activityTitle(entry: Pick<RosiDownloadActivity, 'filename' | 'url'>) {
+  return (
+    entry.filename || lastPathSegmentFromUrl(entry.url) || hostFromUrl(entry.url) || entry.url || ''
+  );
+}
+
 function describeActivityProfile(entry: RosiDownloadActivity) {
   if (entry.presetName) return entry.presetName;
   if (entry.profile === 'compatible') return 'Compatible';
@@ -156,8 +181,11 @@ export function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPane
         );
         const successfulOutputs = successfulPaths.length;
         const failedOutputs = failedPaths.length;
+        const host = hostFromUrl(entry.url);
+        const title = activityTitle(entry);
         const parts = [
-          hostFromUrl(entry.url),
+          // The title already shows the host when it is the only identifier.
+          host !== title ? host : '',
           describeActivityProfile(entry),
           typeof entry.sizeBytes === 'number' ? formatBytes(entry.sizeBytes) : '',
           failedOutputs > 0
@@ -174,7 +202,7 @@ export function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPane
           id: entry.id,
           outcome: entry.outcome,
           partial: entry.outcome === 'failed' && successfulOutputs > 0 && failedOutputs > 0,
-          title: entry.filename || hostFromUrl(entry.url) || entry.url,
+          title,
           subtitle: parts.join(' • '),
           timestamp: entry.completedAt,
           url: entry.url,
@@ -346,16 +374,16 @@ export function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPane
 
   function setActivityEntries(entries: RosiDownloadActivity[]) {
     const previousIds = new Set(activityEntries.map((entry) => entry.id));
-    const previousCount = activityEntries.length;
     activityEntries = Array.isArray(entries) ? entries : [];
-    // The first load is history from earlier sessions, which is not news.
-    if (activityLoaded && activityEntries.length > previousCount) {
+    // Compare ids, not counts: the backend caps the log, so a full list can gain
+    // a new entry without growing. The first load is history, which is not news.
+    const newIds = new Set(
+      activityEntries.filter((entry) => !previousIds.has(entry.id)).map((entry) => entry.id)
+    );
+    if (activityLoaded && newIds.size > 0) {
       markUnseen('activity');
     }
     if (activityLoaded) {
-      const newIds = new Set(
-        activityEntries.filter((entry) => !previousIds.has(entry.id)).map((entry) => entry.id)
-      );
       announceNewEntries(newIds);
     }
     activityLoaded = true;

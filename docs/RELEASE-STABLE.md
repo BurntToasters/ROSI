@@ -23,9 +23,12 @@ intentional administrator bypass, and disables force pushes and branch
 deletion. CI remains limited to tests, audits, validation, and unsigned compile
 smoke; all release building, signing, and publishing stays on the manually
 operated release VMs. Branch protection is optional: `release:preflight` does
-not check it and does not wait for hosted CI. For both stable and beta it
-requires a clean local checkout of the release branch that exactly matches its
-`origin` branch.
+not check it. For both stable and beta it requires a clean local checkout of the
+release branch that exactly matches its `origin` branch, and a green hosted
+`ci-gate` check run on that exact HEAD commit. A missing, pending, failed, or
+unreadable `ci-gate` fails preflight. The only bypass is the beta-only
+`ROSI_RELEASE_ALLOW_UNVERIFIED_CI=1`, which prints an UNVERIFIED warning and
+continues. Stable releases refuse that variable.
 
 Confirm the repository Settings page shows the rule before continuing.
 
@@ -165,6 +168,10 @@ npm run licenses:cargo:strict
 npm run release:preflight
 ```
 
+`release:preflight` must see a green hosted `ci-gate` on this exact commit. Stable
+releases do not accept `ROSI_RELEASE_ALLOW_UNVERIFIED_CI`, so wait for CI to
+pass rather than overriding it.
+
 The strict Cargo license step may fetch the exact immutable VCS revisions
 recorded by crates.io when a published crate omitted a workspace-root license.
 It accepts only HTTPS repositories and exact recorded commit hashes. If the
@@ -218,6 +225,13 @@ npm run release:linux
 Linux ARM64 wiring is retained for future development but is not part of the
 v5 release matrix. Do not use beta recovery overrides for a stable release.
 
+Each platform run signs and uploads `build-commit-<platform>.json` next to its
+checksum files. The record names the commit that platform built from, even when
+`--skip-check` (FORCE_UPLOAD) lets the upload target a different draft commit.
+`release:verify:draft` (step 7) fails unless every platform record names the
+draft's target commit, so assets built from another commit cannot ship under
+the stable draft.
+
 The platform release commands intentionally skip GUI E2E on the signing VM.
 That is acceptable only because step 4 and protected CI already proved the
 exact stable commit with E2E enabled.
@@ -261,8 +275,9 @@ npm run release:verify:draft
 
 This must pass against the complete stable draft. Resolve duplicate drafts,
 missing signatures, incorrect manifest URLs, a missing or misdirected ROSI 4
-update feed (see build-setup.md), or a wrong target commit instead of
-overriding the verifier.
+update feed (see build-setup.md), a missing `build-commit-*.json` record, a
+record naming a commit other than the draft target, or a wrong target commit
+instead of overriding the verifier.
 
 ## 8. Publish, then verify the live feed
 

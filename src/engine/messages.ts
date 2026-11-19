@@ -192,7 +192,9 @@ function formatResolvedOptions(options: DownloadRequestOptions) {
   if (options.presetName) details.push(`Preset: ${options.presetName}`);
   if (options.videoFormat) details.push(`Video ${options.videoFormat}`);
   if (options.audioFormat) details.push(`Audio ${options.audioFormat}`);
-  if (options.audioOutputFormat) details.push(options.audioOutputFormat.toUpperCase());
+  if (profile === 'audio' && options.audioOutputFormat) {
+    details.push(options.audioOutputFormat.toUpperCase());
+  }
   if (options.convertEnabled && options.convertFormat) {
     details.push(`Convert to ${options.convertFormat.toUpperCase()}`);
   }

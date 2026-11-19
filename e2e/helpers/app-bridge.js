@@ -51,3 +51,12 @@ export async function waitForAppReady() {
     },
   );
 }
+
+/** Click the element with this id in the page; a missing element fails the test. */
+export async function clickById(id) {
+  await browser.execute((target) => {
+    const element = document.getElementById(target);
+    if (!element) throw new Error(`missing element ${target}`);
+    element.click();
+  }, id);
+}

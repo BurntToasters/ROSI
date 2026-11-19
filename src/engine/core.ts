@@ -73,9 +73,10 @@ export function setButtonIconLabel(
  */
 export function renderFolderSummary(target: HTMLElement, folderSetting: string | undefined) {
   const folder = folderSetting?.trim() ?? '';
-  target.title = folder || 'Choose a folder before downloading';
+  // With no folder set, downloads save to the Downloads folder without a prompt.
+  target.title = folder || 'No folder set. Downloads save to your Downloads folder.';
   if (!folder) {
-    target.textContent = 'Choose a folder';
+    target.textContent = 'Downloads folder (default)';
     return;
   }
   const [, parents, name] = /^(.*[\\/])([^\\/]+)[\\/]?$/.exec(folder) ?? [];

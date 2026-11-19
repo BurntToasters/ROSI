@@ -99,6 +99,62 @@ spawn site in `process_util.rs::command`.
     were checked by reading and found accurate or reachable. They are left
     unchanged and listed in the report.
 
+## C6: AppImage update recovery copies
+
+Not automated in E2E. Guards: `staging::sweep_appimage_update_backups`, called
+from `main.rs` only on Linux when `APPIMAGE` is set. Checked by reading.
+
+24. The sweep keeps the newest candidate across all roots. Candidates from every
+    root are collected before any removal; only the newest survives.
+25. One directory reached through two roots (for example, the AppImage's parent
+    is the temp dir) is counted once. Guard: a (device, inode) set. Without it,
+    the directory could be kept as the newest copy and then deleted as an older one.
+26. This process's own update directory is removed mid-install. Guard: the pid
+    part must not equal `std::process::id()`.
+27. Another ROSI process that is updating at the same moment loses its staging
+    file. The sweep has no pid liveness or age check (the spec sets none). Open
+    risk; not covered by a guard.
+28. A symlink named like an update directory is followed, or a symlinked file
+    inside one is deleted. Guard: `symlink_metadata` for the directory and for
+    each entry; only real files are removed.
+29. A matching directory that holds any other file (user data) is removed.
+    Guard: any other name skips the whole directory.
+30. An empty matching directory is removed. Intended for leftovers from a crash,
+    but an install that is creating its directory at that instant fails with an
+    error, and the live AppImage is unchanged.
+31. A directory owned by another user is removed. Guard: unix uid check.
+32. Names with a non-digit pid or sequence, or a pid that overflows `u32`, are
+    matched. Guard: digits-only check and a `u32` parse.
+33. A relative `XDG_CACHE_HOME` is resolved against the working directory.
+    Guard: absolute-path filter, then `$HOME/.cache`.
+34. An older failed-update `current_app.AppImage`, which the user may need for a
+    manual rollback, is removed once a newer copy exists. The spec keeps only the
+    newest copy. Not automated.
+35. Wrong platform: macOS and Windows never call the sweep. Guard: the call is
+    under `cfg(target_os = "linux")`; the function is `cfg(unix)` with a
+    `dead_code` allowance off Linux, so macOS still type-checks it.
+36. Startup or a session blocks on the sweep. Guard: a spawned startup thread,
+    never the coordinator or session-owner threads.
+37. An unreadable root, unreadable directory, or failed removal panics. Guard:
+    every fallible call is logged or skipped; no `unwrap`.
+38. About one 100 MB recovery copy remains after the sweep. That is the intended
+    residue; the count no longer grows.
+
+## P1: dedupe before validating
+
+39. Duplicate raw paths are still validated. Guard: the raw-path set check runs
+    before `validate_download_path`. Checked by reading the loop order.
+40. Skipping a raw duplicate changes which folder is kept or the configured
+    folder's position. Guard: the first occurrence is kept, and the configured
+    folder is still first. Checked by reading.
+41. Two spellings that validate to one folder produce two entries. Guard: the
+    post-validation `seen` set is kept. Checked by reading.
+42. Duplicates or rejected paths consume cap slots. Guard: the cap counts only
+    accepted folders, as before. Thousands of distinct invalid paths are still
+    validated one by one; this change does not bound that. Not automated.
+43. A recorded raw path equal to the configured folder is validated and then
+    dropped by `seen`, as before. Checked by reading.
+
 ## Not written in this pass
 
 - No E2E spec was written for these rows. The worker brief says no new unit

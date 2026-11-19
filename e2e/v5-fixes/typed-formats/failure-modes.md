@@ -72,6 +72,30 @@
     `displayLabel`. The renderer has no label fallback, so a missing field would
     show as `undefined`. The TypeScript type requires the field, and the spec
     asserts every option's text equals its entry's `displayLabel`.
+20. **A real failure is reported as a user cancel.** `error_result` must map
+    only the two fixed cancellation messages to `NOT_AVAILABLE`, by exact
+    equality. A failure whose yt-dlp output contains "cancel" (a URL path, or
+    site text such as "This live event has been canceled") must return
+    `INTERNAL_ERROR` with its message. Not automated in E2E yet. The guard is
+    the exact-equality check in `error_result`; a fixture URL containing
+    `cancel` would cover it.
+21. **A cancel path drifts from the fixed message.** Every cancellation return
+    in `media_info.rs` (the `is_cancelled()` checks, the `map_err` fallbacks
+    around the network and FFmpeg guards, the `TrackedError::Cancelled` arms,
+    and the cancellation check in the output callback) must use the shared
+    const. A copied literal that differs would turn a user cancel into an
+    error. Not automated in E2E. The guard is a grep for the literal strings,
+    which must find them only in the const definitions.
+22. **A substring match hides a real error.** A message that only contains a
+    fixed cancellation string, with extra text, must not be classified as a
+    cancel. Exact equality is the guard. Not automated in E2E.
+23. **A cancel without the reservation flag changes code.** A network or
+    FFmpeg guard error such as "The network operation was cancelled." that
+    reaches `error_result` without the reservation flag set now returns
+    `INTERNAL_ERROR`, not `NOT_AVAILABLE`. Every cancel path must set the
+    reservation flag first. The guard is the reservation `is_cancelled()`
+    check before each `map_err`. The E2E acceptance section below checks the
+    visible state, but not the error code.
 
 ## E2E acceptance
 

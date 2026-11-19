@@ -1,6 +1,35 @@
 const fs = require("fs");
 const path = require("node:path");
 
+// Vite values that src reads through import.meta.env, as a non-E2E build sees
+// them. The DOM checks never run the E2E seam, so VITE_ROSI_E2E stays empty.
+const VITE_ENV = { VITE_ROSI_E2E: "", VITE_ROSI_CHANNEL: "" };
+
+/**
+ * Replaces import.meta.env.KEY with its VITE_ENV value. The transpiler leaves
+ * import.meta in place, and CommonJS cannot evaluate it, so any other form
+ * (an unknown KEY, bracket access, or a bare import.meta) throws here.
+ */
+function inlineViteEnv(source, file) {
+  const inlined = source.replace(
+    /\bimport\.meta\.env\.([A-Za-z_]\w*)/g,
+    (match, key) => {
+      if (!Object.hasOwn(VITE_ENV, key)) {
+        throw new Error(
+          `renderer loader: ${file} reads import.meta.env.${key}, which is not in VITE_ENV`,
+        );
+      }
+      return JSON.stringify(VITE_ENV[key]);
+    },
+  );
+  if (/\bimport\.meta\b/.test(inlined)) {
+    throw new Error(
+      `renderer loader: ${file} has an import.meta form the loader does not handle`,
+    );
+  }
+  return inlined;
+}
+
 /**
  * Loads renderer ES modules into a jsdom window. Each file runs as CommonJS
  * in the window, with a resolver for its relative imports. Bare specifiers
@@ -19,7 +48,8 @@ function createRendererLoader(w, root, ts, externals = {}, provided = {}) {
     if (loaded.has(file)) return loaded.get(file).exports;
     const module = { exports: {} };
     loaded.set(file, module);
-    const code = ts.transpileModule(fs.readFileSync(file, "utf8"), {
+    const source = inlineViteEnv(fs.readFileSync(file, "utf8"), file);
+    const code = ts.transpileModule(source, {
       compilerOptions: {
         target: ts.ScriptTarget.ES2020,
         module: ts.ModuleKind.CommonJS,
@@ -53,4 +83,4 @@ function createRendererLoader(w, root, ts, externals = {}, provided = {}) {
   return load;
 }
 
-module.exports = { createRendererLoader };
+module.exports = { createRendererLoader, inlineViteEnv };

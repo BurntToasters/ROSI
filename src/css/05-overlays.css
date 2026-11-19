@@ -40,7 +40,7 @@
      the buttons never shrink, so they stay visible at the minimum window size. */
   max-height: calc(100vh - 2rem);
   padding: 1.6rem 1.6rem 1.3rem;
-  background: color-mix(in srgb, var(--modal-bg-start) 80%, transparent);
+  background: color-mix(in srgb, var(--modal-bg-start) 96%, transparent);
   -webkit-backdrop-filter: blur(var(--blur-lg));
   backdrop-filter: blur(var(--blur-lg));
   border: 1px solid var(--border-default);
@@ -158,32 +158,6 @@
   border: none;
 }
 
-/* ── Update progress ── */
-.update-progress-container {
-  margin: var(--spacing-md) 0;
-}
-
-.update-progress-bar-wrapper {
-  height: 6px;
-  margin-bottom: var(--spacing-sm);
-  overflow: hidden;
-  background: var(--surface-2);
-  border-radius: 3px;
-}
-
-.update-progress-bar {
-  height: 100%;
-  background: var(--success);
-  border-radius: 3px;
-  transition: width 0.3s ease;
-}
-
-.update-progress-info {
-  font-size: var(--text-sm);
-  color: var(--text-muted);
-  text-align: center;
-}
-
 .update-banner {
   position: fixed;
   left: 0;
@@ -241,19 +215,29 @@
 }
 
 /* ── Toasts ── */
-.toast-container {
+/* One fixed stack holds both live regions, so error toasts (assertive, above)
+   and info toasts (polite, below) never cover each other. */
+.toast-stack {
   position: fixed;
   right: var(--spacing-xl);
   bottom: calc(var(--footer-height) + var(--spacing-md));
   z-index: 1001;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  pointer-events: none;
+}
+
+.toast-container {
   display: flex;
   flex-direction: column-reverse;
   gap: var(--spacing-sm);
   pointer-events: none;
 }
 
-.toast-container-assertive {
-  bottom: calc(var(--footer-height) + var(--spacing-md) + 80px);
+/* Space between the two regions only when the assertive one holds a toast. */
+.toast-container-assertive:not(:empty) {
+  margin-bottom: var(--spacing-sm);
 }
 
 /* Short windows (the 900x560 minimum). Info and success toasts sit in the
@@ -261,16 +245,27 @@
    Download button (its top is about 114px) as long as a toast is one line.
    Error and warning toasts stay at the bottom, so they never stack on the
    top toasts. A bottom toast can reach the dock toolbar when a taller card
-   shrinks the dock, which is the one case this placement does not clear. */
+   shrinks the dock, which is the one case this placement does not clear.
+   The wrapper drops out of layout here, so each region is positioned on its own. */
 @media (max-height: 700px) {
+  .toast-stack {
+    display: contents;
+  }
+
   .toast-container {
+    position: fixed;
     top: calc(var(--top-bar-height) + var(--spacing-xs));
-    bottom: auto;
+    right: var(--spacing-xl);
+    z-index: 1001;
   }
 
   .toast-container-assertive {
     top: auto;
     bottom: calc(var(--footer-height) + var(--spacing-md));
+  }
+
+  .toast-container-assertive:not(:empty) {
+    margin-bottom: 0;
   }
 }
 
@@ -283,7 +278,7 @@
   padding: 0.75rem 0.85rem 0.75rem 1rem;
   font-size: var(--text-base);
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--modal-bg-start) 88%, transparent);
+  background: color-mix(in srgb, var(--modal-bg-start) 96%, transparent);
   -webkit-backdrop-filter: blur(var(--blur-lg));
   backdrop-filter: blur(var(--blur-lg));
   border: 1px solid var(--border-default);

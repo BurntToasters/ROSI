@@ -73,7 +73,7 @@ export function initPresets() {
       settingsStore.settings.downloadPresets = nextPresets;
       // The saved preset now holds the on-screen values, so nothing is copied any more.
       clearAppliedPreset();
-      const saved = await persistSettings(true, true);
+      const saved = await persistSettings({ immediate: true });
       renderPresetOptions(saved ? id : downloadPresetSelect?.value);
       if (saved) {
         if (presetNameInput) presetNameInput.value = '';
@@ -90,7 +90,7 @@ export function initPresets() {
       settingsStore.settings.downloadPresets = getPresets().filter(
         (candidate) => candidate.id !== preset.id
       );
-      const saved = await persistSettings(true, true);
+      const saved = await persistSettings({ immediate: true });
       renderPresetOptions('');
       setPresetStatus(saved ? `Deleted ${preset.name}.` : 'Could not delete the preset.');
     });

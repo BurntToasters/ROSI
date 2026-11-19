@@ -82,7 +82,7 @@ Network policy is defined in `docs/NETWORK-POLICY.md`. A URL pre-check alone is 
 | `npm run test:e2e:stability` | Five full E2E runs for stability investigation. |
 | `npm run test:all` | Aggregate frontend, tooling/policy, Rust, and full E2E gate. |
 | `npm run typecheck`, `npm run lint`, `npm run format:check` | Static checks. These do not replace E2E verification. |
-| `npm run test:cargo-safe-update` | Existing script/policy integration checks, including E2E selector/report checks. |
+| `npm run test:scripts` | Node tests for every `scripts/*.test.*` file (release, E2E orchestration, policy and tooling). `test:cargo-safe-update` is an alias. |
 | `npm test`, `npm run test:rust` | Existing frontend and Rust checks. Follow the critical testing instructions above when adding coverage. |
 
 The canonical E2E inventory is `e2e/suites.json`. The orchestrator is `scripts/test-e2e.js`, with selection/build/runner/stability helpers under `scripts/e2e/`. WebdriverIO configuration lives in `e2e/wdio.conf.js`. Read `e2e/README.md` for coverage, runner ownership, platform allowances, focused selectors, and measured local runtimes.

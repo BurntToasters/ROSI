@@ -119,6 +119,33 @@ export function cancelModalHide() {
 const FOCUSABLE_SELECTOR =
   'button, input, select, textarea, a[href], iframe, [tabindex]:not([tabindex="-1"])';
 
+// The licenses frame's real tab stops also include each <details>' <summary>,
+// the control that opens it.
+const FRAME_TAB_STOP_SELECTOR = `${FOCUSABLE_SELECTOR}, summary`;
+
+// True when the element is rendered and focusable, not merely laid out. offsetParent
+// alone is not enough: WebKit and Chromium keep a layout box for a link inside a
+// closed <details>, but focus() is refused there. checkVisibility() answers this
+// directly where it exists (macOS 15 WebKit, WebView2). The fallback, for WebKitGTK
+// builds without it, excludes anything inside a closed <details> except that
+// details' own direct <summary>.
+function isRenderedTabStop(element: HTMLElement): boolean {
+  if (typeof element.checkVisibility === 'function') return element.checkVisibility();
+  return !isInsideClosedDetails(element);
+}
+
+function isInsideClosedDetails(element: HTMLElement): boolean {
+  for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    if (ancestor.tagName !== 'DETAILS' || ancestor.hasAttribute('open')) continue;
+    const ownSummary = Array.from(ancestor.children).find((child) => child.tagName === 'SUMMARY');
+    if (element !== ownSummary) return true;
+  }
+  return false;
+}
+
+// The parent-document trap keeps its selector. It uses the same rendered-and-
+// focusable rule, which only drops elements that cannot take focus (closed-details
+// content). No trapped overlay today contains a <details>.
 export function getFocusableElements(container: unknown): HTMLElement[] {
   if (!(container instanceof HTMLElement)) return [];
   return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
@@ -126,7 +153,20 @@ export function getFocusableElements(container: unknown): HTMLElement[] {
       !element.hasAttribute('disabled') &&
       element.getAttribute('aria-hidden') !== 'true' &&
       element.tabIndex !== -1 &&
-      element.offsetParent !== null
+      element.offsetParent !== null &&
+      isRenderedTabStop(element)
+  );
+}
+
+function getFrameTabStops(frameDoc: Document): HTMLElement[] {
+  return Array.from(frameDoc.querySelectorAll<HTMLElement>(FRAME_TAB_STOP_SELECTOR)).filter(
+    (element) =>
+      !element.hasAttribute('disabled') &&
+      element.tabIndex !== -1 &&
+      element.offsetParent !== null &&
+      // A summary is a tab stop only as the toggle of its own details.
+      (element.tagName !== 'SUMMARY' || element.parentElement?.tagName === 'DETAILS') &&
+      isRenderedTabStop(element)
   );
 }
 
@@ -436,12 +476,7 @@ function forwardLicensesFrameKey(event: KeyboardEvent) {
   }
   if (event.key !== 'Tab') return;
   const frameDoc = event.currentTarget as Document;
-  const frameFocusables = Array.from(
-    frameDoc.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
-  ).filter(
-    (element) =>
-      !element.hasAttribute('disabled') && element.tabIndex !== -1 && element.offsetParent !== null
-  );
+  const frameFocusables = getFrameTabStops(frameDoc);
   const first = frameFocusables[0];
   const last = frameFocusables[frameFocusables.length - 1];
   const active = frameDoc.activeElement;
@@ -469,6 +504,12 @@ function attachLicensesFrameKeys() {
 export function showLicenses() {
   const licensesOverlay = document.getElementById('licenses-overlay');
   if (licensesOverlay) {
+    // Already open (for example, the menu item pressed again). Opening again would
+    // take the close button as the focus to restore and add a second trap.
+    if (licensesOverlay.classList.contains('active')) {
+      licensesOverlay.querySelector<HTMLElement>('#close-licenses')?.focus();
+      return;
+    }
     licensesPreviousFocus = document.activeElement;
     licensesOverlay.classList.add('active');
     licensesOverlay.setAttribute('aria-hidden', 'false');

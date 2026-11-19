@@ -55,67 +55,11 @@ export function parseE2eProfile(
   return profile;
 }
 
+// Shape checks live in validateSuiteManifest (manifest.js), which runs when the
+// suite manifest loads. This lookup only reports an unknown profile name.
 function profileDefinition(manifest, profileName) {
   const profile = manifest.profiles?.[profileName];
   if (!profile) throw new Error(`unknown E2E profile: ${profileName}`);
-  const scenarios = new Map(
-    manifest.scenarios.map((item) => [item.name, item]),
-  );
-  const mainIds = profile.mainScenarioIds;
-  if (!Array.isArray(mainIds) || mainIds.length === 0) {
-    throw new Error(`E2E profile ${profileName} has no main scenarios`);
-  }
-  if (new Set(mainIds).size !== mainIds.length) {
-    throw new Error(`E2E profile ${profileName} has duplicate main scenarios`);
-  }
-  for (const id of mainIds) {
-    if (scenarios.get(id)?.owner !== "main") {
-      throw new Error(
-        `E2E profile ${profileName} references missing or non-main scenario ${id}`,
-      );
-    }
-  }
-  const titles = profile.mainMochaTitles;
-  if (!titles || typeof titles !== "object" || Array.isArray(titles)) {
-    throw new Error(`E2E profile ${profileName} has no main Mocha title map`);
-  }
-  const titleIds = Object.keys(titles);
-  if (
-    titleIds.length !== mainIds.length ||
-    mainIds.some((id) => typeof titles[id] !== "string" || !titles[id].trim())
-  ) {
-    throw new Error(
-      `E2E profile ${profileName} must map every main scenario to one title`,
-    );
-  }
-  const titleValues = mainIds.map((id) => titles[id]);
-  if (new Set(titleValues).size !== titleValues.length) {
-    throw new Error(
-      `E2E profile ${profileName} has duplicate main Mocha titles`,
-    );
-  }
-  const owners = profile.completeOwners;
-  const ownerIds = new Set(Object.keys(manifest.owners ?? {}));
-  if (
-    !Array.isArray(owners) ||
-    owners.length === 0 ||
-    new Set(owners).size !== owners.length ||
-    owners.some((owner) => owner === "main" || !ownerIds.has(owner))
-  ) {
-    throw new Error(`E2E profile ${profileName} has invalid complete owners`);
-  }
-  if (
-    !Array.isArray(profile.requiredTools) ||
-    profile.requiredTools.some((tool) => typeof tool !== "string" || !tool) ||
-    (profileName === "core" &&
-      !["ffmpeg", "ffprobe"].every((tool) =>
-        profile.requiredTools.includes(tool),
-      ))
-  ) {
-    throw new Error(
-      `E2E profile ${profileName} must require FFmpeg and FFprobe`,
-    );
-  }
   return profile;
 }
 
@@ -162,18 +106,32 @@ export function exactMochaTitlePattern(titles) {
   return `^(?:${escaped.join("|")})$`;
 }
 
-export function coreArtifactPaths({
+/**
+ * Which per-run evidence directory a run writes to. Only the full suite may
+ * use the canonical e2e-report-<platform>-<arch>.json; `null` means canonical.
+ */
+export function partialRunKind({ profileName, fullSuite }) {
+  if (profileName) return "core";
+  return fullSuite ? null : "adhoc";
+}
+
+/** Unique per-run report, screenshot, and latest-report paths for a partial run. */
+export function runArtifactPaths({
+  kind,
   root = path.join(REPO_ROOT, "e2e", "artifacts"),
   platform = process.platform,
   arch = process.arch,
   runId,
 }) {
+  if (kind !== "core" && kind !== "adhoc") {
+    throw new Error(`E2E run artifact kind must be core or adhoc, got ${kind}`);
+  }
   if (typeof runId !== "string" || !/^[a-zA-Z0-9_-]+$/.test(runId)) {
     throw new Error(
-      "core E2E run id must contain only letters, numbers, _ or -",
+      `${kind} E2E run id must contain only letters, numbers, _ or -`,
     );
   }
-  const hostDirectory = path.join(root, "core", `${platform}-${arch}`);
+  const hostDirectory = path.join(root, kind, `${platform}-${arch}`);
   const runDir = path.join(hostDirectory, runId);
   return {
     hostDirectory,
@@ -182,4 +140,8 @@ export function coreArtifactPaths({
     latestReportPath: path.join(hostDirectory, "latest-report.json"),
     screenshotDir: path.join(runDir, "screenshots"),
   };
+}
+
+export function coreArtifactPaths(options) {
+  return runArtifactPaths({ ...options, kind: "core" });
 }

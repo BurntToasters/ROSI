@@ -5,6 +5,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { REPO_ROOT } from "../../../e2e/helpers/profile.js";
 import { ARTIFACT_DIR, e2eChildEnv, relativeToRepo } from "../common.js";
+import { verifyRunnerReport } from "../runner-report.js";
+import { pruneRunnerArtifacts } from "../prune-artifacts.js";
 
 const V5_FIXES_ROOT = path.join(REPO_ROOT, "e2e", "v5-fixes");
 // Record name a v5-fixes spec uses in its results file to hand the gate its
@@ -12,6 +14,11 @@ const V5_FIXES_ROOT = path.join(REPO_ROOT, "e2e", "v5-fixes");
 const V5_SCREENSHOT_RECORD = "v5-screenshots";
 const SKIP_OR_FOCUS_PATTERN =
   /\b(?:describe|it|context|test)\.(?:skip|only)\s*\(|\b(?:xit|xdescribe|xtest)\s*\(|\bthis\.skip\s*\(/;
+// Run folders the v5 runners create: <ISO time>-<pid>. The runners write
+// either "HH-MM-SS-mmmZ" or "HH-MM-SS.mmmZ" for the time part.
+export const V5_RUN_DIR_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}[.-]\d{3}Z-\d+$/;
+const V5_RETAINED_RUN_FOLDERS = 20;
 
 /**
  * Lists each e2e/v5-fixes/<area>/ with a *.spec.js file or a run.mjs runner.
@@ -51,9 +58,14 @@ export function discoverV5Fixes(root = V5_FIXES_ROOT) {
 
 export function runV5FixesRunner(area, binary, ffmpeg) {
   // Runners timestamp their own report directories, so earlier runs stay in
-  // place and are told apart by report mtime.
+  // place and are told apart by report mtime. Only the newest are kept.
   const artifactDirectory = path.join(ARTIFACT_DIR, `v5-fixes-${area.area}`);
   fs.mkdirSync(artifactDirectory, { recursive: true });
+  pruneRunnerArtifacts({
+    artifactsDir: artifactDirectory,
+    pattern: V5_RUN_DIR_PATTERN,
+    keep: V5_RETAINED_RUN_FOLDERS,
+  });
   const result = spawnSync(process.execPath, [area.runner], {
     cwd: REPO_ROOT,
     env: e2eChildEnv({
@@ -102,8 +114,13 @@ export function findRunnerReport(area, artifactDir, gateStartedMs) {
     };
   }
   // Network and persistence runners use different verdict keys; both count.
-  const verdict = report.passed === true || report.allPassed === true;
-  if (!verdict) return { file, problem: "runner report did not pass" };
+  // Their embedded self-hash is not checked here: network and async-proxy
+  // hash their body before adding `passed`, and persistence writes a sidecar.
+  const problems = verifyRunnerReport(report, {
+    label: area.area,
+    verdict: true,
+  });
+  if (problems.length > 0) return { file, problem: problems.join("; ") };
   return { file, problem: null };
 }
 

@@ -381,22 +381,87 @@ export function verifyGpgDetachedSignature({
   });
 }
 
+// One build record per platform checksum key, written by gpg-sign.js. It is
+// GPG-signed and records the commit that platform built from.
+export function requiredDraftBuildCommitNames({
+  requireLinuxAarch64 = false,
+} = {}) {
+  return requiredDraftChecksumNames({ requireLinuxAarch64 })
+    .filter((name) => name.endsWith(".txt"))
+    .map(
+      (name) =>
+        `build-commit-${name.slice("SHA256SUMS-".length, -".txt".length)}.json`,
+    )
+    .sort();
+}
+
 export function requiredDraftAssetNames(options = {}) {
   const requireLinuxAarch64 = Boolean(options.requireLinuxAarch64);
   const installers = requiredDraftInstallerNames({ requireLinuxAarch64 });
   const updaterArchives = requiredDraftUpdaterArchiveNames();
+  const buildCommits = requiredDraftBuildCommitNames({ requireLinuxAarch64 });
   return Array.from(
     new Set([
       ...installers,
       ...updaterArchives,
       ...requiredDraftSidecarNames([...installers, ...updaterArchives]),
       ...requiredDraftChecksumNames({ requireLinuxAarch64 }),
+      ...buildCommits,
+      ...buildCommits.map((name) => `${name}.asc`),
       ...requiredDraftStableManifestNames({ requireLinuxAarch64 }),
       ...requiredDraftBetaManifestNames({ requireLinuxAarch64 }),
       // ROSI 4 reads these from the newest release (npm run release:legacy-v4-feed).
       ...LEGACY_FEED_FILES,
     ]),
   ).sort();
+}
+
+/**
+ * `records` maps each build-record asset name to its JSON text. Every required
+ * platform record must exist, and every record present (required or not) must
+ * name the draft's target commit and the platform its file name encodes.
+ */
+export function assertBuildCommitRecords({
+  targetCommitish,
+  records,
+  requireLinuxAarch64 = false,
+}) {
+  if (!/^[0-9a-f]{40}$/i.test(String(targetCommitish || ""))) {
+    throw new Error(
+      "Draft target commit must be a 40-character hexadecimal SHA before build records can be checked.",
+    );
+  }
+  const present = records instanceof Map ? records : new Map(records);
+  const missing = requiredDraftBuildCommitNames({ requireLinuxAarch64 }).filter(
+    (name) => !present.has(name),
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `Draft is missing build commit record(s): ${missing.join(", ")}.`,
+    );
+  }
+  for (const [name, text] of present) {
+    let record;
+    try {
+      record = JSON.parse(text);
+    } catch (error) {
+      throw new Error(
+        `${name} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const commit = String(record?.commit || "");
+    if (commit.toLowerCase() !== String(targetCommitish).toLowerCase()) {
+      throw new Error(
+        `${name} records commit ${commit || "(none)"}, not the draft target ${targetCommitish}.`,
+      );
+    }
+    const platform = name.slice("build-commit-".length, -".json".length);
+    if (record?.platform !== platform) {
+      throw new Error(
+        `${name} names platform ${JSON.stringify(record?.platform)}, expected ${platform}.`,
+      );
+    }
+  }
 }
 
 export function assertDraftReleaseShape({
@@ -686,6 +751,7 @@ async function verifyDraftGpgAndChecksums({
   repoName,
   listedAssets,
   requireLinuxAarch64 = false,
+  targetCommitish,
 }) {
   const expectedFingerprint = resolveExpectedGpgSigner({
     keyId: process.env.GPG_KEY_ID,
@@ -725,11 +791,15 @@ async function verifyDraftGpgAndChecksums({
         ".",
     );
   }
+  const buildCommitNames = requiredDraftBuildCommitNames({
+    requireLinuxAarch64,
+  });
   const expectedSignatureNames = [
     ...requiredDraftSidecarNames(signedNames).filter((name) =>
       name.endsWith(".asc"),
     ),
     ...checksumNames.map((name) => `${name}.asc`),
+    ...buildCommitNames.map((name) => `${name}.asc`),
   ];
   const signatureNames = listedAssets
     .map((asset) => asset?.name)
@@ -817,6 +887,27 @@ async function verifyDraftGpgAndChecksums({
         expectedFingerprint,
       });
     }
+
+    // Check the same bytes whose GPG signature was just verified.
+    const buildCommitRecords = new Map();
+    for (const name of listedAssets
+      .map((asset) => asset?.name)
+      .filter(
+        (name) =>
+          typeof name === "string" &&
+          /^build-commit-[a-z0-9_-]+\.json$/i.test(name),
+      )
+      .sort()) {
+      buildCommitRecords.set(
+        name,
+        fs.readFileSync(await downloadByName(name), "utf8"),
+      );
+    }
+    assertBuildCommitRecords({
+      targetCommitish,
+      records: buildCommitRecords,
+      requireLinuxAarch64,
+    });
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   }
@@ -1009,6 +1100,7 @@ async function main() {
     repoName,
     listedAssets,
     requireLinuxAarch64,
+    targetCommitish: release.target_commitish,
   });
   console.log(
     `verify-draft: ok (${tag}, draft, HEAD ${headCommit.slice(0, 12)}, ${assets.length} assets, prerelease=${isPrereleaseVersion(version)}, ROSI 4 feed -> ${sourceTag})`,

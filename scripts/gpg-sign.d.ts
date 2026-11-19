@@ -17,9 +17,24 @@ export function checksumTargetKeysForArtifactName(
   name: string,
   channelVariants?: UpdaterChannelVariant[],
 ): string[];
+export function buildCommitAssetName(checksumName: string): string;
+export function buildCommitRecord(options: {
+  commit: string;
+  version: string;
+  tag: string;
+  platform: string;
+}): { commit: string; version: string; tag: string; platform: string };
+export function writeBuildCommitRecords(options: {
+  checksumFiles: string[];
+  commit: string;
+  version: string;
+  tag: string;
+  directory?: string;
+}): string[];
 export function buildUploadList(options: {
   artifacts: string[];
   checksumFiles: string[];
+  buildCommitFiles?: string[];
   signatureFiles: string[];
   stagingDirectory?: string;
 }): string[];

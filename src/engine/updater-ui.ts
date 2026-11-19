@@ -11,6 +11,9 @@ import { formatBytes } from './progress';
 import { setButtonLoading } from './ui-helpers';
 import { api } from '../api';
 
+// The public ROSI website, the same host as the website and support links.
+const ROSI_WEBSITE_URL = 'https://rosie.run';
+
 export let isManualUpdateCheck = false;
 export let updateCheckTimeout: ReturnType<typeof setTimeout> | null = null;
 export let updateCheckBtnRef: HTMLButtonElement | null = null;
@@ -116,6 +119,13 @@ export function notifyUpdateChannelChanged(channel: 'auto' | 'stable' | 'beta'):
 export let updaterCleanupFunctions: Array<() => void> = [];
 export let updaterCandidateId: number | null = null;
 
+/** A hidden banner is off screen, so its controls must leave the Tab order too. */
+function setBannerInert(banner: HTMLElement, isInert: boolean) {
+  if ('inert' in banner) {
+    (banner as HTMLElement & { inert: boolean }).inert = isInert;
+  }
+}
+
 export function showUpdateBanner() {
   const banner = document.getElementById('update-banner');
   const bar = document.getElementById('update-banner-bar') as HTMLElement | null;
@@ -130,6 +140,7 @@ export function showUpdateBanner() {
   if (info) info.textContent = '';
   if (text) text.textContent = 'Downloading update…';
   if (banner) {
+    setBannerInert(banner, false);
     banner.classList.add('active');
     banner.setAttribute('aria-busy', 'true');
   }
@@ -140,6 +151,7 @@ export function hideUpdateBanner() {
   if (banner) {
     banner.classList.remove('active');
     banner.setAttribute('aria-busy', 'false');
+    setBannerInert(banner, true);
   }
 }
 
@@ -153,7 +165,7 @@ function errorMessage(error: unknown): string {
  * already shown or queued is not repeated.
  */
 function showUpdateError(message: string) {
-  const text = `An error occurred while checking or installing the update:\n${message}`;
+  const text = `An error occurred while checking or installing the update:\n${message}\n\nYou can download the latest version from ${ROSI_WEBSITE_URL}.`;
   const alreadyShown = [currentModalData, ...modalQueue].some(
     (data) => data?.title === 'Update Error' && data.message === text
   );
@@ -161,7 +173,18 @@ function showUpdateError(message: string) {
   showModal({
     title: 'Update Error',
     message: text,
-    buttons: [{ label: 'OK', primary: true }],
+    // OK stays first: the dismiss helpers in the tests click the first button.
+    buttons: [
+      { label: 'OK', primary: true },
+      {
+        label: 'Get Latest Version',
+        action: () => {
+          void api
+            .openExternal(ROSI_WEBSITE_URL)
+            .catch((error: unknown) => logError('Could not open the ROSI website', error));
+        },
+      },
+    ],
     priority: true,
   });
 }
@@ -206,6 +229,38 @@ export function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boole
   if (cancelBtn) {
     cancelBtn.addEventListener('click', () => {
       fire('cancel_update_download');
+    });
+  }
+
+  // Built in one place so a failed restart flush can offer the same prompt again.
+  function showUpdateReadyPrompt(candidateId: number, version: string) {
+    showModal({
+      title: 'Update Ready!',
+      key: 'updater-downloaded',
+      message: `Version ${version} has been downloaded.\n\nSelect Restart Now to install it. If you quit instead, ROSI downloads it again next time.`,
+      buttons: [
+        {
+          label: 'Restart Now',
+          primary: true,
+          action: async () => {
+            if (updaterCandidateId !== candidateId) return;
+            try {
+              if (await flushSettingsBeforeRestart()) {
+                await call('install_update', { candidateId });
+              } else if (updaterCandidateId === candidateId) {
+                // Keep Downloading or a failed save closed the prompt. Offer it
+                // again, unless a newer status replaced this candidate meanwhile.
+                showUpdateReadyPrompt(candidateId, version);
+              }
+            } catch (error) {
+              hideUpdateBanner();
+              showUpdateError(errorMessage(error));
+            }
+          },
+        },
+        { label: 'Later' },
+      ],
+      priority: true,
     });
   }
 
@@ -335,30 +390,7 @@ export function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boole
           retireModal('updater-candidate');
           retireModal('updater-downloaded');
           hideUpdateBanner();
-          showModal({
-            title: 'Update Ready!',
-            key: 'updater-downloaded',
-            message: `Version ${data.version} has been downloaded.\n\nSelect Restart Now to install it. If you quit instead, ROSI downloads it again next time.`,
-            buttons: [
-              {
-                label: 'Restart Now',
-                primary: true,
-                action: async () => {
-                  if (updaterCandidateId !== candidateId) return;
-                  try {
-                    if (await flushSettingsBeforeRestart()) {
-                      await call('install_update', { candidateId });
-                    }
-                  } catch (error) {
-                    hideUpdateBanner();
-                    showUpdateError(errorMessage(error));
-                  }
-                },
-              },
-              { label: 'Later' },
-            ],
-            priority: true,
-          });
+          showUpdateReadyPrompt(candidateId, data.version);
           break;
         }
       }

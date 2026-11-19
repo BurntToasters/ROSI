@@ -28,7 +28,7 @@
 .wizard-card {
   width: 90%;
   max-width: 520px;
-  background: color-mix(in srgb, var(--modal-bg-start) 80%, transparent);
+  background: color-mix(in srgb, var(--modal-bg-start) 96%, transparent);
   -webkit-backdrop-filter: blur(var(--blur-lg));
   backdrop-filter: blur(var(--blur-lg));
   border: 1px solid var(--card-border);
@@ -220,7 +220,9 @@
 }
 
 .wizard-toggle input:focus-visible + .toggle-slider {
-  outline: none;
+  /* Forced-colors mode drops box-shadow, so the transparent outline becomes visible there. */
+  outline: 2px solid transparent;
+  outline-offset: 4px;
   border-color: var(--accent);
   box-shadow: 0 0 0 4px var(--accent-subtle);
 }
@@ -263,6 +265,11 @@
   border-top: 1px solid var(--border-subtle);
 }
 
+/* Next stays at the right on every step, including the first, where Back is hidden. */
+#wizard-next {
+  margin-left: auto;
+}
+
 .wizard-nav-error {
   flex-basis: 100%;
   margin: 0 0 var(--spacing-sm);
@@ -271,25 +278,6 @@
 #wizard-folder-error {
   margin: 0;
   line-height: 1.35;
-}
-
-.wizard-dots {
-  display: flex;
-  gap: var(--spacing-xs);
-}
-
-.wizard-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-full);
-  background: var(--surface-3);
-  transition: var(--transition-fast);
-}
-
-.wizard-dot.active {
-  background: var(--accent);
-  width: 20px;
-  border-radius: 4px;
 }
 
 .wizard-btn {

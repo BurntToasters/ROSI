@@ -73,6 +73,25 @@ in `e2e/renderer-updates.spec.js`, and the four flatpak scenarios in
 3. Events are emitted from the state thread only, so their order follows the
    order of decisions.
 
+## C5: explicit-target "no update" answer
+
+`check_target` runs a second lookup when an explicit target answers "no
+update", to cover the beta-to-stable asset rename window.
+
+1. A transient error in the second lookup must not turn "no update" into a
+   feed error. The first answer (`None`) is kept. Not automated in E2E yet. The
+   guard is `.ok().flatten()` on the second lookup; a feed that fails only on
+   its second request would cover it.
+2. A second lookup that succeeds with an update must still be used. Guard:
+   `.ok().flatten()` keeps `Ok(Some(update))`. Not automated in E2E yet.
+3. The generation fence is unchanged. The `is_current` check before the second
+   lookup still returns `None` for a superseded check, and the state thread
+   still discards late results by generation. Covered by the existing
+   `updater-generation-retry` and stale-check scenarios.
+4. A broken feed that fails only the second lookup now reads as "up to date"
+   and is not logged. This is accepted: the first lookup already got a valid
+   answer, and the next check repeats both lookups. Not automated in E2E.
+
 ## Notes on what cannot be exercised as-is
 
 - A real macOS or Linux install replaces the app bundle. E2E builds therefore
