@@ -11,6 +11,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   E2E_WEBVIEW2_BROWSER_ARGS,
+  ensureWindowsProfileFolders,
   mergeWebView2BrowserArgs,
 } from "../../helpers/profile.js";
 
@@ -251,6 +252,7 @@ function createIsolatedEnvironment(root) {
   ]) {
     fs.mkdirSync(directory, { recursive: true });
   }
+  ensureWindowsProfileFolders(home);
   const homeDrive = path.win32.parse(home).root.slice(0, 2);
   return {
     ...process.env,

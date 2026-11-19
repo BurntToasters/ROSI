@@ -104,6 +104,17 @@ export function e2eSettings({ downloadFolder, ffmpegPath = "" }) {
   };
 }
 
+/**
+ * Windows resolves Roaming and Local AppData under the overridden USERPROFILE
+ * and fails with "unknown path" when those folders are missing, so a temp home
+ * needs them before the app starts.
+ */
+export function ensureWindowsProfileFolders(home) {
+  for (const name of ["Roaming", "Local"]) {
+    fs.mkdirSync(path.join(home, "AppData", name), { recursive: true });
+  }
+}
+
 export function createE2eProfile({
   ffmpegPath = "",
   seedSettings = true,
@@ -139,6 +150,7 @@ export function createE2eProfile({
   if (process.platform === "win32") {
     const webview2 = path.join(profileDir, "webview2");
     fs.mkdirSync(webview2, { recursive: true });
+    ensureWindowsProfileFolders(home);
     env.WEBVIEW2_USER_DATA_FOLDER = webview2;
     env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = mergeWebView2BrowserArgs(
       process.env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,

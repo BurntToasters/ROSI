@@ -165,11 +165,6 @@ async function waitFor(check, timeoutMs, intervalMs = 500) {
 
 async function launchOnce(binary, mode, index) {
   const profile = createE2eProfile();
-  // Spawned directly, the app resolves app data under the temp USERPROFILE and
-  // exits when the folder is missing.
-  for (const name of ["Roaming", "Local"]) {
-    fs.mkdirSync(path.join(profile.home, "AppData", name), { recursive: true });
-  }
   const folder = profile.env.WEBVIEW2_USER_DATA_FOLDER;
   const merged = mergeWebView2BrowserArgs(
     process.env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
