@@ -3,7 +3,7 @@ import { RosiJobProgressEvent, renderStatusText } from './core';
 import { showToast } from './ui-helpers';
 import { api } from '../api';
 
-export { formatBytes } from '../modules/downloads';
+export { formatBytes } from '../modules/format';
 
 export function setProgressPhase(phase: string) {
   const phases = document.querySelectorAll<HTMLElement>('.progress-phase');
@@ -188,9 +188,7 @@ export async function revealFileLocation(filePath: string) {
 export const downloadState: {
   isDownloading: unknown;
   downloadAbort: (() => void) | null;
-  lastDownloadedFilePath: string | null;
 } = {
   isDownloading: false,
   downloadAbort: null,
-  lastDownloadedFilePath: null,
 };

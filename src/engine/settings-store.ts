@@ -155,6 +155,9 @@ export async function drainSettingsSaves() {
   const patch = changedSettingsPatch(snapshot);
   let saved = false;
   let errorMessage = 'Could not save settings due to an unexpected error.';
+  // The code and message below describe this save only, never an earlier one.
+  settingsStore.lastSettingsSaveErrorCode = null;
+  settingsStore.lastSettingsSaveErrorMessage = null;
 
   let rejectedMessage: string | null = null;
   try {
@@ -201,9 +204,11 @@ export async function drainSettingsSaves() {
       settingsStore.lastSettingsSaveErrorCode = result?.error?.code ?? null;
       errorMessage = result?.error?.message || 'Could not save settings.';
     }
-  } catch {
+  } catch (error) {
     // Keep the latest renderer state available for a later retry.
+    logError('Settings save failed', error);
   }
+  if (!saved) settingsStore.lastSettingsSaveErrorMessage = errorMessage;
 
   const latestRevision = settingsStore.settingsRevision;
   // A newer ROSI owns settings.json: the file is preserved and the user was
@@ -349,6 +354,8 @@ export const settingsStore: {
   persistDebounceTimer: ReturnType<typeof setTimeout> | null;
   settingsSaveInFlight: boolean;
   lastSettingsSaveErrorCode: string | null;
+  // Backend message of the latest failed save, for lifecycle callers.
+  lastSettingsSaveErrorMessage: string | null;
   refreshSettingsControls: (() => void) | null;
   // Settings as the backend last confirmed them. Null until the load records them.
   backendSettings: RosiSettings | null;
@@ -367,6 +374,7 @@ export const settingsStore: {
   persistDebounceTimer: null,
   settingsSaveInFlight: false,
   lastSettingsSaveErrorCode: null,
+  lastSettingsSaveErrorMessage: null,
   refreshSettingsControls: null,
   backendSettings: null,
   settingsSaveWaiters: [],

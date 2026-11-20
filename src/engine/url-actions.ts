@@ -15,7 +15,7 @@ import { cancelScheduledPreview, previewController, schedulePreview } from './pr
 import { downloadState, hideProgressBar } from './progress';
 import { queueController } from './queue-controller';
 import { refs } from './refs';
-import { settingsStore } from './settings-store';
+import { persistSettings, settingsStore } from './settings-store';
 import { setButtonLoading, showToast } from './ui-helpers';
 import { api } from '../api';
 
@@ -55,20 +55,54 @@ export function isDownloadButtonIdle(): boolean {
 }
 
 // ── Activity replay ─────────────────────────────────────────────────────────
-export async function replayActivityDownload(entry: RosiDownloadActivity) {
-  if (downloadState.isDownloading) {
+// True while a replay waits on the folder dialog or the settings flush.
+let replayPending = false;
+
+function replayBlocked(): boolean {
+  if (downloadState.isDownloading || manualDownload.manualDownloadStartPending) {
     showToast('Wait for the current download to finish first.', { type: 'warning' });
-    return;
+    return true;
   }
-  if (refuseDuringQueueRun()) return;
+  return refuseDuringQueueRun();
+}
+
+export async function replayActivityDownload(entry: RosiDownloadActivity) {
+  if (replayPending || replayBlocked()) return;
   const request = { ...(entry.request || {}) } as Record<string, unknown>;
   if (typeof request.url !== 'string' || !request.url.trim()) request.url = entry.url;
-  const outputPath =
-    typeof request.outputPath === 'string' && request.outputPath.trim()
-      ? request.outputPath
-      : settingsStore.settings.downloadFolder?.trim() || (await api.selectDownloadLocation());
-  if (!outputPath) return;
-  request.outputPath = outputPath;
+  replayPending = true;
+  try {
+    // Same rule as the Download button: ask when the setting says so, else use
+    // the saved folder, else let the backend pick its default.
+    let outputPath: string | null = null;
+    if (settingsStore.settings.askDownloadLocation) {
+      try {
+        outputPath = (await api.selectDownloadLocation()) || null;
+      } catch (error) {
+        logError('Error opening save dialog', error);
+        showToast('Could not open the save location dialog. Please try again.', {
+          type: 'error',
+        });
+        return;
+      }
+      if (!outputPath) return;
+    } else {
+      const stored = typeof request.outputPath === 'string' ? request.outputPath.trim() : '';
+      outputPath = stored || settingsStore.settings.downloadFolder?.trim() || null;
+    }
+    if (outputPath) request.outputPath = outputPath;
+    else delete request.outputPath;
+
+    // The backend reads settings from disk when a download starts.
+    if (!(await persistSettings({ immediate: true }))) {
+      showToast('Could not save download settings. Please try again.', { type: 'error' });
+      return;
+    }
+    // A download may have started while the dialog or the save was open.
+    if (replayBlocked()) return;
+  } finally {
+    replayPending = false;
+  }
 
   const operation = beginManualDownloadOperation();
   downloadState.isDownloading = true;

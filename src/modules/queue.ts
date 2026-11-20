@@ -1,3 +1,5 @@
+import { formatBytes, hostFromUrl } from './format';
+
 type QueueStatus = RosiQueueItem['status'];
 type QueueDirection = 'up' | 'down';
 
@@ -41,11 +43,7 @@ export function resolveQueueSectionElement(root?: Document) {
 }
 
 function getHostname(url: string) {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return url.slice(0, 40);
-  }
+  return hostFromUrl(url) || url.slice(0, 40);
 }
 
 /**
@@ -67,15 +65,6 @@ function getUrlDisplay(url: string) {
   } catch {
     return url.slice(0, 56);
   }
-}
-
-function formatBytes(bytes: number | null | undefined) {
-  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return '';
-  if (bytes === 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  const value = bytes / 1024 ** index;
-  return `${value >= 10 || index === 0 ? Math.round(value) : value.toFixed(1)} ${units[index]}`;
 }
 
 function formatEta(seconds: number | null | undefined) {
@@ -155,9 +144,8 @@ function buildProgressBlock(item: QueueItem): HTMLElement | null {
 
   const detailParts: string[] = [];
   if (progress.details) detailParts.push(progress.details);
-  if (typeof progress.speedBytesPerSecond === 'number') {
-    detailParts.push(`${formatBytes(progress.speedBytesPerSecond)}/s`);
-  }
+  const speed = formatBytes(progress.speedBytesPerSecond);
+  if (speed) detailParts.push(`${speed}/s`);
   const eta = formatEta(progress.etaSeconds);
   if (eta) detailParts.push(`ETA ${eta}`);
   const details = document.createElement('div');

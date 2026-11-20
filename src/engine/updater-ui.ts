@@ -8,7 +8,7 @@ import { logError } from './core';
 import { formatUpdateProgressInfo } from '../modules/updates';
 import { currentModalData, modalQueue, retireModal, showModal } from './overlays';
 import { formatBytes } from './progress';
-import { setButtonLoading } from './ui-helpers';
+import { openExternalLink, setButtonLoading } from './ui-helpers';
 import { api } from '../api';
 
 // The public ROSI website, the same host as the website and support links.
@@ -42,7 +42,12 @@ export async function checkForUpdates() {
         {
           label: 'Open Store',
           primary: true,
-          action: () => api.openExternal('ms-windows-store://pdp/?ProductId=9P4Q134B2JW3'),
+          action: () => {
+            void openExternalLink(
+              'ms-windows-store://pdp/?ProductId=9P4Q134B2JW3',
+              'the Microsoft Store'
+            );
+          },
         },
         { label: 'OK' },
       ],
@@ -179,9 +184,7 @@ function showUpdateError(message: string) {
       {
         label: 'Get Latest Version',
         action: () => {
-          void api
-            .openExternal(ROSI_WEBSITE_URL)
-            .catch((error: unknown) => logError('Could not open the ROSI website', error));
+          void openExternalLink(ROSI_WEBSITE_URL, 'the ROSI website');
         },
       },
     ],
@@ -298,11 +301,7 @@ export function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boole
                   primary: true,
                   action: () => {
                     if (updaterCandidateId !== candidateId) return;
-                    void api
-                      .openExternal(releasePageUrl(version))
-                      .catch((error: unknown) =>
-                        logError('Could not open the release page', error)
-                      );
+                    void openExternalLink(releasePageUrl(version), 'the release page');
                   },
                 },
                 { label: 'Later' },

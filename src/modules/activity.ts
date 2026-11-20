@@ -1,5 +1,5 @@
 import { copyText } from './clipboard';
-import { formatBytes } from './downloads';
+import { formatBytes, hostFromUrl } from './format';
 import { api } from '../api';
 
 // window.rosiMessages is published by engine/messages.ts before any render runs.
@@ -43,15 +43,6 @@ interface ActivityRow {
   outputPaths?: string[] | null;
   error?: string | null;
   request?: RosiDownloadCompletion['request'];
-}
-
-function hostFromUrl(url: string | null | undefined) {
-  if (!url) return '';
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return '';
-  }
 }
 
 /** Last non-empty path segment, decoded when possible. Query and hash are never used. */
@@ -187,7 +178,7 @@ export function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPane
           // The title already shows the host when it is the only identifier.
           host !== title ? host : '',
           describeActivityProfile(entry),
-          typeof entry.sizeBytes === 'number' ? formatBytes(entry.sizeBytes) : '',
+          formatBytes(entry.sizeBytes),
           failedOutputs > 0
             ? uiMessages().activity.partialCount(
                 successfulOutputs,

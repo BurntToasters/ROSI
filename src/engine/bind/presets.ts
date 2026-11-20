@@ -70,10 +70,19 @@ export function initPresets() {
       } else {
         nextPresets.push(preset);
       }
-      settingsStore.settings.downloadPresets = nextPresets;
-      // The saved preset now holds the on-screen values, so nothing is copied any more.
-      clearAppliedPreset();
-      const saved = await persistSettings({ immediate: true });
+      // The button stays disabled until the save settles, so a second click cannot submit twice.
+      savePresetBtn.disabled = true;
+      let saved = false;
+      try {
+        settingsStore.settings.downloadPresets = nextPresets;
+        // The saved preset now holds the on-screen values, so nothing is copied any more.
+        clearAppliedPreset();
+        saved = await persistSettings({ immediate: true });
+      } finally {
+        // A failed save must not leave the unsaved preset in memory.
+        if (!saved) settingsStore.settings.downloadPresets = presets;
+        savePresetBtn.disabled = false;
+      }
       renderPresetOptions(saved ? id : downloadPresetSelect?.value);
       if (saved) {
         if (presetNameInput) presetNameInput.value = '';
@@ -87,11 +96,19 @@ export function initPresets() {
     deletePresetBtn.addEventListener('click', async () => {
       const preset = getSelectedPreset();
       if (!preset) return;
-      settingsStore.settings.downloadPresets = getPresets().filter(
-        (candidate) => candidate.id !== preset.id
-      );
-      const saved = await persistSettings({ immediate: true });
-      renderPresetOptions('');
+      const previous = getPresets();
+      deletePresetBtn.disabled = true;
+      let saved = false;
+      try {
+        settingsStore.settings.downloadPresets = previous.filter(
+          (candidate) => candidate.id !== preset.id
+        );
+        saved = await persistSettings({ immediate: true });
+      } finally {
+        // A failed save must not leave the preset removed in memory.
+        if (!saved) settingsStore.settings.downloadPresets = previous;
+        renderPresetOptions(saved ? '' : preset.id);
+      }
       setPresetStatus(saved ? `Deleted ${preset.name}.` : 'Could not delete the preset.');
     });
   }

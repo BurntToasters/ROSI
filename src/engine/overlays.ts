@@ -71,7 +71,7 @@ export function focusTopOverlayOr(target: Element | null) {
 export interface ModalButton {
   label: string;
   icon?: string;
-  action?: () => void;
+  action?: () => unknown;
   primary?: boolean;
   danger?: boolean;
   disabled?: boolean;
@@ -86,7 +86,7 @@ export interface ModalData {
   extra?: (() => Node | null) | Node | null;
   // Runs when the prompt is dismissed without a button (Escape). Never runs for
   // a busy prompt, which cannot be dismissed.
-  onDismiss?: () => void;
+  onDismiss?: () => unknown;
 }
 
 export const modalQueue: ModalData[] = [];
@@ -129,8 +129,13 @@ const FRAME_TAB_STOP_SELECTOR = `${FOCUSABLE_SELECTOR}, summary`;
 // directly where it exists (macOS 15 WebKit, WebView2). The fallback, for WebKitGTK
 // builds without it, excludes anything inside a closed <details> except that
 // details' own direct <summary>.
-function isRenderedTabStop(element: HTMLElement): boolean {
-  if (typeof element.checkVisibility === 'function') return element.checkVisibility();
+function isRenderedTabStop(element: HTMLElement, strict = false): boolean {
+  if (typeof element.checkVisibility === 'function') {
+    // Strict also treats visibility:hidden as unfocusable.
+    return strict
+      ? element.checkVisibility({ checkVisibilityCSS: true, visibilityProperty: true })
+      : element.checkVisibility();
+  }
   return !isInsideClosedDetails(element);
 }
 
@@ -143,9 +148,9 @@ function isInsideClosedDetails(element: HTMLElement): boolean {
   return false;
 }
 
-// The parent-document trap keeps its selector. It uses the same rendered-and-
-// focusable rule, which only drops elements that cannot take focus (closed-details
-// content). No trapped overlay today contains a <details>.
+// The one focusable list for every parent-document trap (modal, licenses, sidebar).
+// It drops elements that cannot take focus: disabled, aria-hidden, inert (itself or
+// an ancestor, such as a collapsed settings section), hidden, or in a closed details.
 export function getFocusableElements(container: unknown): HTMLElement[] {
   if (!(container instanceof HTMLElement)) return [];
   return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
@@ -154,7 +159,8 @@ export function getFocusableElements(container: unknown): HTMLElement[] {
       element.getAttribute('aria-hidden') !== 'true' &&
       element.tabIndex !== -1 &&
       element.offsetParent !== null &&
-      isRenderedTabStop(element)
+      element.closest('[inert]') === null &&
+      isRenderedTabStop(element, true)
   );
 }
 
@@ -200,11 +206,12 @@ export function showModal({
     extra,
     onDismiss,
   };
-  // A keyed prompt (for example an available update) that a priority modal
-  // pushes aside is shown again afterwards instead of being lost.
+  // A prompt that a priority modal pushes aside is shown again afterwards, keyed
+  // or not, so a promise waiting on it still settles. A busy prompt has no
+  // buttons or dismissal to wait on, so it is not kept.
   let displaced: ModalData | null = null;
   if (priority && isModalActive) {
-    if (currentModalData?.key && !currentModalData.busy) displaced = currentModalData;
+    if (currentModalData && !currentModalData.busy) displaced = currentModalData;
     cancelModalHide();
     const modal = document.getElementById('app-modal');
     if (modal) {
@@ -224,6 +231,22 @@ export function showModal({
   }
   if (!isModalActive) {
     displayNextModal();
+  }
+}
+
+// Runs a button action or dismissal callback. A throw or a rejected promise is
+// logged and never escapes, so the modal teardown stays on its normal path.
+function runModalCallback(callback: (() => unknown) | null | undefined) {
+  if (typeof callback !== 'function') return;
+  try {
+    const result = callback();
+    if (result && typeof (result as Promise<unknown>).then === 'function') {
+      (result as Promise<unknown>).then(undefined, (error: unknown) => {
+        logError('Modal action failed', error);
+      });
+    }
+  } catch (error) {
+    logError('Modal action failed', error);
   }
 }
 
@@ -249,6 +272,8 @@ export function displayNextModal() {
   const btnContainer = document.getElementById('modal-buttons');
   const extraEl = document.getElementById('modal-extra');
   if (!modal || !titleEl || !msgEl || !btnContainer) {
+    // Nothing to show it in. Settle whoever waits on it, then move on.
+    runModalCallback(displayedModalData.onDismiss);
     displayNextModal();
     return;
   }
@@ -260,9 +285,13 @@ export function displayNextModal() {
   if (extraEl) {
     extraEl.textContent = '';
     if (extra) {
-      const extraNode = typeof extra === 'function' ? extra() : extra;
-      if (extraNode && extraNode.nodeType) {
-        extraEl.appendChild(extraNode as Node);
+      try {
+        const extraNode = typeof extra === 'function' ? extra() : extra;
+        if (extraNode && extraNode.nodeType) {
+          extraEl.appendChild(extraNode as Node);
+        }
+      } catch (error) {
+        logError('Modal extra content failed', error);
       }
     }
   }
@@ -388,7 +417,7 @@ export function dismissActiveModal(): boolean {
 // The action runs when the button is pressed, not when the fade ends. A priority
 // modal that arrives during the fade cancels the teardown, so an action deferred
 // to the teardown would be dropped.
-export function hideModal(modal: HTMLElement, action: (() => void) | null | undefined) {
+export function hideModal(modal: HTMLElement, action: (() => unknown) | null | undefined) {
   if (!currentModalData || modalHideTimer !== null) return;
   const closingModalData = currentModalData;
   const hideGeneration = ++modalHideGeneration;
@@ -412,13 +441,7 @@ export function hideModal(modal: HTMLElement, action: (() => void) | null | unde
       previousFocus = null;
     }
   }, 200);
-  if (typeof action === 'function') {
-    try {
-      action();
-    } catch (error) {
-      logError('Modal action failed', error);
-    }
-  }
+  runModalCallback(action);
 }
 
 export function retireModal(key: string) {
@@ -462,6 +485,12 @@ Alt+1 / Alt+2 / Alt+3 - Show Queue, Activity, or Console`,
 
 export let licensesPreviousFocus: Element | null = null;
 export let licensesTrapHandler: ((e: KeyboardEvent) => void) | null = null;
+let licensesCleanupTimer: ReturnType<typeof setTimeout> | null = null;
+
+function cancelLicensesCleanup() {
+  if (licensesCleanupTimer !== null) clearTimeout(licensesCleanupTimer);
+  licensesCleanupTimer = null;
+}
 
 // The licenses text lives in a same-origin frame. A key pressed inside the frame
 // reaches the frame's own document, not the overlay listener, so it is forwarded
@@ -510,6 +539,8 @@ export function showLicenses() {
       licensesOverlay.querySelector<HTMLElement>('#close-licenses')?.focus();
       return;
     }
+    // A pending close cleanup would unlock scrolling under the reopened view.
+    cancelLicensesCleanup();
     licensesPreviousFocus = document.activeElement;
     licensesOverlay.classList.add('active');
     licensesOverlay.setAttribute('aria-hidden', 'false');
@@ -598,7 +629,10 @@ export function hideLicenses() {
     licensesPreviousFocus = null;
     syncModalAccessibility();
     setMainContentInert(false);
-    setTimeout(() => {
+    cancelLicensesCleanup();
+    licensesCleanupTimer = setTimeout(() => {
+      licensesCleanupTimer = null;
+      if (licensesOverlay.classList.contains('active')) return;
       document.body.style.overflow = '';
       document.body.classList.remove('licenses-open');
     }, 300);

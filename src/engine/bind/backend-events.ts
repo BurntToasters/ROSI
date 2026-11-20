@@ -1,4 +1,5 @@
 // Startup bindings for backend events.
+import { noteActivityUpdate } from './activity';
 import { logError } from '../core';
 import { handleManualDownloadCompletion, manualDownload } from '../manual-download';
 import { showLicenses } from '../overlays';
@@ -120,6 +121,7 @@ export function bindBackendEvents() {
 
   ipcCleanupFunctions.push(
     api.onDownloadActivityUpdate((activity) => {
+      noteActivityUpdate();
       activityPanel?.setEntries(activity);
     })
   );

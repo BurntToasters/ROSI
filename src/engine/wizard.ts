@@ -454,6 +454,8 @@ export function launchSetupWizard(
   }
 
   nextBtn.addEventListener('click', () => {
+    // A skip or finish in progress owns the settings; Next waits for it.
+    if (wizardSkipping || wizardSaving) return;
     if (currentStep === extrasStepIndex && !subtitleLangsValid()) return;
     if (currentStep < TOTAL_STEPS - 1) {
       currentStep++;
@@ -464,6 +466,7 @@ export function launchSetupWizard(
   });
 
   backBtnEl.addEventListener('click', () => {
+    if (wizardSkipping || wizardSaving) return;
     if (currentStep > 0) {
       currentStep--;
       updateUI();
@@ -485,14 +488,21 @@ export function launchSetupWizard(
   let wizardClosed = false;
   let wizardSaving = false;
 
+  /** Locks Next, Back, and Skip while a skip or finish owns the settings. */
+  function setWizardBusy(busy: boolean) {
+    (nextBtn as HTMLButtonElement).disabled = busy;
+    backBtnEl.disabled = busy || currentStep === 0;
+    if (skipBtn) skipBtn.disabled = busy;
+  }
+
   async function skipWizard() {
-    if (wizardSkipping || wizardClosed) return;
+    if (wizardSkipping || wizardSaving || wizardClosed) return;
     wizardSkipping = true;
-    if (skipBtn) skipBtn.disabled = true;
+    setWizardBusy(true);
     const defaultsLoaded = await applyWizardDefaults();
     if (!defaultsLoaded) {
       wizardSkipping = false;
-      if (skipBtn) skipBtn.disabled = false;
+      setWizardBusy(false);
       if (wizardError) {
         wizardError.textContent = UI_MESSAGES.wizard.defaultsFailed;
         wizardError.hidden = false;
@@ -505,18 +515,15 @@ export function launchSetupWizard(
 
   async function closeWizard(skipped = false) {
     if (wizardClosed || wizardSaving) return;
+    // Finish must not run over the defaults that a skip is saving.
+    if (wizardSkipping && !skipped) return;
     wizardSaving = true;
-    const nextButton = nextBtn as HTMLButtonElement;
-    nextButton.disabled = true;
-    backBtnEl.disabled = true;
-    if (skipBtn) skipBtn.disabled = true;
+    setWizardBusy(true);
     const saved = await finalizeWizard(skipped);
     if (!saved) {
       wizardSaving = false;
       wizardSkipping = false;
-      nextButton.disabled = false;
-      backBtnEl.disabled = false;
-      if (skipBtn) skipBtn.disabled = false;
+      setWizardBusy(false);
       if (wizardError) {
         wizardError.textContent = UI_MESSAGES.wizard.saveFailed;
         wizardError.hidden = false;

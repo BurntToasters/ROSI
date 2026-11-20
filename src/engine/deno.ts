@@ -2,6 +2,7 @@
 import { RosiSettings, logError } from './core';
 import { UI_MESSAGES, setRuntimeCheckFailed } from './messages';
 import { showModal } from './overlays';
+import { openExternalLink } from './ui-helpers';
 import { showRestartFailure } from './updater-ui';
 import { api } from '../api';
 
@@ -38,7 +39,9 @@ export async function checkDenoInstallation(
           {
             label: 'Open Deno Instructions',
             primary: true,
-            action: () => api.openExternal(DENO_INSTALL_DOCS),
+            action: () => {
+              void openExternalLink(DENO_INSTALL_DOCS, 'the Deno instructions');
+            },
           },
           { label: UI_MESSAGES.wizard.later },
           {
@@ -119,7 +122,9 @@ export async function checkDenoInstallation(
                     {
                       label: 'Open Install Instructions',
                       primary: true,
-                      action: () => api.openExternal(DENO_INSTALL_DOCS),
+                      action: () => {
+                        void openExternalLink(DENO_INSTALL_DOCS, 'the Deno instructions');
+                      },
                     },
                     { label: 'OK' },
                   ],
@@ -149,7 +154,9 @@ export async function checkDenoInstallation(
         {
           label: UI_MESSAGES.wizard.installInstructions,
           primary: true,
-          action: () => api.openExternal(DENO_INSTALL_DOCS),
+          action: () => {
+            void openExternalLink(DENO_INSTALL_DOCS, 'the Deno instructions');
+          },
         },
         { label: 'Later' },
       ],

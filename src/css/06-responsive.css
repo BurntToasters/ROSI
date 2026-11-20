@@ -1,4 +1,4 @@
-/* Responsive adjustments only. Base component styles live in their own files. */
+/* Responsive and user-preference adjustments only. Base component styles live in their own files. */
 
 /* Short windows: compact the chrome so the card and the dock tabs both fit.
    900x560 (the minimum window) leaves ~530px of viewport. */
@@ -77,5 +77,207 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* Windows High Contrast (forced colors) drops background colors, so toggles,
+   progress fills and selected cards would lose their state. These rules carry
+   state with system colors, borders and outlines. Only system colors are used,
+   so the browser keeps them. Flat UI repeats a few selectors at higher
+   specificity, so those are listed here too. */
+@media (forced-colors: active) {
+  .toggle-slider,
+  .flat-ui-toggle-slider {
+    background: Canvas;
+    border: 1px solid ButtonText;
+    box-shadow: none;
+  }
+
+  .toggle-slider::after,
+  .flat-ui-toggle-slider::after,
+  :root[data-flat-ui='true'] .toggle-slider::after {
+    background: ButtonText;
+    box-shadow: none;
+  }
+
+  .toggle-switch input:checked + .toggle-slider,
+  .wizard-toggle input:checked + .toggle-slider,
+  .flat-ui-toggle-wrap input:checked + .flat-ui-toggle-slider {
+    background: Highlight;
+    border-color: Highlight;
+    box-shadow: none;
+  }
+
+  .toggle-switch input:checked + .toggle-slider::after,
+  .wizard-toggle input:checked + .toggle-slider::after,
+  .flat-ui-toggle-wrap input:checked + .flat-ui-toggle-slider::after,
+  :root[data-flat-ui='true'] .toggle-switch input:checked + .toggle-slider::after {
+    background: HighlightText;
+  }
+
+  .check input {
+    background: Canvas;
+    border-color: ButtonText;
+    box-shadow: none;
+  }
+
+  .check input:checked {
+    background: Highlight;
+    border-color: Highlight;
+  }
+
+  .check input:checked::after {
+    border-color: HighlightText;
+  }
+
+  .progress-bar-wrapper,
+  .queue-item-progress-track,
+  .wizard-progress,
+  .update-banner-progress {
+    background: Canvas;
+    outline: 1px solid ButtonText;
+    box-shadow: none;
+  }
+
+  .progress-bar,
+  .queue-item-progress-bar,
+  .wizard-progress-bar,
+  .update-banner-bar {
+    background: Highlight;
+  }
+
+  .progress-bar.indeterminate,
+  .queue-item-progress-bar.indeterminate {
+    background: linear-gradient(90deg, transparent, Highlight, transparent);
+    background-size: 200% 100%;
+  }
+
+  .phase-dot,
+  .queue-item-status {
+    background: GrayText;
+  }
+
+  .progress-phase.active .phase-dot,
+  .queue-downloading .queue-item-status {
+    background: Highlight;
+    box-shadow: none;
+  }
+
+  .progress-phase.completed .phase-dot,
+  .queue-completed .queue-item-status {
+    background: CanvasText;
+  }
+
+  .queue-failed .queue-item-status {
+    background: Canvas;
+    border: 2px solid CanvasText;
+  }
+
+  .segmented__item[aria-pressed='true'],
+  .segmented__item[aria-selected='true'],
+  .wizard-segment input:checked + .segmented__item,
+  .wizard-segment input:checked + .segmented__item:hover {
+    color: HighlightText;
+    background: Highlight;
+    border-color: Highlight;
+    box-shadow: none;
+  }
+
+  .segmented__item[aria-pressed='true']::after,
+  .segmented__item[aria-selected='true']::after,
+  .wizard-segment input:checked + .segmented__item::after {
+    background: HighlightText;
+  }
+
+  .wizard-theme-card {
+    border-color: ButtonText;
+  }
+
+  .wizard-theme-card:hover {
+    border-color: Highlight;
+  }
+
+  .wizard-theme-option input:checked + .wizard-theme-card {
+    color: HighlightText;
+    background: Highlight;
+    border-color: Highlight;
+  }
+
+  .wizard-theme-option input:checked + .wizard-theme-card .wizard-theme-label {
+    color: HighlightText;
+  }
+
+  /* The swatches show theme colors, so they keep their own. */
+  .wizard-theme-preview {
+    forced-color-adjust: none;
+    border-color: CanvasText;
+  }
+}
+
+/* A contrast or transparency preference gets the same opaque surfaces and
+   stronger borders as flat UI (see the html[data-flat-ui] blocks in
+   01-base.css). Keep the values in step with those blocks. Layout stays as is. */
+@media (prefers-contrast: more), (prefers-reduced-transparency: reduce) {
+  :root {
+    --surface-1: #16181d;
+    --surface-2: #1e222b;
+    --surface-3: #272c37;
+    --surface-hover: #2f3644;
+    --border-subtle: #242933;
+    --border-default: #3b4252;
+    --border-strong: #4c566a;
+    --sidebar-bg-start: #0d0f13;
+    --modal-bg-start: #16181d;
+    --blur-sm: 0px;
+    --blur-md: 0px;
+    --blur-lg: 0px;
+    --card-bg: var(--surface-1);
+    --card-border: var(--border-default);
+    --well-bg: var(--surface-1);
+  }
+
+  :root[data-theme='purple'] {
+    --surface-1: #1a1626;
+    --surface-2: #221c33;
+    --surface-3: #2d2444;
+    --surface-hover: #372c54;
+    --border-subtle: #2b2340;
+    --border-default: #413561;
+    --border-strong: #52437a;
+    --sidebar-bg-start: #120e1e;
+    --modal-bg-start: #1a1626;
+    --card-bg: var(--surface-1);
+    --card-border: var(--border-default);
+    --well-bg: var(--surface-1);
+  }
+
+  :root[data-theme='light'] {
+    --surface-1: #ffffff;
+    --surface-2: #f1f5f9;
+    --surface-3: #e2e8f0;
+    --surface-hover: #cbd5e1;
+    --border-subtle: #e2e8f0;
+    --border-default: #cbd5e1;
+    --border-strong: #94a3b8;
+    --sidebar-bg-start: #f8fafc;
+    --modal-bg-start: #ffffff;
+    --card-bg: var(--surface-1);
+    --card-border: var(--border-default);
+    --well-bg: var(--surface-1);
+  }
+
+  .modal-box,
+  .toast,
+  .wizard-card,
+  .popover {
+    background: var(--modal-bg-start);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .sidebar {
+    background: var(--sidebar-bg-start);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }

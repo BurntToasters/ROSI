@@ -1,5 +1,6 @@
 import { icon as lucideIcon, renderStatus } from './icons';
 import { setTabAvailable } from './dock';
+import { getFocusableElements } from '../engine/overlays';
 
 type ToastType = 'warning' | 'error' | 'success' | 'info';
 
@@ -287,22 +288,8 @@ function getTopActiveOverlayId() {
 }
 let previousSidebarFocus: HTMLElement | null = null;
 
-function getSidebarFocusableElements(sidebar: HTMLElement): HTMLElement[] {
-  return Array.from(
-    sidebar.querySelectorAll<HTMLElement>(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-    )
-  ).filter(
-    (element) =>
-      !element.hasAttribute('disabled') &&
-      element.getAttribute('aria-hidden') !== 'true' &&
-      element.tabIndex !== -1 &&
-      element.offsetParent !== null
-  );
-}
-
 function focusFirstSidebarElement(sidebar: HTMLElement): boolean {
-  const focusable = getSidebarFocusableElements(sidebar);
+  const focusable = getFocusableElements(sidebar);
   const first = focusable[0];
   if (first) {
     first.focus();
@@ -401,7 +388,7 @@ export function toggleSidebar() {
     }
     if (event.key !== 'Tab') return;
 
-    const focusable = getSidebarFocusableElements(sidebar);
+    const focusable = getFocusableElements(sidebar);
     if (focusable.length === 0) return;
 
     const first = focusable[0];

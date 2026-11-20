@@ -38,7 +38,7 @@ type RosiQueueItem = import('./generated/ipc-types').QueueItem & {
   progress?: RosiJobProgressEvent;
 };
 
-// `queue-update` payload. A bare array is accepted for payloads without a revision.
+// `queue-update` payload. Every snapshot carries a revision.
 type RosiQueueSnapshot = import('./generated/ipc-types').QueueSnapshot;
 
 interface Window {

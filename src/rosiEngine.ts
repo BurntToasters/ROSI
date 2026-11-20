@@ -200,7 +200,15 @@ async function initializeRenderer() {
       const saved = await persistSettings({ immediate: true });
       // A settings file from a newer ROSI is preserved on purpose; it must not
       // keep the app from closing.
-      if (!saved && settingsStore.lastSettingsSaveErrorCode !== 'NEWER_VERSION') return;
+      if (!saved && settingsStore.lastSettingsSaveErrorCode !== 'NEWER_VERSION') {
+        // Say so now. The backend only reports a pending save after its timeout.
+        const detail = settingsStore.lastSettingsSaveErrorMessage;
+        showToast(
+          `Settings could not be saved before closing.${detail ? ` ${detail}` : ''} ROSI will stay open until the save works or you choose to close without saving.`,
+          { type: 'error', duration: 12_000 }
+        );
+        return;
+      }
       await api.notifySettingsFlushed(generation);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);

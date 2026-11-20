@@ -36,7 +36,6 @@ export function beginManualDownloadOperation(): number {
   manualDownload.progressHideTimer = null;
   const hadResult = manualDownload.downloadResult !== null;
   dropDownloadResult();
-  downloadState.lastDownloadedFilePath = null;
   downloadState.downloadAbort = null;
   if (hadResult && refs.downloadBtn) {
     // The result button is still on screen. Put the idle Download button back
@@ -122,7 +121,6 @@ export function clearDownloadResult(operation = manualDownload.manualDownloadOpe
   )
     return;
   dropDownloadResult();
-  downloadState.lastDownloadedFilePath = null;
   setButtonLoading(refs.downloadBtn, false);
   syncPrimaryActionState();
 }
@@ -150,7 +148,6 @@ export function showManualDownloadCompletion(
     null;
   const isSuccess = completion.outcome === 'success';
   if (isSuccess) {
-    downloadState.lastDownloadedFilePath = outputPath;
     updateProgressBar(100, 'Complete!', '');
     showProgressComplete();
     if (settingsStore.settings.notifications) {
@@ -184,7 +181,6 @@ export function showManualDownloadCompletion(
       );
     }
   } else {
-    downloadState.lastDownloadedFilePath = null;
     refs.downloadBtn.onclick = refs.downloadBtn._originalClick ?? null;
     // A user cancel is not a failure, so only a failed outcome notifies.
     if (completion.outcome === 'failed' && settingsStore.settings.notifications) {
