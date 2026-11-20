@@ -163,7 +163,11 @@ async function waitForNoStaging(timeout = 10_000) {
 function guardTempRoots() {
   return [
     ...(process.platform === "win32"
-      ? [path.join(dataDirectory, "media-tools")]
+      ? [
+          // Shared per-run launchers; the old roaming root stays for leftovers.
+          path.join(dataDirectory, "local", "media-tools"),
+          path.join(dataDirectory, "media-tools"),
+        ]
       : []),
     os.tmpdir(),
     env.TMPDIR,
@@ -257,16 +261,45 @@ async function terminateProbeTree(child) {
   });
 }
 
+// Windows stores the canonical path with a verbatim (\\?\) prefix.
+function normalizeToolPath(value) {
+  const plain = String(value ?? "").replace(/^\\\\\?\\/, "");
+  let resolved = path.resolve(plain);
+  try {
+    // Expands short (8.3) names the way the app's canonical path does.
+    resolved = fs.realpathSync.native(resolved).replace(/^\\\\\?\\/, "");
+  } catch {
+    // A missing file keeps its resolved path and fails the comparison.
+  }
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+// A launcher may be shared for the whole run, so an existing one counts when
+// its config names the FFmpeg this download uses.
+function usesDownloadFfmpeg(launcher) {
+  const expected = env.ROSI_ROUND2_NATIVE_FFMPEG_WRAPPER;
+  return (
+    Boolean(expected) &&
+    normalizeToolPath(launcher.config.ffmpeg) === normalizeToolPath(expected)
+  );
+}
+
 async function probeAppCreatedFfmpegAlias(existingLaunchers) {
   const existingKeys = new Set(existingLaunchers.map(guardLauncherKey));
   const deadline = Date.now() + 10_000;
   let observedLaunchers = [];
   let launcher;
+  let launcherSource;
   while (Date.now() < deadline) {
     observedLaunchers = listGuardLaunchers();
     launcher = observedLaunchers.find(
       (candidate) => !existingKeys.has(guardLauncherKey(candidate)),
     );
+    launcherSource = "new";
+    if (!launcher) {
+      launcher = observedLaunchers.find(usesDownloadFfmpeg);
+      launcherSource = "reused";
+    }
     if (launcher) break;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
@@ -291,6 +324,7 @@ async function probeAppCreatedFfmpegAlias(existingLaunchers) {
       aliasRoots: guardTempRoots(),
       aliasDirectory: launcher.directory,
       launcherConfigPath: launcher.configPath,
+      launcherSource,
       configuredFfmpeg: launcher.config.ffmpeg,
       aliasOwnedByApp,
       invariantPassed: false,
@@ -324,6 +358,7 @@ async function probeAppCreatedFfmpegAlias(existingLaunchers) {
   return {
     aliasDirectory: launcher.directory,
     launcherConfigPath: launcher.configPath,
+    launcherSource,
     configuredFfmpeg: launcher.config.ffmpeg,
     configuredFfprobe: launcher.config.ffprobe,
     aliasInvocationArgv0,

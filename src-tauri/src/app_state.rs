@@ -8,6 +8,7 @@ use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 static APP: OnceLock<AppHandle> = OnceLock::new();
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+static LOCAL_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 static HOME_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
 static DOWNLOAD_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
 static MEDIA_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
@@ -28,6 +29,14 @@ pub fn init(app: &AppHandle) -> Result<(), String> {
         .unwrap_or(data);
     std::fs::create_dir_all(&data)
         .map_err(|error| format!("Could not create {}: {error}", data.display()))?;
+    // Machine-local, never synced. Nothing durable lives here.
+    let local = app.path().app_local_data_dir().ok();
+    #[cfg(feature = "e2e")]
+    let local = match std::env::var_os("ROSI_E2E_DATA_DIR").filter(|dir| !dir.is_empty()) {
+        Some(dir) => Some(PathBuf::from(dir).join("local")),
+        None => local,
+    };
+    let _ = LOCAL_DATA_DIR.set(local.unwrap_or_else(|| data.clone()));
     let _ = DATA_DIR.set(data);
     let _ = HOME_DIR.set(app.path().home_dir().ok());
     let _ = DOWNLOAD_DIR.set(app.path().download_dir().ok());
@@ -50,6 +59,13 @@ pub fn data_dir() -> PathBuf {
         .get()
         .cloned()
         .unwrap_or_else(|| std::env::temp_dir().join("run.rosie.rosi"))
+}
+
+/// Per-machine app data (Local app data on Windows). Not created by `init`.
+/// Use it for rebuildable files that a synced roaming profile must not copy.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn local_data_dir() -> PathBuf {
+    LOCAL_DATA_DIR.get().cloned().unwrap_or_else(data_dir)
 }
 
 pub fn home_dir() -> Option<PathBuf> {

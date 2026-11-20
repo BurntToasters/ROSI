@@ -1,13 +1,28 @@
 //! Rolling local diagnostics log (`<app data>/logs/rosi.log`), replacing
 //! electron-log. Lines are single-line, timestamped, and size-trimmed.
 
+use std::collections::VecDeque;
 use std::io::Write;
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex, OnceLock};
 
 const MAX_LOG_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_RENDERER_MESSAGE_CHARS: usize = 2000;
 
 static LOG_LOCK: Mutex<()> = Mutex::new(());
+
+/// Lines handed off by threads that must not touch the disk (the coordinator).
+/// A logger thread writes them; every synchronous write and `flush` drains
+/// them first under `LOG_LOCK`, so file order matches arrival order.
+struct Deferred {
+    millis: u64,
+    level: &'static str,
+    line: String,
+}
+
+const MAX_DEFERRED: usize = 4096;
+static DEFERRED: Mutex<VecDeque<Deferred>> = Mutex::new(VecDeque::new());
+static DEFERRED_READY: Condvar = Condvar::new();
+static LOGGER_THREAD: OnceLock<bool> = OnceLock::new();
 
 fn log_path() -> std::path::PathBuf {
     crate::app_state::data_dir().join("logs").join("rosi.log")
@@ -68,10 +83,91 @@ fn write_line(level: &str, message: &str) {
     let Ok(_guard) = LOG_LOCK.lock() else {
         return;
     };
-    append_line(level, &line);
+    drain_deferred(false);
+    append_line(level, &line, crate::app_state::now_ms());
 }
 
-fn append_line(level: &str, line: &str) {
+/// Write every deferred line. The caller holds `LOG_LOCK`, or is the panic
+/// hook, which accepts an unlocked append and so only try-locks the queue.
+fn drain_deferred(try_only: bool) {
+    loop {
+        let batch: Vec<Deferred> = {
+            let queue = if try_only {
+                DEFERRED.try_lock().ok()
+            } else {
+                DEFERRED.lock().ok()
+            };
+            match queue {
+                Some(mut queue) if !queue.is_empty() => queue.drain(..).collect(),
+                _ => return,
+            }
+        };
+        for entry in batch {
+            append_line(entry.level, &entry.line, entry.millis);
+        }
+    }
+}
+
+fn run_logger_thread() {
+    loop {
+        {
+            let Ok(mut queue) = DEFERRED.lock() else {
+                return;
+            };
+            while queue.is_empty() {
+                queue = match DEFERRED_READY.wait(queue) {
+                    Ok(queue) => queue,
+                    Err(_) => return,
+                };
+            }
+        }
+        let Ok(_guard) = LOG_LOCK.lock() else {
+            return;
+        };
+        drain_deferred(false);
+    }
+}
+
+fn defer_line(level: &'static str, message: &str) {
+    let line = message.replace(['\r', '\n'], " ");
+    if cfg!(debug_assertions) {
+        eprintln!("[{level}] {line}");
+    }
+    let started = *LOGGER_THREAD.get_or_init(|| {
+        std::thread::Builder::new()
+            .name("rosi-logger".into())
+            .spawn(run_logger_thread)
+            .is_ok()
+    });
+    if !started {
+        // No logger thread; fall back to a direct write.
+        if let Ok(_guard) = LOG_LOCK.lock() {
+            drain_deferred(false);
+            append_line(level, &line, crate::app_state::now_ms());
+        }
+        return;
+    }
+    if let Ok(mut queue) = DEFERRED.lock() {
+        if queue.len() >= MAX_DEFERRED {
+            queue.pop_front();
+        }
+        queue.push_back(Deferred {
+            millis: crate::app_state::now_ms(),
+            level,
+            line,
+        });
+        DEFERRED_READY.notify_one();
+    }
+}
+
+/// Write any deferred lines now. Call before the process exits.
+pub fn flush() {
+    if let Ok(_guard) = LOG_LOCK.lock() {
+        drain_deferred(false);
+    }
+}
+
+fn append_line(level: &str, line: &str, millis: u64) {
     let path = log_path();
     if let Some(parent) = path.parent() {
         if std::fs::create_dir_all(parent).is_err() {
@@ -87,11 +183,7 @@ fn append_line(level: &str, line: &str) {
         options.mode(0o600);
     }
     if let Ok(mut file) = options.open(&path) {
-        let _ = writeln!(
-            file,
-            "{} [{level}] {line}",
-            iso_timestamp(crate::app_state::now_ms())
-        );
+        let _ = writeln!(file, "{} [{level}] {line}", iso_timestamp(millis));
     }
 }
 
@@ -122,7 +214,8 @@ pub fn install_panic_hook() {
             let message = format!("PANIC in thread '{name}' at {location}: {payload}")
                 .replace(['\r', '\n'], " ");
             let _guard = LOG_LOCK.try_lock();
-            append_line("panic", &message);
+            drain_deferred(true);
+            append_line("panic", &message, crate::app_state::now_ms());
             IN_PANIC_HOOK.with(|flag| flag.set(false));
         }
         previous(info);
@@ -139,6 +232,12 @@ pub fn warn(message: &str) {
 
 pub fn error(message: &str) {
     write_line("error", message);
+}
+
+/// Like `warn`, for threads that must not do disk IO. The logger thread
+/// writes the line, in order with the other log lines.
+pub fn warn_deferred(message: &str) {
+    defer_line("warn", message);
 }
 
 #[tauri::command(async)]

@@ -5,7 +5,7 @@
     {
       "id": "conversion",
       "owners": ["main", "v5-fixes"],
-      "v5FixAreas": ["download-options", "typed-formats"]
+      "v5FixAreas": ["download-options", "media-dispatch", "typed-formats"]
     },
     {
       "id": "dock-ui",
@@ -939,7 +939,7 @@
     "groupAreas": {
       "downloads": ["downloader"],
       "queue": ["queue-coordinator"],
-      "conversion": ["download-options", "typed-formats"],
+      "conversion": ["download-options", "media-dispatch", "typed-formats"],
       "network-policy": ["async-proxy", "network", "upstream-proxy"],
       "persistence": ["persistence"],
       "updater": ["deno-installer", "updater-engine"],

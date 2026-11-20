@@ -89,24 +89,36 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), String> {
 /// briefly open freshly written files, so replacing one can fail with
 /// "access denied" / "sharing violation" for a few milliseconds; retry those.
 pub fn rename_replacing(from: &Path, to: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    let result = retry_transient_lock(|| windows_rename_replacing(from, to));
+    #[cfg(not(windows))]
+    let result = std::fs::rename(from, to);
+    result.map_err(|error| error.to_string())
+}
+
+/// True for the Windows errors a scanner or indexer causes by briefly holding
+/// a file: 5 (access denied), 32 (sharing violation), 33 (lock violation).
+/// 80 (file exists) and 183 (already exists) are never listed, so a no-replace
+/// collision is never retried.
+#[cfg(windows)]
+fn is_transient_lock_error(error: &std::io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(5 | 32 | 33))
+}
+
+/// Runs `operation`, retrying transient lock errors up to 10 times with a
+/// growing pause (about 1.4 s in total). Other errors return at once.
+#[cfg(windows)]
+pub(crate) fn retry_transient_lock<T>(
+    mut operation: impl FnMut() -> std::io::Result<T>,
+) -> std::io::Result<T> {
     let mut attempt = 0;
     loop {
-        #[cfg(windows)]
-        let rename = windows_rename_replacing(from, to);
-        #[cfg(not(windows))]
-        let rename = std::fs::rename(from, to);
-        match rename {
-            Ok(()) => return Ok(()),
-            Err(error)
-                if cfg!(windows)
-                    && attempt < 10
-                    && (error.kind() == std::io::ErrorKind::PermissionDenied
-                        || error.raw_os_error() == Some(32)) =>
-            {
+        match operation() {
+            Err(error) if attempt < 10 && is_transient_lock_error(&error) => {
                 attempt += 1;
                 std::thread::sleep(std::time::Duration::from_millis(25 * attempt));
             }
-            Err(error) => return Err(error.to_string()),
+            other => return other,
         }
     }
 }
@@ -161,14 +173,15 @@ pub(crate) fn windows_move_file(from: &Path, to: &Path, flags: u32) -> std::io::
 }
 
 /// NUL-terminated UTF-16 path for a raw Win32 call. The binary has no
-/// long-path manifest, so Win32 limits a plain path to MAX_PATH. A path at or
-/// over that limit becomes verbatim (`\\?\`, or `\\?\UNC\` for a share), which
-/// lifts the limit. Shorter and relative paths are passed through unchanged.
+/// long-path manifest, so Win32 limits a plain path to MAX_PATH, and directory
+/// creation to 12 fewer. A path at or over 248 units becomes verbatim (`\\?\`,
+/// or `\\?\UNC\` for a share), which lifts the limit. Shorter and relative paths are passed through unchanged.
 #[cfg(windows)]
 pub(crate) fn win32_path(path: &Path) -> Vec<u16> {
     use std::os::windows::ffi::OsStrExt;
 
-    const MAX_PATH_UNITS: usize = 260;
+    // Directory creation fails at MAX_PATH minus 12 (248), so use that bound.
+    const MAX_PATH_UNITS: usize = 248;
     fn units(text: &str) -> Vec<u16> {
         text.encode_utf16().collect()
     }
@@ -180,7 +193,7 @@ pub(crate) fn win32_path(path: &Path) -> Vec<u16> {
         && plain[0] < 128
         && (plain[0] as u8).is_ascii_alphabetic()
         && plain[1] == u16::from(b':')
-        && plain[2] == u16::from(b'\\');
+        && (plain[2] == u16::from(b'\\') || plain[2] == u16::from(b'/'));
     let mut result = if plain.len() < MAX_PATH_UNITS
         || plain.starts_with(&verbatim)
         || plain.starts_with(&device)

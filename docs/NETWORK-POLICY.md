@@ -99,3 +99,22 @@ Limits to understand before enabling it:
 - **HTTP proxies only.** SOCKS is not supported.
 - **Changes apply to the next operation.** An operation already running keeps
   the route it started with.
+
+## Accepted risks
+
+- **Proxy token on the yt-dlp command line.** Each operation's proxy token is
+  passed to yt-dlp as part of its proxy URL on the command line, so other
+  processes of the same user can read it. This is accepted: the proxy listens
+  on loopback only, the token is created per operation and stops working when
+  the operation ends, and the proxy reaches only destinations that pass the
+  same vetting as every other request. A process that reads the token gains
+  nothing it could not already do as that user.
+
+## Request framing and DNS answers
+
+- The proxy accepts only CRLF line endings in a request header block. A bare
+  LF or CR, a byte below 0x20 other than HTAB, or 0x7F anywhere in the request
+  line or headers is refused with 400 before authentication or forwarding.
+- A DNS lookup that returns more than 32 answers is cut to the first 32. Every
+  kept address must still be public, and the connection is made only to those
+  addresses.

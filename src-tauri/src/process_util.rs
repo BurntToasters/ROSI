@@ -217,14 +217,14 @@ pub fn command<P: AsRef<OsStr>>(
     }
     #[cfg(unix)]
     {
-        // Known gap: release builds use `panic = "abort"`, so a ROSI abort
-        // skips every cleanup path. Windows is covered by the kill-on-close
-        // job. Linux is covered by PR_SET_PDEATHSIG, set in `spawn` on the
+        // Release builds use `panic = "abort"`, so a ROSI abort skips every
+        // cleanup path. Windows is covered by the kill-on-close job. Linux
+        // direct children also get PR_SET_PDEATHSIG, set in `spawn` on the
         // process-lifetime `rosi-spawner` thread (PDEATHSIG tracks the forking
-        // thread). Only direct children are covered: grandchildren that yt-dlp
-        // starts itself (e.g. its own FFmpeg) do not inherit PDEATHSIG. macOS
-        // remains a known gap: yt-dlp and FFmpeg can outlive ROSI after an
-        // abort there.
+        // thread). It does not reach grandchildren such as yt-dlp's own
+        // FFmpeg, and macOS has none. So `spawn` registers every child process
+        // group with `process_watchdog`, which signals the registered groups
+        // after ROSI dies.
         use std::os::unix::process::CommandExt;
         if new_group {
             command.process_group(0);
@@ -236,7 +236,6 @@ pub fn command<P: AsRef<OsStr>>(
 struct ManagedState {
     status: Option<std::process::ExitStatus>,
     terminating: bool,
-    owned_group_survivors: bool,
 }
 
 /// Shared child handle with a short polling gate around reaping. Tree
@@ -385,13 +384,7 @@ impl ManagedChild {
         loop {
             let mut state = self.state();
             if let Some(status) = state.status.as_ref() {
-                let status = *status;
-                let clean_group = state.owned_group_survivors;
-                drop(state);
-                if clean_group {
-                    terminate_tree(self);
-                }
-                return Ok(Some(status));
+                return Ok(Some(*status));
             }
             // Keep cancellation responsive while retaining exclusive control
             // of the small interval in which SharedChild may reap the leader.
@@ -407,6 +400,8 @@ impl ManagedChild {
                     // Once the leader has exited, any remaining group member
                     // is an orphaned helper and must not outlive the operation.
                     signal_group(self.child.id(), libc::SIGKILL);
+                    // The group is dead and its leader still pins the PGID.
+                    watchdog_unregister(self.child.id());
                 }
                 Some(self.child.wait()?)
             } else {
@@ -417,7 +412,6 @@ impl ManagedChild {
             if let Some(status) = status {
                 #[cfg(windows)]
                 self.job.terminate();
-                state.owned_group_survivors = false;
                 state.status = Some(status);
                 state.terminating = false;
                 return Ok(Some(status));
@@ -536,12 +530,26 @@ fn spawn_with_death_signal(command: &mut Command) -> std::io::Result<SharedChild
     SharedChild::spawn(command)
 }
 
+/// Logs once that children start without PDEATHSIG. The watchdog still covers
+/// their process groups.
+#[cfg(target_os = "linux")]
+fn warn_without_death_signal(reason: &str) {
+    static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !LOGGED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        crate::logging::warn_deferred(&format!(
+            "Starting helper processes without PR_SET_PDEATHSIG because {reason}; \
+             they rely on the process watchdog if ROSI dies."
+        ));
+    }
+}
+
 /// Spawns through the spawner thread so the child gets PDEATHSIG. If the
 /// spawner cannot be started or has stopped before taking the job, spawns on
 /// the calling thread without the hook.
 #[cfg(target_os = "linux")]
 fn spawn_child(command: &mut Command) -> std::io::Result<SharedChild> {
     let Some(sender) = spawner() else {
+        warn_without_death_signal("the rosi-spawner thread could not be started");
         return SharedChild::spawn(command);
     };
     let (reply, result) = mpsc::channel();
@@ -551,6 +559,7 @@ fn spawn_child(command: &mut Command) -> std::io::Result<SharedChild> {
     };
     if let Err(mpsc::SendError(_unsent)) = sender.send(job) {
         // The job was never taken, so `command` is still exclusively ours.
+        warn_without_death_signal("the rosi-spawner thread has stopped");
         return SharedChild::spawn(command);
     }
     // Blocking here keeps `command` borrowed until the spawner replies; see
@@ -583,18 +592,41 @@ pub fn spawn(command: &mut Command) -> std::io::Result<Arc<ManagedChild>> {
     #[cfg(unix)]
     let process_group =
         unsafe { libc::getpgid(child.id() as libc::pid_t) == child.id() as libc::pid_t };
+    #[cfg(unix)]
+    if process_group {
+        watchdog_note(crate::process_watchdog::register_group(child.id()));
+    }
     Ok(Arc::new(ManagedChild {
         child,
         state: Mutex::new(ManagedState {
             status: None,
             terminating: false,
-            owned_group_survivors: false,
         }),
         #[cfg(unix)]
         process_group,
         #[cfg(windows)]
         job,
     }))
+}
+
+/// Logs the first watchdog write failure only. A missing watchdog never stops
+/// or delays a download; helpers just lose the crash protection it adds.
+#[cfg(unix)]
+fn watchdog_note(result: std::io::Result<()>) {
+    static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if let Err(error) = result {
+        if !LOGGED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            crate::logging::warn_deferred(&format!(
+                "The process watchdog is not accepting updates ({error}); \
+                 helper processes may outlive ROSI after a crash."
+            ));
+        }
+    }
+}
+
+#[cfg(unix)]
+fn watchdog_unregister(pgid: u32) {
+    watchdog_note(crate::process_watchdog::unregister_group(pgid));
 }
 
 #[cfg(unix)]
@@ -619,7 +651,7 @@ pub fn terminate_tree(child: &Arc<ManagedChild>) {
     if state.terminating {
         return;
     }
-    if state.status.is_some() && !state.owned_group_survivors {
+    if state.status.is_some() {
         return;
     }
     state.terminating = true;
@@ -629,7 +661,7 @@ pub fn terminate_tree(child: &Arc<ManagedChild>) {
             if !signal_group(pid, libc::SIGTERM) {
                 let _ = child.child.kill();
             }
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let deadline = std::time::Instant::now() + crate::process_watchdog::GRACE_PERIOD;
             loop {
                 match child_exit_observed(pid) {
                     Ok(true) => {
@@ -659,9 +691,19 @@ pub fn terminate_tree(child: &Arc<ManagedChild>) {
             }
         } else {
             let _ = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
-            if matches!(child.child.wait_timeout(Duration::from_secs(5)), Ok(None)) {
+            if matches!(
+                child
+                    .child
+                    .wait_timeout(crate::process_watchdog::GRACE_PERIOD),
+                Ok(None)
+            ) {
                 let _ = child.child.kill();
             }
+        }
+        if child.process_group {
+            // Every branch above has killed the group or the leader, and the
+            // unreaped leader still pins the PGID.
+            watchdog_unregister(pid);
         }
         if let Ok(status) = child.child.wait() {
             state.status = Some(status);
@@ -675,7 +717,6 @@ pub fn terminate_tree(child: &Arc<ManagedChild>) {
             state.status = Some(status);
         }
     }
-    state.owned_group_survivors = false;
     state.terminating = false;
 }
 

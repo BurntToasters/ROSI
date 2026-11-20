@@ -414,3 +414,28 @@ exit. Checked by reading; the partial-failure message is covered by
 `e2e/download-process.spec.js` (existing).
 S4. Removing the same condition must not drop the `exit.code.is_some()` check or
 the `playlist_run` check. Both stay. Checked by reading.
+
+## Audit 5.1 R5: cancel discards fragment and format-stream staging
+
+Before the change, a cancelled download discards its staging only when every
+entry ends in `.part`. Fragmented (`.part-FragN`, `.ytdl`) and multi-format
+(`name.fNNN.ext`) cancels keep staging and report a recovery error.
+
+1. Fragment files or `.ytdl` control files are the only entries beside `.part`
+   files. Expected: discarded. Matching reuses `staging::is_ytdlp_intermediate`.
+2. Per-format stream files (`name.f137.mp4`) from a cancelled merge. Expected:
+   discarded. Matching reuses `staging::format_stream_stem`.
+3. A cancelled download that left a plain file such as `clip.mp4`. Expected:
+   staging is kept, since a non-intermediate entry is not discardable.
+4. A directory or symlink named like an intermediate. Expected: kept, because
+   only regular files are discardable (the existing file-type check stays).
+5. Not a cancel (diagnostics incomplete or no cancel flag). Expected: unchanged,
+   only `path_output_file` is discardable, so a failed download still keeps its
+   staging for recovery.
+6. The destructor still verifies identity and contents on removal, so a file
+   that appeared after the snapshot is not deleted.
+
+E2E: not added. The local media server fixtures serve plain MP4 files, so yt-dlp
+writes only `.part` there and never `.part-FragN`, `.ytdl`, or `.fNNN` files.
+Observing cases 1 and 2 needs an HLS or DASH fixture that the suite does not
+have. Existing cancel specs (`cancel-ownership.spec.js`) cover the `.part` case.

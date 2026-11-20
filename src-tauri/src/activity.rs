@@ -387,13 +387,21 @@ pub fn recorded_output_folders() -> Vec<std::path::PathBuf> {
     folders
 }
 
-#[tauri::command(async)]
-pub fn get_download_activity() -> IpcResult<Vec<DownloadCompletion>> {
-    ipc::ok(state().lock().unwrap_or_else(|p| p.into_inner()).clone())
+#[tauri::command]
+pub async fn get_download_activity() -> IpcResult<Vec<DownloadCompletion>> {
+    // The lock is held across disk writes elsewhere.
+    crate::queue::run_blocking(|| {
+        ipc::ok(state().lock().unwrap_or_else(|p| p.into_inner()).clone())
+    })
+    .await
 }
 
-#[tauri::command(async)]
-pub fn clear_download_activity() -> IpcResult<()> {
+#[tauri::command]
+pub async fn clear_download_activity() -> IpcResult<()> {
+    crate::queue::run_blocking(clear_download_activity_blocking).await
+}
+
+fn clear_download_activity_blocking() -> IpcResult<()> {
     let mut entries = state().lock().unwrap_or_else(|p| p.into_inner());
     if let Err(error) = persist(&[]) {
         crate::logging::error(&format!("Failed to clear download activity: {error}"));

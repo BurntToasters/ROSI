@@ -250,7 +250,132 @@ fn is_allowed_download_base(resolved: &Path) -> bool {
                     .any(|base| is_path_within(&real, base));
         }
     }
+    // Resolve short names, junctions and trailing dots through the nearest
+    // existing ancestor, then compare with the real system folders.
+    #[cfg(windows)]
+    if let Some(real) = real_path_of_existing_ancestor(resolved) {
+        if is_within_windows_system_dirs(&real) && !is_within_real_home(&real) {
+            return false;
+        }
+    }
     true
+}
+
+/// Canonical path of the deepest existing ancestor, without the verbatim prefix.
+#[cfg(windows)]
+fn real_path_of_existing_ancestor(path: &Path) -> Option<PathBuf> {
+    let mut existing = path;
+    while !existing.exists() {
+        existing = existing.parent()?;
+    }
+    existing.canonicalize().ok().map(strip_verbatim_prefix)
+}
+
+#[cfg(windows)]
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix("\\\\?\\UNC\\") {
+        PathBuf::from(format!("\\\\{rest}"))
+    } else if let Some(rest) = text.strip_prefix("\\\\?\\") {
+        PathBuf::from(rest)
+    } else {
+        path
+    }
+}
+
+#[cfg(windows)]
+fn is_within_real_home(real: &Path) -> bool {
+    crate::app_state::home_dir()
+        .and_then(|home| home.canonicalize().ok())
+        .map(strip_verbatim_prefix)
+        .is_some_and(|home| is_path_within(real, &home))
+}
+
+#[cfg(windows)]
+fn is_within_windows_system_dirs(path: &Path) -> bool {
+    windows_system_dirs()
+        .iter()
+        .any(|dir| is_path_within(path, dir))
+}
+
+/// The real Windows, Program Files and ProgramData folders: Known Folders
+/// first, then the environment values, each in plain and canonical form.
+#[cfg(windows)]
+fn windows_system_dirs() -> &'static [PathBuf] {
+    use std::sync::OnceLock;
+    use windows_sys::Win32::UI::Shell::{
+        FOLDERID_ProgramData, FOLDERID_ProgramFiles, FOLDERID_ProgramFilesX86, FOLDERID_Windows,
+    };
+    static DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
+    DIRS.get_or_init(|| {
+        let mut dirs: Vec<PathBuf> = [
+            FOLDERID_Windows,
+            FOLDERID_ProgramFiles,
+            FOLDERID_ProgramFilesX86,
+            FOLDERID_ProgramData,
+        ]
+        .iter()
+        .filter_map(known_folder_path)
+        .collect();
+        for name in [
+            "SystemRoot",
+            "ProgramFiles",
+            "ProgramFiles(x86)",
+            "ProgramW6432",
+            "ProgramData",
+        ] {
+            if let Some(value) = std::env::var_os(name) {
+                if !value.is_empty() {
+                    dirs.push(PathBuf::from(value));
+                }
+            }
+        }
+        let mut all: Vec<PathBuf> = Vec::new();
+        for dir in dirs {
+            let canonical = dir
+                .canonicalize()
+                .map(strip_verbatim_prefix)
+                .unwrap_or_else(|_| dir.clone());
+            for candidate in [dir, canonical] {
+                // A drive root would block everything.
+                if candidate.is_absolute()
+                    && candidate.parent().is_some()
+                    && !all.contains(&candidate)
+                {
+                    all.push(candidate);
+                }
+            }
+        }
+        all
+    })
+}
+
+#[cfg(windows)]
+fn known_folder_path(id: &windows_sys::core::GUID) -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::SHGetKnownFolderPath;
+
+    let mut raw: windows_sys::core::PWSTR = std::ptr::null_mut();
+    // SAFETY: `raw` is a valid out pointer. On success Windows returns a
+    // NUL-terminated string that is copied and then freed with CoTaskMemFree,
+    // which is also required after a failed call.
+    unsafe {
+        let hr = SHGetKnownFolderPath(id, 0, std::ptr::null_mut(), &mut raw);
+        let path = if hr >= 0 && !raw.is_null() {
+            let mut len = 0;
+            while *raw.add(len) != 0 {
+                len += 1;
+            }
+            Some(PathBuf::from(std::ffi::OsString::from_wide(
+                std::slice::from_raw_parts(raw, len),
+            )))
+        } else {
+            None
+        };
+        CoTaskMemFree(raw as *const core::ffi::c_void);
+        path
+    }
 }
 
 /// Allowed roots with their own symlinks resolved, for comparing against a
@@ -319,18 +444,9 @@ fn is_allowed_download_base_lexical(resolved: &Path) -> bool {
             }
         }
     }
-    if cfg!(windows) && resolved.is_absolute() {
-        let normalized = format!(
-            "{}\\",
-            resolved.to_string_lossy().replace('/', "\\").to_lowercase()
-        );
-        let blocked = [
-            "\\windows\\",
-            "\\program files\\",
-            "\\program files (x86)\\",
-            "\\programdata\\",
-        ];
-        return !blocked.iter().any(|segment| normalized.contains(segment));
+    #[cfg(windows)]
+    if resolved.is_absolute() {
+        return !is_within_windows_system_dirs(resolved);
     }
     false
 }

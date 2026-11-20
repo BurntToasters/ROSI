@@ -120,8 +120,10 @@ run on Tauri's Tokio runtime, with admission and DNS work bounded independently.
     rejected count the DNS probe checks still increments.
 29. **Cancellation arrives during DNS.** Guard cancel or drop aborts the client
     task that waits on the reply. Dropping `PendingDnsJob` removes a queued job,
-    while a running lookup finishes and its reply is discarded. The answer-count
-    cap (more than 32 answers) and `ip_policy` vetting run unchanged.
+    while a running lookup finishes and its reply is discarded. An answer set
+    over 32 is cut to its first 32 (no longer a block), and `ip_policy` vetting
+    still requires every kept address to be public. Not in the probe: the
+    resolver cannot be fed a synthetic oversized answer; covered by review.
 30. **An idle tunnel wakes the relay with nothing to do.** With one open idle
     tunnel, the relay task and the listener wake only for I/O, cancellation, or
     the idle deadline. A debug counter records any other wake, and the probe
@@ -132,6 +134,17 @@ run on Tauri's Tokio runtime, with admission and DNS work bounded independently.
     subscribe to it like downloads. A cancelled stalled thumbnail therefore wakes
     its relay at once and closes its fixture socket within the scenario's 5 s.
     No `AtomicBool` cancel source feeds a relay any more.
+32. **A header block carries a bare LF or a control byte.** A value such as
+    `X-A: b\nX-Injected: 1`, one with byte 0x01, or one with 0x7F is split or
+    forwarded upstream as an extra header (request smuggling and header
+    injection). `parse_request` now rejects any CR not followed by LF, any LF
+    not preceded by CR, and any byte below 0x20 (except HTAB) or 0x7F, in the
+    request line and every header, with the usual 400. The probe sends the
+    three forms to a fresh proxy and requires `malformedHeaderStatuses` to be
+    `[400, 400, 400]`; a missing status (no reply) or 403, 407, 502 fails.
+33. **Legitimate headers are refused by the stricter parse.** HTAB inside a
+    value stays allowed, and the CRLF pipelining request in the same probe
+    still reaches the origin (status 200), so a too-strict rule fails there.
 
 The native E2E probe is the acceptance mechanism for concurrency and cleanup.
 Rust unit tests must not be added after implementation; existing network and

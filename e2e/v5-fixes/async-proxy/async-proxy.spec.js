@@ -171,4 +171,15 @@ describe("V5 bounded asynchronous proxy", () => {
     assert.equal(dns?.pendingAfterDrain, 0);
     assert.equal(dns?.activeAfterDrain, 0);
   });
+
+  it("rejects bare LF, control bytes and DEL in headers with 400", async () => {
+    const statuses = outcome.value?.malformedHeaderStatuses ?? [];
+    record("malformed-header-rejection", {
+      statuses,
+      invariantPassed:
+        statuses.length === 3 && statuses.every((status) => status === 400),
+    });
+    assert.ok(outcome.ok, JSON.stringify(outcome));
+    assert.deepEqual(statuses, [400, 400, 400]);
+  });
 });

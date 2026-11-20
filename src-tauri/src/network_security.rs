@@ -542,16 +542,32 @@ fn resolve_dns_addresses(
 
     let addresses = (host, port).to_socket_addrs().ok()?;
     let mut resolved = Vec::new();
+    // Keep only the first answers; the caller vets every kept address.
     for address in addresses {
         if resolved.len() >= MAX_DNS_ANSWER_COUNT {
-            return None;
+            break;
         }
         resolved.push(address);
     }
     Some(resolved)
 }
 
+/// Accepts only CRLF line ends and no control bytes except HTAB.
+fn has_clean_header_bytes(header_text: &str) -> bool {
+    let bytes = header_text.as_bytes();
+    bytes.iter().enumerate().all(|(index, &byte)| match byte {
+        b'\r' => bytes.get(index + 1) == Some(&b'\n'),
+        b'\n' => index > 0 && bytes[index - 1] == b'\r',
+        b'\t' => true,
+        0x00..=0x1f | 0x7f => false,
+        _ => true,
+    })
+}
+
 fn parse_request(header_text: &str) -> Option<ParsedHttpRequest> {
+    if !has_clean_header_bytes(header_text) {
+        return None;
+    }
     let mut lines = header_text.split("\r\n");
     let request_line = lines.next()?;
     let mut request_parts = request_line.split_whitespace();
@@ -1409,6 +1425,7 @@ pub fn e2e_pipelining_probe() -> Result<serde_json::Value, String> {
         "uniqueLocalBracketedIsPrivate": parse_ip_host("[fd00::1]").is_some_and(|address| !is_public_ip(address)),
     });
     let policy_matrix = e2e_policy_matrix();
+    let malformed_header_statuses = e2e_malformed_header_probe()?;
     let async_proxy = async_proxy::e2e_capacity_probe()?;
     Ok(serde_json::json!({
         "requests": requests,
@@ -1419,7 +1436,47 @@ pub fn e2e_pipelining_probe() -> Result<serde_json::Value, String> {
         "dnsResolution": dns_resolution,
         "ipv6Classification": ipv6_classification,
         "policyMatrix": policy_matrix,
+        "malformedHeaderStatuses": malformed_header_statuses,
     }))
+}
+
+/// Sends header blocks with a bare LF, a control byte and a DEL byte to a
+/// fresh proxy. Each must get HTTP 400 before authentication or forwarding.
+#[cfg(feature = "e2e")]
+fn e2e_malformed_header_probe() -> Result<Vec<Option<u16>>, String> {
+    let guard = NetworkSecurityGuard::start()?;
+    let proxy_url = url::Url::parse(guard.proxy_url())
+        .map_err(|error| format!("could not inspect secure proxy URL: {error}"))?;
+    let proxy_host = proxy_url.host_str().ok_or("secure proxy has no host")?;
+    let proxy_port = proxy_url
+        .port_or_known_default()
+        .ok_or("secure proxy has no port")?;
+    let proxy_address = format!("{proxy_host}:{proxy_port}");
+    let requests: [&[u8]; 3] = [
+        b"GET http://127.0.0.1:9/ HTTP/1.1\r\nX-A: b\nX-Injected: 1\r\n\r\n",
+        b"GET http://127.0.0.1:9/ HTTP/1.1\r\nX-A: b\x01c\r\n\r\n",
+        b"GET http://127.0.0.1:9/ HTTP/1.1\r\nX-A: b\x7fc\r\n\r\n",
+    ];
+    let mut statuses = Vec::new();
+    for request in requests {
+        let mut client = TcpStream::connect(proxy_address.as_str())
+            .map_err(|error| format!("could not connect to the secure proxy: {error}"))?;
+        let _ = client.set_read_timeout(Some(Duration::from_secs(4)));
+        client
+            .write_all(request)
+            .map_err(|error| format!("could not send malformed header: {error}"))?;
+        let mut response = Vec::new();
+        let _ = client.read_to_end(&mut response);
+        let text = String::from_utf8_lossy(&response);
+        statuses.push(
+            text.lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|status| status.parse::<u16>().ok()),
+        );
+    }
+    drop(guard);
+    Ok(statuses)
 }
 
 /// Fixed literals with expected verdicts, checked by the V5 network policy

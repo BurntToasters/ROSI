@@ -22,7 +22,10 @@ use crate::command_builders::{build_ytdlp_args, YtdlpArgsInput};
 use crate::constants::*;
 use crate::ipc::{self, DownloadRequestInput, FalliblePayload, IpcResult, NOT_AVAILABLE};
 use crate::progress::{self, Metrics, Reporter};
-use crate::staging::{reserve_download_stage, reserve_path_output_file, DownloadStage};
+use crate::staging::{
+    format_stream_stem, is_ytdlp_intermediate, reserve_download_stage, reserve_path_output_file,
+    DownloadStage,
+};
 use crate::types::{
     DownloadCompletion, DownloadRequestOptions, JobProgressEvent, Outcome, Owner, Phase,
     QueueProgress, Settings,
@@ -1258,8 +1261,9 @@ fn recover_staged_downloads(exit: &mut YtdlpExit) -> (Vec<PathBuf>, Vec<PathBuf>
                     let path = exit.stage.directory.join(relative);
                     path == exit.path_output_file
                         || (discard_cancelled_parts
-                            && path.extension().is_some_and(|extension| {
-                                extension.to_string_lossy().eq_ignore_ascii_case("part")
+                            && path.file_name().is_some_and(|name| {
+                                let name = name.to_string_lossy();
+                                is_ytdlp_intermediate(&name) || format_stream_stem(&name).is_some()
                             })
                             && std::fs::symlink_metadata(&path)
                                 .is_ok_and(|metadata| metadata.file_type().is_file()))
@@ -1625,8 +1629,12 @@ pub struct Started {
     session_id: u64,
 }
 
-#[tauri::command(async)]
-pub fn download_video(options: FalliblePayload<DownloadRequestInput>) -> IpcResult<Started> {
+#[tauri::command]
+pub async fn download_video(options: FalliblePayload<DownloadRequestInput>) -> IpcResult<Started> {
+    crate::queue::run_blocking(move || download_video_blocking(options)).await
+}
+
+fn download_video_blocking(options: FalliblePayload<DownloadRequestInput>) -> IpcResult<Started> {
     let settings = crate::settings::load();
     let resolved =
         match crate::download_options::resolve_value(&settings, &options.into_value(), None) {
@@ -1651,7 +1659,9 @@ pub fn download_video(options: FalliblePayload<DownloadRequestInput>) -> IpcResu
         }),
         Err(conflict) => {
             crate::logging::warn(&format!("Refused a manual download: {}", conflict.message));
-            ipc::err(NOT_AVAILABLE, "A queue download is already in progress.")
+            // The slot holder is another manual download, or a queue item that
+            // won a race; the queue case is refused with its own text above.
+            ipc::err(NOT_AVAILABLE, "A download is already in progress.")
         }
     }
 }

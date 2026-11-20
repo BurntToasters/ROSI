@@ -404,6 +404,7 @@ pub fn flush() -> Result<(), String> {
             .unwrap_or_else(|_| Err("Queue writer stopped before saving.".into())),
         Err(_) => Err("Queue writer is not running.".into()),
     };
+    crate::logging::flush();
     match result {
         Err(_)
             if crate::fs_util::is_newer_schema_file(&queue_path(), MAX_QUEUE_FILE_BYTES as u64) =>
@@ -1204,8 +1205,28 @@ pub fn extract_queue_urls(input: FalliblePayload<QueueTextInput>) -> IpcResult<E
     })
 }
 
-#[tauri::command(async)]
-pub fn add_to_queue(
+/// Runs a command body that reads settings, takes locks, or waits on the
+/// coordinator on the blocking pool, so the async runtime (which also drives
+/// the download proxy) never stalls on it.
+pub(crate) async fn run_blocking<T, F>(work: F) -> IpcResult<T>
+where
+    T: serde::Serialize + Send + 'static,
+    F: FnOnce() -> IpcResult<T> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .unwrap_or_else(|error| ipc::err(crate::ipc::INTERNAL_ERROR, error.to_string()))
+}
+
+#[tauri::command]
+pub async fn add_to_queue(
+    urls: FalliblePayload<QueueUrlsInput>,
+    options: Option<FalliblePayload<DownloadRequestOverrides>>,
+) -> IpcResult<AddResult> {
+    run_blocking(move || add_to_queue_blocking(urls, options)).await
+}
+
+fn add_to_queue_blocking(
     urls: FalliblePayload<QueueUrlsInput>,
     options: Option<FalliblePayload<DownloadRequestOverrides>>,
 ) -> IpcResult<AddResult> {
@@ -1292,30 +1313,33 @@ fn typed_queue_item_id(id: FalliblePayload<String>) -> Result<String, IpcError> 
     validate_queue_item_id(&raw)
 }
 
-#[tauri::command(async)]
-pub fn remove_from_queue(id: FalliblePayload<String>) -> IpcResult<()> {
-    match typed_queue_item_id(id) {
+#[tauri::command]
+pub async fn remove_from_queue(id: FalliblePayload<String>) -> IpcResult<()> {
+    run_blocking(move || match typed_queue_item_id(id) {
         Ok(id) => coordinator::remove_item(id),
         Err(error) => ipc::from_error(error),
-    }
+    })
+    .await
 }
 
-#[tauri::command(async)]
-pub fn retry_queue_item(id: FalliblePayload<String>) -> IpcResult<()> {
-    match typed_queue_item_id(id) {
+#[tauri::command]
+pub async fn retry_queue_item(id: FalliblePayload<String>) -> IpcResult<()> {
+    run_blocking(move || match typed_queue_item_id(id) {
         Ok(id) => coordinator::retry_item(id),
         Err(error) => ipc::from_error(error),
-    }
+    })
+    .await
 }
 
-#[tauri::command(async)]
-pub fn reorder_queue_item(
+#[tauri::command]
+pub async fn reorder_queue_item(
     request: FalliblePayload<JsonObject<QueueReorderInput>>,
 ) -> IpcResult<()> {
-    match validate_queue_reorder(request) {
+    run_blocking(move || match validate_queue_reorder(request) {
         Ok((id, up)) => coordinator::reorder_item(id, up),
         Err(error) => ipc::from_error(error),
-    }
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1350,15 +1374,16 @@ fn clear_queue_blocking() -> IpcResult<()> {
 
 /// Remove every completed, failed or cancelled item. Pending and active items
 /// stay, so this never interrupts a run.
-#[tauri::command(async)]
-pub fn clear_finished_queue() -> IpcResult<RemovedCount> {
-    match coordinator::clear_finished_items() {
+#[tauri::command]
+pub async fn clear_finished_queue() -> IpcResult<RemovedCount> {
+    run_blocking(|| match coordinator::clear_finished_items() {
         Some(removed) => ipc::ok(RemovedCount { removed }),
         None => ipc::err(
             crate::ipc::INTERNAL_ERROR,
             "Queue coordinator is not running.",
         ),
-    }
+    })
+    .await
 }
 
 #[derive(serde::Serialize)]
@@ -1367,14 +1392,16 @@ pub struct RemovedCount {
     pub(crate) removed: usize,
 }
 
-#[tauri::command(async)]
-pub fn get_queue() -> Vec<QueueItem> {
-    coordinator::items()
+#[tauri::command]
+pub async fn get_queue() -> Vec<QueueItem> {
+    tauri::async_runtime::spawn_blocking(coordinator::items)
+        .await
+        .unwrap_or_default()
 }
 
-#[tauri::command(async)]
-pub fn start_queue() -> IpcResult<Started> {
-    coordinator::start()
+#[tauri::command]
+pub async fn start_queue() -> IpcResult<Started> {
+    run_blocking(coordinator::start).await
 }
 
 #[derive(serde::Serialize)]

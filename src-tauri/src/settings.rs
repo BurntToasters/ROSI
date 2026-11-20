@@ -629,8 +629,14 @@ fn settings_file_is_newer() -> bool {
         .is_some_and(|value| check_schema(&value).is_err())
 }
 
-#[tauri::command(async)]
-pub fn save_settings(
+#[tauri::command]
+pub async fn save_settings(
+    settings: FalliblePayload<JsonObject<SettingsPatchInput>>,
+) -> IpcResult<Settings> {
+    crate::queue::run_blocking(move || save_settings_blocking(settings)).await
+}
+
+fn save_settings_blocking(
     settings: FalliblePayload<JsonObject<SettingsPatchInput>>,
 ) -> IpcResult<Settings> {
     // The renderer sends its whole snapshot. Values equal to the stored ones

@@ -3,11 +3,17 @@
 //! ffprobe calls, so each invocation is routed through this process entry.
 
 use serde::{Deserialize, Serialize};
+#[cfg(windows)]
+use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+#[cfg(windows)]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(windows)]
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 const CONFIG_FILE: &str = "launcher.json";
@@ -40,9 +46,9 @@ fn e2e_ffprobe_mode() -> Option<String> {
     None
 }
 
-/// Where per-operation launchers live. Windows uses the app data folder: it
-/// is on the same volume as a per-user install, so the launcher is a hard link
-/// rather than a full copy of ROSI in %TEMP% for every operation.
+/// Where launchers live. Windows uses the local (non-roaming) app data folder:
+/// it is on the same volume as a per-user install, so the launcher is a hard
+/// link rather than a full copy of ROSI, and a synced profile never copies it.
 fn launcher_root() -> Result<PathBuf, String> {
     #[cfg(windows)]
     {
@@ -56,28 +62,35 @@ fn launcher_root() -> Result<PathBuf, String> {
 
 #[cfg(windows)]
 fn windows_launcher_root() -> PathBuf {
-    crate::app_state::data_dir().join("media-tools")
+    crate::app_state::local_data_dir().join("media-tools")
 }
 
-/// Folders a launcher may have been created in. Nothing is created here.
-fn existing_launcher_roots() -> Vec<PathBuf> {
+/// Folders a launcher may have been created in, with the age a directory must
+/// reach before the sweep removes it. Nothing is created here.
+fn existing_launcher_roots() -> Vec<(PathBuf, Duration)> {
     let mut roots = Vec::new();
     #[cfg(windows)]
     {
-        roots.push(windows_launcher_root());
+        // Every unregistered directory here is from an earlier run. Earlier
+        // versions used the roaming folder, so it is still swept by age.
+        roots.push((windows_launcher_root(), Duration::ZERO));
+        roots.push((
+            crate::app_state::data_dir().join("media-tools"),
+            STALE_LAUNCHER_AGE,
+        ));
     }
     if let Ok(root) = crate::process_util::executable_temp_dir() {
-        roots.push(root);
+        roots.push((root, STALE_LAUNCHER_AGE));
     }
     roots
 }
 
 /// Removes launcher directories left by a crash or force quit. Only a real
-/// directory with the exact launcher name, owned by this user and unmodified
-/// for 24 hours, is removed. Runs on a startup thread.
+/// directory with the exact launcher name, owned by this user, not in use by
+/// this run and old enough for its root, is removed. Runs on a startup thread.
 pub fn sweep_stale_launchers() {
     let now = SystemTime::now();
-    for root in existing_launcher_roots() {
+    for (root, min_age) in existing_launcher_roots() {
         let entries = match fs::read_dir(&root) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
@@ -105,8 +118,11 @@ pub fn sweep_stale_launchers() {
                 .modified()
                 .ok()
                 .and_then(|modified| now.duration_since(modified).ok())
-                .is_some_and(|age| age > STALE_LAUNCHER_AGE);
+                .is_some_and(|age| age > min_age);
             if !metadata.is_dir() || !stale || !owned_by_current_user(&metadata) {
+                continue;
+            }
+            if is_live_shared_launcher(&name) {
                 continue;
             }
             match fs::remove_dir_all(&path) {
@@ -153,6 +169,8 @@ fn owned_by_current_user(metadata: &fs::Metadata) -> bool {
 pub struct FfmpegToolGuard {
     directory: PathBuf,
     location: PathBuf,
+    /// Shared directories live for the whole run and are never removed here.
+    shared: bool,
 }
 
 impl FfmpegToolGuard {
@@ -206,8 +224,25 @@ impl FfmpegToolGuard {
             None
         };
 
+        let config = LauncherConfig {
+            version: 1,
+            ffmpeg,
+            ffprobe,
+            probe_log,
+        };
+
+        #[cfg(windows)]
+        if let Some(executable) = executable.as_deref() {
+            let directory = shared_directory(&root, executable, &config)?;
+            return Ok(Self {
+                location: directory.clone(),
+                directory,
+                shared: true,
+            });
+        }
+
         for _ in 0..32 {
-            let directory = root.join(format!("rosi-media-tools-{}", crate::fs_util::uuid_v4()));
+            let directory = root.join(format!("{LAUNCHER_PREFIX}{}", crate::fs_util::uuid_v4()));
             match create_private_directory(&directory) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -218,40 +253,22 @@ impl FfmpegToolGuard {
                 }
             }
 
-            let result = (|| {
-                let Some(executable) = executable.as_deref() else {
-                    return Ok::<_, String>(directory.clone());
-                };
-                let config_path = directory.join(CONFIG_FILE);
-                let config = LauncherConfig {
-                    version: 1,
-                    ffmpeg: ffmpeg.clone(),
-                    ffprobe: ffprobe.clone(),
-                    probe_log: probe_log.clone(),
-                };
-                write_private_config(&config_path, &config)?;
-
-                let ffmpeg_alias = alias_path(&directory, "ffmpeg");
-                install_executable_alias(executable, &config_path, &ffmpeg_alias, "ffmpeg")?;
-                if ffprobe.is_some() {
-                    let ffprobe_alias = alias_path(&directory, "ffprobe");
-                    install_executable_alias(executable, &config_path, &ffprobe_alias, "ffprobe")?;
-                }
-                Ok(directory.clone())
-            })();
-
-            match result {
-                Ok(location) => {
-                    return Ok(Self {
-                        directory,
-                        location,
-                    })
-                }
+            let result = match executable.as_deref() {
+                Some(executable) => encode_config(&config)
+                    .and_then(|bytes| build_launcher(&directory, executable, &config, &bytes)),
+                None => Ok(()),
+            };
+            return match result {
+                Ok(()) => Ok(Self {
+                    location: directory.clone(),
+                    directory,
+                    shared: false,
+                }),
                 Err(error) => {
                     let _ = fs::remove_dir_all(&directory);
-                    return Err(error);
+                    Err(error)
                 }
-            }
+            };
         }
         Err("Could not reserve a unique media-tool launcher path.".to_string())
     }
@@ -263,7 +280,101 @@ impl FfmpegToolGuard {
 
 impl Drop for FfmpegToolGuard {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.directory);
+        if !self.shared {
+            let _ = fs::remove_dir_all(&self.directory);
+        }
+    }
+}
+
+/// Writes the config and the aliases into a fresh private directory.
+fn build_launcher(
+    directory: &Path,
+    executable: &Path,
+    config: &LauncherConfig,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let config_path = directory.join(CONFIG_FILE);
+    write_private_config(&config_path, bytes)?;
+    let ffmpeg_alias = alias_path(directory, "ffmpeg");
+    install_executable_alias(executable, &config_path, &ffmpeg_alias, "ffmpeg")?;
+    if config.ffprobe.is_some() {
+        let ffprobe_alias = alias_path(directory, "ffprobe");
+        install_executable_alias(executable, &config_path, &ffprobe_alias, "ffprobe")?;
+    }
+    Ok(())
+}
+
+/// One launcher directory per distinct config for the whole run, keyed by the
+/// exact config bytes so different tool paths can never share.
+#[cfg(windows)]
+static SHARED_LAUNCHERS: Mutex<BTreeMap<Vec<u8>, PathBuf>> = Mutex::new(BTreeMap::new());
+
+/// Lookup and creation hold the lock together, and the sweep checks the same
+/// registry under it, so a directory in use is never removed.
+#[cfg(windows)]
+fn shared_directory(
+    root: &Path,
+    executable: &Path,
+    config: &LauncherConfig,
+) -> Result<PathBuf, String> {
+    let bytes = encode_config(config)?;
+    let mut registry = SHARED_LAUNCHERS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(directory) = registry.get(&bytes).cloned() {
+        if shared_directory_intact(&directory, &bytes, config) {
+            return Ok(directory);
+        }
+        registry.remove(&bytes);
+        let _ = fs::remove_dir_all(&directory);
+    }
+    for _ in 0..32 {
+        let directory = root.join(format!("{LAUNCHER_PREFIX}{}", crate::fs_util::uuid_v4()));
+        match create_private_directory(&directory) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "Could not reserve a private media-tool directory: {error}"
+                ));
+            }
+        }
+        return match build_launcher(&directory, executable, config, &bytes) {
+            Ok(()) => {
+                registry.insert(bytes, directory.clone());
+                Ok(directory)
+            }
+            Err(error) => {
+                let _ = fs::remove_dir_all(&directory);
+                Err(error)
+            }
+        };
+    }
+    Err("Could not reserve a unique media-tool launcher path.".to_string())
+}
+
+#[cfg(windows)]
+fn shared_directory_intact(directory: &Path, bytes: &[u8], config: &LauncherConfig) -> bool {
+    fs::read(directory.join(CONFIG_FILE)).is_ok_and(|found| found == bytes)
+        && alias_path(directory, "ffmpeg").is_file()
+        && (config.ffprobe.is_none() || alias_path(directory, "ffprobe").is_file())
+}
+
+/// True when this run owns a shared launcher directory with this name.
+fn is_live_shared_launcher(name: &str) -> bool {
+    #[cfg(windows)]
+    {
+        let registry = SHARED_LAUNCHERS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        registry
+            .values()
+            .any(|directory| directory.file_name().is_some_and(|found| found == name))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = name;
+        false
     }
 }
 
@@ -461,9 +572,12 @@ fn create_private_directory(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn write_private_config(path: &Path, config: &LauncherConfig) -> Result<(), String> {
-    let bytes = serde_json::to_vec(config)
-        .map_err(|error| format!("Could not encode media-tool config: {error}"))?;
+fn encode_config(config: &LauncherConfig) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(config)
+        .map_err(|error| format!("Could not encode media-tool config: {error}"))
+}
+
+fn write_private_config(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -474,7 +588,7 @@ fn write_private_config(path: &Path, config: &LauncherConfig) -> Result<(), Stri
     let mut file = options
         .open(path)
         .map_err(|error| format!("Could not create private media-tool config: {error}"))?;
-    file.write_all(&bytes)
+    file.write_all(bytes)
         .and_then(|()| file.sync_all())
         .map_err(|error| format!("Could not write private media-tool config: {error}"))
 }
@@ -530,8 +644,17 @@ fn install_executable_alias(
     #[cfg(windows)]
     {
         let _ = (config, tool);
-        if fs::hard_link(source, destination).is_ok() {
-            return Ok(());
+        match fs::hard_link(source, destination) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                // Once per run: the copy below is tens of MB, so say why.
+                static LOGGED: AtomicBool = AtomicBool::new(false);
+                if !LOGGED.swap(true, Ordering::Relaxed) {
+                    crate::logging::warn(&format!(
+                        "Could not hard-link the media-tool launcher ({error}); copying ROSI instead."
+                    ));
+                }
+            }
         }
         fs::copy(source, destination)
             .map(|_| ())

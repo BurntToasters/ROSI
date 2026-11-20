@@ -1834,4 +1834,136 @@ describe("ROSI downloader and process repairs", () => {
       `Repair invariants failed: ${failures.join(", ")}`,
     );
   });
+
+  // Runs last: it kills the app under test, so the session ends here. See
+  // "Orphaned helpers after a ROSI crash or kill" in download-process.failures.md.
+  it("stops yt-dlp and its FFmpeg when ROSI is killed", async function () {
+    this.timeout(120_000);
+    if (process.platform === "win32") this.skip();
+
+    const readyPath = process.env.ROSI_REPAIRS_KILL_PARENT_READY;
+    const marker = "kill-parent-hold";
+    const processTable = () => {
+      const result = spawnSync("ps", ["-Ao", "pid=,ppid=,pgid=,command="], {
+        encoding: "utf8",
+      });
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout
+        .split("\n")
+        .map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/))
+        .filter(Boolean)
+        .map((match) => ({
+          pid: Number(match[1]),
+          ppid: Number(match[2]),
+          pgid: Number(match[3]),
+          command: match[4],
+        }));
+    };
+    // A zombie waiting for its reaper is already gone for our purposes.
+    const alive = (pid) => {
+      const result = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], {
+        encoding: "utf8",
+      });
+      const state = result.stdout.trim();
+      return state !== "" && !state.startsWith("Z");
+    };
+    let groupToClean = null;
+    let rosiPid = null;
+    try {
+      const url = `${media}/${marker}.m3u8?repair-kill-parent=1`;
+      const started = await api("downloadVideo", {
+        url,
+        outputPath: downloads,
+        convertEnabled: false,
+        hookBrowser: false,
+        gpuAcceleration: false,
+      });
+      assert.equal(started.ok, true, JSON.stringify(started));
+      await browser.waitUntil(() => fs.existsSync(readyPath), {
+        timeout: 30_000,
+        interval: 50,
+        timeoutMsg: "yt-dlp never started the held FFmpeg",
+      });
+      const held = JSON.parse(fs.readFileSync(readyPath, "utf8"));
+      groupToClean = held.pgid;
+
+      const table = processTable();
+      const ytdlp = table.filter(
+        (entry) =>
+          entry.command.includes("rosi-yt-dlp") &&
+          entry.command.includes(marker),
+      );
+      const watchdogs = table.filter((entry) =>
+        entry.command.includes("--rosi-process-watchdog"),
+      );
+      const watchdog = watchdogs.length === 1 ? watchdogs[0] : null;
+      const rosi = watchdog
+        ? table.find((entry) => entry.pid === watchdog.ppid)
+        : null;
+      rosiPid = rosi?.pid ?? null;
+      const before = {
+        heldFfmpeg: held,
+        ytdlp,
+        watchdog,
+        rosi: rosi ? { pid: rosi.pid, pgid: rosi.pgid } : null,
+      };
+      const setupPassed =
+        ytdlp.length > 0 &&
+        watchdog !== null &&
+        Boolean(rosi) &&
+        rosi.command.startsWith(process.env.ROSI_E2E_BINARY) &&
+        // Own session and group leader, apart from ROSI's group.
+        watchdog.pgid === watchdog.pid &&
+        watchdog.pgid !== rosi.pgid &&
+        // The FFmpeg that yt-dlp started sits in yt-dlp's group.
+        ytdlp.every((entry) => entry.pgid === held.pgid) &&
+        held.pgid !== rosi.pgid;
+      if (!setupPassed) {
+        record("rosi-kill-orphans-helpers", {
+          ...before,
+          invariantPassed: false,
+        });
+      }
+      assert.equal(
+        setupPassed,
+        true,
+        `Process tree was not as expected: ${JSON.stringify(before)}`,
+      );
+
+      // The session dies with the app; keep wdio from tearing it down.
+      globalThis.rosiMainWindowClosed = true;
+      const killedAt = performance.now();
+      process.kill(rosiPid, "SIGKILL");
+      const watched = [
+        ...ytdlp.map((entry) => entry.pid),
+        held.pid,
+        watchdog.pid,
+      ];
+      let remaining = watched;
+      while (remaining.length > 0 && performance.now() - killedAt < 20_000) {
+        await pause(100);
+        remaining = remaining.filter(alive);
+      }
+      const elapsedMs = Math.round(performance.now() - killedAt);
+      globalThis.browser.sessionId = undefined;
+      record("rosi-kill-orphans-helpers", {
+        ...before,
+        elapsedMs,
+        survivors: remaining,
+        invariantPassed: remaining.length === 0 && rosiPid !== null,
+      });
+      assert.deepEqual(
+        remaining,
+        [],
+        `Helpers outlived ROSI by ${elapsedMs} ms: ${remaining.join(", ")}`,
+      );
+    } finally {
+      // Never leave a held helper behind when the case failed.
+      if (groupToClean) {
+        try {
+          process.kill(-groupToClean, "SIGKILL");
+        } catch {}
+      }
+    }
+  });
 });

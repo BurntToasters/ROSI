@@ -37,6 +37,32 @@ impl From<String> for FetchError {
     }
 }
 
+/// Most stderr bytes an error message carries.
+const MAX_ERROR_TAIL_BYTES: usize = 4096;
+
+/// The end of yt-dlp's stderr, where the error text is, with the proxy URL
+/// hidden. When cut, it starts on a line boundary.
+fn stderr_tail(stderr: &str, proxy_url: &str) -> String {
+    let text = if proxy_url.is_empty() {
+        stderr.trim().to_string()
+    } else {
+        stderr
+            .replace(proxy_url, "<ephemeral proxy credentials>")
+            .trim()
+            .to_string()
+    };
+    if text.len() <= MAX_ERROR_TAIL_BYTES {
+        return text;
+    }
+    let mut cut = text.len() - MAX_ERROR_TAIL_BYTES;
+    while !text.is_char_boundary(cut) {
+        cut += 1;
+    }
+    let tail = &text[cut..];
+    let tail = tail.split_once('\n').map_or(tail, |(_, rest)| rest);
+    format!("...{tail}")
+}
+
 /// Cookie choice a format listing or preview uses in place of the saved
 /// settings. The renderer sends the choice the next download would resolve. An
 /// absent field keeps the saved value, and no field means the saved settings.
@@ -576,16 +602,11 @@ fn fetch_formats(
                 parse_format_list(&output.stdout)
             } else {
                 Err(format!(
-                    "yt-dlp exited with code {}.\nOutput:\n{}\nError:\n{}",
+                    "yt-dlp exited with code {}.\n{}",
                     output
                         .code
                         .map_or("null".to_string(), |code| code.to_string()),
-                    output
-                        .stdout
-                        .replace(guard.proxy_url(), "<ephemeral proxy credentials>"),
-                    output
-                        .stderr
-                        .replace(guard.proxy_url(), "<ephemeral proxy credentials>")
+                    stderr_tail(&output.stderr, guard.proxy_url())
                 ))
             }
         },
@@ -688,9 +709,7 @@ fn fetch_video_info(
                     output
                         .code
                         .map_or("null".to_string(), |code| code.to_string()),
-                    output
-                        .stderr
-                        .replace(guard.proxy_url(), "<ephemeral proxy credentials>")
+                    stderr_tail(&output.stderr, guard.proxy_url())
                 )));
             }
             let mut info = parse_video_info(&output.stdout, PLAYLIST_PREVIEW_ENTRY_LIMIT)
@@ -744,7 +763,10 @@ pub async fn get_formats(
     hook_browser: Option<FalliblePayload<bool>>,
     browser_choice: Option<FalliblePayload<String>>,
 ) -> IpcResult<FormatList> {
-    let reservation = FORMATS.reserve();
+    // Reserving can end the previous lookup's process tree, which waits.
+    let Ok(reservation) = tauri::async_runtime::spawn_blocking(|| FORMATS.reserve()).await else {
+        return ipc::err(INTERNAL_ERROR, "Format lookup could not start.");
+    };
     let Some(url) = url
         .into_typed(INVALID_URL, "Invalid URL provided.")
         .ok()
@@ -765,9 +787,10 @@ pub async fn get_formats(
     }
 }
 
-#[tauri::command(async)]
-pub fn cancel_formats() {
-    FORMATS.cancel();
+#[tauri::command]
+pub async fn cancel_formats() {
+    // Cancelling terminates the lookup's process tree.
+    let _ = tauri::async_runtime::spawn_blocking(|| FORMATS.cancel()).await;
 }
 
 #[tauri::command]
@@ -777,7 +800,10 @@ pub async fn get_video_info(
     hook_browser: Option<FalliblePayload<bool>>,
     browser_choice: Option<FalliblePayload<String>>,
 ) -> IpcResult<VideoInfo> {
-    let reservation = VIDEO_INFO.reserve();
+    let Ok(reservation) = tauri::async_runtime::spawn_blocking(|| VIDEO_INFO.reserve()).await
+    else {
+        return ipc::err(INTERNAL_ERROR, "Video info lookup could not start.");
+    };
     let Some(url) = url
         .into_typed(INVALID_URL, "Invalid URL provided.")
         .ok()
@@ -811,9 +837,9 @@ pub async fn get_video_info(
     }
 }
 
-#[tauri::command(async)]
-pub fn cancel_video_info() {
-    VIDEO_INFO.cancel();
+#[tauri::command]
+pub async fn cancel_video_info() {
+    let _ = tauri::async_runtime::spawn_blocking(|| VIDEO_INFO.cancel()).await;
 }
 
 pub fn cancel_all() {

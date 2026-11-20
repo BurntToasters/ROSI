@@ -209,3 +209,46 @@ diagnostic override for this assertion.
   every file ROSI left on disk. The older check required exactly one output and
   failed. Expected: the first entry's final path is reported, every reported
   path is a final public path that exists, and sizes match the reported files.
+
+## Orphaned helpers after a ROSI crash or kill (written before the watchdog)
+
+ROSI can die without cleanup (`panic = "abort"`, SIGKILL, OOM kill). Windows is
+covered by the kill-on-close job. Linux covers only direct children through
+`PR_SET_PDEATHSIG`, and macOS has no equivalent. A POSIX-only watchdog process
+(a private re-exec of the ROSI binary that reads a pipe from ROSI) closes both
+gaps. Each failure below must be impossible, and the first is proven natively:
+
+1. **Orphaned tree after SIGKILL.** Start a download whose yt-dlp delegates to
+   FFmpeg (HLS fallback), wait until the FFmpeg wrapper is live, then SIGKILL
+   ROSI. yt-dlp and the FFmpeg wrapper (a grandchild started by yt-dlp through
+   the private launcher) must both be gone within 20 seconds. The wrapper
+   ignores SIGTERM, so the SIGKILL escalation after the grace period is
+   exercised too. Linux `PDEATHSIG` alone leaves the grandchild alive.
+2. **Watchdog shares ROSI's fate.** The watchdog must be its own session and
+   process-group leader (PGID == PID, PGID != ROSI's PGID). Otherwise a group
+   signal or terminal Ctrl-C that reaches ROSI also reaches the watchdog.
+3. **Registered group is the real download group.** The FFmpeg wrapper must be
+   in the same process group as yt-dlp, and that group must be the one ROSI
+   registered. A group the watchdog never learned about cannot be cleaned.
+4. **Wrong target.** The watchdog must never signal group 0, 1, a negative
+   number, its own group, or anything parsed from a malformed line. Only
+   positive PGIDs above 1 that are not its own are accepted.
+5. **Clean exit must not kill.** After the clean-exit marker the watchdog exits
+   without signalling, and a ROSI that exits after a failed shutdown (children
+   still running) sends no marker, so those children are cleaned up.
+6. **Ended groups must not be signalled.** `-<pgid>` is sent after the group is
+   killed and before the leader is reaped, so a reused PGID is never targeted.
+7. **Caller must never block or panic.** If the watchdog stopped reading (pipe
+   full) or exited (broken pipe), writes fail fast (non-blocking descriptor,
+   SIGPIPE ignored), one warning is logged, and spawning continues.
+8. **Pipe leaks.** The write end must be close-on-exec; if a child inherited it,
+   end-of-file would never arrive after ROSI died. The watchdog must close every
+   other inherited descriptor and use null stdout/stderr so it never keeps
+   ROSI's captured output pipes open after ROSI died.
+9. **Helper modes must not start watchdogs.** The private media-tool launcher
+   and the malformed-launcher cases exit before the watchdog starts; the
+   launcher process has no watchdog pipe, so its children register nothing.
+10. **Close path (macOS).** Stopping work and shutdown after the window closes
+    run on a worker thread. The close handshake, its timeout and the forced
+    close dialog are unchanged, and a window reopened during the stop stays
+    hidden until the stop finishes so it cannot cancel new work.

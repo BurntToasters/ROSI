@@ -73,27 +73,30 @@ pub fn record(outcome: Outcome, format: Option<&str>, bytes: Option<u64>) {
     let _guard = STATS_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let mut stats = load_unlocked();
     let now = crate::app_state::now_ms();
-    stats.total_downloads += 1;
+    stats.total_downloads = stats.total_downloads.saturating_add(1);
     if stats.first_download_at.is_none() {
         stats.first_download_at = Some(now);
     }
     stats.last_download_at = Some(now);
     match outcome {
         Outcome::Success => {
-            stats.successful_downloads += 1;
+            stats.successful_downloads = stats.successful_downloads.saturating_add(1);
             if let Some(format) = format.filter(|format| !format.is_empty()) {
                 if stats.format_counts.contains_key(format)
                     || stats.format_counts.len() < MAX_FORMAT_COUNTS
                 {
-                    *stats.format_counts.entry(format.to_string()).or_insert(0) += 1;
+                    let count = stats.format_counts.entry(format.to_string()).or_insert(0);
+                    *count = count.saturating_add(1);
                 }
             }
             if let Some(bytes) = bytes.filter(|bytes| *bytes > 0) {
-                stats.total_bytes_downloaded += bytes;
+                stats.total_bytes_downloaded = stats.total_bytes_downloaded.saturating_add(bytes);
             }
         }
-        Outcome::Failed => stats.failed_downloads += 1,
-        Outcome::Cancelled => stats.cancelled_downloads += 1,
+        Outcome::Failed => stats.failed_downloads = stats.failed_downloads.saturating_add(1),
+        Outcome::Cancelled => {
+            stats.cancelled_downloads = stats.cancelled_downloads.saturating_add(1)
+        }
     }
     if let Err(error) = save_unlocked(&stats) {
         crate::logging::error(&format!("Failed to save stats: {error}"));

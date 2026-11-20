@@ -180,6 +180,7 @@ fs.mkdirSync(fixtureDir, { recursive: true });
 const helper = path.join(fixtureDir, "ffmpeg");
 const terminationReady = path.join(fixtureDir, "tree-ready.json");
 const cancelBetweenReady = path.join(fixtureDir, "cancel-between-ready");
+const killParentReady = path.join(fixtureDir, "kill-parent-ready.json");
 const codecProbeReady = path.join(fixtureDir, "codec-probe-ready");
 const captionEnumerationReady = path.join(
   fixtureDir,
@@ -488,6 +489,7 @@ TOOL_KIND = ${JSON.stringify(toolKind)}
 TOOL_TRACE = ${JSON.stringify(toolTracePath)}
 READY = ${JSON.stringify(terminationReady)}
 CANCEL_BETWEEN_READY = ${JSON.stringify(cancelBetweenReady)}
+KILL_PARENT_READY = ${JSON.stringify(killParentReady)}
 CODEC_PROBE_READY = ${JSON.stringify(codecProbeReady)}
 GPU_FAILURE = ${JSON.stringify(gpuFailureMarker)}
 if "--audit-descendant" in sys.argv:
@@ -505,6 +507,14 @@ else:
     except (ValueError, IndexError):
         input_path = ""
 input_name = os.path.basename(input_path)
+if TOOL_KIND == "ffmpeg" and "kill-parent-hold" in input_path:
+    # Started by yt-dlp through the private launcher. Ignore SIGTERM so the
+    # watchdog must escalate to SIGKILL after ROSI is killed.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    with open(KILL_PARENT_READY, "w", encoding="utf-8") as file:
+        json.dump({"pid": os.getpid(), "parentPid": os.getppid(), "pgid": os.getpgid(0)}, file)
+    while True:
+        time.sleep(1)
 if TOOL_KIND == "ffmpeg" and "-progress" not in args and "probe-unknown-caption" in input_name:
     sys.stderr.write("ROSI_FORCED_INCOMPLETE_CODEC_PROBE\\n")
     sys.exit(1)
@@ -827,7 +837,7 @@ await new Promise((resolve) =>
   fallbackSegmentServer.listen(0, "127.0.0.1", resolve),
 );
 const fallbackSegmentUrl = `http://127.0.0.1:${fallbackSegmentServer.address().port}/nested.ts`;
-mediaRoutes["/fallback-escape.m3u8"] = {
+const fallbackPlaylist = {
   body: Buffer.from(
     `#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n` +
       `#EXT-X-KEY:METHOD=SAMPLE-AES,URI="${pathToFileURL(fallbackLocalSegment).href}"\n` +
@@ -835,6 +845,9 @@ mediaRoutes["/fallback-escape.m3u8"] = {
   ),
   contentType: "application/vnd.apple.mpegurl",
 };
+mediaRoutes["/fallback-escape.m3u8"] = fallbackPlaylist;
+// Same manifest: yt-dlp hands it to FFmpeg, and the wrapper holds that FFmpeg.
+mediaRoutes["/kill-parent-hold.m3u8"] = fallbackPlaylist;
 const nestedProbePlaylist = path.join(profile.downloads, "nested-probe.m3u8");
 fs.writeFileSync(
   nestedProbePlaylist,
@@ -919,6 +932,7 @@ try {
           ROSI_REPAIRS_AUTH_REQUESTS_FILE: authRequestsFile,
           ROSI_REPAIRS_TERMINATION_READY: terminationReady,
           ROSI_REPAIRS_CANCEL_BETWEEN_READY: cancelBetweenReady,
+          ROSI_REPAIRS_KILL_PARENT_READY: killParentReady,
           ROSI_REPAIRS_CODEC_PROBE_READY: codecProbeReady,
           ROSI_AUDIT3_CAPTION_ENUMERATION_READY: captionEnumerationReady,
           ROSI_AUDIT3_CAPTION_ENUMERATION_RELEASE: captionEnumerationRelease,

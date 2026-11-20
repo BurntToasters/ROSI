@@ -467,7 +467,7 @@ impl Coordinator {
                     Some(sink) => {
                         let _ = sink.send(*completion);
                     }
-                    None => crate::logging::warn(&format!(
+                    None => crate::logging::warn_deferred(&format!(
                         "Ignored a terminal result for session {session_id} with no registered caller."
                     )),
                 }

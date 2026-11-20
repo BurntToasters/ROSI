@@ -21,6 +21,8 @@ mod network_security;
 mod notices;
 mod platform;
 mod process_util;
+#[cfg(unix)]
+mod process_watchdog;
 mod progress;
 mod queue;
 mod settings;
@@ -189,9 +191,26 @@ macro_rules! generate_app_handler {
     };
 }
 
+/// Work is stopped, so the watchdog has nothing left to clean.
+#[cfg(unix)]
+fn notify_watchdog_clean_exit() {
+    if let Err(error) = process_watchdog::clean_exit() {
+        logging::warn(&format!("Could not notify the process watchdog: {error}"));
+    }
+}
+
+#[cfg(not(unix))]
+fn notify_watchdog_clean_exit() {}
+
 fn main() {
     logging::install_panic_hook();
     if let Some(exit_code) = ffmpeg_guard::dispatch_from_argv() {
+        std::process::exit(exit_code);
+    }
+    // The crash watchdog is a private mode of this binary. Like the media-tool
+    // launcher, it must run before any Tauri setup.
+    #[cfg(unix)]
+    if let Some(exit_code) = process_watchdog::dispatch_from_argv() {
         std::process::exit(exit_code);
     }
 
@@ -275,6 +294,14 @@ fn main() {
             if repaired_gdk_backend {
                 logging::info("No X display for the AppImage's forced X11 backend; using Wayland.");
             }
+            // Stops helper processes if ROSI dies without cleanup. Failure
+            // only loses that crash protection.
+            #[cfg(unix)]
+            if let Err(error) = process_watchdog::start() {
+                logging::warn(&format!(
+                    "Could not start the process watchdog; helpers may outlive a ROSI crash: {error}"
+                ));
+            }
             // Before anything reads settings, the queue, or stats.
             legacy::import_on_first_launch(app.handle());
             if report_missing_ytdlp(app.handle()) {
@@ -325,13 +352,14 @@ fn main() {
                 api.prevent_exit();
             }
         }
-        tauri::RunEvent::Exit => {
-            if let Err(error) = window::shutdown() {
-                logging::error(&format!(
-                    "Could not confirm durable state during final shutdown: {error}"
-                ));
-            }
-        }
+        tauri::RunEvent::Exit => match window::shutdown() {
+            // After a failed shutdown no marker is sent, so the watchdog stops
+            // anything still running.
+            Ok(()) => notify_watchdog_clean_exit(),
+            Err(error) => logging::error(&format!(
+                "Could not confirm durable state during final shutdown: {error}"
+            )),
+        },
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen {
             has_visible_windows: false,

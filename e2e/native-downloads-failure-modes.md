@@ -80,6 +80,29 @@ profile, record each observation, and write a repeatable JSON artifact.
     probe tree must remain observable failures. Cancellation must still leave
     no output or owned staging behind.
 
+    **Update (shared launcher, written before the spec change).** Windows
+    launchers now live in `<data dir>/local/media-tools` (local app data, not
+    `app-data/media-tools`) and one directory is shared per distinct config for
+    the whole run. A launcher for this download's config may exist before the
+    download starts, so "a launcher that did not exist before" times out
+    (`observedLaunchers: []`, `timedOut: true`). Failure modes:
+
+    - Scanning only the old `app-data/media-tools` root finds nothing. The
+      probe must also scan the local root; the old roots stay for other
+      platforms and for stale fallbacks.
+    - Accepting any existing launcher could pick one for a different tool. An
+      existing launcher counts only when its `launcher.json` `ffmpeg` is the
+      FFmpeg this download uses (the wrapper in
+      `ROSI_ROUND2_NATIVE_FFMPEG_WRAPPER`). Windows may store it canonicalized
+      with a `\\?\` prefix, so compare normalized paths, case-insensitively on
+      Windows.
+    - A new launcher is still accepted when it appears, so Unix per-operation
+      directories keep working.
+    - Reuse must not weaken the proof: the alias must still be the app binary,
+      the extensionless-argv0 `-version` call must still exit 0 within the
+      bound, and a missing, non-app or hanging alias must still fail. The record
+      states whether the launcher was new or reused.
+
 The E2E evidence is intentionally limited to observable app behavior and
 filesystem state. It does not prove survival of real power loss or run the
 Windows Job Object scenario when the host is not Windows.
@@ -89,9 +112,9 @@ Windows Job Object scenario when the host is not Windows.
 Written before the spec change. A skipped record proves nothing, so it must not
 report `invariantPassed: true`.
 
-| Row  | Failure mode                                                                                                                                  | Guard after the change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| T6-1 | `windows-job-object-leader-exit` is skipped but reports `invariantPassed: true`, so a reader counts a Windows gap as proven.                | The record reports `invariantPassed: null` with `skipped: true` and its `skipReason`. `scripts/e2e/runners/native.js` accepts a skipped record only when `invariantPassed` is `null`, and still requires the leader-exit record to be skipped with a reason.                                                                                                                                                                                                                                                    |
-| T6-2 | Win32 skips (`source-identity-preserves-replacement`, `deno-version-probe`) keep `invariantPassed: true` and read as passed.                 | Both win32 skip records report `invariantPassed: null` with their existing reasons. The native verdict accepts them only on win32, as before.                                                                                                                                                                                                                                                                                                                                                                       |
-| T6-3 | A skipped record with `invariantPassed: true` still passes the native verdict after the change.                                                | `native.js` requires `invariantPassed === null` for every skipped observation and `=== true` for every other one. Dependent verdicts in `e2e/native-downloads-run.mjs` and `scripts/test-e2e-round2.test.mjs` also need `null` for skipped records. They are outside this change, and the native gate fails until they are updated.                                                                                                                                                                                                       |
-| T6-4 | A non-skipped observation reports `null` and the verdict treats it as skipped.                                                                 | `native.js` only accepts `null` on records with `skipped: true`. An unskipped record with `null` is reported as `did not pass`.                                                                                                                                                                                                                                                                                                                                                                                       |
+| Row  | Failure mode                                                                                                                 | Guard after the change                                                                                                                                                                                                                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T6-1 | `windows-job-object-leader-exit` is skipped but reports `invariantPassed: true`, so a reader counts a Windows gap as proven. | The record reports `invariantPassed: null` with `skipped: true` and its `skipReason`. `scripts/e2e/runners/native.js` accepts a skipped record only when `invariantPassed` is `null`, and still requires the leader-exit record to be skipped with a reason.                                                                        |
+| T6-2 | Win32 skips (`source-identity-preserves-replacement`, `deno-version-probe`) keep `invariantPassed: true` and read as passed. | Both win32 skip records report `invariantPassed: null` with their existing reasons. The native verdict accepts them only on win32, as before.                                                                                                                                                                                       |
+| T6-3 | A skipped record with `invariantPassed: true` still passes the native verdict after the change.                              | `native.js` requires `invariantPassed === null` for every skipped observation and `=== true` for every other one. Dependent verdicts in `e2e/native-downloads-run.mjs` and `scripts/test-e2e-round2.test.mjs` also need `null` for skipped records. They are outside this change, and the native gate fails until they are updated. |
+| T6-4 | A non-skipped observation reports `null` and the verdict treats it as skipped.                                               | `native.js` only accepts `null` on records with `skipped: true`. An unskipped record with `null` is reported as `did not pass`.                                                                                                                                                                                                     |

@@ -4,7 +4,7 @@
 
 use crate::app_state::{MAIN_WINDOW, SPLASH_WINDOW};
 use crate::constants::{SETTINGS_FLUSH_TIMEOUT, SPLASH_FADE_DELAY};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -19,6 +19,9 @@ static CLOSE_GENERATION: AtomicU64 = AtomicU64::new(0);
 static CLOSE_TIMEOUT_DIALOG_VISIBLE: AtomicBool = AtomicBool::new(false);
 static CLOSE_STATE_LOCK: Mutex<()> = Mutex::new(());
 pub static APP_QUITTING: AtomicBool = AtomicBool::new(false);
+// Background stops started when the macOS window closes. A reopened window
+// stays hidden until they finish, so a stop cannot cancel work started in it.
+static BACKGROUND_STOPS: AtomicUsize = AtomicUsize::new(0);
 
 pub fn create_splash(app: &AppHandle) {
     if app.get_webview_window(SPLASH_WINDOW).is_some() {
@@ -406,6 +409,11 @@ pub fn mark_main_window_ready(app: AppHandle, window: WebviewWindow) {
     };
     std::thread::spawn(move || {
         std::thread::sleep(delay);
+        // Bounded, so a stuck stop cannot keep the window hidden forever.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while BACKGROUND_STOPS.load(Ordering::SeqCst) > 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
             close_splash(&handle);
@@ -659,9 +667,12 @@ pub fn on_main_destroyed(app: &AppHandle) {
         CLOSE_GENERATION.fetch_add(1, Ordering::SeqCst);
     }
     close_splash(app);
-    if cfg!(target_os = "macos") && !APP_QUITTING.load(Ordering::SeqCst) {
+    #[cfg(target_os = "macos")]
+    if !APP_QUITTING.load(Ordering::SeqCst) {
         // macOS keeps the app in the Dock; a closed window still stops work.
-        stop_active_work();
+        // Stopping waits for child processes, which must not block this UI
+        // thread.
+        stop_active_work_in_background();
         return;
     }
     if APP_QUITTING.load(Ordering::SeqCst) {
@@ -686,20 +697,25 @@ pub fn request_quit(app: &AppHandle) {
                 );
             }
         }
-        None => match shutdown() {
-            Ok(()) => app.exit(0),
-            Err(error) => {
-                APP_QUITTING.store(false, Ordering::SeqCst);
-                crate::notices::show(
-                    "Could Not Quit ROSI",
-                    &format!(
-                        "ROSI could not save the download queue, so it will remain open.\n\n{error}"
-                    ),
-                    crate::notices::NoticeKind::Error,
-                    false,
-                );
-            }
-        },
+        // Shutdown flushes to disk and waits for child processes, so it runs
+        // off the main thread; the outcome is handled the same way.
+        None => {
+            let handle = app.clone();
+            std::thread::spawn(move || match shutdown() {
+                Ok(()) => handle.exit(0),
+                Err(error) => {
+                    APP_QUITTING.store(false, Ordering::SeqCst);
+                    crate::notices::show(
+                        "Could Not Quit ROSI",
+                        &format!(
+                            "ROSI could not save the download queue, so it will remain open.\n\n{error}"
+                        ),
+                        crate::notices::NoticeKind::Error,
+                        false,
+                    );
+                }
+            });
+        }
     }
 }
 
@@ -769,6 +785,31 @@ fn force_close(app: AppHandle) {
 pub fn stop_active_work() {
     crate::queue::stop();
     crate::media_info::cancel_all();
+}
+
+/// Runs `stop_active_work` on a worker thread. Only the macOS window-close
+/// path calls this, so it is unused on other platforms.
+#[cfg(target_os = "macos")]
+fn stop_active_work_in_background() {
+    struct Pending;
+    impl Drop for Pending {
+        fn drop(&mut self) {
+            BACKGROUND_STOPS.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    BACKGROUND_STOPS.fetch_add(1, Ordering::SeqCst);
+    let pending = Pending;
+    let spawned = std::thread::Builder::new()
+        .name("rosi-stop-work".into())
+        .spawn(move || {
+            let _pending = pending;
+            stop_active_work();
+        });
+    if let Err(error) = spawned {
+        // The closure (and its guard) was dropped with the failed spawn.
+        crate::logging::warn(&format!("Could not start the stop-work thread: {error}"));
+        stop_active_work();
+    }
 }
 
 /// Flush once before stopping work so a failed write leaves it running, then

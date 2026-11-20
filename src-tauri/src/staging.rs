@@ -156,7 +156,7 @@ fn is_bookkeeping_name(name: &str) -> bool {
 /// True for yt-dlp files that are never the user's output: `.part`, `.ytdl`
 /// control files, `.part-Frag<N>` fragments and `.temp.<ext>` postprocessor
 /// output. Format streams are handled by `format_stream_stem`.
-fn is_ytdlp_intermediate(name: &str) -> bool {
+pub(crate) fn is_ytdlp_intermediate(name: &str) -> bool {
     if name.ends_with(".part") || name.ends_with(".ytdl") {
         return true;
     }
@@ -170,7 +170,7 @@ fn is_ytdlp_intermediate(name: &str) -> bool {
 }
 
 /// The merged-output stem of a `<stem>.f<digits>.<ext>` format stream.
-fn format_stream_stem(name: &str) -> Option<&str> {
+pub(crate) fn format_stream_stem(name: &str) -> Option<&str> {
     let (stem, _extension) = name.rsplit_once('.')?;
     let (base, last) = stem.rsplit_once('.')?;
     (!base.is_empty()
@@ -462,6 +462,8 @@ impl DownloadStage {
                 Ok(())
             }
             Err(error) => {
+                // No complete snapshot: callers must see "unknown", not "empty".
+                self.owned_entries = None;
                 self.preserve_on_drop = true;
                 Err(error)
             }
@@ -797,9 +799,12 @@ pub(crate) fn install_no_replace(temp: &Path, destination: &Path) -> std::io::Re
     // `std::fs::rename` replaces an existing destination on Windows. Use the
     // Win32 move primitive without MOVEFILE_REPLACE_EXISTING so an output
     // collision fails atomically instead of overwriting a user's file.
+    // Retry only brief scanner locks; "exists" errors still fail at once.
     use windows_sys::Win32::Storage::FileSystem::MOVEFILE_WRITE_THROUGH;
 
-    crate::fs_util::windows_move_file(temp, destination, MOVEFILE_WRITE_THROUGH)
+    crate::fs_util::retry_transient_lock(|| {
+        crate::fs_util::windows_move_file(temp, destination, MOVEFILE_WRITE_THROUGH)
+    })
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
@@ -814,11 +819,10 @@ pub(crate) fn install_no_replace(temp: &Path, destination: &Path) -> std::io::Re
 pub fn hide_on_windows(path: &Path) {
     #[cfg(windows)]
     {
-        use std::os::windows::ffi::OsStrExt;
         use windows_sys::Win32::Storage::FileSystem::{
             GetFileAttributesW, SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN, INVALID_FILE_ATTRIBUTES,
         };
-        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let wide = win32_path(path);
         // SAFETY: `wide` is a NUL-terminated buffer that lives for both calls.
         unsafe {
             let current = GetFileAttributesW(wide.as_ptr());
