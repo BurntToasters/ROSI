@@ -4,7 +4,16 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import {
+  api,
+  restoreBridge,
+  setControl,
+  stubBridge,
+  stubCalls,
+  waitFor,
+  waitForAppReady,
+  waitForBackendSetting,
+} from "../../helpers/ui.js";
 import { REPO_ROOT } from "../../helpers/profile.js";
 
 // Rows are numbered in wording.failure-modes.md. Each check lists the rows it covers.
@@ -107,19 +116,6 @@ async function scenario(name, failureModes, body) {
   }
 }
 
-async function waitFor(
-  predicate,
-  message,
-  timeout = 10_000,
-  argument = undefined,
-) {
-  await browser.waitUntil(async () => browser.execute(predicate, argument), {
-    timeout,
-    interval: 100,
-    timeoutMsg: message,
-  });
-}
-
 // Waits until the predicate holds before the deadline (ms since epoch).
 async function waitUntilBefore(predicate, deadline, message) {
   await browser.waitUntil(predicate, {
@@ -129,76 +125,46 @@ async function waitUntilBefore(predicate, deadline, message) {
   });
 }
 
-async function pauseUntil(time) {
-  const remaining = time - Date.now();
-  if (remaining > 0) await browser.pause(remaining);
-}
-
-async function settle(ms) {
-  await browser.pause(ms);
-}
-
-async function waitForBackendSetting(key, value, message) {
+// Polls the toast until `deadline` (ms since epoch). The first poll where
+// `ok` fails is returned at once; otherwise the last status. Replaces a blind
+// wait: the toast must stay in the wanted state for the whole span.
+async function holdToastUntil(
+  text,
+  deadline,
+  ok = (status) => status.present && !status.hiding,
+) {
+  let last = null;
+  let broken = null;
   await browser.waitUntil(
-    async () => (await api("getSettings"))[key] === value,
-    { timeout: 10_000, interval: 150, timeoutMsg: message },
-  );
-}
-
-async function setControl(id, value) {
-  await browser.execute(
-    (target, next) => {
-      const control = document.getElementById(target);
-      if (!control) throw new Error(`missing control ${target}`);
-      if (control.type === "checkbox") control.checked = Boolean(next);
-      else control.value = String(next);
-      control.dispatchEvent(new Event("change", { bubbles: true }));
-    },
-    id,
-    value,
-  );
-}
-
-// Replaces one bridge method with a recorder that resolves to `value`. The real
-// method comes back in restoreStubs(). The renderer calls the bridge at call
-// time, so the stub is seen by every caller.
-async function stubBridge(name, value) {
-  await browser.execute(
-    (target, result) => {
-      window.__wordingStubs ??= {};
-      if (!(target in window.__wordingStubs)) {
-        window.__wordingStubs[target] = {
-          original: window.__ROSI_E2E__.api[target],
-          calls: [],
-        };
+    async () => {
+      last = await toastStatus(text);
+      if (!ok(last)) {
+        broken = last;
+        return true;
       }
-      const stub = window.__wordingStubs[target];
-      window.__ROSI_E2E__.api[target] = (...args) => {
-        stub.calls.push(JSON.parse(JSON.stringify(args)));
-        return Promise.resolve(result);
-      };
+      return Date.now() >= deadline;
     },
-    name,
-    value,
+    {
+      timeout: Math.max(1_000, deadline - Date.now() + 2_000),
+      interval: 100,
+      timeoutMsg: `toast hold did not finish: ${text}`,
+    },
   );
+  return broken ?? last;
 }
 
-async function stubCalls(name) {
-  return browser.execute(
-    (target) => (window.__wordingStubs?.[target]?.calls ?? []).slice(),
-    name,
+// The manual download handler ran: the button is idle and the progress bar,
+// which the completion handler hides after 2 s, is gone.
+async function waitForManualCompletionHandled() {
+  await waitFor(
+    () =>
+      !document
+        .getElementById("progress-container")
+        ?.classList.contains("visible") &&
+      !document.getElementById("downloadBtn")?.classList.contains("loading"),
+    "the manual download completion was not handled",
+    15_000,
   );
-}
-
-async function restoreStubs() {
-  await browser.execute(() => {
-    const stubs = window.__wordingStubs;
-    if (!stubs) return;
-    for (const [name, stub] of Object.entries(stubs)) {
-      window.__ROSI_E2E__.api[name] = stub.original;
-    }
-    window.__wordingStubs = undefined;
-  });
 }
 
 // Records every download completion the renderer receives, for waits.
@@ -374,7 +340,7 @@ describe("ROSI wording, manual notifications, and toast timing", () => {
   });
 
   after(async () => {
-    await restoreStubs();
+    await restoreBridge();
     report.completedAt = new Date().toISOString();
     report.passed = report.checks.filter(
       (check) => check.status === "passed",
@@ -501,7 +467,7 @@ describe("ROSI wording, manual notifications, and toast timing", () => {
           original,
           "ask-every-time was not restored",
         );
-        await restoreStubs();
+        await restoreBridge();
       }
     }));
 
@@ -550,7 +516,7 @@ describe("ROSI wording, manual notifications, and toast timing", () => {
           original,
           "ask-every-time was not restored",
         );
-        await restoreStubs();
+        await restoreBridge();
       }
     }));
 
@@ -631,7 +597,15 @@ describe("ROSI wording, manual notifications, and toast timing", () => {
           await startManualDownload(onUrl);
           const completed = await completionFor(onUrl);
           assert.equal(completed.outcome, "failed", "download did not fail");
-          await settle(2_000);
+          await waitFor(
+            () =>
+              (window.__rosiStubs?.calls ?? []).some(
+                (call) => call.name === "showNotification",
+              ),
+            "the failure did not send a notification",
+            15_000,
+          );
+          await waitForManualCompletionHandled();
           const calls = await stubCalls("showNotification");
           assert.equal(
             calls.length,
@@ -665,7 +639,7 @@ describe("ROSI wording, manual notifications, and toast timing", () => {
             "failed",
             "second download did not fail",
           );
-          await settle(2_000);
+          await waitForManualCompletionHandled();
           const offSent = (await stubCalls("showNotification")).length - before;
           assert.equal(
             offSent,
@@ -679,7 +653,7 @@ describe("ROSI wording, manual notifications, and toast timing", () => {
             offNotifications: offSent,
           };
         } finally {
-          await restoreStubs();
+          await restoreBridge();
           await setControl("notificationsToggle", original);
           await waitForBackendSetting(
             "notifications",
@@ -720,7 +694,7 @@ describe("ROSI wording, manual notifications, and toast timing", () => {
           "cancelled",
           "download was not cancelled",
         );
-        await settle(2_000);
+        await waitForManualCompletionHandled();
         const calls = await stubCalls("showNotification");
         assert.equal(
           calls.length,
@@ -729,7 +703,7 @@ describe("ROSI wording, manual notifications, and toast timing", () => {
         );
         return { notifications: 0 };
       } finally {
-        await restoreStubs();
+        await restoreBridge();
         await setControl("notificationsToggle", original);
         await waitForBackendSetting(
           "notifications",
@@ -744,8 +718,7 @@ describe("ROSI wording, manual notifications, and toast timing", () => {
       await clearToasts();
       const text = `wording error ${Date.now()}`;
       const started = await openToast(text, "error");
-      await pauseUntil(started + 6_000);
-      const at6 = await toastStatus(text);
+      const at6 = await holdToastUntil(text, started + 6_000);
       assert.equal(
         at6.present && !at6.hiding,
         true,
@@ -764,8 +737,7 @@ describe("ROSI wording, manual notifications, and toast timing", () => {
       await clearToasts();
       const text = `wording warning ${Date.now()}`;
       const started = await openToast(text, "warning");
-      await pauseUntil(started + 6_000);
-      const at6 = await toastStatus(text);
+      const at6 = await holdToastUntil(text, started + 6_000);
       assert.equal(
         at6.present && !at6.hiding,
         true,
@@ -797,8 +769,11 @@ describe("ROSI wording, manual notifications, and toast timing", () => {
       await clearToasts();
       const text = `wording info ${Date.now()}`;
       const started = await openToast(text, "info");
-      await pauseUntil(started + 1_000);
-      const at1 = await toastStatus(text);
+      const at1 = await holdToastUntil(
+        text,
+        started + 1_000,
+        (status) => status.present,
+      );
       assert.equal(at1.present, true, "info toast did not appear");
       await waitUntilBefore(
         async () => !(await toastStatus(text)).present,
@@ -813,10 +788,9 @@ describe("ROSI wording, manual notifications, and toast timing", () => {
       await clearToasts();
       const text = `wording hover ${Date.now()}`;
       const started = await openToast(text, "error");
-      await pauseUntil(started + 2_000);
+      await holdToastUntil(text, started + 2_000);
       await dispatchOnToast(text, "mouseenter");
-      await pauseUntil(started + 9_500);
-      const whileHovered = await toastStatus(text);
+      const whileHovered = await holdToastUntil(text, started + 9_500);
       assert.equal(
         whileHovered.present && !whileHovered.hiding,
         true,
@@ -824,8 +798,7 @@ describe("ROSI wording, manual notifications, and toast timing", () => {
       );
       await dispatchOnToast(text, "mouseleave");
       const leftAt = Date.now();
-      await settle(1_000);
-      const afterLeave = await toastStatus(text);
+      const afterLeave = await holdToastUntil(text, leftAt + 1_000);
       assert.equal(
         afterLeave.present && !afterLeave.hiding,
         true,
@@ -845,10 +818,9 @@ describe("ROSI wording, manual notifications, and toast timing", () => {
       await clearToasts();
       const text = `wording focus ${Date.now()}`;
       const started = await openToast(text, "error");
-      await pauseUntil(started + 1_000);
+      await holdToastUntil(text, started + 1_000);
       const focusMode = await focusToastButton(text);
-      await pauseUntil(started + 9_500);
-      const whileFocused = await toastStatus(text);
+      const whileFocused = await holdToastUntil(text, started + 9_500);
       assert.equal(
         whileFocused.present && !whileFocused.hiding,
         true,
@@ -856,8 +828,7 @@ describe("ROSI wording, manual notifications, and toast timing", () => {
       );
       await blurToastButton(text);
       const blurredAt = Date.now();
-      await settle(1_000);
-      const afterBlur = await toastStatus(text);
+      const afterBlur = await holdToastUntil(text, blurredAt + 1_000);
       assert.equal(
         afterBlur.present && !afterBlur.hiding,
         true,

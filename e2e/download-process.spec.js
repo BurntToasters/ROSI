@@ -17,6 +17,42 @@ const observations = [];
 const failures = [];
 const hash = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// The cancel path escalates to a kill; survivors after this long are a defect.
+// Waits for "no process left" end early and never run longer.
+const TERMINATION_GRACE_MS = 6500;
+// Gap between liveness checks while waiting for helpers to die.
+const LIVENESS_POLL_MS = 100;
+// No renderer signal marks "stale events were handled and ignored", so the
+// absence check keeps a fixed window after the events are emitted.
+const STALE_EVENT_WINDOW_MS = 3000;
+// The Rust E2E DNS stand-in (E2E_DNS_DELAY) holds a lookup for 2 s; a leaked
+// continuation would show up in the trace shortly after. No signal marks the
+// end of that lookup.
+const DNS_DRAIN_WINDOW_MS = 2500;
+const HTTP_NOT_WHITELISTED = /protocol ['"]?http['"]? not on whitelist/i;
+
+/** Wait for a condition; false on timeout so the case's own invariant records it. */
+async function settles(check, timeout, message) {
+  try {
+    await browser.waitUntil(check, {
+      timeout,
+      interval: 50,
+      timeoutMsg: message,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Wait until a marked process exists, so a later "none left" check means something. */
+function waitForMarkedProcess(marker, message) {
+  return browser.waitUntil(() => processMatches(marker).length > 0, {
+    timeout: 15_000,
+    interval: 50,
+    timeoutMsg: message,
+  });
+}
 
 function record(name, details) {
   const observation = { name, ...details };
@@ -277,7 +313,11 @@ async function metadataCancellation(method, marker) {
     method,
     marker,
   );
-  await pause(1500);
+  await settles(
+    () => processMatches(marker).length > 0,
+    15_000,
+    `no yt-dlp process appeared for ${method}`,
+  );
   const before = processMatches(marker);
   await api(method === "getFormats" ? "cancelFormats" : "cancelVideoInfo");
   await browser.waitUntil(
@@ -774,11 +814,18 @@ describe("ROSI downloader and process repairs", () => {
         manualUrl,
         downloads,
       );
-      await pause(1000);
+      await waitForMarkedProcess(
+        marker,
+        "no yt-dlp process appeared for the manual and queue starts",
+      );
       const before = processMatches(marker);
       await api("cancelDownload");
       await api("cancelQueue");
-      await pause(6500);
+      await settles(
+        () => processMatches(marker).length === 0,
+        TERMINATION_GRACE_MS,
+        "helpers survived both cancels",
+      );
       const after = processMatches(marker);
       const queue = await api("getQueue");
       record("manual-queue-start-ownership", {
@@ -814,10 +861,17 @@ describe("ROSI downloader and process repairs", () => {
         media,
         downloads,
       );
-      await pause(1000);
+      await waitForMarkedProcess(
+        fanoutMarker,
+        "no yt-dlp process appeared for the manual fan-out",
+      );
       const fanoutBefore = processMatches(fanoutMarker);
       await api("cancelDownload");
-      await pause(6500);
+      await settles(
+        () => processMatches(fanoutMarker).length === 0,
+        TERMINATION_GRACE_MS,
+        "helpers survived the fan-out cancel",
+      );
       const fanoutAfter = processMatches(fanoutMarker);
       record("concurrent-manual-start-cancellation", {
         starts: JSON.parse(concurrent),
@@ -896,7 +950,7 @@ describe("ROSI downloader and process repairs", () => {
           }),
         secondSessionId,
       );
-      await pause(3000);
+      await pause(STALE_EVENT_WINDOW_MS);
       const ui = await browser.execute(() => ({
         loading: document
           .getElementById("downloadBtn")
@@ -994,7 +1048,7 @@ describe("ROSI downloader and process repairs", () => {
         () => window.repairDelayedFormats,
       );
       const processesAfter = processMatches("repair-formats-dns=1", host);
-      await pause(2_500);
+      await pause(DNS_DRAIN_WINDOW_MS);
       const eventsAfterDrain = readTrace().filter(
         (event) => event.host === host,
       );
@@ -1147,7 +1201,26 @@ describe("ROSI downloader and process repairs", () => {
       const localSegmentSha256 = hash(fs.readFileSync(localSegmentPath));
       const url = `${media}/fallback-escape.m3u8?repair-fallback-protocol=1`;
       const completion = await download(url, { convertEnabled: false });
-      await pause(250);
+      // The diagnostic reaches the console and the helper's trace records the
+      // rejection before the request file is judged empty.
+      await settles(
+        async () =>
+          readToolInvocations().some(
+            (entry) =>
+              entry.toolKind === "ffmpeg" &&
+              entry.inputArguments?.some((input) =>
+                input.includes("fallback-escape"),
+              ) &&
+              HTTP_NOT_WHITELISTED.test(entry.stderrTail ?? ""),
+          ) &&
+          (await browser.execute(() =>
+            /delegated to ffmpeg/i.test(
+              document.getElementById("output")?.textContent ?? "",
+            ),
+          )),
+        5_000,
+        "fallback rejection never reached the trace and console",
+      );
       const consoleLines = await browser.execute(() =>
         [...document.querySelectorAll("#output .console-line")].map(
           (node) => node.textContent ?? "",
@@ -1216,7 +1289,18 @@ describe("ROSI downloader and process repairs", () => {
         },
       );
       const blocked = blockedAttempt.completion;
-      await pause(250);
+      // The rejected probe is traced before the request file is judged empty.
+      await settles(
+        () =>
+          readToolInvocations().some(
+            (entry) =>
+              entry.toolKind === "ffprobe" &&
+              entry.input?.includes("ffprobe-escape") &&
+              HTTP_NOT_WHITELISTED.test(entry.stderrTail ?? ""),
+          ),
+        5_000,
+        "ffprobe rejection never reached the trace",
+      );
       const requests = JSON.parse(fs.readFileSync(requestPath, "utf8"));
       const maliciousProbeCalls = readToolInvocations().filter(
         (entry) =>
@@ -1300,7 +1384,20 @@ describe("ROSI downloader and process repairs", () => {
         },
       );
       const blocked = blockedAttempt.completion;
-      await pause(250);
+      // The rejected probe is traced before the request file is judged empty.
+      await settles(
+        () =>
+          readToolInvocations()
+            .slice(traceStart)
+            .some(
+              (entry) =>
+                entry.toolKind === "ffprobe" &&
+                entry.input?.includes("ffprobe-escape") &&
+                HTTP_NOT_WHITELISTED.test(entry.stderrTail ?? ""),
+            ),
+        5_000,
+        "ffprobe rejection never reached the trace",
+      );
       const requests = JSON.parse(fs.readFileSync(requestPath, "utf8"));
       const probeCalls = readToolInvocations()
         .slice(traceStart)
@@ -1941,7 +2038,7 @@ describe("ROSI downloader and process repairs", () => {
       ];
       let remaining = watched;
       while (remaining.length > 0 && performance.now() - killedAt < 20_000) {
-        await pause(100);
+        await pause(LIVENESS_POLL_MS);
         remaining = remaining.filter(alive);
       }
       const elapsedMs = Math.round(performance.now() - killedAt);

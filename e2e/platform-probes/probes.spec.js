@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../helpers/app-bridge.js";
+import { api, waitFor, waitForAppReady } from "../helpers/ui.js";
 
 const directory = process.env.ROSI_AUDIT_DIRECTORY;
 const downloads = process.env.ROSI_AUDIT_DOWNLOADS;
@@ -14,7 +14,9 @@ const securityOnly = process.env.ROSI_AUDIT_SECURITY_ONLY === "1";
 const uiOnly = process.env.ROSI_AUDIT_UI_ONLY === "1";
 const terminationOnly = process.env.ROSI_AUDIT_TERMINATION_ONLY === "1";
 const hash = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
-const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// The app's cancel path escalates to a kill; survivors after this long are a
+// defect. Waits for "no process left" end early and never run longer.
+const TERMINATION_GRACE_MS = 6500;
 function record(name, details) {
   observations.push({ name, ...details });
   fs.writeFileSync(
@@ -47,6 +49,49 @@ async function download(url, overrides = {}, oldId) {
   });
   assert.equal(response.ok, true, JSON.stringify(response));
   return activity(url, oldId);
+}
+/** Wait for a Node-side condition; false on timeout so the caller records it. */
+async function settles(check, timeout, message) {
+  try {
+    await browser.waitUntil(check, {
+      timeout,
+      interval: 100,
+      timeoutMsg: message,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+/** Wait until the renderer has no settings save queued or in flight. */
+function waitForSettingsSavesIdle(message) {
+  return waitFor(
+    () => {
+      const store = window.__ROSI_E2E__.modules.settings.settingsStore;
+      return (
+        !store.settingsSaveInFlight &&
+        store.settingsSaveWaiters.length === 0 &&
+        !store.persistDebounceTimer
+      );
+    },
+    message,
+    15_000,
+  );
+}
+/** Wait until no CSS transition is running, so computed styles are final. */
+function waitForTransitionsDone(message) {
+  return waitFor(
+    () =>
+      !document
+        .getAnimations()
+        .some(
+          (animation) =>
+            animation instanceof CSSTransition &&
+            animation.playState === "running",
+        ),
+    message,
+    10_000,
+  );
 }
 function files() {
   return fs
@@ -119,7 +164,7 @@ function processes(marker) {
         () => browser.execute(() => window.auditSaveCalls.length >= 2),
         { timeout: 10_000 },
       );
-      await pause(500);
+      await waitForSettingsSavesIdle("settings saves never settled");
       const saved = await api("getSettings");
       const state = await browser.execute(() => ({
         calls: window.auditSaveCalls,
@@ -240,7 +285,7 @@ function processes(marker) {
             theme,
             flat,
           );
-          await pause(350);
+          await waitForTransitionsDone("control transitions never finished");
           samples.push(
             await browser.execute(() => {
               const button = document.getElementById("downloadBtn");
@@ -271,7 +316,7 @@ function processes(marker) {
           .querySelector("#history-list .history-item-actions button")
           .focus();
       });
-      await pause(500);
+      await waitForTransitionsDone("activity focus transitions never finished");
       const focus = await browser.execute(() => {
         const button = document.querySelector(
           "#history-list .history-item-actions button",
@@ -324,10 +369,18 @@ function processes(marker) {
         media,
         downloads,
       );
-      await pause(600);
+      await browser.waitUntil(() => processes(marker).length > 0, {
+        timeout: 15_000,
+        interval: 100,
+        timeoutMsg: "no yt-dlp process appeared for the concurrent starts",
+      });
       const before = processes(marker);
       await api("cancelDownload");
-      await pause(6500);
+      await settles(
+        () => processes(marker).length === 0,
+        TERMINATION_GRACE_MS,
+        "yt-dlp processes survived the cancel",
+      );
       const after = processes(marker);
       record("concurrent-start-cancel", {
         starts: JSON.parse(outcomes),
@@ -360,10 +413,18 @@ function processes(marker) {
             );
         }
       }, media);
-      await pause(1500);
+      await browser.waitUntil(() => processes(marker).length > 0, {
+        timeout: 15_000,
+        interval: 100,
+        timeoutMsg: "no yt-dlp process appeared for the preview requests",
+      });
       const before = processes(marker);
       await api("cancelVideoInfo");
-      await pause(6500);
+      await settles(
+        () => processes(marker).length === 0,
+        TERMINATION_GRACE_MS,
+        "yt-dlp preview processes survived the cancel",
+      );
       const after = processes(marker);
       record("concurrent-preview-cancel", {
         processesBefore: before,
@@ -403,7 +464,22 @@ function processes(marker) {
       const child = JSON.parse(fs.readFileSync(ready, "utf8"));
       try {
         await api("cancelDownload");
-        await pause(6500);
+        await settles(
+          () => {
+            const alive = spawnSync(
+              "ps",
+              ["-p", String(child.pid), "-o", "pid=,stat=,command="],
+              { encoding: "utf8" },
+            );
+            return (
+              alive.status !== 0 ||
+              !alive.stdout.includes(helper) ||
+              /^s*d+s+Z/.test(alive.stdout)
+            );
+          },
+          TERMINATION_GRACE_MS,
+          "descendant survived the cancel",
+        );
         const listing = spawnSync(
           "ps",
           ["-p", String(child.pid), "-o", "pid=,stat=,command="],
@@ -436,7 +512,18 @@ function processes(marker) {
             process.kill(child.pid, "SIGKILL");
           } catch {}
         }
-        await pause(500);
+        await settles(
+          () => {
+            const left = spawnSync(
+              "ps",
+              ["-p", String(child.pid), "-o", "command="],
+              { encoding: "utf8" },
+            );
+            return left.status !== 0 || !left.stdout.includes(helper);
+          },
+          5_000,
+          "descendant outlived SIGKILL",
+        );
       }
     });
   },
@@ -453,8 +540,13 @@ function processes(marker) {
         { encoding: "utf8" },
       );
       assert.equal(activated.status, 0, activated.stdout + activated.stderr);
+      // Focus is recorded below; a window that never takes it is evidence.
+      await settles(
+        () => browser.execute(() => document.hasFocus()),
+        5_000,
+        "window did not take focus after activation",
+      );
     }
-    await pause(2000);
     await download(`${media}/a.mp4`);
     const samples = [];
     for (const theme of ["dark", "light", "purple"]) {
@@ -475,7 +567,8 @@ function processes(marker) {
           theme,
           flat,
         );
-        await pause(2000);
+        await waitForSettingsSavesIdle("theme and flat UI saves never settled");
+        await waitForTransitionsDone("theme transitions never finished");
         samples.push(
           await browser.execute(() => {
             const button = document.getElementById("downloadBtn");
@@ -527,7 +620,7 @@ function processes(marker) {
         .querySelector("#history-list .history-item-actions button")
         .focus();
     });
-    await pause(500);
+    await waitForTransitionsDone("activity focus transitions never finished");
     const focus = await browser.execute(() => {
       const button = document.querySelector(
         "#history-list .history-item-actions button",

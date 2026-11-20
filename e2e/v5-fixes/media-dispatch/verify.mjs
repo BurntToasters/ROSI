@@ -14,6 +14,7 @@ import {
   ensureWindowsProfileFolders,
   mergeWebView2BrowserArgs,
 } from "../../helpers/profile.js";
+import { sha256File } from "../../helpers/host.js";
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -110,13 +111,6 @@ function run(file, args, options = {}) {
   }
   if (result.error) throw result.error;
   return result;
-}
-
-function sha256File(file) {
-  return crypto
-    .createHash("sha256")
-    .update(fs.readFileSync(file))
-    .digest("hex");
 }
 
 function expectSuccess(result, label) {
@@ -308,6 +302,9 @@ function captureProcessAsync(file, args, timeoutMs = 3_000) {
   });
 }
 
+// Gap between process queries while waiting for the alias process to appear.
+const ALIAS_POLL_INTERVAL_MS = 150;
+
 async function observeYtdlpAliasCommand(aliasPath) {
   let lastProbeDetail = "no matching process was visible";
   const expectedDirectory = path.win32
@@ -343,7 +340,7 @@ async function observeYtdlpAliasCommand(aliasPath) {
         argv0Name,
       };
     }
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await new Promise((resolve) => setTimeout(resolve, ALIAS_POLL_INTERVAL_MS));
   }
   return { error: lastProbeDetail };
 }

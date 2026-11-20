@@ -4,7 +4,14 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, clickById, waitForAppReady } from "../../helpers/app-bridge.js";
+import {
+  activityFor,
+  api,
+  clickById,
+  setControl,
+  waitForAppReady,
+  waitForBackendSetting,
+} from "../../helpers/ui.js";
 import { REPO_ROOT } from "../../helpers/profile.js";
 
 // Rows are numbered in longterm-audit.failure-modes.md. Each check lists the rows it covers.
@@ -199,20 +206,6 @@ async function waitForState(read, done, message, timeout = 10_000) {
   return last;
 }
 
-async function setControl(id, value) {
-  await browser.execute(
-    (target, next) => {
-      const control = document.getElementById(target);
-      if (!control) throw new Error(`missing control ${target}`);
-      if (control.type === "checkbox") control.checked = Boolean(next);
-      else control.value = String(next);
-      control.dispatchEvent(new Event("change", { bubbles: true }));
-    },
-    id,
-    value,
-  );
-}
-
 // Sets the URL field the way typing does, so the preview and summary follow it.
 async function setUrlField(value) {
   await browser.execute((text) => {
@@ -220,13 +213,6 @@ async function setUrlField(value) {
     input.value = text;
     input.dispatchEvent(new Event("input", { bubbles: true }));
   }, value);
-}
-
-async function waitForBackendSetting(key, value, message) {
-  await browser.waitUntil(
-    async () => (await api("getSettings"))[key] === value,
-    { timeout: 10_000, interval: 150, timeoutMsg: message },
-  );
 }
 
 async function setSidebarOpen(open) {
@@ -416,13 +402,6 @@ async function readPreviewCard() {
         document.getElementById("preview-duration")?.textContent?.trim() ?? "",
     });
   });
-}
-
-// The Activity rows that belong to one URL, from the backend's own history.
-async function activityFor(url) {
-  const envelope = await api("getDownloadActivity");
-  assert.equal(envelope?.ok, true, "getDownloadActivity failed");
-  return envelope.data.filter((entry) => entry.url === url);
 }
 
 async function readActivityRow(id) {

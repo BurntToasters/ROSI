@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import { browser } from "@wdio/globals";
+import { api, waitForAppReady } from "../../helpers/ui.js";
 
 const mode = process.env.ROSI_PERSISTENCE_MODE;
 const directory = process.env.ROSI_PERSISTENCE_ARTIFACTS;
@@ -30,7 +31,6 @@ const recoveryCopies = (stem) =>
   fs
     .readdirSync(dataDir)
     .filter((name) => name.startsWith(`${stem}.recovery-`));
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Call a bridge method and report failures as data instead of throwing. `ok`
@@ -45,16 +45,32 @@ async function attempt(method, ...args) {
   }
 }
 
-/** Queue saves are debounced (about 300 ms); wait until the URL reaches disk. */
-async function waitForPersistedUrl(url) {
-  for (let index = 0; index < 50; index += 1) {
-    if (fs.existsSync(queuePath) && readBytes(queuePath).includes(url)) {
-      return true;
-    }
-    await sleep(100);
+/**
+ * Wait for a disk or log condition. Resolves true when it held and false on
+ * timeout, so the caller's invariant records the failure with its evidence.
+ */
+async function waitForCondition(check, message, timeout = 5_000) {
+  try {
+    await browser.waitUntil(check, {
+      timeout,
+      interval: 100,
+      timeoutMsg: message,
+    });
+    return true;
+  } catch {
+    return false;
   }
-  return false;
 }
+
+/** Queue saves are debounced (about 300 ms); wait until the URL reaches disk. */
+function waitForPersistedUrl(url) {
+  return waitForCondition(
+    () => fs.existsSync(queuePath) && readBytes(queuePath).includes(url),
+    `queue file never contained ${url}`,
+  );
+}
+
+const PERSIST_FAILURE_LINE = "Failed to persist queue revision";
 
 describe("v5 persistence acceptance (findings 2, 3, 15, 16)", () => {
   it(`records the ${mode} invariant in the real application`, async () => {
@@ -135,10 +151,11 @@ describe("v5 persistence acceptance (findings 2, 3, 15, 16)", () => {
       await waitForPersistedUrl(itemC);
       // The backup is written just after the primary; wait for that write
       // instead of racing it.
-      for (let index = 0; index < 50; index += 1) {
-        if (readBytes(backupPath).includes(itemB)) break;
-        await sleep(100);
-      }
+      await waitForCondition(
+        () =>
+          fs.existsSync(backupPath) && readBytes(backupPath).includes(itemB),
+        "backup file never contained the first generation",
+      );
       const backup = JSON.parse(readBytes(backupPath));
       observation.backupUrls = (
         Array.isArray(backup) ? backup : backup.items
@@ -165,16 +182,28 @@ describe("v5 persistence acceptance (findings 2, 3, 15, 16)", () => {
     } else if (mode === "queue-newer-schema") {
       const before = readBytes(queuePath);
       observation.add = await attempt("addToQueue", [itemB]);
-      await sleep(1500);
+      // Each refused save logs one persist failure, so the count shows the
+      // writer got past each add before the notice count is read.
+      const refusedAfterFirst = await waitForCondition(
+        () => countMatches(readLog(), PERSIST_FAILURE_LINE) >= 1,
+        "first add never reached a refused queue save",
+      );
+      const firstCount = countMatches(readLog(), PERSIST_FAILURE_LINE);
       observation.secondAdd = await attempt("addToQueue", [itemC]);
-      await sleep(1500);
+      const refusedAfterSecond = await waitForCondition(
+        () => countMatches(readLog(), PERSIST_FAILURE_LINE) > firstCount,
+        "second add never reached a refused queue save",
+      );
       const log = readLog();
       observation.userNotices = countMatches(
         log,
         "Told the user that a newer ROSI version owns Download queue",
       );
       observation.invariantPassed =
-        readBytes(queuePath).equals(before) && observation.userNotices === 1;
+        refusedAfterFirst &&
+        refusedAfterSecond &&
+        readBytes(queuePath).equals(before) &&
+        observation.userNotices === 1;
     } else if (mode === "settings-unreadable") {
       observation.save = await attempt("saveSettings", { theme: "light" });
       observation.loaded = await api("getSettings");

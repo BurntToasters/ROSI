@@ -4,7 +4,15 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, clickById, waitForAppReady } from "../../helpers/app-bridge.js";
+import {
+  api,
+  clickById,
+  clickModalButton,
+  setControl,
+  waitFor,
+  waitForAppReady,
+  waitForModal,
+} from "../../helpers/ui.js";
 import { REPO_ROOT } from "../../helpers/profile.js";
 
 const MEDIA = process.env.ROSI_E2E_MEDIA_URL;
@@ -110,44 +118,6 @@ async function scenario(name, failureModes, body) {
   }
 }
 
-async function waitFor(
-  predicate,
-  message,
-  timeout = 10_000,
-  argument = undefined,
-) {
-  await browser.waitUntil(async () => browser.execute(predicate, argument), {
-    timeout,
-    interval: 100,
-    timeoutMsg: message,
-  });
-}
-
-async function setControl(id, value) {
-  await browser.execute(
-    (target, next) => {
-      const control = document.getElementById(target);
-      if (!control) throw new Error(`missing control ${target}`);
-      control.value = String(next);
-      control.dispatchEvent(new Event("input", { bubbles: true }));
-      control.dispatchEvent(new Event("change", { bubbles: true }));
-    },
-    id,
-    value,
-  );
-}
-
-async function waitForModal(open) {
-  await waitFor(
-    (want) =>
-      document.getElementById("app-modal")?.classList.contains("active") ===
-      want,
-    `modal did not ${open ? "open" : "close"}`,
-    10_000,
-    open,
-  );
-}
-
 async function modalState() {
   return browser.execute(() => ({
     title: document.getElementById("modal-title")?.textContent.trim() ?? "",
@@ -159,16 +129,6 @@ async function modalState() {
       (button) => button.textContent.trim(),
     ),
   }));
-}
-
-async function clickModalButton(label) {
-  await browser.execute((wantedLabel) => {
-    const button = [...document.querySelectorAll("#modal-buttons button")].find(
-      (candidate) => candidate.textContent.trim() === wantedLabel,
-    );
-    if (!button) throw new Error(`missing modal action ${wantedLabel}`);
-    button.click();
-  }, label);
 }
 
 async function setSidebarOpen(open) {
@@ -353,8 +313,9 @@ describe("ROSI markup, queue cancel labels, and Remove finished", () => {
     });
 
     await clickModalButton("Keep Running");
+    // The modal closes after its 200 ms hide timer, which starts at the press,
+    // so a cancel issued by the press has reached the backend before this read.
     await waitForModal(false);
-    await browser.pause(1_000);
 
     await scenario("keep-running-leaves-queue-unchanged", [5], async () => {
       const statuses = await queueStatusByUrl();
@@ -496,8 +457,8 @@ describe("ROSI markup, queue cancel labels, and Remove finished", () => {
     // Seed through the renderer, as a user edit does. A direct saveSettings call
     // skips the renderer's backend baseline, so the next section reset would
     // send no patch for keys that look unchanged to the renderer.
-    await setControl("convertFormat", marker);
-    await setControl("upstreamProxyInput", PROXY);
+    await setControl("convertFormat", marker, { input: true });
+    await setControl("upstreamProxyInput", PROXY, { input: true });
     await waitForBackendSettings(
       (settings) =>
         settings.upstreamProxy === PROXY && settings.convertFormat === marker,

@@ -11,7 +11,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import { api, waitForAppReady, waitForModal } from "../../helpers/ui.js";
 import { REPO_ROOT } from "../../helpers/profile.js";
 
 const MEDIA = process.env.ROSI_E2E_MEDIA_URL;
@@ -463,24 +463,6 @@ async function snapshot() {
   return probe("snapshot");
 }
 
-async function waitForTitle(title, timeout = 8_000) {
-  await browser.waitUntil(
-    async () => {
-      const current = (await snapshot()).modal;
-      return current.active && !current.hiding && current.title === title;
-    },
-    { timeout, interval: 100, timeoutMsg: `modal "${title}" did not show` },
-  );
-}
-
-async function waitForHidden(timeout = 5_000) {
-  await browser.waitUntil(async () => !(await snapshot()).modal.active, {
-    timeout,
-    interval: 100,
-    timeoutMsg: "modal did not hide",
-  });
-}
-
 async function waitForQueueStatus(url, status, timeout = 60_000) {
   await browser.waitUntil(
     async () =>
@@ -636,20 +618,20 @@ describe("ROSI overlays audit: displacement, focus traps, async actions, license
         title: "Plain A",
         buttons: [{ label: "Close A" }],
       });
-      await waitForTitle("Plain A");
+      await waitForModal("Plain A");
       await probe("show", {
         title: "Priority B",
         priority: true,
         buttons: [{ label: "Close B" }],
       });
-      await waitForTitle("Priority B");
+      await waitForModal("Priority B");
       assert.equal(
         await probe("depth", "Plain A"),
         1,
         "the displaced unkeyed modal was dropped",
       );
       await probe("clickButton", "Close B");
-      await waitForTitle("Plain A");
+      await waitForModal("Plain A");
       return { redisplayed: "Plain A" };
     });
   });
@@ -666,22 +648,22 @@ describe("ROSI overlays audit: displacement, focus traps, async actions, license
           { label: "Stop", value: true },
         ],
       });
-      await waitForTitle("Confirm shape");
+      await waitForModal("Confirm shape");
       await probe("show", {
         title: "Other priority",
         priority: true,
         buttons: [{ label: "Close other" }],
       });
-      await waitForTitle("Other priority");
+      await waitForModal("Other priority");
       assert.equal(
         (await snapshot()).promises.confirm.settled,
         false,
         "the promise settled while its prompt was pushed aside",
       );
       await probe("clickButton", "Close other");
-      await waitForTitle("Confirm shape");
+      await waitForModal("Confirm shape");
       await probe("clickButton", "Stop");
-      await waitForHidden();
+      await waitForModal(false);
       const settled = (await snapshot()).promises.confirm;
       assert.deepEqual(settled, { settled: true, value: true });
       return { settledValue: settled.value };
@@ -700,9 +682,9 @@ describe("ROSI overlays audit: displacement, focus traps, async actions, license
         priority: true,
         buttons: [{ label: "Close over" }],
       });
-      await waitForTitle("Priority over confirm");
+      await waitForModal("Priority over confirm");
       await probe("clickButton", "Close over");
-      await waitForTitle("Download in Progress");
+      await waitForModal("Download in Progress");
       await probe("escape");
       await browser.waitUntil(
         async () => (await snapshot()).confirm?.settled === true,
@@ -714,7 +696,7 @@ describe("ROSI overlays audit: displacement, focus traps, async actions, license
       );
       const after = await snapshot();
       assert.equal(after.confirm.value, false, "Escape did not keep the work");
-      await waitForHidden();
+      await waitForModal(false);
       const item = (await api("getQueue")).find((entry) => entry.url === slow);
       assert.equal(item?.status, "downloading", "the download was stopped");
       return { settledValue: after.confirm.value, queueStatus: item.status };
@@ -728,18 +710,18 @@ describe("ROSI overlays audit: displacement, focus traps, async actions, license
         key: KEYED_KEY,
         buttons: [{ label: "Close keyed" }],
       });
-      await waitForTitle("Keyed A");
+      await waitForModal("Keyed A");
       await probe("show", {
         title: "Priority K",
         priority: true,
         buttons: [{ label: "Close K" }],
       });
-      await waitForTitle("Priority K");
+      await waitForModal("Priority K");
       assert.equal(await probe("depth", "Keyed A"), 1, "queued more than once");
       await probe("clickButton", "Close K");
-      await waitForTitle("Keyed A");
+      await waitForModal("Keyed A");
       await probe("clickButton", "Close keyed");
-      await waitForHidden();
+      await waitForModal(false);
       assert.equal(await probe("depth", "Keyed A"), 0, "it came back again");
       return { shownAgainOnce: true };
     });
@@ -754,15 +736,15 @@ describe("ROSI overlays audit: displacement, focus traps, async actions, license
         priority: true,
         buttons: [{ label: "Working...", disabled: true }],
       });
-      await waitForTitle("Busy probe");
+      await waitForModal("Busy probe");
       await probe("show", {
         title: "Priority over busy",
         priority: true,
         buttons: [{ label: "Close busy-over" }],
       });
-      await waitForTitle("Priority over busy");
+      await waitForModal("Priority over busy");
       await probe("clickButton", "Close busy-over");
-      await waitForHidden();
+      await waitForModal(false);
       const after = await snapshot();
       assert.equal(
         await probe("depth", "Busy probe"),
@@ -780,23 +762,23 @@ describe("ROSI overlays audit: displacement, focus traps, async actions, license
         title: "Order A",
         buttons: [{ label: "Close oa" }],
       });
-      await waitForTitle("Order A");
+      await waitForModal("Order A");
       await probe("show", {
         title: "Order B",
         priority: true,
         buttons: [{ label: "Close ob" }],
       });
-      await waitForTitle("Order B");
+      await waitForModal("Order B");
       await probe("show", {
         title: "Order C",
         priority: true,
         buttons: [{ label: "Close oc" }],
       });
-      await waitForTitle("Order C");
+      await waitForModal("Order C");
       await probe("clickButton", "Close oc");
-      await waitForTitle("Order B");
+      await waitForModal("Order B");
       await probe("clickButton", "Close ob");
-      await waitForTitle("Order A");
+      await waitForModal("Order A");
       return { order: ["C", "B", "A"] };
     });
   });
@@ -808,15 +790,15 @@ describe("ROSI overlays audit: displacement, focus traps, async actions, license
         dismissCount: "dismissA",
         buttons: [{ label: "Close da" }],
       });
-      await waitForTitle("Dismiss A");
+      await waitForModal("Dismiss A");
       await probe("show", {
         title: "Priority D",
         priority: true,
         buttons: [{ label: "Close D" }],
       });
-      await waitForTitle("Priority D");
+      await waitForModal("Priority D");
       await probe("clickButton", "Close D");
-      await waitForTitle("Dismiss A");
+      await waitForModal("Dismiss A");
       const counts = (await snapshot()).counts;
       assert.equal(counts.dismissA ?? 0, 0, "onDismiss ran for a displacement");
       return { dismissCount: counts.dismissA ?? 0 };
@@ -935,13 +917,13 @@ describe("ROSI overlays audit: displacement, focus traps, async actions, license
         title: "Async action",
         buttons: [{ label: "Boom", asyncThrows: true }],
       });
-      await waitForTitle("Async action");
+      await waitForModal("Async action");
       await probe("show", {
         title: "After async action",
         buttons: [{ label: "OK", primary: true }],
       });
       await probe("clickButton", "Boom");
-      await waitForTitle("After async action");
+      await waitForModal("After async action");
       const after = await snapshot();
       assert.equal(after.counts.asyncAction, 1, "the action did not run once");
       assert.deepEqual(after.rejections, [], "an unhandled rejection escaped");
@@ -957,13 +939,13 @@ describe("ROSI overlays audit: displacement, focus traps, async actions, license
         asyncDismiss: true,
         buttons: [{ label: "Later" }],
       });
-      await waitForTitle("Async dismiss");
+      await waitForModal("Async dismiss");
       await probe("show", {
         title: "After async dismiss",
         buttons: [{ label: "OK", primary: true }],
       });
       await probe("escape");
-      await waitForTitle("After async dismiss");
+      await waitForModal("After async dismiss");
       const after = await snapshot();
       assert.equal(after.counts.asyncDismiss, 1, "onDismiss did not run once");
       assert.deepEqual(after.rejections, [], "an unhandled rejection escaped");

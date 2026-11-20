@@ -137,13 +137,9 @@ verify(
     !renderer.presetSurvivesStaleLookup.audioOptions.includes("478"),
   renderer.presetSurvivesStaleLookup,
 );
-verify(
-  "previous-channel-reaches-updater",
-  updater.channelForwarded === true,
-  {
-    channelForwarded: updater.channelForwarded,
-  },
-);
+verify("previous-channel-reaches-updater", updater.channelForwarded === true, {
+  channelForwarded: updater.channelForwarded,
+});
 verify(
   "updater-prompt-retires-and-binds-candidate",
   updater.activePromptAfterSecondCheck.includes("7.0.0-beta.1") &&

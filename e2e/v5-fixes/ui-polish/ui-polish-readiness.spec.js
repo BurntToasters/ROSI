@@ -4,7 +4,14 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, clickById, waitForAppReady } from "../../helpers/app-bridge.js";
+import {
+  api,
+  clickById,
+  reloadRenderer,
+  setControl,
+  waitFor,
+  waitForAppReady,
+} from "../../helpers/ui.js";
 import { e2eBinaryPath, REPO_ROOT } from "../../helpers/profile.js";
 
 // Readiness hint next to Download, folder feedback, long content, and the
@@ -119,20 +126,6 @@ async function scenario(name, body) {
   }
 }
 
-async function setControl(id, value) {
-  await browser.execute(
-    (target, next) => {
-      const control = document.getElementById(target);
-      if (!control) throw new Error(`missing control ${target}`);
-      if (control.type === "checkbox") control.checked = Boolean(next);
-      else control.value = String(next);
-      control.dispatchEvent(new Event("change", { bubbles: true }));
-    },
-    id,
-    value,
-  );
-}
-
 async function setUrl(value) {
   await browser.execute((next) => {
     const url = document.getElementById("url");
@@ -141,46 +134,18 @@ async function setUrl(value) {
   }, value);
 }
 
-async function waitFor(
-  predicate,
-  message,
-  timeout = 10_000,
-  argument = undefined,
-) {
-  await browser.waitUntil(async () => browser.execute(predicate, argument), {
-    timeout,
-    interval: 100,
-    timeoutMsg: message,
-  });
-}
-
-/**
- * Reload the page and wait until its controls and bridge are installed.
- * Uses a deferred location.reload, like the other reloading specs. WebDriver
- * refresh left the next script waiting for the full 30 s script timeout.
- */
+/** Reload the page and wait until its controls and bridge are installed. */
 async function reloadApp() {
-  await browser.execute(() => {
-    window.__ROSI_E2E__.ready = false;
-    window.setTimeout(() => window.location.reload(), 50);
-  });
-  // Waits for the new document: the old page still has the bridge until it unloads.
-  await waitForAppReady();
-  await browser.waitUntil(
+  await reloadRenderer();
+  await waitFor(
     () =>
-      browser.execute(
-        () =>
-          document.readyState === "complete" &&
-          typeof window.__ROSI_E2E__?.api?.resolveDownloadOptions ===
-            "function" &&
-          typeof window.__ROSI_E2E__?.api?.addToQueue === "function" &&
-          Boolean(document.getElementById("profileCustomBtn")) &&
-          Boolean(document.getElementById("downloadBtn")),
-      ),
-    {
-      timeout: 60_000,
-      timeoutMsg: "reloaded page never rendered the main window controls",
-    },
+      document.readyState === "complete" &&
+      typeof window.__ROSI_E2E__?.api?.resolveDownloadOptions === "function" &&
+      typeof window.__ROSI_E2E__?.api?.addToQueue === "function" &&
+      Boolean(document.getElementById("profileCustomBtn")) &&
+      Boolean(document.getElementById("downloadBtn")),
+    "reloaded page never rendered the main window controls",
+    60_000,
   );
 }
 
@@ -563,7 +528,16 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
       await stubDownloadVideo();
       try {
         await clickById("downloadBtn");
-        await browser.pause(300);
+        // The refusal ends with this warning toast, after the point where a
+        // request would have been sent.
+        await waitFor(
+          () =>
+            [...document.querySelectorAll(".toast .toast-message")].some(
+              (node) => node.textContent.includes("Check resolutions"),
+            ),
+          "the blocked download showed no refusal toast",
+          10_000,
+        );
         assert.equal(
           await downloadCalls(),
           0,
@@ -736,7 +710,11 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
           "picker was not called",
           5_000,
         );
-        await browser.pause(200);
+        // The handler continues in microtasks and one 0 ms timer after the
+        // picker answers; two frames cover both.
+        await browser.executeAsync((done) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => done(true)));
+        });
         const askOnCancel = await folderFeedback();
         assert.equal(
           askOnCancel.hidden,
@@ -805,7 +783,17 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
         await restorePicker();
       }
       await setControl("consoleToggle", true);
-      await browser.pause(250);
+      await waitFor(
+        () =>
+          document
+            .getElementById("console-section")
+            ?.classList.contains("visible") &&
+          document
+            .getAnimations({ subtree: true })
+            .every((animation) => !(animation instanceof CSSTransition)),
+        "the console did not finish showing",
+        5_000,
+      );
 
       await clickById("dockTabQueue");
       assert.equal((await api("clearQueue")).ok, true);

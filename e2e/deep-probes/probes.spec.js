@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../helpers/app-bridge.js";
+import { api, waitFor, waitForAppReady } from "../helpers/ui.js";
 
 const mode = process.env.ROSI_DEEP_MODE;
 const directory = process.env.ROSI_DEEP_ARTIFACTS;
@@ -15,6 +15,11 @@ const home = process.env.HOME;
 const logPath = path.join(dataDir, "logs", "rosi.log");
 const settingsPath = path.join(dataDir, "settings.json");
 const queuePath = path.join(dataDir, "download-queue.json");
+// Gaps between polls of a log file, the queue, or the activity list. Each loop
+// below is bounded by its own deadline.
+const LOG_POLL_MS = 200;
+const STATE_POLL_MS = 250;
+const SLOW_POLL_MS = 500;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function readLog() {
@@ -25,15 +30,35 @@ function readBytes(file) {
   return fs.existsSync(file) ? fs.readFileSync(file) : null;
 }
 
-async function waitForLog(patterns, timeoutMs) {
+async function waitForLog(patterns, timeoutMs, since = 0) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    const log = readLog();
+    const log = readLog().slice(since);
     const hit = patterns.find((pattern) => pattern.test(log));
     if (hit) return { matched: String(hit), elapsedMs: Date.now() - started };
-    await sleep(200);
+    await sleep(LOG_POLL_MS);
   }
   return { matched: null, elapsedMs: Date.now() - started };
+}
+
+// How long a close that did not finish first may still finish late. A close
+// that never happens has no log line, so this stays a bounded wait.
+const LATE_CLOSE_WINDOW_MS = 2000;
+
+/** Wait until the renderer has no settings save queued or in flight. */
+function waitForSettingsSavesIdle(message) {
+  return waitFor(
+    () => {
+      const store = window.__ROSI_E2E__.modules.settings.settingsStore;
+      return (
+        !store.settingsSaveInFlight &&
+        store.settingsSaveWaiters.length === 0 &&
+        !store.persistDebounceTimer
+      );
+    },
+    message,
+    15_000,
+  );
 }
 
 /** Request a close through the real window close path and judge the outcome. */
@@ -50,8 +75,11 @@ async function requestCloseAndObserve(timeoutMs = 15_000) {
     ],
     timeoutMs,
   );
-  // Let a late close finish so the log tells the whole story.
-  await sleep(2000);
+  // A close that is still pending ends with its own log line; wait for it so
+  // the tail tells the whole story. An already closed window needs no wait.
+  if (!/Main window closed./.test(readLog().slice(logBefore))) {
+    await waitForLog([/Main window closed./], LATE_CLOSE_WINDOW_MS, logBefore);
+  }
   const tail = readLog().slice(logBefore);
   const closed = /Main window closed\./.test(tail);
   if (closed) globalThis.rosiMainWindowClosed = true;
@@ -101,10 +129,18 @@ async function closeInvalidFolder(observation) {
   observation.folderBefore = settingsBefore.downloadFolder;
   // Simulate the native picker returning a folder outside the allowed bases.
   await browser.execute((folder) => {
-    window.__ROSI_E2E__.api.selectDownloadLocation = async () => folder;
+    window.__rosiDeepPicked = false;
+    window.__ROSI_E2E__.api.selectDownloadLocation = async () => {
+      window.__rosiDeepPicked = true;
+      return folder;
+    };
     document.getElementById("changeDownloadFolderBtn").click();
   }, outside);
-  await sleep(1500);
+  await waitFor(
+    () => window.__rosiDeepPicked === true,
+    "folder picker stub was never called",
+  );
+  await waitForSettingsSavesIdle("folder pick save never settled");
   observation.uiFolderSummary = await browser.execute(
     () => document.getElementById("downloadFolderSummary")?.title ?? null,
   );
@@ -119,7 +155,7 @@ async function closeInvalidFolder(observation) {
     toggle.checked = checked;
     toggle.dispatchEvent(new Event("change", { bubbles: true }));
   }, !notificationsBefore);
-  await sleep(1500);
+  await waitForSettingsSavesIdle("notifications toggle save never settled");
   observation.unrelatedToggleSaved =
     JSON.parse(fs.readFileSync(settingsPath, "utf8")).notifications ===
     !notificationsBefore;
@@ -146,7 +182,7 @@ async function waitForQueueIdle(timeoutMs) {
     ) {
       return queue;
     }
-    await sleep(250);
+    await sleep(STATE_POLL_MS);
   }
   return api("getQueue");
 }
@@ -162,7 +198,7 @@ async function waitForManualDone(url, sinceMs, timeoutMs) {
         item.completedAt >= sinceMs,
     );
     if (entry) return entry;
-    await sleep(250);
+    await sleep(STATE_POLL_MS);
   }
   return null;
 }
@@ -230,7 +266,11 @@ async function queueOwnerRace(observation) {
       manualOutcome: manual?.outcome ?? null,
     });
     await api("clearQueue");
-    await sleep(500);
+    await browser.waitUntil(async () => (await api("getQueue")).length === 0, {
+      timeout: 10_000,
+      interval: STATE_POLL_MS,
+      timeoutMsg: `round ${round}: queue was not empty after clearQueue`,
+    });
   }
   observation.roundsJudged = observation.rounds.filter(
     (round) => round.bothAccepted,
@@ -250,7 +290,16 @@ async function stagingSweepLeak(observation) {
     [/Recovered staged file from an interrupted session/],
     30_000,
   );
-  await sleep(3000);
+  // The sweep of the seeded staging dir ends with one of these lines. A
+  // timeout falls through so the checks below record what was left.
+  await waitForLog(
+    [
+      new RegExp(
+        `(Removed stale staging directory|Retaining staging directory) .*${seeded.stage}`,
+      ),
+    ],
+    15_000,
+  );
   const entries = fs.readdirSync(downloads).sort();
   observation.downloadFolderEntries = entries;
   observation.recoveredBookkeeping = entries.filter(
@@ -292,13 +341,29 @@ async function proxyPoolExhaustion(observation) {
       (item) => item.url === manifest && item.completedAt >= startedAt,
     );
     if (entry) break;
-    await sleep(500);
+    await sleep(SLOW_POLL_MS);
   }
   observation.completedWithinWindow = Boolean(entry);
   observation.elapsedMs = Date.now() - startedAt;
   if (!entry) {
     await api("cancelDownload");
-    await sleep(3000);
+    // The cancel ends with an activity entry for this URL. A timeout falls
+    // through; the runner judges the observation as before.
+    try {
+      await browser.waitUntil(
+        async () =>
+          (await api("getDownloadActivity"))?.data?.some(
+            (item) => item.url === manifest && item.completedAt >= startedAt,
+          ) === true,
+        {
+          timeout: 15_000,
+          interval: STATE_POLL_MS,
+          timeoutMsg: "cancelled HLS download never produced an activity entry",
+        },
+      );
+    } catch {
+      // No entry within the bound; nothing else to record.
+    }
   }
   observation.outcome = entry?.outcome ?? null;
   observation.outputPath = entry?.outputPath ?? null;

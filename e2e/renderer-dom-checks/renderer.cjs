@@ -217,13 +217,24 @@ const ui = load("modules/ui.ts");
 for (const m of ["downloads", "queue", "settings", "updates", "dock"])
   load("modules/" + m + ".ts");
 load("rosiEngine.ts");
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const { until, turn, nextFrame, within } = require("./wait.cjs");
+// A hide timer is 200 ms; a replaced prompt's old timer is cancelled, so there
+// is no state that shows it did not fire. This window is the timer plus margin.
+const OLD_HIDE_TIMER_WINDOW_MS = 260;
+const isActive = (id) =>
+  w.document.getElementById(id).classList.contains("active");
+const optionValues = (id) =>
+  [...w.document.getElementById(id).options].map((o) => o.value);
 (async () => {
-  await wait(120);
-  await w.__ROSI_RENDERER_STARTUP_READY__;
+  await within(
+    w.__ROSI_RENDERER_STARTUP_READY__,
+    "the renderer did not finish starting",
+  );
   w.document.getElementById("settingsBtn").click();
   w.document.getElementById("resetSettings").click();
-  await wait(80);
+  await until(() => isActive("app-modal"), "the reset prompt did not open");
+  // The frame callback is the last place the prompt moves focus.
+  await nextFrame(w);
   const afterOpen = {
     modalActive: w.document
       .getElementById("app-modal")
@@ -242,7 +253,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     .dispatchEvent(
       new w.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
     );
-  await wait(300);
+  await until(() => !isActive("app-modal"), "the reset prompt did not close");
   const afterClose = {
     sidebarOpen: w.document
       .getElementById("sidebar")
@@ -255,13 +266,18 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   ui.closeSidebar();
 
   w.document.getElementById("licensesLink").click();
-  await wait(30);
+  await until(() => isActive("licenses-overlay"), "licenses did not open");
+  await nextFrame(w);
   emitUpdaterStatus({
     status: "available",
     candidateId: 11,
     version: "6.0.0",
   });
-  await wait(40);
+  await until(
+    () => isActive("app-modal"),
+    "the prompt did not open over licenses",
+  );
+  await nextFrame(w);
   const licensesWithModal = {
     licensesActive: w.document
       .getElementById("licenses-overlay")
@@ -281,7 +297,10 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   w.document.activeElement.dispatchEvent(
     new w.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
   );
-  await wait(260);
+  await until(
+    () => !isActive("app-modal"),
+    "the prompt did not close over licenses",
+  );
   const modalClosedWithLicenses = {
     licensesActive: w.document
       .getElementById("licenses-overlay")
@@ -302,7 +321,11 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     candidateId: 12,
     version: "6.0.1",
   });
-  await wait(30);
+  await until(
+    () => isActive("app-modal"),
+    "the second prompt did not open over licenses",
+  );
+  await nextFrame(w);
   w.document.getElementById("close-licenses").click();
   const licenseClosedUnderModal = {
     licensesActive: w.document
@@ -321,7 +344,10 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   w.document.activeElement.dispatchEvent(
     new w.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
   );
-  await wait(260);
+  await until(
+    () => !isActive("app-modal"),
+    "the second prompt did not close after licenses",
+  );
   const focusAfterLicenseAndModalClose = {
     focusId: w.document.activeElement.id,
     focusInsideInactiveLicense: w.document
@@ -337,14 +363,15 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     candidateId: 13,
     version: "6.0.2",
   });
-  await wait(30);
+  await until(() => isActive("app-modal"), "the third prompt did not open");
+  await nextFrame(w);
   w.document.querySelector("#modal-buttons button:last-child").click();
   emitUpdaterStatus({
     status: "downloaded",
     candidateId: 14,
     version: "7.0.0",
   });
-  await wait(260);
+  await new Promise((resolve) => setTimeout(resolve, OLD_HIDE_TIMER_WINDOW_MS));
   const promptAfterOldHideTimer = {
     modalActive: w.document
       .getElementById("app-modal")
@@ -355,13 +382,16 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
       .contains(w.document.activeElement),
   };
   w.document.querySelector("#modal-buttons button:last-child").click();
-  await wait(230);
+  await until(() => !isActive("app-modal"), "the ready prompt did not close");
 
   const input = w.document.getElementById("url");
   input.value = "https://example.com/a";
   input.dispatchEvent(new w.Event("input", { bubbles: true }));
   w.document.getElementById("fetchFormatsBtn").click();
-  await wait(40);
+  await until(
+    () => optionValues("videoFormat").includes("137"),
+    "the formats for A were not listed",
+  );
   w.document.getElementById("videoFormat").value = "137";
   w.document.getElementById("audioFormat").value = "140";
   input.value = "https://example.com/b";
@@ -387,21 +417,32 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   input.value = "https://example.com/c";
   input.dispatchEvent(new w.Event("input", { bubbles: true }));
   w.document.getElementById("fetchFormatsBtn").click();
-  await wait(20);
+  await until(
+    () => resolveFirst !== undefined,
+    "the formats for C were not requested",
+  );
   input.value = "https://example.com/d";
   input.dispatchEvent(new w.Event("input", { bubbles: true }));
   w.document.getElementById("fetchFormatsBtn").click();
-  await wait(20);
+  await until(
+    () => resolveSecond !== undefined,
+    "the formats for D were not requested",
+  );
   resolveSecond?.({
     ok: true,
     data: formatList([videoFormat("88", "1280x720"), audioFormat("89")]),
   });
-  await wait(20);
+  await until(
+    () => optionValues("videoFormat").includes("88"),
+    "the formats for D were not listed",
+  );
   resolveFirst?.({
     ok: true,
     data: formatList([videoFormat("177", "3840x2160"), audioFormat("178")]),
   });
-  await wait(40);
+  // The stale reply changes nothing, so there is no state to poll. One turn
+  // lets its handler run before the options are read.
+  await turn();
   const staleReplyFormats = {
     requests: formatRequests.slice(),
     videoOptions: [...w.document.getElementById("videoFormat").options].map(
@@ -420,7 +461,12 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   presetSelect.value = "saved-custom";
   presetSelect.dispatchEvent(new w.Event("change", { bubbles: true }));
   w.document.getElementById("applyPresetBtn").click();
-  await wait(20);
+  await until(
+    () =>
+      w.document.getElementById("videoFormat").value === "88" &&
+      w.document.getElementById("audioFormat").value === "89",
+    "the saved preset was not applied",
+  );
   const beforeManualDownload = {
     url: input.value,
     videoFormat: w.document.getElementById("videoFormat").value,
@@ -438,17 +484,28 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   };
   deferNextSettingsSave = true;
   w.document.getElementById("downloadBtn").click();
-  await wait(30);
+  await until(
+    () => settingsSaveResolvers.length >= 1,
+    "the download did not wait on its settings save",
+  );
   input.value = "https://example.com/e";
   input.dispatchEvent(new w.Event("input", { bubbles: true }));
   getFormatsImpl = () =>
     ok(formatList([videoFormat("277", "1920x1080"), audioFormat("278")]));
   w.document.getElementById("fetchFormatsBtn").click();
-  await wait(40);
+  await until(
+    () => optionValues("videoFormat").includes("277"),
+    "the formats for E were not listed",
+  );
   w.document.getElementById("videoFormat").value = "277";
   w.document.getElementById("audioFormat").value = "278";
   settingsSaveResolvers[0]?.();
-  await wait(100);
+  await until(
+    () => downloadArgs !== undefined,
+    "the download did not start after its save",
+  );
+  // The rest of the start path is promise-only; one turn finishes it.
+  await turn();
   const manualSubmission = {
     url: downloadArgs?.url,
     videoFormat: downloadArgs?.videoFormat,
@@ -465,17 +522,26 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   w.document.getElementById("queueUrlInput").value = "https://example.com/e";
   deferNextSettingsSave = true;
   w.document.getElementById("addToQueueBtn").click();
-  await wait(30);
+  await until(
+    () => settingsSaveResolvers.length >= 2,
+    "the queue add did not wait on its settings save",
+  );
   input.value = "https://example.com/f";
   input.dispatchEvent(new w.Event("input", { bubbles: true }));
   getFormatsImpl = () =>
     ok(formatList([videoFormat("377", "1920x1080"), audioFormat("378")]));
   w.document.getElementById("fetchFormatsBtn").click();
-  await wait(40);
+  await until(
+    () => optionValues("videoFormat").includes("377"),
+    "the formats for F were not listed",
+  );
   w.document.getElementById("videoFormat").value = "377";
   w.document.getElementById("audioFormat").value = "378";
   settingsSaveResolvers[1]?.();
-  await wait(100);
+  await until(
+    () => queueArgs !== undefined,
+    "the queue add did not run after its save",
+  );
   const queuedSubmission = queueArgs;
 
   let resolvePresetLookup;
@@ -486,14 +552,24 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   input.value = "https://example.com/g";
   input.dispatchEvent(new w.Event("input", { bubbles: true }));
   w.document.getElementById("fetchFormatsBtn").click();
-  await wait(30);
+  await until(
+    () => resolvePresetLookup !== undefined,
+    "the formats for G were not requested",
+  );
   w.document.getElementById("applyPresetBtn").click();
-  await wait(30);
+  await until(
+    () =>
+      w.document.getElementById("videoFormat").value === "88" &&
+      w.document.getElementById("audioFormat").value === "89",
+    "the saved preset was not applied over the pending lookup",
+  );
   resolvePresetLookup?.({
     ok: true,
     data: formatList([videoFormat("477", "1920x1080"), audioFormat("478")]),
   });
-  await wait(50);
+  // The late reply must change nothing, so there is no state to poll. One turn
+  // lets its handler run before the selection is read.
+  await turn();
   const presetSurvivesStaleLookup = {
     video: w.document.getElementById("videoFormat").value,
     audio: w.document.getElementById("audioFormat").value,
@@ -512,7 +588,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     /z-index:\s*calc\(var\(--z-modal\)\s*\+\s*1\)/.test(appModalStackingRule);
 
   w.document.getElementById("downloadBtn").click();
-  await wait(80);
+  // The click starts nothing observable here; one turn lets its promise chain run.
+  await turn();
   console.log(
     JSON.stringify(
       {

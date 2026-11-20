@@ -4,7 +4,16 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, clickById, waitForAppReady } from "../../helpers/app-bridge.js";
+import {
+  api,
+  clickById,
+  clickModalButton,
+  setControl,
+  waitFor,
+  waitForAppReady,
+  waitForBackendSetting,
+  waitForModal,
+} from "../../helpers/ui.js";
 import { REPO_ROOT } from "../../helpers/profile.js";
 
 const MEDIA = process.env.ROSI_E2E_MEDIA_URL;
@@ -101,61 +110,6 @@ async function scenario(name, failureModes, body) {
     writeReport();
     throw error;
   }
-}
-
-async function waitFor(
-  predicate,
-  message,
-  timeout = 10_000,
-  argument = undefined,
-) {
-  await browser.waitUntil(async () => browser.execute(predicate, argument), {
-    timeout,
-    interval: 100,
-    timeoutMsg: message,
-  });
-}
-
-async function waitForBackendSetting(key, value, message) {
-  await browser.waitUntil(
-    async () => (await api("getSettings"))[key] === value,
-    { timeout: 10_000, interval: 150, timeoutMsg: message },
-  );
-}
-
-async function setControl(id, value) {
-  await browser.execute(
-    (target, next) => {
-      const control = document.getElementById(target);
-      if (!control) throw new Error(`missing control ${target}`);
-      if (control.type === "checkbox") control.checked = Boolean(next);
-      else control.value = String(next);
-      control.dispatchEvent(new Event("change", { bubbles: true }));
-    },
-    id,
-    value,
-  );
-}
-
-async function waitForModal(open) {
-  await waitFor(
-    (want) =>
-      document.getElementById("app-modal")?.classList.contains("active") ===
-      want,
-    `modal did not ${open ? "open" : "close"}`,
-    5_000,
-    open,
-  );
-}
-
-async function clickModalButton(label) {
-  await browser.execute((wantedLabel) => {
-    const button = [...document.querySelectorAll("#modal-buttons button")].find(
-      (candidate) => candidate.textContent.trim() === wantedLabel,
-    );
-    if (!button) throw new Error(`missing modal action ${wantedLabel}`);
-    button.click();
-  }, label);
 }
 
 async function setSidebarOpen(open) {
@@ -324,6 +278,52 @@ async function rangeToastCount() {
         message.startsWith(prefix),
       ).length,
     RANGE_TOAST,
+  );
+}
+
+// True when no toast is still animating in or out.
+function toastsSettled() {
+  return [...document.querySelectorAll(".toast")].every(
+    (toast) => toast.getAnimations().length === 0,
+  );
+}
+
+// Wraps one bridge method so the page counts how often its call settled. The
+// renderer handler runs after the wrapper's promise, so a later WebDriver call
+// sees whatever toast that handler showed. The call itself passes through.
+async function watchBridgeCalls(name) {
+  await browser.execute((method) => {
+    const bridge = window.__ROSI_E2E__.api;
+    const watch = (window.__settingsResetWatch ??= {
+      original: {},
+      settled: {},
+    });
+    if (!(method in watch.original)) watch.original[method] = bridge[method];
+    watch.settled[method] = 0;
+    bridge[method] = (...args) =>
+      Promise.resolve(watch.original[method].apply(bridge, args)).finally(
+        () => {
+          watch.settled[method] += 1;
+        },
+      );
+  }, name);
+}
+
+async function unwatchBridgeCalls() {
+  await browser.execute(() => {
+    const watch = window.__settingsResetWatch;
+    if (!watch) return;
+    Object.assign(window.__ROSI_E2E__.api, watch.original);
+    window.__settingsResetWatch = undefined;
+  });
+}
+
+async function waitForSettledBridgeCall(name) {
+  await waitFor(
+    (method) => window.__settingsResetWatch?.settled[method] >= 1,
+    `${name} did not settle`,
+    10_000,
+    name,
   );
 }
 
@@ -585,7 +585,13 @@ describe("ROSI settings reset, playlist toasts, and settings search", () => {
 
       // A summary refresh with an invalid range must not toast.
       await setPlaylistRange(3, 2);
-      await browser.pause(1_500);
+      // The inline message comes from the same validation that would toast.
+      await waitFor(
+        () =>
+          document.getElementById("playlistScopeError").textContent.length > 0,
+        "invalid range did not reach the inline message",
+        10_000,
+      );
       assert.equal(
         await rangeToastCount(),
         0,
@@ -607,7 +613,9 @@ describe("ROSI settings reset, playlist toasts, and settings search", () => {
         15_000,
         RANGE_TOAST,
       );
-      await browser.pause(2_000);
+      // A repeat would come from the same click handler; wait until the toast
+      // has finished animating in before counting.
+      await waitFor(toastsSettled, "toasts did not settle", 10_000);
       assert.equal(
         await rangeToastCount(),
         1,
@@ -626,7 +634,16 @@ describe("ROSI settings reset, playlist toasts, and settings search", () => {
         input.dispatchEvent(new Event("input", { bubbles: true }));
       }, playlistUrl);
       await clickById("addToQueueBtn");
-      await browser.pause(2_000);
+      await waitFor(
+        (prefix) =>
+          window.__settingsResetToasts.filter((message) =>
+            message.startsWith(prefix),
+          ).length >= 2,
+        "Add to queue did not report the invalid playlist range",
+        15_000,
+        RANGE_TOAST,
+      );
+      await waitFor(toastsSettled, "toasts did not settle", 10_000);
       assert.equal(
         await rangeToastCount(),
         2,
@@ -674,28 +691,35 @@ describe("ROSI settings reset, playlist toasts, and settings search", () => {
       await setSidebarOpen(true);
       await installToastLog();
 
-      answerCancel();
-      await clickById("exportSettingsBtn");
-      await waitForAnswerConsumed();
-      await browser.pause(1_000);
-      assert.deepEqual(
-        await transferToasts(),
-        [],
-        "a cancelled export showed a toast",
-      );
+      try {
+        await watchBridgeCalls("exportSettings");
+        await watchBridgeCalls("importSettings");
 
-      answerCancel();
-      await clickById("importSettingsBtn");
-      await waitForModal(true);
-      await clickModalButton("Import");
-      await waitForModal(false);
-      await waitForAnswerConsumed();
-      await browser.pause(1_000);
-      assert.deepEqual(
-        await transferToasts(),
-        [],
-        "a cancelled import showed a toast",
-      );
+        answerCancel();
+        await clickById("exportSettingsBtn");
+        await waitForAnswerConsumed();
+        await waitForSettledBridgeCall("exportSettings");
+        assert.deepEqual(
+          await transferToasts(),
+          [],
+          "a cancelled export showed a toast",
+        );
+
+        answerCancel();
+        await clickById("importSettingsBtn");
+        await waitForModal(true);
+        await clickModalButton("Import");
+        await waitForModal(false);
+        await waitForAnswerConsumed();
+        await waitForSettledBridgeCall("importSettings");
+        assert.deepEqual(
+          await transferToasts(),
+          [],
+          "a cancelled import showed a toast",
+        );
+      } finally {
+        await unwatchBridgeCalls();
+      }
       return { cancelledTransferToasts: 0, seamConsumed: !fs.existsSync(seam) };
     }));
 

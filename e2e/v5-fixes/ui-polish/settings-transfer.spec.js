@@ -5,7 +5,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import {
+  api,
+  clickModalButton,
+  setControl,
+  waitForAppReady,
+  waitForBackendSetting,
+  waitForModal,
+} from "../../helpers/ui.js";
 import { REPO_ROOT } from "../../helpers/profile.js";
 
 // Must match E2E_DIALOG_ANSWER_FILE in src-tauri/src/settings.rs. The app
@@ -145,27 +152,6 @@ function listFiles(dir) {
   return fs.readdirSync(dir).sort();
 }
 
-async function waitForBackendSetting(key, value, message) {
-  await browser.waitUntil(
-    async () => (await api("getSettings"))[key] === value,
-    { timeout: 15_000, interval: 150, timeoutMsg: message },
-  );
-}
-
-// Changes a sidebar toggle the way a user does: set the state, then fire change.
-async function setToggle(id, checked) {
-  await browser.execute(
-    (control, value) => {
-      const element = document.getElementById(control);
-      if (!element) throw new Error(`missing control ${control}`);
-      element.checked = value;
-      element.dispatchEvent(new Event("change", { bubbles: true }));
-    },
-    id,
-    checked,
-  );
-}
-
 async function readToggle(id) {
   return browser.execute((control) => {
     const element = document.getElementById(control);
@@ -179,11 +165,12 @@ async function readToggle(id) {
 // profile. The after hook runs it too, but only after every check is recorded.
 async function restoreSeededNotification() {
   if ((await api("getSettings")).notifications === observed.seeded) return;
-  await setToggle("notificationsToggle", observed.seeded);
+  await setControl("notificationsToggle", observed.seeded);
   await waitForBackendSetting(
     "notifications",
     observed.seeded,
     "the profile setting could not be restored",
+    { timeout: 15_000 },
   );
 }
 
@@ -208,16 +195,6 @@ async function modalState() {
       ),
     };
   });
-}
-
-async function clickModalButton(label) {
-  await browser.execute((text) => {
-    const button = [...document.querySelectorAll("#modal-buttons button")].find(
-      (candidate) => candidate.textContent.trim() === text,
-    );
-    if (!button) throw new Error(`modal has no ${text} button`);
-    button.click();
-  }, label);
 }
 
 // Counts settings-imported events the page receives, through the same
@@ -323,11 +300,12 @@ describe("ROSI settings export and import through the dialog seam", () => {
     };
 
     // Change the setting back through its own control and let it persist.
-    await setToggle("notificationsToggle", observed.seeded);
+    await setControl("notificationsToggle", observed.seeded);
     await waitForBackendSetting(
       "notifications",
       observed.seeded,
       "reverting the setting did not persist",
+      { timeout: 15_000 },
     );
     observed.beforeImport = {
       backendNotifications: (await api("getSettings")).notifications,
@@ -338,17 +316,9 @@ describe("ROSI settings export and import through the dialog seam", () => {
     // the confirm click, so nothing is imported before it.
     queueDialogAnswer({ path: exportFile });
     await clickControl("importSettingsBtn");
-    await browser.waitUntil(
-      async () => {
-        const state = await modalState();
-        return state.active && state.title === "Import Settings";
-      },
-      {
-        timeout: 10_000,
-        interval: 100,
-        timeoutMsg: "import confirm modal did not open",
-      },
-    );
+    await waitForModal("Import Settings", {
+      timeoutMsg: "import confirm modal did not open",
+    });
     observed.importModal = {
       beforeConfirm: await modalState(),
       backendNotificationsBeforeConfirm: (await api("getSettings"))
@@ -360,6 +330,7 @@ describe("ROSI settings export and import through the dialog seam", () => {
       "notifications",
       observed.changed,
       "import did not restore the exported notifications value",
+      { timeout: 15_000 },
     );
     await browser.waitUntil(
       async () =>
@@ -370,11 +341,7 @@ describe("ROSI settings export and import through the dialog seam", () => {
         timeoutMsg: "sidebar did not show the imported notifications value",
       },
     );
-    await browser.waitUntil(async () => !(await modalState()).active, {
-      timeout: 10_000,
-      interval: 100,
-      timeoutMsg: "import modal did not close",
-    });
+    await waitForModal(false, { timeoutMsg: "import modal did not close" });
     observed.afterImport = {
       seamAfterImport: fs.existsSync(SEAM_FILE),
       backendNotifications: (await api("getSettings")).notifications,

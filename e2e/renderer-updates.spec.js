@@ -2,7 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "./helpers/app-bridge.js";
+import {
+  api,
+  clickModalButton,
+  waitForAppReady,
+  waitForModal,
+} from "./helpers/ui.js";
 import { startUpdaterFixture } from "./helpers/updater-engine-fixture.js";
 
 const RESULT_PATH =
@@ -17,69 +22,18 @@ function record(name, details) {
   }
 }
 
-async function waitForModal(titleText) {
-  try {
-    await browser.waitUntil(
-      () =>
-        browser.execute((expectedTitle) => {
-          const modal = document.getElementById("app-modal");
-          return (
-            modal?.classList.contains("active") &&
-            document
-              .getElementById("modal-title")
-              ?.textContent?.includes(expectedTitle)
-          );
-        }, titleText),
-      {
-        timeout: 10_000,
-        timeoutMsg: `modal ${titleText} did not appear`,
-      },
-    );
-  } catch (error) {
-    const currentModal = await browser.execute(() => {
-      const modal = document.getElementById("app-modal");
-      return {
-        active: modal?.classList.contains("active") ?? false,
-        showing: modal?.classList.contains("showing") ?? false,
-        hiding: modal?.classList.contains("hiding") ?? false,
-        title: document.getElementById("modal-title")?.textContent ?? "",
-        message: document.getElementById("modal-message")?.textContent ?? "",
-      };
-    });
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`${reason}; current modal=${JSON.stringify(currentModal)}`);
-  }
-  return browser.execute(() => ({
-    title: document.getElementById("modal-title")?.textContent ?? "",
-    message: document.getElementById("modal-message")?.textContent ?? "",
-  }));
-}
-
-async function clickModalButton(label) {
-  await browser.execute((expectedLabel) => {
-    const button = [...document.querySelectorAll("#modal-buttons button")].find(
-      (candidate) => candidate.textContent.trim() === expectedLabel,
-    );
-    if (!button) throw new Error(`modal button ${expectedLabel} was not found`);
-    button.click();
-  }, label);
-}
+// A feed error is a quiet background event. Every listener of one event runs
+// in the same burst, so one more task in the page means the dialog code has
+// handled it too.
+const afterPageTurn = () => browser.executeAsync((done) => setTimeout(done, 0));
 
 async function dismissModal(titleText, label) {
-  await waitForModal(titleText);
+  await waitForModal(titleText, { match: "includes" });
   await clickModalButton(label);
-  await browser.waitUntil(
-    () =>
-      browser.execute(
-        () =>
-          !document.getElementById("app-modal")?.classList.contains("active"),
-      ),
-    {
-      timeout: 5_000,
-      interval: 50,
-      timeoutMsg: `modal ${titleText} did not finish dismissing`,
-    },
-  );
+  await waitForModal(false, {
+    timeout: 5_000,
+    timeoutMsg: `modal ${titleText} did not finish dismissing`,
+  });
 }
 
 describe("renderer round-two repairs", () => {
@@ -161,7 +115,9 @@ describe("renderer round-two repairs", () => {
 
     // The beta channel is set before the feed; its background recheck settles first.
     await engine("set_update_channel", { channel: "beta" });
-    await browser.pause(1_500);
+    // A check made now goes through the same engine queue, so it ends after
+    // that recheck has been handled.
+    assert.ok((await engine("check_for_updates")).ok, "settling check failed");
     const fixture = await startUpdaterFixture({
       betaTarget,
       disableCompact: true,
@@ -263,6 +219,7 @@ describe("renderer round-two repairs", () => {
       const checkingBefore = (await statuses()).filter(
         (event) => event.status === "checking",
       ).length;
+      const statusesBeforeStable = (await statuses()).length;
       await engine("set_update_channel", { channel: "stable" });
       await browser.waitUntil(
         async () =>
@@ -275,7 +232,22 @@ describe("renderer round-two repairs", () => {
         },
       );
       await engine("install_update", { candidateId: second2.candidateId });
-      await browser.pause(800);
+      // The stable recheck ends with a result event. Past it, the engine has
+      // handled both the channel change and the stale install.
+      await browser.waitUntil(
+        async () =>
+          (await statuses())
+            .slice(statusesBeforeStable)
+            .some((event) =>
+              ["available", "not-available", "error"].includes(event.status),
+            ),
+        {
+          timeout: 20_000,
+          interval: 100,
+          timeoutMsg: "the stable recheck did not report a result",
+        },
+      );
+      await afterPageTurn();
       assert.equal(
         (await probe()).installs,
         installsBeforeStale,
@@ -297,19 +269,20 @@ describe("renderer round-two repairs", () => {
 
       // Background feed errors stay quiet; a manual feed error is shown.
       fixture.server.respond(betaTarget, 500, "boom");
+      const statusesBeforeBeta = (await statuses()).length;
       await engine("set_update_channel", { channel: "beta" });
       await browser.waitUntil(
         async () =>
-          (await statuses()).some(
-            (event) => event.status === "error" && event.kind === "feed",
-          ),
+          (await statuses())
+            .slice(statusesBeforeBeta)
+            .some((event) => event.status === "error" && event.kind === "feed"),
         {
           timeout: 20_000,
           interval: 100,
           timeoutMsg: "background feed error was not reported",
         },
       );
-      await browser.pause(400);
+      await afterPageTurn();
       assert.equal(
         await browser.execute(() =>
           document.getElementById("app-modal")?.classList.contains("active"),

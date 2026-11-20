@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { waitForAppReady } from "../../helpers/app-bridge.js";
+import { setControl, waitFor, waitForAppReady } from "../../helpers/ui.js";
 import { REPO_ROOT, e2eBinaryPath } from "../../helpers/profile.js";
 
 // Covers the checks in contrast-layout.failure-modes.md. Each check names the
@@ -118,30 +118,11 @@ async function scenario(name, failureModes, body) {
   }
 }
 
-async function waitFor(
-  predicate,
-  message,
-  timeout = 10_000,
-  argument = undefined,
-) {
-  await browser.waitUntil(async () => browser.execute(predicate, argument), {
-    timeout,
-    interval: 100,
-    timeoutMsg: message,
-  });
-}
-
-async function setControl(id, value) {
-  await browser.execute(
-    (target, next) => {
-      const control = document.getElementById(target);
-      if (!control) throw new Error(`missing control ${target}`);
-      control.value = String(next);
-      control.dispatchEvent(new Event("change", { bubbles: true }));
-    },
-    id,
-    value,
-  );
+// True when no CSS transition is running. Infinite animations are ignored.
+function transitionsSettled() {
+  return document
+    .getAnimations({ subtree: true })
+    .every((animation) => !(animation instanceof CSSTransition));
 }
 
 async function selectDock(tab) {
@@ -159,7 +140,28 @@ const near = (size, width, height) =>
 // platform's window model.
 async function applyMinimumWindow() {
   await browser.setWindowSize(900, 560);
-  await browser.pause(400);
+  // A platform that ignores the size never reaches it, so the wait is bounded
+  // and the result below reports whether it did.
+  await browser
+    .waitUntil(
+      async () =>
+        near(await browser.getWindowSize(), 900, 560) ||
+        near(
+          await browser.execute(() => ({
+            width: window.innerWidth,
+            height: window.innerHeight,
+          })),
+          900,
+          560,
+        ),
+      { timeout: 3_000, interval: 100 },
+    )
+    .catch(() => {});
+  await waitFor(
+    transitionsSettled,
+    "layout transitions after resize did not settle",
+    5_000,
+  );
   const outer = await browser.getWindowSize();
   const inner = await browser.execute(() => ({
     width: window.innerWidth,
@@ -328,7 +330,11 @@ async function measureLongModal() {
     "long modal did not open",
     5_000,
   );
-  await browser.pause(450);
+  await waitFor(
+    transitionsSettled,
+    "long modal animation did not settle",
+    5_000,
+  );
   const snapshot = await browser.execute(() => {
     const modal = document.getElementById("app-modal");
     const box = modal.querySelector(".modal-box");
@@ -402,7 +408,11 @@ async function measureShortModal() {
     "short modal did not open",
     5_000,
   );
-  await browser.pause(450);
+  await waitFor(
+    transitionsSettled,
+    "short modal animation did not settle",
+    5_000,
+  );
   const snapshot = await browser.execute(() => {
     const modal = document.getElementById("app-modal");
     const box = modal.querySelector(".modal-box");
@@ -459,7 +469,11 @@ async function measureQueue(textValue) {
     area.value = value;
     area.dispatchEvent(new Event("input", { bubbles: true }));
   }, textValue);
-  await browser.pause(200);
+  await waitFor(
+    transitionsSettled,
+    "queue input transitions did not settle",
+    5_000,
+  );
   return browser.execute(() => {
     const area = document.getElementById("queueUrlInput");
     const style = getComputedStyle(area);
@@ -493,7 +507,11 @@ async function measureUrl(url) {
     input.value = value;
     input.dispatchEvent(new Event("input", { bubbles: true }));
   }, url);
-  await browser.pause(250);
+  await waitFor(
+    transitionsSettled,
+    "URL input transitions did not settle",
+    5_000,
+  );
   return browser.execute(() => {
     const input = document.getElementById("url");
     const actions = document.querySelector(".url-input-actions");
@@ -635,7 +653,22 @@ describe("ROSI contrast, layout, and toast placement", () => {
     const measured = [];
     for (const selection of THEMES) {
       await setControl("themeSelect", selection);
-      await browser.pause(300);
+      await waitFor(
+        (wanted) => {
+          const theme = document.documentElement.dataset.theme;
+          return wanted === "system"
+            ? theme === "dark" || theme === "light"
+            : theme === wanted;
+        },
+        `theme ${selection} was not applied`,
+        5_000,
+        selection,
+      );
+      await waitFor(
+        transitionsSettled,
+        "theme transitions did not settle",
+        5_000,
+      );
       const resolved = await browser.execute(
         () => document.documentElement.dataset.theme,
       );

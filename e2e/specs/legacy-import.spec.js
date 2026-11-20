@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../helpers/app-bridge.js";
+import { api, clickById, waitFor, waitForAppReady } from "../helpers/ui.js";
 import { processesMatching, sha256File } from "../helpers/host.js";
 import { snapshotDir } from "../helpers/legacy-v4.js";
 
@@ -15,6 +15,10 @@ const FIXTURES = JSON.parse(env.ROSI_E2E_FIXTURES || "{}");
 const MARKER = path.join(DATA_DIR, "legacy-v4-import.json");
 
 const results = [];
+
+// An imported queue item must not start downloading. Nothing marks "the
+// runner would have started it by now", so the quiet window is a fixed time.
+const IMPORTED_QUEUE_QUIET_MS = 2_000;
 
 const real = (value) => fs.realpathSync.native(value);
 
@@ -92,7 +96,17 @@ describe("ROSI 4 data import", () => {
       queue.map((item) => ({ id: item.id, status: item.status })),
       SEED.expected.queue,
     );
-    await browser.pause(2000);
+    // The renderer shows every imported item before the quiet window starts.
+    await waitFor(
+      (count) =>
+        document.querySelectorAll("#queueList .queue-item").length === count,
+      "the renderer did not show the imported queue",
+      10_000,
+      queue.length,
+    );
+    await new Promise((resolve) =>
+      setTimeout(resolve, IMPORTED_QUEUE_QUIET_MS),
+    );
     assert.equal(
       (await api("getQueue")).some((item) => item.status === "downloading"),
       false,
@@ -124,9 +138,7 @@ describe("ROSI 4 data import", () => {
         ),
       { timeout: 10_000, timeoutMsg: "download button stayed disabled" },
     );
-    await browser.execute(() =>
-      document.getElementById("downloadBtn")?.click(),
-    );
+    await clickById("downloadBtn");
     let entry = null;
     await browser.waitUntil(
       async () => {

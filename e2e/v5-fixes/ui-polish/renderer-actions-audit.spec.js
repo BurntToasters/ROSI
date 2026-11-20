@@ -4,7 +4,14 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import {
+  api,
+  clickModalButton,
+  reloadRenderer,
+  waitFor,
+  waitForAppReady,
+  waitForModal,
+} from "../../helpers/ui.js";
 import { REPO_ROOT } from "../../helpers/profile.js";
 
 // Failure modes are numbered in renderer-actions-audit.failure-modes.md. Each
@@ -104,14 +111,6 @@ async function scenario(name, failureModes, body) {
     writeReport();
     throw error;
   }
-}
-
-async function waitFor(predicate, message, timeout = 10_000, argument = null) {
-  await browser.waitUntil(async () => browser.execute(predicate, argument), {
-    timeout,
-    interval: 100,
-    timeoutMsg: message,
-  });
 }
 
 async function resetQueue() {
@@ -379,37 +378,9 @@ function modalSnapshot() {
   });
 }
 
-async function waitForModal(title) {
-  await browser.waitUntil(
-    async () => {
-      const current = await modalSnapshot();
-      return current.active && !current.hiding && current.title === title;
-    },
-    {
-      timeout: 10_000,
-      interval: 100,
-      timeoutMsg: `modal "${title}" did not show`,
-    },
-  );
-}
-
-async function pressModalButton(label) {
-  await browser.execute((text) => {
-    const button = [...document.querySelectorAll("#modal-buttons button")].find(
-      (candidate) => candidate.textContent.trim() === text,
-    );
-    if (!button) throw new Error(`no modal button labelled ${text}`);
-    button.click();
-  }, label);
-}
-
 async function closeModal(label) {
-  await pressModalButton(label);
-  await browser.waitUntil(async () => !(await modalSnapshot()).active, {
-    timeout: 10_000,
-    interval: 100,
-    timeoutMsg: "modal did not hide",
-  });
+  await clickModalButton(label);
+  await waitForModal(false);
 }
 
 async function emitUpdaterError(message) {
@@ -773,19 +744,7 @@ describe("ROSI renderer actions audit: toasts, replay, presets, links, formats",
     this.timeout(180_000);
     await scenario("renderer-actions-activity-startup", [8], async () => {
       const entry = await ensureSeedEntry();
-      await browser.execute(() => {
-        window.__ROSI_E2E__.ready = false;
-        window.setTimeout(() => window.location.reload(), 50);
-      });
-      await browser.waitUntil(
-        async () =>
-          browser.execute(
-            () =>
-              Boolean(window.__ROSI_E2E__?.ready) &&
-              Boolean(window.__ROSI_E2E__?.api),
-          ),
-        { timeout: 60_000, timeoutMsg: "renderer did not come back" },
-      );
+      await reloadRenderer();
       await installProbe();
       await showActivityRow(entry);
       const backend = (await api("getDownloadActivity")).data;
@@ -913,7 +872,7 @@ describe("ROSI renderer actions audit: toasts, replay, presets, links, formats",
         await clearToasts();
         await emitUpdaterError(`audit update failure ${route}`);
         await waitForModal("Update Error");
-        await pressModalButton("Get Latest Version");
+        await clickModalButton("Get Latest Version");
         await waitForLastToast(
           "Could not open the ROSI website.",
           `a ${route} openExternal showed no error toast`,

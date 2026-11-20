@@ -3,7 +3,13 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { waitForAppReady } from "../../helpers/app-bridge.js";
+import {
+  clickModalButton,
+  modalState,
+  reloadRenderer,
+  waitForAppReady,
+  waitForModal,
+} from "../../helpers/ui.js";
 import { REPO_ROOT } from "../../helpers/profile.js";
 import {
   captureUpdaterStatuses,
@@ -21,6 +27,10 @@ const VERSION = "9.0.7";
 const STOPPING = "still stopping";
 const ALREADY_IN_PROGRESS = "A download is already in progress.";
 const ANSWER_LIMIT_MS = 5_000;
+// A refused check or download emits no status, and the engine gives no signal
+// that it did not. This is how long a stray emit gets to arrive before CB3
+// counts events.
+const STATUS_EMIT_WINDOW_MS = 500;
 
 const stamp = new Date()
   .toISOString()
@@ -90,14 +100,6 @@ function stableTarget() {
   return `${osName()}-${arch}`;
 }
 
-async function freshRenderer() {
-  await browser.execute(() => {
-    window.__ROSI_E2E__.ready = false;
-    window.setTimeout(() => window.location.reload(), 50);
-  });
-  await waitForAppReady();
-}
-
 async function invoke(command, args) {
   return browser.executeAsync(
     (name, payload, done) => {
@@ -115,45 +117,6 @@ async function statuses() {
   return browser.execute(() => window.engineStatuses.slice());
 }
 
-async function readModal() {
-  return browser.execute(() => {
-    const modal = document.getElementById("app-modal");
-    return {
-      active: modal?.classList.contains("active") === true,
-      title: document.getElementById("modal-title")?.textContent?.trim() ?? "",
-      message: document.getElementById("modal-message")?.textContent ?? "",
-      buttons: [...document.querySelectorAll("#modal-buttons button")].map(
-        (button) => button.textContent.trim(),
-      ),
-    };
-  });
-}
-
-async function waitForModal(title) {
-  await browser.waitUntil(
-    async () => {
-      const modal = await readModal();
-      return modal.active && modal.title === title;
-    },
-    {
-      timeout: 20_000,
-      interval: 100,
-      timeoutMsg: `modal "${title}" did not appear`,
-    },
-  );
-  return readModal();
-}
-
-async function clickModal(label) {
-  await browser.execute((expected) => {
-    const button = [...document.querySelectorAll("#modal-buttons button")].find(
-      (candidate) => candidate.textContent.trim() === expected,
-    );
-    if (!button) throw new Error(`modal button "${expected}" was not found`);
-    button.click();
-  }, label);
-}
-
 function requestCount(prefix) {
   return fixture.server.requests.filter((request) =>
     request.path.startsWith(prefix),
@@ -168,7 +131,7 @@ async function latestCandidate() {
 
 async function startScenario(options) {
   if (fixture) await fixture.close();
-  await freshRenderer();
+  await reloadRenderer();
   await setUpdateChannel("stable");
   fixture = await startUpdaterFixture(options);
   await captureUpdaterStatuses("engineStatuses");
@@ -198,9 +161,9 @@ describe("Updater engine: cancelled download still stopping", () => {
     });
     try {
       await clickManualCheck();
-      await waitForModal("Update Available!");
+      await waitForModal("Update Available!", { timeout: 20_000 });
       const { candidateId } = await latestCandidate();
-      await clickModal("Later");
+      await clickModalButton("Later");
 
       // A live transfer, not yet cancelled, keeps the old answers.
       await browser.execute((id) => {
@@ -240,8 +203,8 @@ describe("Updater engine: cancelled download still stopping", () => {
 
       // Cancel: the held transfer cannot be aborted, so it keeps the engine busy.
       await invoke("cancel_update_download");
-      await waitForModal("Download Cancelled");
-      await clickModal("OK");
+      await waitForModal("Download Cancelled", { timeout: 20_000 });
+      await clickModalButton("OK");
       const statusBaseline = (await statuses()).length;
       const feedBaseline = requestCount("/latest-");
       const artifactBaseline = requestCount("/artifacts/");
@@ -252,8 +215,9 @@ describe("Updater engine: cancelled download still stopping", () => {
       const downloadStarted = Date.now();
       const download = await invoke("download_update", { candidateId });
       const downloadMs = Date.now() - downloadStarted;
-      // Give any asynchronous status emit time to arrive before it is counted.
-      await browser.pause(500);
+      await new Promise((resolve) =>
+        setTimeout(resolve, STATUS_EMIT_WINDOW_MS),
+      );
 
       await recordRow("CB1", async () => {
         assert.equal(check.ok, true, JSON.stringify(check));
@@ -336,7 +300,7 @@ describe("Updater engine: cancelled download still stopping", () => {
           JSON.stringify(events),
         );
         assert.equal(
-          (await readModal()).active,
+          (await modalState()).active,
           false,
           "a late transfer opened a prompt",
         );
@@ -345,14 +309,14 @@ describe("Updater engine: cancelled download still stopping", () => {
 
       await recordRow("CB7", async () => {
         await clickManualCheck();
-        await waitForModal("Update Available!");
+        await waitForModal("Update Available!", { timeout: 20_000 });
         const offered = await latestCandidate();
         assert.equal(offered.version, VERSION, JSON.stringify(offered));
         assert.ok(
           requestCount("/latest-") > feedBaseline,
           "the recovered check did not request the feed",
         );
-        await clickModal("Later");
+        await clickModalButton("Later");
         return {
           offeredVersion: offered.version,
           feedRequests: requestCount("/latest-"),

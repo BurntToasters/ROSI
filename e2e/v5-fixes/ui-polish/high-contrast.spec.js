@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { waitForAppReady } from "../../helpers/app-bridge.js";
+import { waitFor, waitForAppReady } from "../../helpers/ui.js";
 import { REPO_ROOT, e2eBinaryPath } from "../../helpers/profile.js";
 
 // Covers the rows in high-contrast.failure-modes.md. Each check names the rows
@@ -123,19 +123,6 @@ async function scenario(name, failureModes, body) {
     writeReport();
     throw error;
   }
-}
-
-async function waitFor(
-  predicate,
-  message,
-  timeout = 10_000,
-  argument = undefined,
-) {
-  await browser.waitUntil(async () => browser.execute(predicate, argument), {
-    timeout,
-    interval: 100,
-    timeoutMsg: message,
-  });
 }
 
 function readCss(name) {

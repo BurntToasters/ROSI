@@ -94,28 +94,46 @@ const load = require("./load-renderer.cjs").createRendererLoader(
 for (const m of ["ui", "downloads", "queue", "settings", "updates", "dock"])
   load("modules/" + m + ".ts");
 load("rosiEngine.ts");
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const { previewController } = load("engine/preview-controller.ts");
+const { until, within } = require("./wait.cjs");
 (async () => {
-  await wait(120);
-  await w.__ROSI_RENDERER_STARTUP_READY__;
+  await within(
+    w.__ROSI_RENDERER_STARTUP_READY__,
+    "the renderer did not finish starting",
+  );
 
   const input = w.document.getElementById("url");
   input.value = "https://example.com/a";
   input.dispatchEvent(new w.Event("input", { bubbles: true }));
-  await wait(550);
+  await until(
+    () => previewCalls.includes("https://example.com/a"),
+    "the preview for A was not requested",
+  );
   input.value = "https://example.com/b";
   input.dispatchEvent(new w.Event("input", { bubbles: true }));
-  await wait(550);
+  // B's debounce fires while A is in flight and parks B as the pending preview.
+  await until(
+    () => previewController.pendingPreviewUrl === "https://example.com/b",
+    "B was not parked behind the preview in flight",
+  );
   previewResolutions.get("https://example.com/a")?.({
     ok: true,
     data: { title: "A", url: "https://example.com/a" },
   });
-  await wait(50);
+  await until(
+    () => previewCalls.includes("https://example.com/b"),
+    "the latest preview was not requested after A settled",
+  );
   previewResolutions.get("https://example.com/b")?.({
     ok: true,
     data: { title: "B", url: "https://example.com/b" },
   });
-  await wait(100);
+  await until(
+    () =>
+      w.document.getElementById("preview-title").textContent === "B" &&
+      !w.document.getElementById("previewBtn").classList.contains("loading"),
+    "the preview for B was not shown",
+  );
   console.log(
     JSON.stringify(
       {

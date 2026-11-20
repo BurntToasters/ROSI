@@ -4,7 +4,16 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import {
+  api,
+  reloadRenderer,
+  restoreBridge,
+  setControl,
+  stubBridge,
+  stubCalls,
+  waitFor,
+  waitForAppReady,
+} from "../../helpers/ui.js";
 import { REPO_ROOT } from "../../helpers/profile.js";
 
 // Rows are numbered in full-audit-b.failure-modes.md. Each check lists the rows it covers.
@@ -113,36 +122,11 @@ async function scenario(name, failureModes, body) {
   }
 }
 
-async function waitFor(
-  predicate,
-  message,
-  timeout = 10_000,
-  argument = undefined,
-) {
-  await browser.waitUntil(async () => browser.execute(predicate, argument), {
-    timeout,
-    interval: 100,
-    timeoutMsg: message,
-  });
-}
-
-async function settle(ms) {
-  await browser.pause(ms);
-}
-
-async function setControl(id, value) {
-  await browser.execute(
-    (target, next) => {
-      const control = document.getElementById(target);
-      if (!control) throw new Error(`missing control ${target}`);
-      if (control.type === "checkbox") control.checked = Boolean(next);
-      else control.value = String(next);
-      control.dispatchEvent(new Event("change", { bubbles: true }));
-    },
-    id,
-    value,
-  );
-}
+// The auto preview starts 450 ms after the URL changes (PREVIEW_DEBOUNCE_MS)
+// and then runs the real lookup. The preview controller state is not exposed to
+// the page, so this stays a sleep. A hook counter for the pending preview timer
+// or the fetch in flight would replace it.
+const AUTO_PREVIEW_SETTLE_MS = 1_200;
 
 async function readSettings() {
   const read = await api("getSettings");
@@ -167,69 +151,17 @@ async function setAskEveryTime(value) {
 }
 
 // Reload the page and wait until its controls and bridge are installed.
-// Uses a deferred location.reload, like the other reloading specs.
 async function reloadApp() {
-  await browser.execute(() => {
-    window.__ROSI_E2E__.ready = false;
-    window.setTimeout(() => window.location.reload(), 50);
-  });
-  await waitForAppReady();
-  await browser.waitUntil(
+  await reloadRenderer();
+  await waitFor(
     () =>
-      browser.execute(
-        () =>
-          document.readyState === "complete" &&
-          typeof window.__ROSI_E2E__?.api?.addToQueue === "function" &&
-          Boolean(document.getElementById("profileCustomBtn")) &&
-          Boolean(document.getElementById("downloadBtn")),
-      ),
-    {
-      timeout: 60_000,
-      timeoutMsg: "reloaded page never rendered the main window controls",
-    },
+      document.readyState === "complete" &&
+      typeof window.__ROSI_E2E__?.api?.addToQueue === "function" &&
+      Boolean(document.getElementById("profileCustomBtn")) &&
+      Boolean(document.getElementById("downloadBtn")),
+    "reloaded page never rendered the main window controls",
+    60_000,
   );
-}
-
-// Replaces one bridge method with a recorder that resolves to `value`. The real
-// method comes back in restoreStubs(). The renderer calls the bridge at call
-// time, so the stub is seen by every caller.
-async function stubBridge(name, value) {
-  await browser.execute(
-    (target, result) => {
-      window.__auditBStubs ??= {};
-      if (!(target in window.__auditBStubs)) {
-        window.__auditBStubs[target] = {
-          original: window.__ROSI_E2E__.api[target],
-          calls: [],
-        };
-      }
-      const stub = window.__auditBStubs[target];
-      window.__ROSI_E2E__.api[target] = (...args) => {
-        stub.calls.push(JSON.parse(JSON.stringify(args)));
-        return Promise.resolve(result);
-      };
-    },
-    name,
-    value,
-  );
-}
-
-async function stubCalls(name) {
-  return browser.execute(
-    (target) => (window.__auditBStubs?.[target]?.calls ?? []).slice(),
-    name,
-  );
-}
-
-async function restoreStubs() {
-  await browser.execute(() => {
-    const stubs = window.__auditBStubs;
-    if (!stubs) return;
-    for (const [name, stub] of Object.entries(stubs)) {
-      window.__ROSI_E2E__.api[name] = stub.original;
-    }
-    window.__auditBStubs = undefined;
-  });
 }
 
 // Sets the URL field the way typing does, without blur, so the preview can run.
@@ -280,9 +212,9 @@ async function applyPlaylistScope(scope) {
 async function runQueueAdd({ mainUrl, queueText, scope }) {
   await setUrlField(mainUrl);
   // Let the URL preview settle before the scope is set, so it cannot reset it.
-  await settle(1_200);
+  await browser.pause(AUTO_PREVIEW_SETTLE_MS);
   await applyPlaylistScope(scope);
-  await restoreStubs();
+  await restoreBridge();
   await stubBridge("addToQueue", { ok: true, data: { added: 1, skipped: 0 } });
   await browser.execute((text) => {
     const status = document.getElementById("queueStatusMessage");
@@ -292,16 +224,15 @@ async function runQueueAdd({ mainUrl, queueText, scope }) {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   }, queueText);
   await browser.execute(() => document.getElementById("addToQueueBtn").click());
-  await browser.waitUntil(
-    async () => {
-      const calls = (await stubCalls("addToQueue")).length;
-      const status = await queueStatus();
-      return calls > 0 || status !== "";
-    },
-    { timeout: 10_000, interval: 100, timeoutMsg: "queue add did nothing" },
+  // Every add reports through the status text, which is written on a 0 ms
+  // timer after the stub call (or the range block), so it ends the flow.
+  await waitFor(
+    () =>
+      (document.getElementById("queueStatusMessage")?.textContent.trim() ??
+        "") !== "",
+    "queue add did not report a status",
+    10_000,
   );
-  // The status text is written on a timer, so it is read after a short pause.
-  await settle(400);
   return {
     calls: await stubCalls("addToQueue"),
     status: await queueStatus(),
@@ -316,7 +247,7 @@ async function queueStatus() {
 }
 
 async function resetQueueForm() {
-  await restoreStubs();
+  await restoreBridge();
   await applyPlaylistScope(null);
   await setUrlField("");
   await browser.execute(() => {
@@ -348,10 +279,25 @@ async function activeDockTab() {
   );
 }
 
+// Emits the activity list and waits for the panel to rebuild its rows, which
+// it does after deciding whether the tab is marked unseen.
 async function emitActivity(entries) {
+  await browser.execute(() => {
+    window.__auditBActivityRows =
+      document.getElementById("history-list")?.firstElementChild ?? null;
+  });
   await browser.execute(
     (list) => window.__TAURI__.event.emit("download-activity-update", list),
     entries,
+  );
+  await waitFor(
+    () => {
+      const first =
+        document.getElementById("history-list")?.firstElementChild ?? null;
+      return first !== null && first !== window.__auditBActivityRows;
+    },
+    "the activity list was not rebuilt after the update",
+    10_000,
   );
 }
 
@@ -400,7 +346,7 @@ describe("ROSI full audit B renderer fixes", () => {
   });
 
   after(async () => {
-    await restoreStubs();
+    await restoreBridge();
     await resetQueue();
     await setAskEveryTime(originalAsk ?? false);
     report.completedAt = new Date().toISOString();
@@ -484,7 +430,7 @@ describe("ROSI full audit B renderer fixes", () => {
           start: 2,
           end: 4,
         });
-        await restoreStubs();
+        await restoreBridge();
         const padded = await runQueueAdd({
           mainUrl: MAIN_URL,
           queueText: `   ${MAIN_URL}   `,
@@ -689,7 +635,6 @@ describe("ROSI full audit B renderer fixes", () => {
           await selectDockTab("dockTabActivity");
           await selectDockTab("dockTabQueue");
           await emitActivity([a1, a2, a3]);
-          await settle(600);
           await selectDockTab("dockTabActivity");
           await selectDockTab("dockTabQueue");
           assert.equal(await activityBadge(), false, "badge was not cleared");
@@ -708,14 +653,12 @@ describe("ROSI full audit B renderer fixes", () => {
           await selectDockTab("dockTabActivity");
           await selectDockTab("dockTabQueue");
           await emitActivity([a2, a3, a4]);
-          await settle(1_000);
           assert.equal(
             await activityBadge(),
             false,
             "a re-sent list marked the tab",
           );
           await emitActivity([]);
-          await settle(1_000);
           assert.equal(
             await activityBadge(),
             false,
@@ -727,7 +670,6 @@ describe("ROSI full audit B renderer fixes", () => {
         await scenario("activity-unseen-tab-selected", [17], async () => {
           await selectDockTab("dockTabActivity");
           await emitActivity([a4, a5, a6]);
-          await settle(1_000);
           assert.equal(
             await activityBadge(),
             false,

@@ -2,7 +2,15 @@ import fs from "node:fs";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "./helpers/app-bridge.js";
+import {
+  api,
+  clickModalButton,
+  reloadRenderer,
+  waitFor,
+  waitForAppReady,
+  waitForBackendSetting,
+  waitForModal,
+} from "./helpers/ui.js";
 import { readListFile } from "./helpers/persisted.js";
 import {
   captureUpdaterStatuses,
@@ -15,20 +23,15 @@ const DATA_DIR = process.env.ROSI_E2E_DATA_DIR;
 const RESULT_PATH = process.env.ROSI_STATE_REPAIR_RESULTS;
 const MEDIA_URL = process.env.ROSI_E2E_MEDIA_URL;
 const observations = [];
+// The first download's result button clears itself after 8 s. Nothing in the
+// page shows a timer that was cancelled, so the scenario waits out the window.
+const STALE_RESULT_TIMER_WINDOW_MS = 8_500;
 
 function record(name, details) {
   observations.push({ name, status: "passed", ...details });
   if (RESULT_PATH) {
     fs.writeFileSync(RESULT_PATH, `${JSON.stringify(observations, null, 2)}\n`);
   }
-}
-
-async function reloadRenderer() {
-  await browser.execute(() => {
-    window.__ROSI_E2E__.ready = false;
-    window.setTimeout(() => window.location.reload(), 50);
-  });
-  await waitForAppReady();
 }
 
 async function waitForStoredSetting(key, value, timeoutMsg) {
@@ -57,29 +60,29 @@ async function clickDownload(url) {
 }
 
 async function dismissModal(titleText, buttonText) {
-  await browser.waitUntil(
-    () =>
-      browser.execute((expectedTitle) => {
-        const modal = document.getElementById("app-modal");
-        return (
-          modal?.classList.contains("active") &&
-          document
-            .getElementById("modal-title")
-            ?.textContent?.includes(expectedTitle)
-        );
-      }, titleText),
-    {
-      timeout: 10_000,
-      timeoutMsg: `modal ${titleText} did not appear`,
-    },
-  );
-  await browser.execute((label) => {
-    const button = [...document.querySelectorAll("#modal-buttons button")].find(
-      (candidate) => candidate.textContent.trim() === label,
+  await waitForModal(titleText, { match: "includes" });
+  await clickModalButton(buttonText);
+}
+
+// The renderer saves settings after a 300 ms debounce. The store is idle when
+// no timer, request or waiter is left.
+async function waitForSettingsSaved(message) {
+  await waitFor(() => {
+    const store = window.__ROSI_E2E__.modules.settings.settingsStore;
+    return (
+      store.persistDebounceTimer === null &&
+      store.settingsSaveInFlight === false &&
+      store.settingsSaveWaiters.length === 0
     );
-    if (!button) throw new Error(`modal button ${label} was not found`);
-    button.click();
-  }, buttonText);
+  }, message);
+}
+
+// A channel change rechecks in the background, before the feed is configured.
+// A check made now goes through the same engine queue, so it ends after that
+// recheck has been handled.
+async function settleChannelRecheck() {
+  const result = await engineInvoke("check_for_updates");
+  assert.ok(result.ok, JSON.stringify(result));
 }
 
 async function engineInvoke(command, args) {
@@ -183,7 +186,17 @@ describe("state and updater repair E2E", () => {
         notifications.checked = settings.notifications;
         notifications.dispatchEvent(new Event("change", { bubbles: true }));
       }, initial);
-      await new Promise((resolve) => setTimeout(resolve, 450));
+      await waitForBackendSetting(
+        "theme",
+        initial.theme,
+        "restored theme did not persist",
+      );
+      await waitForBackendSetting(
+        "notifications",
+        initial.notifications,
+        "restored notifications did not persist",
+      );
+      await waitForSettingsSaved("restored settings were still saving");
     }
   });
 
@@ -394,7 +407,15 @@ describe("state and updater repair E2E", () => {
         control.value = theme;
         control.dispatchEvent(new Event("change", { bubbles: true }));
       }, desiredTheme);
-      await new Promise((resolve) => setTimeout(resolve, 450));
+      // The debounce has fired and save B waits behind save A. Without this,
+      // "no second save yet" would also hold before the edit was queued.
+      await waitFor(() => {
+        const store = window.__ROSI_E2E__.modules.settings.settingsStore;
+        return (
+          store.persistDebounceTimer === null &&
+          store.settingsSaveWaiters.some((waiter) => !waiter.immediate)
+        );
+      }, "save B did not reach the queue behind the held save A");
       assert.equal(
         await browser.execute(() => window.auditLifecycleSaveCalls.length),
         1,
@@ -851,11 +872,13 @@ describe("state and updater repair E2E", () => {
         window.__TAURI__.core
           .invoke("e2e_emit_stale_download_events", { currentSessionId })
           .then(
-            () => setTimeout(done, 100),
+            () => done(null),
             (error) => done(String(error)),
           );
       }, secondSessionId);
-      await new Promise((resolve) => setTimeout(resolve, 8500));
+      await new Promise((resolve) =>
+        setTimeout(resolve, STALE_RESULT_TIMER_WINDOW_MS),
+      );
 
       const activeUi = await browser.execute(() => ({
         loading: document
@@ -950,7 +973,7 @@ describe("state and updater repair E2E", () => {
     await reloadRenderer();
     // The channel change rechecks in the background; set it before the feed.
     await setUpdateChannel("beta");
-    await browser.pause(1_500);
+    await settleChannelRecheck();
     const fixture = await startUpdaterFixture({
       betaTarget,
       disableCompact: true,
@@ -1171,7 +1194,14 @@ describe("state and updater repair E2E", () => {
         candidateId: candidateC.candidateId,
       });
       assert.ok(retry.ok, JSON.stringify(retry));
-      await browser.pause(800);
+      await browser.waitUntil(
+        async () => (await engineProbe()).restarts - afterRefusal.restarts >= 1,
+        {
+          timeout: 10_000,
+          interval: 100,
+          timeoutMsg: "the retried install did not restart",
+        },
+      );
       const afterRetry = await engineProbe();
       // Measured from the refusal: the refused flush recorded no install.
       assert.equal(afterRetry.installs - afterRefusal.installs, 1);
@@ -1231,7 +1261,7 @@ describe("state and updater repair E2E", () => {
     // configured and let that recheck finish, so the manual check is the only
     // feed attempt that is asserted.
     await setUpdateChannel("beta");
-    await browser.pause(1_500);
+    await settleChannelRecheck();
     const fixture = await startUpdaterFixture({
       compactTarget: "darwin-beta-aarch64-app-zst",
       betaTarget: "darwin-beta-aarch64-app",

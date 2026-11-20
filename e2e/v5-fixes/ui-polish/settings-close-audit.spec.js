@@ -11,7 +11,14 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import {
+  api,
+  clickModalButton,
+  reloadRenderer,
+  waitFor,
+  waitForAppReady,
+  waitForModal,
+} from "../../helpers/ui.js";
 import { REPO_ROOT } from "../../helpers/profile.js";
 
 const STUB_KEYS = [
@@ -113,48 +120,6 @@ async function scenario(name, failureModes, body) {
     writeReport();
     throw error;
   }
-}
-
-async function waitFor(
-  predicate,
-  message,
-  timeout = 10_000,
-  argument = undefined,
-) {
-  await browser.waitUntil(async () => browser.execute(predicate, argument), {
-    timeout,
-    interval: 100,
-    timeoutMsg: message,
-  });
-}
-
-async function reloadRenderer() {
-  await browser.execute(() => {
-    window.__ROSI_E2E__.ready = false;
-    window.setTimeout(() => window.location.reload(), 50);
-  });
-  await waitForAppReady();
-}
-
-async function waitForModal(open) {
-  await waitFor(
-    (want) =>
-      document.getElementById("app-modal")?.classList.contains("active") ===
-      want,
-    `modal did not ${open ? "open" : "close"}`,
-    5_000,
-    open,
-  );
-}
-
-async function clickModalButton(label) {
-  await browser.execute((wantedLabel) => {
-    const button = [...document.querySelectorAll("#modal-buttons button")].find(
-      (candidate) => candidate.textContent.trim() === wantedLabel,
-    );
-    if (!button) throw new Error(`missing modal action ${wantedLabel}`);
-    button.click();
-  }, label);
 }
 
 // Installs the four stubs and the page-side record. Each stub answers from

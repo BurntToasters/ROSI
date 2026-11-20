@@ -284,6 +284,9 @@ function usesDownloadFfmpeg(launcher) {
   );
 }
 
+// Gap between launcher directory scans while the app creates its alias.
+const LAUNCHER_POLL_INTERVAL_MS = 50;
+
 async function probeAppCreatedFfmpegAlias(existingLaunchers) {
   const existingKeys = new Set(existingLaunchers.map(guardLauncherKey));
   const deadline = Date.now() + 10_000;
@@ -301,7 +304,9 @@ async function probeAppCreatedFfmpegAlias(existingLaunchers) {
       launcherSource = "reused";
     }
     if (launcher) break;
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) =>
+      setTimeout(resolve, LAUNCHER_POLL_INTERVAL_MS),
+    );
   }
   if (!launcher) {
     return {

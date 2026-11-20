@@ -3,7 +3,13 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { browser } from "@wdio/globals";
-import { waitForAppReady } from "../../helpers/app-bridge.js";
+import {
+  clickModalButton,
+  modalState,
+  reloadRenderer,
+  waitForAppReady,
+  waitForModal,
+} from "../../helpers/ui.js";
 import { readListFile } from "../../helpers/persisted.js";
 import {
   captureUpdaterStatuses,
@@ -18,6 +24,8 @@ import {
 // probe belongs to the app process.
 const EXPECTED_CHECKS = 27;
 const BETA = "darwin-beta-aarch64-app";
+const MODAL_TIMEOUT = { timeout: 20_000 };
+const RESULT_STATUSES = ["available", "not-available", "error"];
 const here = path.dirname(fileURLToPath(import.meta.url));
 const runDirectory = path.join(
   here,
@@ -81,9 +89,9 @@ function holdResponse() {
 }
 
 async function dismissModal() {
-  const modal = await readModal();
+  const modal = await modalState();
   if (modal.active) {
-    await clickModal(modal.buttons.includes("Later") ? "Later" : "OK");
+    await clickModalButton(modal.buttons.includes("Later") ? "Later" : "OK");
   }
 }
 
@@ -112,14 +120,6 @@ function stableTarget() {
   return `${osName()}-${arch}`;
 }
 
-async function freshRenderer() {
-  await browser.execute(() => {
-    window.__ROSI_E2E__.ready = false;
-    window.setTimeout(() => window.location.reload(), 50);
-  });
-  await waitForAppReady();
-}
-
 async function invoke(command, args) {
   return browser.executeAsync(
     (name, payload, done) => {
@@ -143,45 +143,6 @@ async function statuses(name) {
   return browser.execute((store) => window[store].slice(), name);
 }
 
-async function readModal() {
-  return browser.execute(() => {
-    const modal = document.getElementById("app-modal");
-    return {
-      active: modal?.classList.contains("active") === true,
-      title: document.getElementById("modal-title")?.textContent?.trim() ?? "",
-      message: document.getElementById("modal-message")?.textContent ?? "",
-      buttons: [...document.querySelectorAll("#modal-buttons button")].map(
-        (button) => button.textContent.trim(),
-      ),
-    };
-  });
-}
-
-async function waitForModal(title) {
-  await browser.waitUntil(
-    async () => {
-      const modal = await readModal();
-      return modal.active && modal.title === title;
-    },
-    {
-      timeout: 20_000,
-      interval: 100,
-      timeoutMsg: `modal "${title}" did not appear`,
-    },
-  );
-  return readModal();
-}
-
-async function clickModal(label) {
-  await browser.execute((expected) => {
-    const button = [...document.querySelectorAll("#modal-buttons button")].find(
-      (candidate) => candidate.textContent.trim() === expected,
-    );
-    if (!button) throw new Error(`modal button "${expected}" was not found`);
-    button.click();
-  }, label);
-}
-
 async function waitForStatus(store, predicate, message, timeout = 20_000) {
   await browser.waitUntil(async () => (await statuses(store)).some(predicate), {
     timeout,
@@ -190,9 +151,90 @@ async function waitForStatus(store, predicate, message, timeout = 20_000) {
   });
 }
 
+// Every listener of one event runs in the same burst, so one more task in the
+// page means the dialog code has handled an event the test has seen.
+function afterPageTurn() {
+  return browser.executeAsync((done) => setTimeout(done, 0));
+}
+
+async function waitForProbe(predicate, message) {
+  await browser.waitUntil(async () => predicate(await engineProbe()), {
+    timeout: 10_000,
+    interval: 100,
+    timeoutMsg: message,
+  });
+}
+
+/**
+ * A channel change starts a background recheck. A check made now goes through
+ * the same engine queue and ends with a result event, so past it the recheck
+ * has been handled. The caller reads its baselines after this.
+ */
+async function settleRecheck() {
+  const from = (await statuses("engineStatuses")).length;
+  const result = await invoke("check_for_updates");
+  assert.ok(result.ok, JSON.stringify(result));
+  await waitForStatus(
+    "engineStatuses",
+    (event, index) => index >= from && RESULT_STATUSES.includes(event.status),
+    "the settling check reported no result",
+  );
+}
+
+/** For cleanup: the check returns once the engine has handled any recheck. */
+async function settleEngine() {
+  await invoke("check_for_updates");
+}
+
+/** Starts a check without awaiting it; the command returns when the check settles. */
+async function startHeldCheck() {
+  await browser.execute(() => {
+    window.heldCheckSettled = false;
+    window.__TAURI__.core
+      .invoke("check_for_updates")
+      .catch(() => {})
+      .finally(() => {
+        window.heldCheckSettled = true;
+      });
+  });
+}
+
+async function waitForHeldCheck(message) {
+  await browser.waitUntil(
+    () => browser.execute(() => window.heldCheckSettled === true),
+    { timeout: 20_000, interval: 100, timeoutMsg: message },
+  );
+}
+
+/**
+ * A cancelled transfer holds the engine until it ends. A download of its
+ * candidate answers "still stopping" until then, and "cancelled" once the
+ * candidate is released.
+ */
+async function waitForTransferEnded(candidateId, message) {
+  await browser.waitUntil(
+    async () =>
+      (await invoke("download_update", { candidateId })).data?.cancelled ===
+      true,
+    { timeout: 20_000, interval: 100, timeoutMsg: message },
+  );
+}
+
+/** Waits until an install has taken the engine. Reads a probe counter only. */
+async function waitForInstallStarted(installStartsBefore) {
+  await browser.waitUntil(
+    async () => (await engineProbe()).installStarts > installStartsBefore,
+    {
+      timeout: 10_000,
+      interval: 50,
+      timeoutMsg: "the install did not start",
+    },
+  );
+}
+
 async function startScenario(options) {
   if (fixture) await fixture.close();
-  await freshRenderer();
+  await reloadRenderer();
   await setUpdateChannel(options.channel ?? "stable");
   fixture = await startUpdaterFixture(options);
   await captureUpdaterStatuses("engineStatuses");
@@ -209,9 +251,9 @@ describe("Updater engine failure modes", () => {
     await startScenario({ isPackaged: false });
     const before = await engineProbe();
     await clickManualCheck();
-    const modal = await waitForModal("Development Mode");
+    const modal = await waitForModal("Development Mode", MODAL_TIMEOUT);
     assert.ok(modal.message.includes("development mode"), modal.message);
-    await clickModal("OK");
+    await clickModalButton("OK");
     const feeds = fixture.server.requests.filter((request) =>
       request.path.startsWith("/latest-"),
     );
@@ -226,9 +268,9 @@ describe("Updater engine failure modes", () => {
       betaTarget: "linux-beta-x86_64-deb",
     });
     await clickManualCheck();
-    const modal = await waitForModal("Update Check Failed");
+    const modal = await waitForModal("Update Check Failed", MODAL_TIMEOUT);
     assert.ok(modal.message.includes("DEB and RPM"), modal.message);
-    await clickModal("OK");
+    await clickModalButton("OK");
     const feeds = fixture.server.requests.filter((request) =>
       request.path.startsWith("/latest-"),
     );
@@ -249,8 +291,8 @@ describe("Updater engine failure modes", () => {
       fileName: "ROSI-9.0.1.bin",
     });
     await clickManualCheck();
-    await waitForModal("Update Available!");
-    await clickModal("Later");
+    await waitForModal("Update Available!", MODAL_TIMEOUT);
+    await clickModalButton("Later");
     await waitForStatus(
       "engineStatuses",
       (event) => event.status === "available",
@@ -269,12 +311,17 @@ describe("Updater engine failure modes", () => {
 
     // Nothing is downloaded yet, so install of the offered candidate is an error.
     await invoke("install_update", { candidateId: offered.candidateId });
-    await waitForModal("Update Error");
-    await clickModal("OK");
+    await waitForModal("Update Error", MODAL_TIMEOUT);
+    await clickModalButton("OK");
 
     // A stale candidate id is ignored without any event.
-    await invoke("install_update", { candidateId: offered.candidateId + 100 });
-    await browser.pause(800);
+    // The command returns once the engine has handled the request, so a stale
+    // id is past the point where it would have emitted an event.
+    const staleInstall = await invoke("install_update", {
+      candidateId: offered.candidateId + 100,
+    });
+    assert.ok(staleInstall.ok, JSON.stringify(staleInstall));
+    await afterPageTurn();
     const after = await statuses("engineStatuses");
     assert.equal(
       after.slice(beforeCount).filter((event) => event.status === "error")
@@ -306,19 +353,19 @@ describe("Updater engine failure modes", () => {
     });
     const before = await engineProbe();
     await clickManualCheck();
-    await waitForModal("Update Available!");
-    await clickModal("Download & Install");
-    await waitForModal("Update Ready!");
-    await clickModal("Later");
+    await waitForModal("Update Available!", MODAL_TIMEOUT);
+    await clickModalButton("Download & Install");
+    await waitForModal("Update Ready!", MODAL_TIMEOUT);
+    await clickModalButton("Later");
     const candidateId = (await statuses("engineStatuses")).find(
       (event) => event.status === "downloaded",
     )?.candidateId;
     assert.ok(candidateId !== undefined, "the download did not finish");
 
     await invoke("install_update", { candidateId });
-    const refused = await waitForModal("Update Error");
+    const refused = await waitForModal("Update Error", MODAL_TIMEOUT);
     assert.ok(refused.message.includes("refused"), refused.message);
-    await clickModal("OK");
+    await clickModalButton("OK");
     const afterRefusal = await engineProbe();
     assert.equal(afterRefusal.installs - before.installs, 1);
     assert.equal(afterRefusal.refusedRestarts - before.refusedRestarts, 1);
@@ -327,7 +374,10 @@ describe("Updater engine failure modes", () => {
     // The retry only restarts: the verified bytes are not installed again.
     const retry = await invoke("install_update", { candidateId });
     assert.ok(retry.ok, JSON.stringify(retry));
-    await browser.pause(800);
+    await waitForProbe(
+      (probe) => probe.restarts - before.restarts >= 1,
+      "the retried install did not restart",
+    );
     const afterRetry = await engineProbe();
     assert.equal(afterRetry.installs - before.installs, 1);
     assert.equal(afterRetry.restarts - before.restarts, 1);
@@ -356,10 +406,10 @@ describe("Updater engine failure modes", () => {
       });
       const before = await engineProbe();
       await clickManualCheck();
-      await waitForModal("Update Available!");
-      await clickModal("Download & Install");
-      await waitForModal("Update Ready!");
-      await clickModal("Later");
+      await waitForModal("Update Available!", MODAL_TIMEOUT);
+      await clickModalButton("Download & Install");
+      await waitForModal("Update Ready!", MODAL_TIMEOUT);
+      await clickModalButton("Later");
       const candidateId = (await statuses("engineStatuses")).find(
         (event) => event.status === "downloaded",
       )?.candidateId;
@@ -395,12 +445,12 @@ describe("Updater engine failure modes", () => {
       );
 
       await invoke("install_update", { candidateId });
-      const refused = await waitForModal("Update Error");
+      const refused = await waitForModal("Update Error", MODAL_TIMEOUT);
       assert.ok(
         refused.message.trim().length > 0,
         "the refusal had no message",
       );
-      await clickModal("OK");
+      await clickModalButton("OK");
       // The flush runs before the install, so nothing is installed or restarted.
       const afterRefusal = await engineProbe();
       assert.equal(afterRefusal.installs - before.installs, 0);
@@ -413,7 +463,10 @@ describe("Updater engine failure modes", () => {
       if (priorBackup) fs.writeFileSync(backupPath, priorBackup);
       const retry = await invoke("install_update", { candidateId });
       assert.ok(retry.ok, JSON.stringify(retry));
-      await browser.pause(800);
+      await waitForProbe(
+        (probe) => probe.restarts - before.restarts >= 1,
+        "the retried install did not restart",
+      );
       const afterRetry = await engineProbe();
       assert.equal(afterRetry.installs - before.installs, 1);
       assert.equal(afterRetry.restarts - before.restarts, 1);
@@ -479,8 +532,9 @@ describe("Updater engine failure modes", () => {
     });
     const before = await engineProbe();
     await clickManualCheck();
-    await waitForModal("Update Available!");
-    await clickModal("Download & Install");
+    await waitForModal("Update Available!", MODAL_TIMEOUT);
+    const { candidateId: cancelledCandidateId } = await latestCandidate();
+    await clickModalButton("Download & Install");
     await browser.waitUntil(
       () =>
         fixture.server.requests.some((request) =>
@@ -493,17 +547,21 @@ describe("Updater engine failure modes", () => {
       },
     );
     await invoke("cancel_update_download");
-    await waitForModal("Download Cancelled");
-    await clickModal("OK");
+    await waitForModal("Download Cancelled", MODAL_TIMEOUT);
+    await clickModalButton("OK");
 
     releaseArtifact();
-    await browser.pause(2_000);
+    await waitForTransferEnded(
+      cancelledCandidateId,
+      "the cancelled transfer did not end",
+    );
+    await afterPageTurn();
     const events = (await statuses("engineStatuses")).map(
       (event) => event.status,
     );
     assert.ok(!events.includes("downloaded"), JSON.stringify(events));
     assert.equal(
-      (await readModal()).active,
+      (await modalState()).active,
       false,
       "a late download opened a prompt",
     );
@@ -527,8 +585,8 @@ describe("Updater engine failure modes", () => {
     });
     const before = (await statuses("engineStatuses")).length;
     await clickManualCheck();
-    await waitForModal("Update Available!");
-    await clickModal("Later");
+    await waitForModal("Update Available!", MODAL_TIMEOUT);
+    await clickModalButton("Later");
     const seen = (await statuses("engineStatuses"))
       .slice(before)
       .map((event) => event.status);
@@ -543,9 +601,9 @@ describe("Updater engine failure modes", () => {
     fixture.server.respond(osName(), 500, "controlled feed failure");
     const before = (await statuses("engineStatuses")).length;
     await clickManualCheck();
-    const modal = await waitForModal("Update Error");
+    const modal = await waitForModal("Update Error", MODAL_TIMEOUT);
     assert.ok(modal.message.length > 0, modal.message);
-    await clickModal("OK");
+    await clickModalButton("OK");
     const errors = (await statuses("engineStatuses"))
       .slice(before)
       .filter((event) => event.status === "error");
@@ -565,8 +623,8 @@ describe("Updater engine failure modes", () => {
     });
     fixture.server.tamper("ROSI-9.0.5.bin", Buffer.from("unsigned substitute"));
     await clickManualCheck();
-    await waitForModal("Update Available!");
-    await clickModal("Later");
+    await waitForModal("Update Available!", MODAL_TIMEOUT);
+    await clickModalButton("Later");
     const offered = (await statuses("engineStatuses")).find(
       (event) => event.status === "available",
     );
@@ -575,8 +633,8 @@ describe("Updater engine failure modes", () => {
       candidateId: offered.candidateId,
     });
     assert.ok(result.data?.error, JSON.stringify(result));
-    await waitForModal("Update Error");
-    await clickModal("OK");
+    await waitForModal("Update Error", MODAL_TIMEOUT);
+    await clickModalButton("OK");
     const errors = (await statuses("engineStatuses"))
       .slice(before)
       .filter((event) => event.status === "error");
@@ -598,8 +656,8 @@ describe("Updater engine failure modes", () => {
       const requestIndex = fixture.server.requests.length;
       const statusIndex = (await statuses("engineStatuses")).length;
       await clickManualCheck();
-      await waitForModal(expectedTitle);
-      await clickModal(
+      await waitForModal(expectedTitle, MODAL_TIMEOUT);
+      await clickModalButton(
         expectedTitle === "ROSI is up to date!" ? "OK" : "Later",
       );
       const settled = (await statuses("engineStatuses"))
@@ -661,20 +719,28 @@ describe("Updater engine failure modes", () => {
     const plain = await manualCheck("Update Available!");
     assert.deepEqual(plain.feeds, [osName()]);
     const betaIndex = fixture.server.requests.length;
+    const betaStatusIndex = (await statuses("engineStatuses")).length;
     await setUpdateChannel("beta");
-    await browser.waitUntil(() => feedsSince(betaIndex).length >= 1, {
-      timeout: 20_000,
-      interval: 100,
-      timeoutMsg: "the channel change did not recheck the beta target",
-    });
-    await browser.pause(500);
+    await waitForStatus(
+      "engineStatuses",
+      (event, index) =>
+        index >= betaStatusIndex && RESULT_STATUSES.includes(event.status),
+      "the channel change did not recheck the beta target",
+    );
     const betaFeeds = feedsSince(betaIndex);
+    assert.ok(betaFeeds.length >= 1, "the beta target was not requested");
     assert.ok(
       betaFeeds.every((target) => target === "darwin-beta-aarch64-app"),
       JSON.stringify(betaFeeds),
     );
+    const stableStatusIndex = (await statuses("engineStatuses")).length;
     await setUpdateChannel("stable");
-    await browser.pause(500);
+    await waitForStatus(
+      "engineStatuses",
+      (event, index) =>
+        index >= stableStatusIndex && RESULT_STATUSES.includes(event.status),
+      "the channel change back to stable did not recheck",
+    );
     record("updater-engine-compact-routing", {
       compactUsed: used.feeds,
       compactEmpty: empty.feeds,
@@ -687,7 +753,7 @@ describe("Updater engine failure modes", () => {
   it("discards a check result that arrives after the channel changed", async () => {
     // G04: the beta answer is held while the channel moves to stable.
     await startScenario({ channel: "beta" });
-    await browser.pause(1_000);
+    await settleRecheck();
     let releaseBeta = () => {};
     const betaGate = new Promise((resolve) => {
       releaseBeta = resolve;
@@ -710,9 +776,7 @@ describe("Updater engine failure modes", () => {
       const requestIndex = fixture.server.requests.length;
       const statusIndex = (await statuses("engineStatuses")).length;
       // Not awaited: the command returns only when the held check settles.
-      await browser.execute(() => {
-        window.__TAURI__.core.invoke("check_for_updates").catch(() => {});
-      });
+      await startHeldCheck();
       await browser.waitUntil(
         () => feedTargets(requestIndex).includes("darwin-beta-aarch64-app"),
         {
@@ -728,8 +792,9 @@ describe("Updater engine failure modes", () => {
         "the stable update was not offered after the channel change",
       );
       releaseBeta();
-      // Give the released beta answer time to reach the engine and be fenced.
-      await browser.pause(1_500);
+      // The held check returns once the released beta answer was fenced.
+      await waitForHeldCheck("the released beta answer was not handled");
+      await afterPageTurn();
       const seen = (await statuses("engineStatuses")).slice(statusIndex);
       assert.ok(
         !seen.some((event) => event.version === "9.1.0-beta.1"),
@@ -737,9 +802,9 @@ describe("Updater engine failure modes", () => {
       );
       const offered = seen.filter((event) => event.status === "available");
       assert.equal(offered.at(-1)?.version, "9.1.0", JSON.stringify(seen));
-      const modal = await readModal();
+      const modal = await modalState();
       if (modal.active && modal.buttons.includes("Later")) {
-        await clickModal("Later");
+        await clickModalButton("Later");
       }
       record("updater-engine-stale-check-after-channel-change", {
         feeds: feedTargets(requestIndex),
@@ -755,7 +820,7 @@ describe("Updater engine failure modes", () => {
     assert.ok(DATA_DIR, "ROSI_E2E_DATA_DIR is not set");
     const settingsPath = path.join(DATA_DIR, "settings.json");
     await startScenario({ channel: "stable" });
-    await browser.pause(1_000);
+    await settleRecheck();
     fixture.server.publish({
       target: "darwin-beta-aarch64-app",
       version: "9.2.0-beta.1",
@@ -776,9 +841,9 @@ describe("Updater engine failure modes", () => {
         "the unsaved channel did not refuse the background check",
       );
       await clickManualCheck();
-      const modal = await waitForModal("Update Error");
+      const modal = await waitForModal("Update Error", MODAL_TIMEOUT);
       assert.match(modal.message, /could not be saved before revalidation/);
-      await clickModal("OK");
+      await clickModalButton("OK");
       const errors = (await statuses("engineStatuses"))
         .slice(statusIndex)
         .filter((event) => event.status === "error");
@@ -818,18 +883,20 @@ describe("Updater engine failure modes", () => {
       });
     } finally {
       fs.writeFileSync(settingsPath, original);
-      const modal = await readModal();
+      const modal = await modalState();
       if (modal.active) {
-        await clickModal(modal.buttons.includes("Later") ? "Later" : "OK");
+        await clickModalButton(
+          modal.buttons.includes("Later") ? "Later" : "OK",
+        );
       }
       await setUpdateChannel("stable");
-      await browser.pause(500);
+      await settleEngine();
     }
   });
 
   it("retries a feed that answers no update once for an explicit target", async () => {
     await startScenario({ channel: "beta" });
-    await browser.pause(1_000);
+    await settleRecheck();
     fixture.server.queueFeed(BETA, [{ status: 204 }]);
     fixture.server.publish({
       target: BETA,
@@ -840,8 +907,8 @@ describe("Updater engine failure modes", () => {
     const requestIndex = fixture.server.requests.length;
     const statusIndex = (await statuses("engineStatuses")).length;
     await clickManualCheck();
-    await waitForModal("Beta Update Available!");
-    await clickModal("Later");
+    await waitForModal("Beta Update Available!", MODAL_TIMEOUT);
+    await clickModalButton("Later");
     const seen = (await statuses("engineStatuses"))
       .slice(statusIndex)
       .map((event) => event.status);
@@ -853,7 +920,7 @@ describe("Updater engine failure modes", () => {
 
   it("retries a feed error once in place for an explicit target", async () => {
     await startScenario({ channel: "beta" });
-    await browser.pause(1_000);
+    await settleRecheck();
     fixture.server.queueFeed(BETA, [
       { status: 500, body: "controlled retry failure" },
     ]);
@@ -866,8 +933,8 @@ describe("Updater engine failure modes", () => {
     const requestIndex = fixture.server.requests.length;
     const statusIndex = (await statuses("engineStatuses")).length;
     await clickManualCheck();
-    await waitForModal("Beta Update Available!");
-    await clickModal("Later");
+    await waitForModal("Beta Update Available!", MODAL_TIMEOUT);
+    await clickModalButton("Later");
     const seen = (await statuses("engineStatuses"))
       .slice(statusIndex)
       .map((event) => event.status);
@@ -879,7 +946,7 @@ describe("Updater engine failure modes", () => {
 
   it("discards a check whose target changed during the feed request", async () => {
     await startScenario({});
-    await browser.pause(1_000);
+    await settleRecheck();
     const original = fs.readFileSync(settingsFile());
     const held = holdResponse();
     fixture.server.publish({
@@ -900,9 +967,7 @@ describe("Updater engine failure modes", () => {
     const statusIndex = (await statuses("engineStatuses")).length;
     try {
       // Not awaited: the command returns only when the held check settles.
-      await browser.execute(() => {
-        window.__TAURI__.core.invoke("check_for_updates").catch(() => {});
-      });
+      await startHeldCheck();
       await browser.waitUntil(
         () => feedTargets(requestIndex).includes(osName()),
         {
@@ -943,7 +1008,7 @@ describe("Updater engine failure modes", () => {
 
   it("re-resolves the target after a feed error and restarts when it changed", async () => {
     await startScenario({ channel: "beta" });
-    await browser.pause(1_000);
+    await settleRecheck();
     const original = fs.readFileSync(settingsFile());
     const held = holdResponse();
     fixture.server.respond(BETA, 500, "held feed failure", { gate: held.gate });
@@ -957,9 +1022,7 @@ describe("Updater engine failure modes", () => {
     const requestIndex = fixture.server.requests.length;
     const statusIndex = (await statuses("engineStatuses")).length;
     try {
-      await browser.execute(() => {
-        window.__TAURI__.core.invoke("check_for_updates").catch(() => {});
-      });
+      await startHeldCheck();
       await browser.waitUntil(() => feedTargets(requestIndex).includes(BETA), {
         timeout: 20_000,
         interval: 100,
@@ -993,16 +1056,14 @@ describe("Updater engine failure modes", () => {
 
   it("ends a feed error silently when the target cannot be resolved", async () => {
     await startScenario({ channel: "beta" });
-    await browser.pause(1_000);
+    await settleRecheck();
     const original = fs.readFileSync(settingsFile());
     const held = holdResponse();
     fixture.server.respond(BETA, 500, "held feed failure", { gate: held.gate });
     const requestIndex = fixture.server.requests.length;
     const statusIndex = (await statuses("engineStatuses")).length;
     try {
-      await browser.execute(() => {
-        window.__TAURI__.core.invoke("check_for_updates").catch(() => {});
-      });
+      await startHeldCheck();
       await browser.waitUntil(() => feedTargets(requestIndex).includes(BETA), {
         timeout: 20_000,
         interval: 100,
@@ -1017,7 +1078,9 @@ describe("Updater engine failure modes", () => {
         interval: 100,
         timeoutMsg: "the feed error was not retried in place",
       });
-      await browser.pause(1_000);
+      // The held check ends silently once the retry fails; it returns then.
+      await waitForHeldCheck("the held check did not end");
+      await afterPageTurn();
       const seen = (await statuses("engineStatuses")).slice(statusIndex);
       const feeds = feedTargets(requestIndex);
       assert.deepEqual(feeds, [BETA, BETA]);
@@ -1026,7 +1089,7 @@ describe("Updater engine failure modes", () => {
         JSON.stringify(seen),
       );
       assert.equal(
-        (await readModal()).active,
+        (await modalState()).active,
         false,
         "a silent failure opened a prompt",
       );
@@ -1039,7 +1102,7 @@ describe("Updater engine failure modes", () => {
       fs.writeFileSync(settingsFile(), original);
       // A successful save clears the unsaved channel and rechecks.
       await setUpdateChannel("beta");
-      await browser.pause(1_000);
+      await settleEngine();
       await dismissModal();
     }
   });
@@ -1055,18 +1118,18 @@ describe("Updater engine failure modes", () => {
     });
     const before = await engineProbe();
     await clickManualCheck();
-    await waitForModal("Update Available!");
-    await clickModal("Download & Install");
-    await waitForModal("Update Ready!");
-    await clickModal("Later");
+    await waitForModal("Update Available!", MODAL_TIMEOUT);
+    await clickModalButton("Download & Install");
+    await waitForModal("Update Ready!", MODAL_TIMEOUT);
+    await clickModalButton("Later");
     const candidateId = (await statuses("engineStatuses")).find(
       (event) => event.status === "downloaded",
     )?.candidateId;
     assert.ok(candidateId !== undefined, "the download did not finish");
     await invoke("install_update", { candidateId });
-    const refused = await waitForModal("Update Error");
+    const refused = await waitForModal("Update Error", MODAL_TIMEOUT);
     assert.ok(refused.message.includes("refused"), refused.message);
-    await clickModal("OK");
+    await clickModalButton("OK");
     const afterRefusal = await engineProbe();
     assert.equal(afterRefusal.installs - before.installs, 1);
     assert.equal(afterRefusal.restarts - before.restarts, 0);
@@ -1089,8 +1152,8 @@ describe("Updater engine failure modes", () => {
         timeoutMsg: "the installed identity was not reported",
       },
     );
-    await waitForModal("Update Ready!");
-    await clickModal("Later");
+    await waitForModal("Update Ready!", MODAL_TIMEOUT);
+    await clickModalButton("Later");
     const seen = (await statuses("engineStatuses"))
       .slice(statusIndex)
       .map((event) => event.status);
@@ -1102,7 +1165,10 @@ describe("Updater engine failure modes", () => {
     // The retry finishes the pending restart and releases the candidate.
     const retry = await invoke("install_update", { candidateId });
     assert.ok(retry.ok, JSON.stringify(retry));
-    await browser.pause(800);
+    await waitForProbe(
+      (probe) => probe.restarts - before.restarts >= 1,
+      "the retried install did not restart",
+    );
     const done = await engineProbe();
     assert.equal(done.installs - before.installs, 1);
     assert.equal(done.restarts - before.restarts, 1);
@@ -1123,10 +1189,10 @@ describe("Updater engine failure modes", () => {
       fileName: "ROSI-9.8.0.bin",
     });
     await clickManualCheck();
-    await waitForModal("Update Available!");
-    await clickModal("Download & Install");
-    await waitForModal("Update Ready!");
-    await clickModal("Later");
+    await waitForModal("Update Available!", MODAL_TIMEOUT);
+    await clickModalButton("Download & Install");
+    await waitForModal("Update Ready!", MODAL_TIMEOUT);
+    await clickModalButton("Later");
     const { candidateId } = await latestCandidate();
     const requestIndex = fixture.server.requests.length;
     const statusIndex = (await statuses("engineStatuses")).length;
@@ -1147,8 +1213,8 @@ describe("Updater engine failure modes", () => {
         timeoutMsg: "the downloaded candidate was not reported again",
       },
     );
-    await waitForModal("Update Ready!");
-    await clickModal("Later");
+    await waitForModal("Update Ready!", MODAL_TIMEOUT);
+    await clickModalButton("Later");
     const seen = (await statuses("engineStatuses"))
       .slice(statusIndex)
       .map((event) => event.status);
@@ -1159,8 +1225,9 @@ describe("Updater engine failure modes", () => {
       candidateId,
       sequence: seen,
     });
-    await invoke("install_update", { candidateId });
-    await browser.pause(800);
+    // The command returns once the install and restart are done.
+    const cleanup = await invoke("install_update", { candidateId });
+    assert.ok(cleanup.ok, JSON.stringify(cleanup));
   });
 
   it("keeps a downloaded candidate on no update and releases an undownloaded one", async () => {
@@ -1173,10 +1240,10 @@ describe("Updater engine failure modes", () => {
       fileName: "ROSI-9.10.0.bin",
     });
     await clickManualCheck();
-    await waitForModal("Update Available!");
-    await clickModal("Download & Install");
-    await waitForModal("Update Ready!");
-    await clickModal("Later");
+    await waitForModal("Update Available!", MODAL_TIMEOUT);
+    await clickModalButton("Download & Install");
+    await waitForModal("Update Ready!", MODAL_TIMEOUT);
+    await clickModalButton("Later");
     const keptId = (await latestCandidate()).candidateId;
 
     // Downloaded: a no-update answer reports the download, not "not available".
@@ -1197,8 +1264,8 @@ describe("Updater engine failure modes", () => {
         timeoutMsg: "the downloaded candidate was not kept",
       },
     );
-    await waitForModal("Update Ready!");
-    await clickModal("Later");
+    await waitForModal("Update Ready!", MODAL_TIMEOUT);
+    await clickModalButton("Later");
     const keptEvents = (await statuses("engineStatuses"))
       .slice(statusIndex)
       .map((event) => event.status);
@@ -1206,8 +1273,9 @@ describe("Updater engine failure modes", () => {
       !keptEvents.includes("not-available"),
       JSON.stringify(keptEvents),
     );
-    await invoke("install_update", { candidateId: keptId });
-    await browser.pause(800);
+    // The command returns once the install and restart are done.
+    const kept = await invoke("install_update", { candidateId: keptId });
+    assert.ok(kept.ok, JSON.stringify(kept));
 
     // Offered but not downloaded: a no-update answer releases it.
     fixture.server.publish({
@@ -1218,14 +1286,14 @@ describe("Updater engine failure modes", () => {
       fileName: "ROSI-9.10.1.bin",
     });
     await clickManualCheck();
-    await waitForModal("Update Available!");
-    await clickModal("Later");
+    await waitForModal("Update Available!", MODAL_TIMEOUT);
+    await clickModalButton("Later");
     const offeredId = (await latestCandidate()).candidateId;
     fixture.server.respond(osName(), 204);
     statusIndex = (await statuses("engineStatuses")).length;
     await clickManualCheck();
-    await waitForModal("ROSI is up to date!");
-    await clickModal("OK");
+    await waitForModal("ROSI is up to date!", MODAL_TIMEOUT);
+    await clickModalButton("OK");
     const released = await invoke("download_update", {
       candidateId: offeredId,
     });
@@ -1254,16 +1322,16 @@ describe("Updater engine failure modes", () => {
         fileName: `ROSI-${version}.bin`,
       });
       await clickManualCheck();
-      await waitForModal(title);
-      await clickModal(button);
+      await waitForModal(title, MODAL_TIMEOUT);
+      await clickModalButton(button);
     };
     await checkAndDismiss("9.9.0-beta.1", "Beta Update Available!", "Later");
     await checkAndDismiss("9.9.1-RC.2", "Beta Update Available!", "Later");
     await checkAndDismiss("9.9.2", "Update Available!", "Later");
     fixture.server.respond(osName(), 204);
     await clickManualCheck();
-    await waitForModal("ROSI is up to date!");
-    await clickModal("OK");
+    await waitForModal("ROSI is up to date!", MODAL_TIMEOUT);
+    await clickModalButton("OK");
     const events = (await statuses("engineStatuses"))
       .slice(statusIndex)
       .filter((event) => ["available", "not-available"].includes(event.status))
@@ -1304,11 +1372,11 @@ describe("Updater engine failure modes", () => {
       });
     });
     await clickManualCheck();
-    await waitForModal("Update Available!");
+    await waitForModal("Update Available!", MODAL_TIMEOUT);
     const { candidateId } = await latestCandidate();
-    await clickModal("Download & Install");
-    await waitForModal("Update Ready!");
-    await clickModal("Later");
+    await clickModalButton("Download & Install");
+    await waitForModal("Update Ready!", MODAL_TIMEOUT);
+    await clickModalButton("Later");
     const progress = await browser.execute(() => window.__progress.slice());
     assert.ok(progress.length >= 2, JSON.stringify(progress));
     const gaps = progress
@@ -1331,9 +1399,13 @@ describe("Updater engine failure modes", () => {
 
     // A cancelled download emits no more progress.
     await browser.execute((id) => {
+      window.__secondDownloadEnded = false;
       window.__TAURI__.core
         .invoke("download_update", { candidateId: id })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => {
+          window.__secondDownloadEnded = true;
+        });
     }, candidateId);
     await browser.waitUntil(
       async () =>
@@ -1346,10 +1418,20 @@ describe("Updater engine failure modes", () => {
       },
     );
     await invoke("cancel_update_download");
-    await waitForModal("Download Cancelled");
-    await clickModal("OK");
+    await waitForModal("Download Cancelled", MODAL_TIMEOUT);
+    await clickModalButton("OK");
     const atCancel = await browser.execute(() => window.__progress.length);
-    await browser.pause(1_500);
+    // The cancelled transfer runs on until its body ends; the command returns
+    // then, after every late progress callback.
+    await browser.waitUntil(
+      () => browser.execute(() => window.__secondDownloadEnded === true),
+      {
+        timeout: 30_000,
+        interval: 100,
+        timeoutMsg: "the cancelled transfer did not end",
+      },
+    );
+    await afterPageTurn();
     const afterCancel = await browser.execute(() => window.__progress.length);
     assert.equal(afterCancel, atCancel, "progress arrived after the cancel");
     record("updater-engine-download-progress-throttle", {
@@ -1407,17 +1489,17 @@ describe("Updater engine failure modes", () => {
       drip: { chunkBytes: 64 * 1024, intervalMs: 100 },
     });
     await clickManualCheck();
-    await waitForModal("Update Available!");
+    await waitForModal("Update Available!", MODAL_TIMEOUT);
     const { candidateId } = await latestCandidate();
-    await clickModal("Later");
+    await clickModalButton("Later");
     const started = Date.now();
     const first = await invoke("download_update", { candidateId });
     const elapsedMs = Date.now() - started;
     assert.ok(first.data?.error, JSON.stringify(first));
     // The full body takes about 6 s, so the limit is what ended the transfer.
     assert.ok(elapsedMs >= 1_400 && elapsedMs < 5_000, `${elapsedMs} ms`);
-    await waitForModal("Update Error");
-    await clickModal("OK");
+    await waitForModal("Update Error", MODAL_TIMEOUT);
+    await clickModalButton("OK");
     const errors = (await statuses("engineStatuses")).filter(
       (event) => event.status === "error",
     );
@@ -1427,8 +1509,8 @@ describe("Updater engine failure modes", () => {
     // A failed transfer keeps the candidate, so a retry times out, not cancels.
     const second = await invoke("download_update", { candidateId });
     assert.ok(second.data?.error, JSON.stringify(second));
-    await waitForModal("Update Error");
-    await clickModal("OK");
+    await waitForModal("Update Error", MODAL_TIMEOUT);
+    await clickModalButton("OK");
     record("updater-engine-download-timeout", {
       candidateId,
       elapsedMs,
@@ -1450,12 +1532,12 @@ describe("Updater engine failure modes", () => {
       gate: held.gate,
     });
     await clickManualCheck();
-    await waitForModal("Update Available!");
+    await waitForModal("Update Available!", MODAL_TIMEOUT);
     const { candidateId } = await latestCandidate();
     const statusIndex = (await statuses("engineStatuses")).length;
     try {
       const artifactsBefore = artifactRequestCount();
-      await clickModal("Download & Install");
+      await clickModalButton("Download & Install");
       await browser.waitUntil(() => artifactRequestCount() > artifactsBefore, {
         timeout: 20_000,
         interval: 100,
@@ -1465,9 +1547,9 @@ describe("Updater engine failure modes", () => {
       makeSettingsUnsavable();
       await setUpdateChannel("stable");
       held.release();
-      const modal = await waitForModal("Update Error");
+      const modal = await waitForModal("Update Error", MODAL_TIMEOUT);
       assert.match(modal.message, /could not be saved before revalidation/);
-      await clickModal("OK");
+      await clickModalButton("OK");
       const seen = (await statuses("engineStatuses")).slice(statusIndex);
       const errors = seen.filter((event) => event.status === "error");
       assert.equal(errors.length, 1, JSON.stringify(seen));
@@ -1484,14 +1566,14 @@ describe("Updater engine failure modes", () => {
       held.release();
       fs.writeFileSync(settingsFile(), original);
       await setUpdateChannel("stable");
-      await browser.pause(1_000);
+      await settleEngine();
       await dismissModal();
     }
   });
 
   it("waits for an install that already started before honoring a channel change", async () => {
     await startScenario({ installWriteHoldMs: 1_500 });
-    await browser.pause(1_000);
+    await settleRecheck();
     fixture.server.publish({
       target: stableTarget(),
       route: osName(),
@@ -1506,11 +1588,11 @@ describe("Updater engine failure modes", () => {
       fileName: "ROSI-9.12.1-beta.1.bin",
     });
     await clickManualCheck();
-    await waitForModal("Update Available!");
+    await waitForModal("Update Available!", MODAL_TIMEOUT);
     const { candidateId } = await latestCandidate();
-    await clickModal("Download & Install");
-    await waitForModal("Update Ready!");
-    await clickModal("Later");
+    await clickModalButton("Download & Install");
+    await waitForModal("Update Ready!", MODAL_TIMEOUT);
+    await clickModalButton("Later");
 
     const before = await engineProbe();
     const requestIndex = fixture.server.requests.length;
@@ -1521,7 +1603,7 @@ describe("Updater engine failure modes", () => {
         .catch(() => {});
     }, candidateId);
     // The install holds 1.5 s after it confirms its target; change the channel inside that window.
-    await browser.pause(400);
+    await waitForInstallStarted(before.installStarts);
     await setUpdateChannel("beta");
     const midInstall = await engineProbe();
     assert.equal(midInstall.installs - before.installs, 0);
@@ -1541,8 +1623,8 @@ describe("Updater engine failure modes", () => {
     assert.equal(done.refusedRestarts - before.refusedRestarts, 0);
 
     // The held channel change rechecks the beta target once the install ends.
-    await waitForModal("Beta Update Available!");
-    await clickModal("Later");
+    await waitForModal("Beta Update Available!", MODAL_TIMEOUT);
+    await clickModalButton("Later");
     const feeds = feedTargets(requestIndex);
     assert.deepEqual(feeds, [BETA]);
     record("updater-engine-channel-change-during-install", {
@@ -1556,7 +1638,7 @@ describe("Updater engine failure modes", () => {
 
   it("exits an install whose candidate a channel change released before it confirmed", async () => {
     await startScenario({ installConfirmHoldMs: 1_500 });
-    await browser.pause(1_000);
+    await settleRecheck();
     fixture.server.publish({
       target: stableTarget(),
       route: osName(),
@@ -1571,11 +1653,11 @@ describe("Updater engine failure modes", () => {
       fileName: "ROSI-9.13.1-beta.1.bin",
     });
     await clickManualCheck();
-    await waitForModal("Update Available!");
+    await waitForModal("Update Available!", MODAL_TIMEOUT);
     const { candidateId } = await latestCandidate();
-    await clickModal("Download & Install");
-    await waitForModal("Update Ready!");
-    await clickModal("Later");
+    await clickModalButton("Download & Install");
+    await waitForModal("Update Ready!", MODAL_TIMEOUT);
+    await clickModalButton("Later");
 
     const before = await engineProbe();
     const requestIndex = fixture.server.requests.length;
@@ -1586,7 +1668,7 @@ describe("Updater engine failure modes", () => {
         .invoke("install_update", { candidateId: id })
         .catch(() => {});
     }, candidateId);
-    await browser.pause(400);
+    await waitForInstallStarted(before.installStarts);
     // Releases the candidate while the install waits for its target check.
     await setUpdateChannel("beta");
     const midInstall = await engineProbe();
@@ -1597,8 +1679,8 @@ describe("Updater engine failure modes", () => {
       interval: 100,
       timeoutMsg: "the channel change did not recheck the beta target",
     });
-    await waitForModal("Beta Update Available!");
-    await clickModal("Later");
+    await waitForModal("Beta Update Available!", MODAL_TIMEOUT);
+    await clickModalButton("Later");
     const after = await engineProbe();
     assert.equal(after.installs - before.installs, 0);
     assert.equal(after.restarts - before.restarts, 0);

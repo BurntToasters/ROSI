@@ -20,6 +20,7 @@ import {
   setControl,
   stubBridges,
   stubCalls,
+  waitFor,
   waitForModal,
 } from "../helpers/ui.js";
 
@@ -191,10 +192,41 @@ async function waitForStableSnapshot(
   return { snapshot: current, readyAndStable };
 }
 
-/** Let CSS transitions (up to the 500 ms springy curve) finish. */
-function settle(ms = 600) {
+/** Wait until no finite CSS transition or animation is running. */
+function waitForTransitions(message = "CSS transitions did not finish") {
+  return waitFor(
+    () =>
+      document.getAnimations().every((animation) => {
+        if (
+          animation.playState !== "running" &&
+          animation.playState !== "pending"
+        ) {
+          return true;
+        }
+        // Looping animations (spinners) never finish and are not awaited.
+        return animation.effect?.getComputedTiming().endTime === Infinity;
+      }),
+    message,
+  );
+}
+
+// A platform that refuses a window resize (Xvfb without a window manager)
+// never changes the viewport, so the wait for a change is bounded.
+const RESIZE_REFUSED_MS = 2_000;
+
+function viewportSize() {
+  return browser.execute(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }));
+}
+
+// Kept sleeps: no observable state marks the end of what they wait out.
+function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+// Post-wizard startup checks are async and leave no marker when they are done.
+const POST_WIZARD_QUIET_MS = 1_500;
 
 /** Dispatch a keydown the way a real key press reaches the renderer. */
 async function pressKey(targetSelector, init) {
@@ -241,6 +273,7 @@ function dockState() {
 
 /** Resize the window through Tauri and wait for layout to settle. */
 async function resizeWindow(width, height) {
+  const before = await viewportSize();
   const result = await browser.executeAsync(
     (w, h, done) => {
       const { getCurrentWindow } = window.__TAURI__.window;
@@ -248,7 +281,7 @@ async function resizeWindow(width, height) {
       getCurrentWindow()
         .setSize(new LogicalSize(w, h))
         .then(
-          () => setTimeout(() => done(JSON.stringify({ ok: true })), 600),
+          () => done(JSON.stringify({ ok: true })),
           (error) => done(JSON.stringify({ error: String(error) })),
         );
     },
@@ -257,6 +290,21 @@ async function resizeWindow(width, height) {
   );
   const parsed = JSON.parse(result);
   assert.equal(parsed.error, undefined, parsed.error);
+  try {
+    await browser.waitUntil(
+      async () => {
+        const now = await viewportSize();
+        return now.width !== before.width || now.height !== before.height;
+      },
+      { timeout: RESIZE_REFUSED_MS, interval: 50 },
+    );
+  } catch (error) {
+    if (!String(error).includes("waitUntil condition timed out after")) {
+      throw error;
+    }
+  }
+  await waitForStableSnapshot(viewportSize, "viewport after resize");
+  await waitForTransitions("transitions after resize did not finish");
 }
 
 /** Native window theme as Tauri reports it ("light", "dark" or null). */
@@ -348,7 +396,7 @@ async function setSidebarOpen(open) {
       timeoutMsg: `sidebar did not ${open ? "open" : "close"}`,
     },
   );
-  await settle();
+  await waitForTransitions("sidebar slide did not finish");
 }
 
 /**
@@ -911,7 +959,7 @@ describe("ROSI main window", () => {
         ),
       { timeout: 10_000, timeoutMsg: "sidebar did not open" },
     );
-    await settle();
+    await waitForTransitions("sidebar slide did not finish");
     const layout = await browser.execute(() => {
       const sections = [...document.querySelectorAll(".settings-section")];
       return {
@@ -1538,16 +1586,20 @@ describe("ROSI main window", () => {
       // The frame's CSP blocks WebDriver script injection, so the click is a
       // DOM click on the frame's own link. It runs the frame's click handler,
       // which posts the message to this window.
-      const clicked = await browser.execute((url) => {
-        const frameDoc =
-          document.getElementById("licenses-frame")?.contentDocument;
-        const link = [
-          ...(frameDoc?.querySelectorAll("a[data-external]") ?? []),
-        ].find((candidate) => candidate.getAttribute("data-external") === url);
-        if (!link) return false;
-        link.click();
-        return true;
-      }, linkUrl);
+      const clickLicenseLink = (url) =>
+        browser.execute((target) => {
+          const frameDoc =
+            document.getElementById("licenses-frame")?.contentDocument;
+          const link = [
+            ...(frameDoc?.querySelectorAll("a[data-external]") ?? []),
+          ].find(
+            (candidate) => candidate.getAttribute("data-external") === target,
+          );
+          if (!link) return false;
+          link.click();
+          return true;
+        }, url);
+      const clicked = await clickLicenseLink(linkUrl);
       assert.ok(clicked, "licence link is missing from the frame");
       await browser.waitUntil(
         () => browser.execute(() => window.__rosiLicenseOpened.length === 1),
@@ -1563,11 +1615,20 @@ describe("ROSI main window", () => {
           window.location.origin,
         );
       }, linkUrl);
-      await browser.pause(300);
+      // Messages are handled in order. A real click posted after the forged
+      // message and handled proves the forged one was already refused.
+      assert.ok(
+        await clickLicenseLink(linkUrl),
+        "licence link is missing from the frame",
+      );
+      await browser.waitUntil(
+        () => browser.execute(() => window.__rosiLicenseOpened.length >= 2),
+        { timeout: 10_000, timeoutMsg: "second licence click did not open" },
+      );
       const afterForged = await browser.execute(
         () => window.__rosiLicenseOpened,
       );
-      assert.deepEqual(afterForged, [linkUrl]);
+      assert.deepEqual(afterForged, [linkUrl, linkUrl]);
     } finally {
       await browser.switchToParentFrame();
       await browser.execute(() => {
@@ -1586,21 +1647,30 @@ describe("ROSI main window", () => {
     // the Rust navigation guard must cancel it without opening a browser.
     // Use the media server's port: WebKitGTK refuses restricted ports such as
     // 9 before asking the app, which would bypass the guard under test.
+    const logFile = path.join(DATA_DIR, "logs", "rosi.log");
+    const blockedLines = () =>
+      fs.existsSync(logFile)
+        ? (
+            fs
+              .readFileSync(logFile, "utf8")
+              .match(/Blocked navigation to http/g) ?? []
+          ).length
+        : 0;
+    const blockedBefore = blockedLines();
     await browser.execute((target) => {
       window.location.assign(target);
     }, `${MEDIA}/rosi-e2e-blocked`);
-    await browser.pause(1500);
+    await browser.waitUntil(() => blockedLines() > blockedBefore, {
+      timeout: 15_000,
+      interval: 100,
+      timeoutMsg: "the navigation guard never logged the blocked URL",
+    });
     const after = await browser.execute(() => ({
       href: window.location.href,
       api: typeof window.__ROSI_E2E__?.api?.getAppVersion,
     }));
     assert.equal(after.href, before);
     assert.equal(after.api, "function");
-    const log = fs.readFileSync(
-      path.join(DATA_DIR, "logs", "rosi.log"),
-      "utf8",
-    );
-    assert.match(log, /Blocked navigation to http/);
     const appUrl = new URL(before);
     record("navigation-guard", { app: `${appUrl.protocol}//${appUrl.host}` });
   });
@@ -1816,8 +1886,14 @@ describe("ROSI main window", () => {
         ),
       { timeout: 60_000, timeoutMsg: "queue item never started" },
     );
-    await browser.pause(1500);
-    assert.ok(processesMatching("queue=cancel").length > 0);
+    await browser.waitUntil(
+      () => processesMatching("queue=cancel").length > 0,
+      {
+        timeout: 30_000,
+        interval: 250,
+        timeoutMsg: "no yt-dlp process for the running queue item",
+      },
+    );
     assert.equal((await api("cancelQueue")).ok, true);
     await browser.waitUntil(
       async () =>
@@ -1828,7 +1904,21 @@ describe("ROSI main window", () => {
         timeoutMsg: "queue items were not cancelled",
       },
     );
-    await browser.pause(1000);
+    // Both items must be recorded and the process gone before counting.
+    await waitForActivity(
+      (item) => item.url === slow,
+      "running item was never recorded",
+      30_000,
+    );
+    await waitForActivity(
+      (item) => item.url === next,
+      "pending item was never recorded",
+      30_000,
+    );
+    await waitForNoProcess(
+      "queue=cancel",
+      "queue yt-dlp survived cancellation",
+    );
     const activity = (await api("getDownloadActivity")).data;
     const slowEntries = activity.filter((item) => item.url === slow);
     const nextEntries = activity.filter((item) => item.url === next);
@@ -1836,10 +1926,6 @@ describe("ROSI main window", () => {
     assert.equal(nextEntries.length, 1, "pending item recorded more than once");
     assert.equal(slowEntries[0].outcome, "cancelled");
     assert.equal(nextEntries[0].outcome, "cancelled");
-    await waitForNoProcess(
-      "queue=cancel",
-      "queue yt-dlp survived cancellation",
-    );
     const leftovers = fs
       .readdirSync(DOWNLOADS)
       .filter((name) => name.startsWith("slow") && name.endsWith(".part"));
@@ -2040,13 +2126,9 @@ describe("ROSI main window", () => {
     // 1366x768 laptops at 125% scaling leave roughly 1093x570 logical pixels.
     // Measure the CSS viewport: Tauri's innerSize() on Linux includes GTK
     // chrome, and Xvfb without a window manager ignores resize requests.
-    const result = await browser.executeAsync((done) => {
-      const { getCurrentWindow } = window.__TAURI__.window;
-      const { LogicalSize } = window.__TAURI__.dpi;
-      const win = getCurrentWindow();
-      const settle = () => new Promise((resolve) => setTimeout(resolve, 600));
-      const reachable = (selector) => {
-        const element = document.querySelector(selector);
+    const reachable = (selector) =>
+      browser.execute((target) => {
+        const element = document.querySelector(target);
         if (!element) return false;
         element.scrollIntoView({ block: "nearest" });
         const rect = element.getBoundingClientRect();
@@ -2056,35 +2138,28 @@ describe("ROSI main window", () => {
           rect.top >= -1 &&
           rect.bottom <= window.innerHeight + 1
         );
-      };
-      // Only the stage scrolls; the window chrome (header, tabs, footer) stays put.
-      const pageScrolls = () =>
-        document.scrollingElement.scrollHeight > window.innerHeight + 1;
-      (async () => {
-        const before = window.innerHeight;
-        await win.setSize(new LogicalSize(900, 560));
-        await settle();
-        const out = {
-          before,
-          viewportHeight: window.innerHeight,
-          resized: window.innerHeight !== before,
-          downloadButton: reachable("#downloadBtn"),
-          dockTabs: reachable("#dockTabQueue"),
-          footer: reachable(".main-footer"),
-          pageScrolls: pageScrolls(),
-        };
-        window.scrollTo(0, 0);
-        await win.setSize(new LogicalSize(1200, 900));
-        await settle();
-        out.pageScrollsLarge = pageScrolls();
-        return out;
-      })().then(
-        (value) => done(JSON.stringify(value)),
-        (error) => done(JSON.stringify({ error: String(error) })),
+      }, selector);
+    // Only the stage scrolls; the window chrome (header, tabs, footer) stays put.
+    const pageScrolls = () =>
+      browser.execute(
+        () => document.scrollingElement.scrollHeight > window.innerHeight + 1,
       );
-    });
-    const sizes = JSON.parse(result);
-    assert.equal(sizes.error, undefined, sizes.error);
+    const { height: before } = await viewportSize();
+    await resizeWindow(900, 560);
+    const { height: viewportHeight } = await viewportSize();
+    const sizes = {
+      before,
+      viewportHeight,
+      resized: viewportHeight !== before,
+      downloadButton: await reachable("#downloadBtn"),
+      dockTabs: await reachable("#dockTabQueue"),
+      footer: await reachable(".main-footer"),
+      pageScrolls: await pageScrolls(),
+    };
+    await browser.execute(() => window.scrollTo(0, 0));
+    await resizeWindow(1200, 900);
+    sizes.pageScrollsLarge = await pageScrolls();
+    const result = JSON.stringify(sizes);
     if (sizes.resized) {
       // minHeight must admit a 560px window (viewport = 560 minus title bar).
       assert.ok(sizes.viewportHeight <= 560, `560px window refused: ${result}`);
@@ -2131,7 +2206,7 @@ describe("ROSI main window", () => {
         timeout: 10_000,
         timeoutMsg,
       });
-      await settle();
+      await waitForTransitions("dock resize did not finish");
       return measure();
     };
 
@@ -2430,7 +2505,7 @@ describe("ROSI main window", () => {
     assert.equal(result.newlines, 4000, "line breaks drifted from line count");
 
     await clickById("clearConsole");
-    await settle();
+    await waitForTransitions("dock did not finish shrinking");
     const cleared = await browser.execute(() => ({
       nodes: document.getElementById("output").childNodes.length,
       dockEmpty: document.getElementById("dock").classList.contains("is-empty"),
@@ -2453,7 +2528,11 @@ describe("ROSI main window", () => {
       window.__ROSI_E2E__.modules.dock.selectTab("activity");
       document.activeElement?.blur();
     });
-    await settle();
+    await waitFor(
+      () => document.querySelector("#history-list .history-item") !== null,
+      "Activity tab showed no rows",
+    );
+    await waitForTransitions("Activity tab transitions did not finish");
     const rest = await browser.execute(() => {
       const row = document.querySelector("#history-list .history-item");
       const buttons = [...row.querySelectorAll(".history-item-actions button")];
@@ -2526,7 +2605,10 @@ describe("ROSI main window", () => {
     await browser.execute(() =>
       window.__ROSI_E2E__.modules.dock.selectTab("activity"),
     );
-    await settle();
+    await waitFor(
+      () => document.querySelector("#history-list .history-item") !== null,
+      "Activity tab showed no rows",
+    );
     const activity = (await api("getDownloadActivity")).data;
     const target = activity.find(
       (item) => item.outcome === "success" && item.outputPath,
@@ -2569,7 +2651,10 @@ describe("ROSI main window", () => {
       await clickAction("folder-open"),
       "row has no Open folder action",
     );
-    await settle(300);
+    await waitFor(
+      () => window.__rosiOpened.length >= 1,
+      "Open folder never called the bridge",
+    );
     const opened = await browser.execute(() => {
       window.__ROSI_E2E__.api.openFileLocation = window.__rosiOpenFileLocation;
       return window.__rosiOpened;
@@ -2794,13 +2879,13 @@ describe("ROSI main window", () => {
     assert.equal(state.skipHidden, false, "Skip is missing on the first step");
     const next = async () => {
       await clickById("wizard-next");
-      await settle(200);
+      await waitForTransitions("wizard step transition did not finish");
       return wizardState();
     };
     const shots = [];
     const shoot = async (name) => {
       if (!SCREENSHOT_DIR) return;
-      await settle();
+      await waitForTransitions("transitions before the screenshot");
       fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
       const file = path.join(SCREENSHOT_DIR, `${name}.png`);
       await browser.saveScreenshot(file);
@@ -2865,7 +2950,7 @@ describe("ROSI main window", () => {
     // Back and forward again keeps every choice made so far.
     await clickById("wizard-back");
     await clickById("wizard-back");
-    await settle(200);
+    await waitForTransitions("wizard step transition did not finish");
     assert.equal((await wizardState()).step, 1);
     await next();
     state = await next();
@@ -2940,7 +3025,8 @@ describe("ROSI main window", () => {
     for (const [key, value] of Object.entries(expected)) {
       assert.deepEqual(saved[key], value, `wizard saved ${key}=${saved[key]}`);
     }
-    await settle(1500);
+    // The wizard is closed and saved before this quiet window starts.
+    await sleep(POST_WIZARD_QUIET_MS);
     const followUp = await browser.execute(
       () =>
         document.querySelector(".modal-overlay.active, .modal.active")
@@ -3100,7 +3186,7 @@ describe("ROSI main window", () => {
         `step ${step} does not fit 900x560`,
       );
       if (step < 6) await clickById("wizard-next");
-      await settle(200);
+      await waitForTransitions("wizard step transition did not finish");
     }
     await clickById("wizard-next");
     await waitForWizardClosed();
@@ -3153,6 +3239,15 @@ describe("ROSI main window", () => {
           calls: window.__rosiDeno,
         };
       });
+    const waitForExternalCalls = async (count) => {
+      await browser.waitUntil(
+        async () => (await denoView()).calls.external.length >= count,
+        {
+          timeout: 5_000,
+          timeoutMsg: `Deno step opened fewer than ${count} external links`,
+        },
+      );
+    };
     const waitDeno = async (state) => {
       let view = null;
       await browser.waitUntil(
@@ -3208,7 +3303,7 @@ describe("ROSI main window", () => {
     assert.match(view.text, /winget exploded/);
     assert.equal(view.action, "Open install instructions");
     await clickById("wizard-deno-action");
-    await settle(200);
+    await waitForExternalCalls(1);
     assert.deepEqual((await denoView()).calls.external, [
       "https://docs.deno.com/runtime/getting_started/installation/",
     ]);
@@ -3227,7 +3322,7 @@ describe("ROSI main window", () => {
     view = await waitDeno("missing");
     assert.equal(view.action, "Open install instructions");
     await clickById("wizard-deno-action");
-    await settle(200);
+    await waitForExternalCalls(1);
     view = await denoView();
     assert.equal(view.calls.installs, 0, "Linux tried an automatic install");
     assert.deepEqual(view.calls.external, [
@@ -3327,7 +3422,7 @@ describe("ROSI main window", () => {
     fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
     const shots = [];
     const shoot = async (name) => {
-      await settle();
+      await waitForTransitions("transitions before the screenshot");
       const file = path.join(SCREENSHOT_DIR, `${name}.png`);
       await browser.saveScreenshot(file);
       const bytes = fs.statSync(file).size;
@@ -3428,7 +3523,7 @@ describe("ROSI main window", () => {
   it("searches, collapses, and resets settings sections", async () => {
     const original = settingsOnDisk();
     await clickById("settingsBtn");
-    await settle();
+    await waitForTransitions("sidebar slide did not finish");
     const search = (query) =>
       browser.execute((text) => {
         const input = document.getElementById("settingsSearch");
@@ -3754,7 +3849,11 @@ describe("ROSI main window", () => {
         "https://help.rosie.run/rosi/en-us/about-browser-cookies",
     };
     for (const id of Object.keys(links)) await clickById(id);
-    await settle(200);
+    await browser.waitUntil(
+      async () =>
+        (await stubCalls("openExternal")).length >= Object.keys(links).length,
+      { timeout: 10_000, timeoutMsg: "not every help link reached the bridge" },
+    );
     const opened = (await restoreBridge()).map((call) => call.args[0]);
     assert.deepEqual(opened, Object.values(links));
     record("external-links", { links: opened.length });
@@ -3764,43 +3863,39 @@ describe("ROSI main window", () => {
     const emit = (action) =>
       browser.executeAsync((name, done) => {
         window.__TAURI__.event.emit("menu-action", name).then(
-          () => setTimeout(done, 400),
+          () => done(null),
           (error) => done(String(error)),
         );
       }, action);
+    const waitForSidebar = (open, timeoutMsg) =>
+      browser.waitUntil(async () => (await sidebarOpen()) === open, {
+        timeout: 10_000,
+        timeoutMsg,
+      });
     const sidebarOpen = () =>
       browser.execute(() =>
         document.getElementById("sidebar").classList.contains("open"),
       );
     assert.equal(await emit("open-settings"), null);
-    assert.equal(
-      await sidebarOpen(),
-      true,
-      "open-settings did not open Settings",
-    );
-    await emit("open-settings");
-    assert.equal(
-      await sidebarOpen(),
-      true,
-      "open-settings closed an open sidebar",
-    );
-    await emit("toggle-sidebar");
-    assert.equal(
-      await sidebarOpen(),
+    await waitForSidebar(true, "open-settings did not open Settings");
+    // Menu events are handled in order: if the second open-settings had
+    // closed the sidebar, the toggle would reopen it and the wait would fail.
+    assert.equal(await emit("open-settings"), null);
+    assert.equal(await emit("toggle-sidebar"), null);
+    await waitForSidebar(
       false,
-      "toggle-sidebar did not close Settings",
+      "open-settings closed an open sidebar, or toggle-sidebar did not close Settings",
     );
-    await emit("show-licenses");
-    assert.ok(
-      await browser.execute(() =>
+    assert.equal(await emit("show-licenses"), null);
+    await waitFor(
+      () =>
         document
           .getElementById("licenses-overlay")
           .classList.contains("active"),
-      ),
       "show-licenses did not open the licenses",
     );
     await clickById("close-licenses");
-    await emit("check-for-updates");
+    assert.equal(await emit("check-for-updates"), null);
     const modal = await waitForModal(true, {
       timeoutMsg: "check-for-updates showed nothing",
     });
@@ -4081,7 +4176,10 @@ describe("ROSI main window", () => {
     // A backwards range is refused before anything downloads.
     await setRange(3, 2);
     await clickById("downloadBtn");
-    await settle();
+    await waitFor(
+      () => document.getElementById("playlistScopeError").textContent !== "",
+      "a backwards range showed no error",
+    );
     const refused = await browser.execute(() => ({
       // An `error` key would read as a thrown error to the WebDriver bridge.
       scopeError: document.getElementById("playlistScopeError").textContent,
@@ -4360,6 +4458,17 @@ describe("ROSI main window", () => {
     await stubBridges({ showNotification: { ok: true } });
     let drainCalls = [];
     let cancelCalls = [];
+    const flushQueueSnapshots = async () => {
+      await waitFor(() => {
+        const button = document.getElementById("clearFinishedQueueBtn");
+        return button !== null && !button.disabled;
+      }, "the renderer never showed the finished queue item");
+      assert.equal((await api("clearQueue")).ok, true);
+      await waitFor(
+        () => document.getElementById("clearFinishedQueueBtn").disabled,
+        "the renderer never showed the cleared queue",
+      );
+    };
     try {
       // A run that drains on its own sends exactly one notification.
       const drain = `${MEDIA}/clip-three.mp4?notify=drain`;
@@ -4378,8 +4487,9 @@ describe("ROSI main window", () => {
           timeoutMsg: "drained queue run sent no notification",
         },
       );
-      // Give any duplicate from the drained snapshots time to arrive.
-      await settle(2_000);
+      // A clear is a snapshot behind every earlier one. Once the renderer
+      // shows it, any duplicate from the drained snapshots has been handled.
+      await flushQueueSnapshots();
       drainCalls = await stubCalls("showNotification");
       assert.equal(
         drainCalls.length,
@@ -4415,14 +4525,13 @@ describe("ROSI main window", () => {
           "cancelled",
         { timeout: 30_000, timeoutMsg: "user cancel did not stop the run" },
       );
-      await settle(3_000);
+      await flushQueueSnapshots();
       cancelCalls = await stubCalls("showNotification");
       assert.equal(
         cancelCalls.length,
         drainCalls.length,
         `a user cancel sent ${cancelCalls.length - drainCalls.length} notification(s)`,
       );
-      await api("clearQueue");
     } finally {
       await restoreBridge();
       await setControl("notificationsToggle", original);
@@ -4541,6 +4650,9 @@ describe("ROSI main window", () => {
         timeoutMsg: "settings were not saved before the import",
       },
     );
+    const revisionBefore = await browser.execute(
+      () => window.__ROSI_E2E__.modules.settings.settingsStore.settingsRevision,
+    );
     // The backend emits settings-imported with the saved settings after an import.
     const emitted = await browser.executeAsync((done) => {
       const store = window.__ROSI_E2E__.modules.settings.settingsStore;
@@ -4552,7 +4664,19 @@ describe("ROSI main window", () => {
         );
     });
     assert.equal(emitted, true, "settings-imported was not emitted");
-    await settle(500);
+    // The handler bumps the revision, so a higher revision proves it ran.
+    await waitFor(
+      (previous) => {
+        const store = window.__ROSI_E2E__.modules.settings.settingsStore;
+        return (
+          store.settingsRevision > previous &&
+          store.settingsSavedRevision === store.settingsRevision
+        );
+      },
+      "the import left the settings marked unsaved",
+      15_000,
+      revisionBefore,
+    );
     const revisions = await browser.execute(() => {
       const store = window.__ROSI_E2E__.modules.settings.settingsStore;
       return {
@@ -4567,7 +4691,14 @@ describe("ROSI main window", () => {
     );
     // A valid link makes the options summary read the settings state.
     await typeUrl(`${MEDIA}/clip-one.mp4?import=1`);
-    await settle(1_500);
+    await waitFor(
+      () =>
+        ["resolved", "error", "settings-unsaved"].includes(
+          document.getElementById("downloadOutputSummary")?.dataset.state,
+        ),
+      "the options summary never settled",
+      15_000,
+    );
     const summary = await browser.execute(
       () => document.getElementById("downloadOutputSummary")?.textContent ?? "",
     );
@@ -4706,7 +4837,13 @@ describe("ROSI main window", () => {
     await stubBridges({ selectDownloadLocation: null });
     await typeUrl(`${MEDIA}/clip-one.mp4?ask=cancel`);
     await clickById("downloadBtn");
-    await settle();
+    await waitFor(
+      () =>
+        document
+          .getElementById("output")
+          .textContent.includes("No save location selected"),
+      "a cancelled picker logged no message",
+    );
     const cancelled = await browser.execute(() => ({
       busy: document
         .getElementById("downloadBtn")
@@ -4784,19 +4921,20 @@ describe("ROSI main window", () => {
     );
     const clickedAt = Date.now();
     await clickById("downloadBtn");
-    await settle(500);
-    const opened = await stubCalls("openFileLocation");
-    await restoreBridge();
+    // The second download finishing proves the click started a download.
+    const entry = await waitForActivity(
+      (item) => item.url === second && item.completedAt >= clickedAt,
+      "the second download never started",
+    );
+    const opened = (await restoreBridge())
+      .filter((call) => call.name === "openFileLocation")
+      .map((call) => call.args);
     assert.equal(
       button,
       "Download",
       `button still read "${button}" after typing`,
     );
     assert.deepEqual(opened, [], "Download opened the old file's folder");
-    const entry = await waitForActivity(
-      (item) => item.url === second && item.completedAt >= clickedAt,
-      "the second download never started",
-    );
     await waitForIdle();
     assert.equal(entry.outcome, "success");
     await typeUrl("");

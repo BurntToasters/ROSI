@@ -95,7 +95,7 @@ const load = require("./load-renderer.cjs").createRendererLoader(
 for (const m of ["ui", "downloads", "queue", "settings", "updates", "dock"])
   load("modules/" + m + ".ts");
 const updater = load("engine/updater-ui.ts");
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const { until, turn } = require("./wait.cjs");
 const commandsNamed = (name) =>
   invocations.filter((entry) => entry.command === name);
 const modalTitle = () => w.document.getElementById("modal-title").textContent;
@@ -110,12 +110,14 @@ const clickModalButton = (label) => {
 };
 
 (async () => {
-  await wait(60);
   updater.setupAutoUpdater(async () => true);
 
   // Channel change: the renderer forwards the channel; Rust saves and revalidates it.
   updater.notifyUpdateChannelChanged("auto");
-  await wait(20);
+  await until(
+    () => commandsNamed("set_update_channel").length > 0,
+    "the channel change was not forwarded",
+  );
   const channelForwarded = commandsNamed("set_update_channel").some(
     (entry) => entry.args?.channel === "auto",
   );
@@ -129,11 +131,14 @@ const clickModalButton = (label) => {
     isBeta: false,
     manualInstall: false,
   });
-  await wait(30);
-  const firstPrompt = modalMessage();
-  const oldPromptButton = [...w.document.querySelectorAll("#modal-buttons button")].find(
-    (entry) => entry.textContent.trim() === "Download & Install",
+  await until(
+    () => modalMessage().includes("v6.0.0"),
+    "the first candidate prompt did not appear",
   );
+  const firstPrompt = modalMessage();
+  const oldPromptButton = [
+    ...w.document.querySelectorAll("#modal-buttons button"),
+  ].find((entry) => entry.textContent.trim() === "Download & Install");
   emit("updater-status", {
     status: "available",
     candidateId: 2,
@@ -142,13 +147,18 @@ const clickModalButton = (label) => {
     isBeta: true,
     manualInstall: false,
   });
-  await wait(30);
+  await until(
+    () => modalMessage().includes("v7.0.0-beta.1"),
+    "the second candidate prompt did not replace the first",
+  );
   const activePromptAfterSecondCheck = modalMessage();
   const oldPromptStillConnected = oldPromptButton?.isConnected ?? false;
 
   // The superseded prompt must not start a download for candidate 1.
   oldPromptButton?.click();
-  await wait(30);
+  // A stale click starts nothing, so there is no state to poll. One turn lets
+  // any download call it would have made run.
+  await turn();
   const downloadCallsAfterStale = commandsNamed("download_update").map(
     (entry) => entry.args?.candidateId,
   );
@@ -160,10 +170,18 @@ const clickModalButton = (label) => {
     candidateId: 2,
     version: "7.0.0-beta.1",
   });
-  await wait(30);
+  await until(
+    () => modalTitle() === "Update Ready!",
+    "the ready prompt did not appear",
+  );
   const readyPromptTitle = modalTitle();
   clickModalButton("Restart Now");
-  await wait(400);
+  await until(
+    () => commandsNamed("install_update").length > 0,
+    "Restart Now did not call install_update",
+  );
+  // A second call, if one were made, would follow in the same chain.
+  await turn();
   const installCalls = commandsNamed("install_update").map(
     (entry) => entry.args?.candidateId,
   );

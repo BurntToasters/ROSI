@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import { activityFor, api, waitForAppReady } from "../../helpers/ui.js";
 import {
   deterministicBytes,
   sha256,
@@ -44,8 +44,11 @@ const record = (name, details) => {
 const SLOW_BYTES = 2 * 1024 * 1024;
 const FAST_BYTES = 256 * 1024;
 
-const activityFor = async (url) =>
-  (await api("getDownloadActivity")).data.filter((entry) => entry.url === url);
+// Window for watching that a manual Cancel leaves the queue item alone. A
+// correct build changes nothing, so there is no state to wait on; the loop ends
+// early the moment the item leaves "downloading". Twelve samples at 250 ms.
+const CANCEL_OBSERVATION_SAMPLES = 12;
+const CANCEL_OBSERVATION_INTERVAL_MS = 250;
 
 const queueStatus = async (url) =>
   (await api("getQueue")).find((item) => item.url === url)?.status ?? null;
@@ -126,10 +129,10 @@ describe("V5 fix A2: cancel ownership", () => {
       // whichever session was current, so it would end this queue item.
       await api("cancelDownload");
       const statuses = [];
-      for (let sample = 0; sample < 12; sample += 1) {
+      for (let sample = 0; sample < CANCEL_OBSERVATION_SAMPLES; sample += 1) {
         statuses.push(await queueStatus(url));
         if (statuses.at(-1) !== "downloading") break;
-        await browser.pause(250);
+        await browser.pause(CANCEL_OBSERVATION_INTERVAL_MS);
       }
       assert.deepEqual(
         [...new Set(statuses)],

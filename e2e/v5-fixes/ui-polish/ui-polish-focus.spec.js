@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import { api, waitFor, waitForAppReady } from "../../helpers/ui.js";
 import { REPO_ROOT } from "../../helpers/profile.js";
 
 const MEDIA = process.env.ROSI_E2E_MEDIA_URL;
@@ -91,19 +91,6 @@ async function scenario(name, body) {
     writeReport();
     throw error;
   }
-}
-
-async function waitFor(
-  predicate,
-  message,
-  timeout = 10_000,
-  argument = undefined,
-) {
-  await browser.waitUntil(async () => browser.execute(predicate, argument), {
-    timeout,
-    interval: 100,
-    timeoutMsg: message,
-  });
 }
 
 async function selectDock(tab) {
@@ -234,15 +221,40 @@ async function runActivityFlow(observed) {
     "cancelled activity entry was not announced",
     20_000,
   );
-  await browser.pause(500);
+  // The cancelled item ends the session, which is when its entry is written, so
+  // a repeat announcement for it would have come by now. The frames flush the
+  // page.
+  await waitForQueueItemStatus(
+    slowUrl,
+    "cancelled",
+    "slow item was not cancelled",
+    20_000,
+  );
+  await browser.executeAsync((done) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => done(true)));
+  });
   observed.afterCancel = await activitySnapshot();
 
   // A re-sent update with no new entry is a re-render only.
   const latest = (await api("getDownloadActivity")).data;
+  await browser.execute(() => {
+    window.__uiPolishFocusRows =
+      document.getElementById("history-list")?.firstElementChild ?? null;
+  });
   await browser.execute((list) => {
     window.__TAURI__.event.emit("download-activity-update", list);
   }, latest);
-  await browser.pause(300);
+  // The panel rebuilds its rows for every update, so a new first row shows
+  // that the re-sent list was handled.
+  await waitFor(
+    () => {
+      const first =
+        document.getElementById("history-list")?.firstElementChild ?? null;
+      return first !== null && first !== window.__uiPolishFocusRows;
+    },
+    "the re-sent activity list was not rendered",
+    10_000,
+  );
   observed.afterResend = await activitySnapshot();
 }
 

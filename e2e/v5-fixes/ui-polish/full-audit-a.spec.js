@@ -4,7 +4,14 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import {
+  api,
+  clickModalButton,
+  setControl,
+  waitFor,
+  waitForAppReady,
+  waitForBackendSetting,
+} from "../../helpers/ui.js";
 import { REPO_ROOT } from "../../helpers/profile.js";
 
 // Rows are numbered in full-audit-a.failure-modes.md. Each check lists the rows it covers.
@@ -130,39 +137,33 @@ async function scenario(name, failureModes, body) {
   }
 }
 
-const settle = (ms) => browser.pause(ms);
+// The auto preview starts 450 ms after the URL changes (PREVIEW_DEBOUNCE_MS).
+// The preview controller timer is not exposed to the page, so this stays a
+// sleep. A hook counter for the pending preview timer would replace it.
+const AUTO_PREVIEW_SETTLE_MS = 1_000;
+
+// Resolves after two animation frames, so every microtask and frame callback
+// queued by the last action has run.
+async function nextFrames() {
+  await browser.executeAsync((done) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => done(true)));
+  });
+}
 
 // Reads `read()` every 100 ms until `done` accepts the value or the timeout ends.
 // Returns the last value, so a failed assertion reports what was actually seen.
 async function settled(read, done, timeout = 5_000) {
-  const deadline = Date.now() + timeout;
-  let last = await read();
-  while (!done(last) && Date.now() < deadline) {
-    await browser.pause(100);
-    last = await read();
-  }
+  let last;
+  await browser
+    .waitUntil(
+      async () => {
+        last = await read();
+        return done(last);
+      },
+      { timeout, interval: 100, timeoutMsg: "settled value never accepted" },
+    )
+    .catch(() => {});
   return last;
-}
-
-async function waitForBackendSetting(key, value, message) {
-  await browser.waitUntil(
-    async () => (await api("getSettings"))[key] === value,
-    { timeout: 10_000, interval: 150, timeoutMsg: message },
-  );
-}
-
-async function setControl(id, value) {
-  await browser.execute(
-    (target, next) => {
-      const control = document.getElementById(target);
-      if (!control) throw new Error(`missing control ${target}`);
-      if (control.type === "checkbox") control.checked = Boolean(next);
-      else control.value = String(next);
-      control.dispatchEvent(new Event("change", { bubbles: true }));
-    },
-    id,
-    value,
-  );
 }
 
 // Puts the three convert-related toggles back to the values read in before().
@@ -355,16 +356,6 @@ async function modalState() {
   });
 }
 
-async function clickModalButton(label) {
-  await browser.execute((text) => {
-    const button = [...document.querySelectorAll("#modal-buttons button")].find(
-      (node) => node.textContent.trim() === text,
-    );
-    if (!button) throw new Error(`no modal button labelled ${text}`);
-    button.click();
-  }, label);
-}
-
 // Updater rows emit real updater-status events, which the listener in
 // updater-ui.ts handles. Mirrors emitUpdaterStatus in dialogs.spec.js.
 async function emitUpdaterStatus(payload) {
@@ -478,7 +469,8 @@ describe("ROSI full audit A: licenses reopen, GPU select, update prompt, preview
         await browser.execute(() =>
           window.__ROSI_E2E__.modules.overlays.showLicenses(),
         );
-        await settle(200);
+        // The reopen path is synchronous; the frames cover the deferred focus.
+        await nextFrames();
         const reopened = await licensesState();
         assert.equal(reopened.active, true, "overlay closed on reopen");
         assert.equal(
@@ -694,7 +686,9 @@ describe("ROSI full audit A: licenses reopen, GPU select, update prompt, preview
             false,
             "the held flush never finished",
           );
-          await settle(600);
+          // The re-offer would follow the flush in microtasks; the frames wait
+          // for them before the modal is read.
+          await nextFrames();
           const after = await modalState();
           const offered =
             after.currentKey === "updater-downloaded" ||
@@ -739,7 +733,8 @@ describe("ROSI full audit A: licenses reopen, GPU select, update prompt, preview
           () => window.__fullAuditA.calls.install_update[0],
         );
         assert.deepEqual(args, { candidateId: 9303 });
-        await settle(600);
+        // See the replaced-candidate row: frames let the handler finish.
+        await nextFrames();
         const after = await modalState();
         assert.notEqual(
           after.currentKey,
@@ -763,7 +758,7 @@ describe("ROSI full audit A: licenses reopen, GPU select, update prompt, preview
         try {
           await setPreviewUrl(PREVIEW_URL);
           // Let the debounced automatic preview finish before the manual one.
-          await settle(1_000);
+          await browser.pause(AUTO_PREVIEW_SETTLE_MS);
           await clearToasts();
           await clickPreview();
           const seen = await settled(
@@ -795,7 +790,7 @@ describe("ROSI full audit A: licenses reopen, GPU select, update prompt, preview
       await stubBridge("getVideoInfo", NOT_AVAILABLE_FAILURE);
       try {
         await setPreviewUrl(PREVIEW_URL);
-        await settle(1_000);
+        await browser.pause(AUTO_PREVIEW_SETTLE_MS);
         await clearToasts();
         const before = await callCount("getVideoInfo");
         await clickPreview();
@@ -807,7 +802,16 @@ describe("ROSI full audit A: licenses reopen, GPU select, update prompt, preview
           calls > before,
           "the manual preview never called getVideoInfo",
         );
-        await settle(800);
+        // The preview flow ends by clearing the button's loading state, after
+        // the point where a failure toast would have been shown.
+        await waitFor(
+          () =>
+            !document
+              .getElementById("previewBtn")
+              .classList.contains("loading"),
+          "preview button never stopped loading",
+          10_000,
+        );
         const seen = await previewSnapshot();
         const failures = seen.toasts.filter((text) =>
           text.startsWith("Could not load preview."),

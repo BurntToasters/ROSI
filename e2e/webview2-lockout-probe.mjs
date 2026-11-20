@@ -20,6 +20,8 @@ import {
 const WEBVIEW2_CLIENT_KEY =
   "Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
 const STARTUP_TIMEOUT_MS = 60_000;
+// Time WebView2 runs before it is stopped. Nothing signals when its sign-in
+// attempts are done, so this stays a fixed dwell.
 const DWELL_MS = 10_000;
 const EXIT_TIMEOUT_MS = 15_000;
 // Never let probing come closer than this to the lockout threshold.

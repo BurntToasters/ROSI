@@ -703,6 +703,8 @@ impl State {
         let already_installed = self.installed == Some(sequence);
         self.checks += 1;
         self.installing = true;
+        #[cfg(feature = "e2e")]
+        e2e_probe::record_install_start();
         self.install_started = already_installed;
         InstallStart::Proceed {
             sequence,
@@ -1257,6 +1259,7 @@ mod e2e_probe {
 
     static REFUSALS: AtomicU32 = AtomicU32::new(0);
     static INSTALLS: AtomicU64 = AtomicU64::new(0);
+    static INSTALL_STARTS: AtomicU64 = AtomicU64::new(0);
     static RESTARTS: AtomicU64 = AtomicU64::new(0);
     static REFUSED: AtomicU64 = AtomicU64::new(0);
 
@@ -1264,6 +1267,8 @@ mod e2e_probe {
     #[serde(rename_all = "camelCase")]
     pub struct ProbeState {
         pub installs: u64,
+        /// Installs that took the engine, counted before any install work.
+        pub install_starts: u64,
         pub restarts: u64,
         pub refused_restarts: u64,
     }
@@ -1274,6 +1279,10 @@ mod e2e_probe {
 
     pub fn record_install() {
         INSTALLS.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub fn record_install_start() {
+        INSTALL_STARTS.fetch_add(1, Ordering::SeqCst);
     }
 
     pub fn restart() -> Result<(), String> {
@@ -1293,6 +1302,7 @@ mod e2e_probe {
     pub fn snapshot() -> ProbeState {
         ProbeState {
             installs: INSTALLS.load(Ordering::SeqCst),
+            install_starts: INSTALL_STARTS.load(Ordering::SeqCst),
             restarts: RESTARTS.load(Ordering::SeqCst),
             refused_restarts: REFUSED.load(Ordering::SeqCst),
         }

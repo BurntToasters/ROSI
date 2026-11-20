@@ -2,9 +2,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../../helpers/app-bridge.js";
-import { waitForNoProcess } from "../../helpers/host.js";
-import { activityFor } from "../../helpers/ui.js";
+import { processesMatching, waitForNoProcess } from "../../helpers/host.js";
+import { activityFor, api, waitForAppReady } from "../../helpers/ui.js";
 
 const env = process.env;
 const MEDIA = env.ROSI_E2E_MEDIA_URL;
@@ -27,6 +26,27 @@ async function waitForAllTerminal(timeoutMsg) {
     async () =>
       (await api("getQueue")).every((item) => TERMINAL.includes(item.status)),
     { timeout: 180_000, interval: 500, timeoutMsg },
+  );
+}
+
+/** Wait until a process whose command line mentions `needle` is running. */
+async function waitForProcess(needle, message, timeout = 30_000) {
+  await browser.waitUntil(() => processesMatching(needle).length > 0, {
+    timeout,
+    interval: 250,
+    timeoutMsg: message,
+  });
+}
+
+/** Wait until the activity log holds at least `count` entries for the URL. */
+async function waitForActivityCount(url, count, message, timeout = 15_000) {
+  await browser.waitUntil(
+    async () => (await activityFor(url)).length >= count,
+    {
+      timeout,
+      interval: 250,
+      timeoutMsg: message,
+    },
   );
 }
 
@@ -116,11 +136,11 @@ describe("queue and session coordinator behaviour", () => {
     assert.equal((await api("addToQueue", [slow])).data.added, 1);
     assert.equal((await api("startQueue")).ok, true);
     await waitForItemStatus(slow, "downloading", "queue item never started");
-    await browser.pause(1000);
+    await waitForProcess("coord=retry", "yt-dlp never started for the item");
     assert.equal((await api("cancelQueue")).ok, true);
     await waitForItemStatus(slow, "cancelled", "cancel did not land");
     await waitForNoProcess("coord=retry", "cancelled yt-dlp survived");
-    await browser.pause(500);
+    await waitForActivityCount(slow, 1, "cancelled item was never recorded");
     let entries = await activityFor(slow);
     assert.equal(entries.length, 1, "cancelled item recorded more than once");
     assert.equal(entries[0].outcome, "cancelled");
@@ -129,7 +149,7 @@ describe("queue and session coordinator behaviour", () => {
     assert.equal((await api("retryQueueItem", item.id)).ok, true);
     assert.equal((await api("startQueue")).ok, true);
     await waitForItemStatus(slow, "downloading", "retried item never started");
-    await browser.pause(1000);
+    await waitForProcess("coord=retry", "yt-dlp never started for the retry");
     assert.equal((await api("cancelQueue")).ok, true);
     await waitForItemStatus(
       slow,
@@ -137,7 +157,7 @@ describe("queue and session coordinator behaviour", () => {
       "retried attempt did not cancel",
     );
     await waitForNoProcess("coord=retry", "retried yt-dlp survived");
-    await browser.pause(500);
+    await waitForActivityCount(slow, 2, "retried attempt was never recorded");
     entries = await activityFor(slow);
     assert.equal(entries.length, 2, JSON.stringify(entries));
     assert.deepEqual(
@@ -199,11 +219,15 @@ describe("queue and session coordinator behaviour", () => {
     assert.equal((await api("addToQueue", [slow, next])).data.added, 2);
     assert.equal((await api("startQueue")).ok, true);
     await waitForItemStatus(slow, "downloading", "queue item never started");
-    await browser.pause(1000);
+    await waitForProcess("coord=clear", "yt-dlp never started for the item");
     assert.equal((await api("clearQueue")).ok, true);
     assert.deepEqual(await api("getQueue"), []);
     await waitForNoProcess("coord=clear", "cleared queue yt-dlp survived");
-    await browser.pause(1000);
+    await waitForActivityCount(
+      slow,
+      1,
+      "cleared running item was never recorded",
+    );
     const slowEntries = await activityFor(slow);
     assert.equal(slowEntries.length, 1, "running item recorded more than once");
     assert.equal(slowEntries[0].outcome, "cancelled");
@@ -296,7 +320,11 @@ describe("queue and session coordinator behaviour", () => {
           timeoutMsg: "the stale snapshot never reached the renderer",
         },
       );
-      await browser.pause(1000);
+      // The app's own listener ran before this one. Two frames let any render
+      // it scheduled from the stale snapshot reach the DOM.
+      await browser.executeAsync((done) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => done(true))),
+      );
       assert.equal(
         await rowCount(),
         rendered,
@@ -327,6 +355,7 @@ describe("queue and session coordinator behaviour", () => {
 
     await browser.execute(() => {
       window.__rosiActivityUpdates = [];
+      window.__rosiQueueTicks = 0;
       window.__rosiActivityUnsubscribe =
         window.__ROSI_E2E__.api.onDownloadActivityUpdate((snapshot) => {
           window.__rosiActivityUpdates.push(
@@ -335,6 +364,11 @@ describe("queue and session coordinator behaviour", () => {
               .filter((url) => url.includes("coord=cancelbatch")),
           );
         });
+      window.__rosiQueueTickUnsubscribe = window.__ROSI_E2E__.api.onQueueUpdate(
+        () => {
+          window.__rosiQueueTicks += 1;
+        },
+      );
     });
     try {
       assert.equal((await api("cancelQueue")).ok, true);
@@ -346,8 +380,23 @@ describe("queue and session coordinator behaviour", () => {
           timeoutMsg: "cancel produced no activity update",
         },
       );
-      // A second event would arrive shortly after the first one.
-      await browser.pause(1000);
+      assert.deepEqual(
+        (await api("getQueue")).map((item) => item.status),
+        ["cancelled", "cancelled", "cancelled", "cancelled", "cancelled"],
+      );
+      // A second activity event would have been emitted before this queue
+      // snapshot. Events keep their order, so once the renderer has it, the
+      // activity updates are complete.
+      assert.equal((await api("clearFinishedQueue")).ok, true);
+      await browser.waitUntil(
+        () => browser.execute(() => window.__rosiQueueTicks >= 1),
+        {
+          timeout: 10_000,
+          interval: 100,
+          timeoutMsg:
+            "the queue snapshot after cancel never reached the renderer",
+        },
+      );
       const updates = await browser.execute(() =>
         window.__rosiActivityUpdates.slice(),
       );
@@ -364,15 +413,14 @@ describe("queue and session coordinator behaviour", () => {
     } finally {
       await browser.execute(() => {
         window.__rosiActivityUnsubscribe?.();
+        window.__rosiQueueTickUnsubscribe?.();
         delete window.__rosiActivityUnsubscribe;
+        delete window.__rosiQueueTickUnsubscribe;
         delete window.__rosiActivityUpdates;
+        delete window.__rosiQueueTicks;
       });
     }
 
-    assert.deepEqual(
-      (await api("getQueue")).map((item) => item.status),
-      ["cancelled", "cancelled", "cancelled", "cancelled", "cancelled"],
-    );
     const rows = (await api("getDownloadActivity")).data.filter((entry) =>
       entry.url.includes("coord=cancelbatch"),
     );

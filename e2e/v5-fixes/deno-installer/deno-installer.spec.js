@@ -2,7 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import {
+  api,
+  clickById,
+  clickModalButton,
+  reloadRenderer,
+  waitForAppReady,
+} from "../../helpers/ui.js";
 
 // Acceptance for the Deno installer fix: a missing package manager fails
 // before any native dialog, and every failure path offers the official
@@ -58,28 +64,6 @@ async function scenario(name, body) {
   }
 }
 
-async function clickById(id) {
-  await browser.execute((target) => {
-    document.getElementById(target)?.click();
-  }, id);
-}
-
-async function reloadRenderer() {
-  await browser.execute(() => {
-    window.__ROSI_E2E__.ready = false;
-    window.setTimeout(() => window.location.reload(), 50);
-  });
-  await browser.waitUntil(
-    async () =>
-      browser.execute(
-        () =>
-          Boolean(window.__ROSI_E2E__?.ready) &&
-          Boolean(window.__ROSI_E2E__?.api),
-      ),
-    { timeout: 60_000, timeoutMsg: "renderer did not come back after reload" },
-  );
-}
-
 // Records every external URL the app asks to open, instead of opening it.
 function stubOpenExternal() {
   return browser.execute(() => {
@@ -109,18 +93,6 @@ function modalView() {
       ),
     };
   });
-}
-
-// Clicks a modal button by its label. The modal runs the action after its
-// hide animation, so callers wait for the effect rather than the click.
-function clickModalButton(label) {
-  return browser.execute((text) => {
-    const button = [...document.querySelectorAll("#modal-buttons button")].find(
-      (candidate) => candidate.textContent.trim() === text,
-    );
-    if (!button) throw new Error(`no modal button labelled ${text}`);
-    button.click();
-  }, label);
 }
 
 function wizardState() {

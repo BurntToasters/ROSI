@@ -16,7 +16,12 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import {
+  api,
+  waitFor,
+  waitForAppReady,
+  waitForModal,
+} from "../../helpers/ui.js";
 import { REPO_ROOT } from "../../helpers/profile.js";
 
 const MEDIA = process.env.ROSI_E2E_MEDIA_URL;
@@ -562,22 +567,11 @@ async function snapshot() {
   return probe("snapshot");
 }
 
-async function waitForTitle(title, timeout = 8_000) {
-  await browser.waitUntil(
-    async () => {
-      const current = (await snapshot()).modal;
-      return current.active && !current.hiding && current.title === title;
-    },
-    { timeout, interval: 100, timeoutMsg: `modal "${title}" did not show` },
-  );
-}
-
-async function waitForHidden(timeout = 5_000) {
-  await browser.waitUntil(async () => !(await snapshot()).modal.active, {
-    timeout,
-    interval: 100,
-    timeoutMsg: "modal did not hide",
-  });
+// True when no CSS transition is running. Infinite animations are ignored.
+function transitionsSettled() {
+  return document
+    .getAnimations({ subtree: true })
+    .every((animation) => !(animation instanceof CSSTransition));
 }
 
 async function emitUpdaterStatus(payload) {
@@ -615,6 +609,24 @@ async function waitForQueueStatus(url, status, timeout = 60_000) {
   );
 }
 
+// Waits until the modal differs from `before`: gone, fading, no longer busy, or
+// showing other content.
+async function waitForModalChange(before, message) {
+  await browser.waitUntil(
+    async () => {
+      const now = (await snapshot()).modal;
+      return (
+        !now.active ||
+        now.hiding !== before.hiding ||
+        now.busy !== before.busy ||
+        now.title !== before.title ||
+        JSON.stringify(now.buttons) !== JSON.stringify(before.buttons)
+      );
+    },
+    { timeout: 3_000, interval: 100, timeoutMsg: message },
+  );
+}
+
 // Retires probe and updater prompts, then clicks through any others, so one
 // check cannot leave a prompt behind for the next.
 async function closeModals() {
@@ -625,13 +637,13 @@ async function closeModals() {
     const current = (await snapshot()).modal;
     if (!current.active) return;
     if (current.hiding || current.busy) {
-      await browser.pause(250);
+      await waitForModalChange(current, "hiding or busy prompt did not change");
       continue;
     }
     if (current.buttons.length > 0) {
       await probe("clickButton", { label: current.buttons[0] });
     }
-    await browser.pause(300);
+    await waitForModalChange(current, "pressed prompt did not change");
   }
   throw new Error("could not close the modal stack during cleanup");
 }
@@ -708,9 +720,15 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         priority: true,
         buttons: [{ label: "Installing...", disabled: true }],
       });
-      await waitForTitle("Installing Deno...");
+      await waitForModal("Installing Deno...");
       await browser.keys("Escape");
-      await browser.pause(400);
+      // Escape is handled synchronously, so a wrong dismissal shows as hiding
+      // at once; the transition wait also covers the fade.
+      await waitFor(
+        transitionsSettled,
+        "modal transitions did not settle",
+        5_000,
+      );
       const current = (await snapshot()).modal;
       assert.equal(
         current.active && !current.hiding,
@@ -737,15 +755,20 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
           priority: true,
           buttons: [{ label: "Installing...", disabled: true }],
         });
-        await waitForTitle("Installing Deno...");
+        await waitForModal("Installing Deno...");
         await browser.keys("Escape");
-        await browser.pause(400);
+        // Escape is handled synchronously; see B4-1.
+        await waitFor(
+          transitionsSettled,
+          "modal transitions did not settle",
+          5_000,
+        );
         const current = await snapshot();
         assert.equal(current.modal.busy, true, "busy prompt was dismissed");
         assert.equal(current.sidebarOpen, true, "Escape reached the sidebar");
       } finally {
         await probe("retire", PROBE_KEY);
-        await waitForHidden().catch(() => {});
+        await waitForModal(false).catch(() => {});
         await probe("sidebarToggle");
       }
       return { sidebarOpenAfterEscape: true };
@@ -758,9 +781,9 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         title: "Plain probe",
         buttons: [{ label: "OK", primary: true }],
       });
-      await waitForTitle("Plain probe");
+      await waitForModal("Plain probe");
       await browser.keys("Escape");
-      await waitForHidden();
+      await waitForModal(false);
       return { closed: true };
     });
   });
@@ -773,9 +796,9 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         onDismissCount: "dismiss",
         buttons: [{ label: "Later" }],
       });
-      await waitForTitle("Dismiss probe");
+      await waitForModal("Dismiss probe");
       await probe("escapeTwice");
-      await browser.pause(400);
+      await waitForModal(false);
       const counts = (await probe("snapshot")).counts;
       assert.equal(
         counts.dismiss,
@@ -793,9 +816,9 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         onDismissCount: "dismiss",
         buttons: [{ label: "Confirm", primary: true, count: "confirm" }],
       });
-      await waitForTitle("Button probe");
+      await waitForModal("Button probe");
       await probe("clickButton", { label: "Confirm" });
-      await waitForHidden();
+      await waitForModal(false);
       const counts = (await snapshot()).counts;
       assert.equal(counts.confirm, 1, "the button action did not run once");
       assert.equal(counts.dismiss ?? 0, 0, "onDismiss ran for a button press");
@@ -809,9 +832,13 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
       assert.equal((await api("addToQueue", [slow])).data.added, 1);
       assert.equal((await api("startQueue")).ok, true);
       await waitForQueueStatus(slow, "downloading");
-      await browser.pause(300);
+      await waitFor(
+        () => document.querySelector(".queue-item.queue-downloading") !== null,
+        "renderer queue did not show the downloading item",
+        10_000,
+      );
       await probe("confirmInterrupt", "Restarting ROSI");
-      await waitForTitle("Download in Progress");
+      await waitForModal("Download in Progress");
       await browser.keys("Escape");
       await browser.waitUntil(
         async () => (await snapshot()).confirm?.settled === true,
@@ -827,7 +854,7 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         false,
         "Escape did not keep the current work",
       );
-      await waitForHidden();
+      await waitForModal(false);
       const item = (await api("getQueue")).find((entry) => entry.url === slow);
       assert.equal(item?.status, "downloading", "Escape stopped the download");
       return { settledValue: after.confirm.value, queueStatus: item.status };
@@ -841,7 +868,7 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         title: "Confirm probe",
         buttons: [{ label: "Confirm", primary: true, count: "confirm" }],
       });
-      await waitForTitle("Confirm probe");
+      await waitForModal("Confirm probe");
       const { elapsedMs } = await probe("clickThenPriority", {
         label: "Confirm",
         title: "Priority probe",
@@ -850,8 +877,7 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         elapsedMs < 200,
         `priority prompt was not inside the fade (${elapsedMs} ms)`,
       );
-      await waitForTitle("Priority probe");
-      await browser.pause(400);
+      await waitForModal("Priority probe");
       const counts = (await snapshot()).counts;
       assert.equal(counts.confirm, 1, "the pressed action was dropped");
       return { confirmCount: counts.confirm, elapsedMs: Math.round(elapsedMs) };
@@ -864,9 +890,9 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         title: "Double probe",
         buttons: [{ label: "Go", count: "go" }],
       });
-      await waitForTitle("Double probe");
+      await waitForModal("Double probe");
       await probe("clickButton", { label: "Go", double: true });
-      await browser.pause(400);
+      await waitForModal(false);
       const counts = (await snapshot()).counts;
       assert.equal(counts.go, 1, `action ran ${counts.go ?? 0} times`);
       return { goCount: counts.go };
@@ -879,13 +905,13 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         title: "Throw probe",
         buttons: [{ label: "Boom", throws: true, count: "boom" }],
       });
-      await waitForTitle("Throw probe");
+      await waitForModal("Throw probe");
       await probe("show", {
         title: "After throw",
         buttons: [{ label: "OK", primary: true }],
       });
       await probe("clickButton", { label: "Boom" });
-      await waitForTitle("After throw", 4_000);
+      await waitForModal("After throw", { timeout: 4_000 });
       const counts = (await snapshot()).counts;
       assert.equal(counts.boom, 1, "the throwing action did not run");
       return { boomCount: counts.boom };
@@ -898,10 +924,16 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         title: "Closing A",
         buttons: [{ label: "Close", count: "closeA" }],
       });
-      await waitForTitle("Closing A");
+      await waitForModal("Closing A");
       await probe("clickThenPriority", { label: "Close", title: "Priority A" });
-      await waitForTitle("Priority A");
-      await browser.pause(600);
+      await waitForModal("Priority A");
+      // The fade timer of the closed prompt is 200 ms and the new prompt's own
+      // fade-in is longer, so it has fired once transitions settle.
+      await waitFor(
+        transitionsSettled,
+        "modal transitions did not settle",
+        5_000,
+      );
       const depth = await probe("depth", "Closing A");
       assert.equal(depth, 0, "the closed prompt came back");
       return { depthAfter: depth };
@@ -914,9 +946,9 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         title: "Go modal",
         buttons: [{ label: "Go", count: "go", thenShow: "Second probe" }],
       });
-      await waitForTitle("Go modal");
+      await waitForModal("Go modal");
       await probe("clickButton", { label: "Go" });
-      await waitForTitle("Second probe");
+      await waitForModal("Second probe");
       assert.equal((await snapshot()).counts.go, 1, "the action did not run");
       return { secondShown: true };
     });
@@ -931,9 +963,9 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         value: "probe bridge failure",
       });
       await emitUpdaterStatus(availableStatus(9101, "9.1.1"));
-      await waitForTitle("Update Available!");
+      await waitForModal("Update Available!");
       await probe("clickButton", { label: "Download & Install" });
-      await waitForTitle("Update Error");
+      await waitForModal("Update Error");
       const current = await snapshot();
       assert.equal(
         current.banner.active,
@@ -966,9 +998,9 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         },
       });
       await emitUpdaterStatus(availableStatus(9102, "9.1.2"));
-      await waitForTitle("Update Available!");
+      await waitForModal("Update Available!");
       await probe("clickButton", { label: "Download & Install" });
-      await waitForTitle("Update Error");
+      await waitForModal("Update Error");
       const current = await snapshot();
       assert.ok(
         current.calls.includes("download_update"),
@@ -987,7 +1019,7 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
     await scenario("failed-download-one-error-prompt", async () => {
       await probe("stub", { cmd: "download_update", mode: "hold" });
       await emitUpdaterStatus(availableStatus(9103, "9.1.3"));
-      await waitForTitle("Update Available!");
+      await waitForModal("Update Available!");
       await probe("clickButton", { label: "Download & Install" });
       await browser.waitUntil(
         async () => (await snapshot()).calls.includes("download_update"),
@@ -999,13 +1031,14 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
       );
       const message = "probe download failure";
       await emitUpdaterStatus({ status: "error", message, kind: "download" });
-      await waitForTitle("Update Error");
+      await waitForModal("Update Error");
       await probe("release", {
         success: false,
         cancelled: false,
         error: message,
       });
-      await browser.pause(500);
+      // The held result settles in microtasks, which finish before the next
+      // WebDriver call runs, so the prompts counted below include its handler's.
       const depth = await probe("depth", "Update Error");
       assert.equal(depth, 1, `Update Error prompts shown or queued: ${depth}`);
       return { updateErrorPrompts: depth };
@@ -1016,7 +1049,7 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
     await scenario("cancelled-download-no-error", async () => {
       await probe("stub", { cmd: "download_update", mode: "hold" });
       await emitUpdaterStatus(availableStatus(9104, "9.1.4"));
-      await waitForTitle("Update Available!");
+      await waitForModal("Update Available!");
       await probe("clickButton", { label: "Download & Install" });
       await browser.waitUntil(
         async () => (await snapshot()).calls.includes("download_update"),
@@ -1043,7 +1076,8 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         interval: 100,
         timeoutMsg: "the banner stayed up after the cancel",
       });
-      await browser.pause(500);
+      // The banner hides in the same step that would show an error, so the
+      // hidden banner above proves the result was handled.
       assert.equal(
         await probe("depth", "Update Error"),
         0,
@@ -1065,9 +1099,9 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         candidateId: 9301,
         version: "9.3.1",
       });
-      await waitForTitle("Update Ready!");
+      await waitForModal("Update Ready!");
       await probe("clickButton", { label: "Restart Now" });
-      await waitForTitle("Update Error");
+      await waitForModal("Update Error");
       const current = await snapshot();
       assert.ok(
         current.calls.includes("install_update"),
@@ -1090,7 +1124,7 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         value: { reason: "message", message: "probe refusal" },
       });
       await probe("clickElement", "checkUpdateBtn");
-      await waitForTitle("Update Check Failed");
+      await waitForModal("Update Check Failed");
       const current = await snapshot();
       assert.ok(
         current.modal.message.includes("probe refusal"),
@@ -1254,7 +1288,11 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         interval: 100,
         timeoutMsg: "Escape in the frame did not close licenses after cycles",
       });
-      await browser.pause(500);
+      await waitFor(
+        () => !document.body.classList.contains("licenses-open"),
+        "licenses cleanup did not finish",
+        5_000,
+      );
       const current = await snapshot();
       assert.equal(
         current.modal.active,
@@ -1272,7 +1310,7 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         title: "Over licenses",
         buttons: [{ label: "OK", primary: true }],
       });
-      await waitForTitle("Over licenses");
+      await waitForModal("Over licenses");
       const escape = await probe("frameEscape");
       assert.equal(
         escape.licensesActive,
@@ -1280,7 +1318,7 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         "Escape closed licenses under an app prompt",
       );
       await probe("clickButton", { label: "OK" });
-      await waitForHidden();
+      await waitForModal(false);
       await probe("clickElement", "close-licenses");
       return { licensesStayedOpen: true };
     });

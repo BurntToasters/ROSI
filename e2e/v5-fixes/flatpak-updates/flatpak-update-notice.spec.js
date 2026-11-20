@@ -3,7 +3,13 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import {
+  api,
+  clickModalButton,
+  reloadRenderer,
+  waitForAppReady,
+  waitForModal,
+} from "../../helpers/ui.js";
 import {
   captureUpdaterStatuses,
   clickManualCheck,
@@ -62,14 +68,6 @@ function stableTarget() {
   return `${osName()}-${arch}`;
 }
 
-async function freshRenderer() {
-  await browser.execute(() => {
-    window.__ROSI_E2E__.ready = false;
-    window.setTimeout(() => window.location.reload(), 50);
-  });
-  await waitForAppReady();
-}
-
 async function installScenario({ flatpak, channel, version }) {
   if (fixture) await fixture.close();
   // The channel is set before the feed is configured, so no stale check runs.
@@ -124,43 +122,6 @@ async function readProbe() {
   };
 }
 
-function readModal() {
-  const modal = document.getElementById("app-modal");
-  return {
-    active: modal?.classList.contains("active") === true,
-    title: document.getElementById("modal-title")?.textContent?.trim() ?? "",
-    message: document.getElementById("modal-message")?.textContent ?? "",
-    buttons: [...document.querySelectorAll("#modal-buttons button")].map(
-      (button) => button.textContent.trim(),
-    ),
-  };
-}
-
-async function waitForModal(title) {
-  await browser.waitUntil(
-    async () => {
-      const modal = await browser.execute(readModal);
-      return modal.active && modal.title === title;
-    },
-    {
-      timeout: 15_000,
-      interval: 100,
-      timeoutMsg: `modal "${title}" did not appear`,
-    },
-  );
-  return browser.execute(readModal);
-}
-
-async function clickModalButton(label) {
-  await browser.execute((expected) => {
-    const button = [...document.querySelectorAll("#modal-buttons button")].find(
-      (candidate) => candidate.textContent.trim() === expected,
-    );
-    if (!button) throw new Error(`modal button "${expected}" was not found`);
-    button.click();
-  }, label);
-}
-
 async function invokeEngine(command, args) {
   return browser.executeAsync(
     (name, payload, done) => {
@@ -184,11 +145,11 @@ describe("Flatpak update notice E2E", () => {
   it("prompts with the release page for a newer Flatpak build and never downloads or installs", async () => {
     const current = await api("getAppVersion");
     const version = newerVersionThan(current);
-    await freshRenderer();
+    await reloadRenderer();
     await installScenario({ flatpak: true, channel: "stable", version });
 
     await clickManualCheck();
-    const prompt = await waitForModal("Update Available!");
+    const prompt = await waitForModal("Update Available!", { timeout: 15_000 });
     assert.ok(prompt.message.includes(`(v${version})`), prompt.message);
     assert.deepEqual(prompt.buttons, ["Open Release Page", "Later"]);
     fs.mkdirSync(runDirectory, { recursive: true });
@@ -221,7 +182,7 @@ describe("Flatpak update notice E2E", () => {
     const download = await invokeEngine("download_update", { candidateId });
     assert.ok(download.data?.error, JSON.stringify(download));
     await invokeEngine("install_update", { candidateId });
-    const refused = await waitForModal("Update Error");
+    const refused = await waitForModal("Update Error", { timeout: 15_000 });
     assert.ok(refused.message.includes("Flatpak"), refused.message);
     await clickModalButton("OK");
 
@@ -241,11 +202,11 @@ describe("Flatpak update notice E2E", () => {
   it("reads the beta feed target in a Flatpak build on the beta channel", async () => {
     const current = await api("getAppVersion");
     const version = newerVersionThan(current);
-    await freshRenderer();
+    await reloadRenderer();
     await installScenario({ flatpak: true, channel: "beta", version });
 
     await clickManualCheck();
-    const prompt = await waitForModal("Update Available!");
+    const prompt = await waitForModal("Update Available!", { timeout: 15_000 });
     assert.deepEqual(prompt.buttons, ["Open Release Page", "Later"]);
     const probe = await readProbe();
     assert.ok(probe.checkTargets.length > 0, "the feed was not checked");
@@ -265,11 +226,13 @@ describe("Flatpak update notice E2E", () => {
 
   it("reports the normal up-to-date result in a Flatpak build with no newer version", async () => {
     const current = await api("getAppVersion");
-    await freshRenderer();
+    await reloadRenderer();
     await installScenario({ flatpak: true, channel: "stable", version: null });
 
     await clickManualCheck();
-    const modal = await waitForModal("ROSI is up to date!");
+    const modal = await waitForModal("ROSI is up to date!", {
+      timeout: 15_000,
+    });
     assert.ok(modal.message.includes(`(v${current})`), modal.message);
     assert.deepEqual(modal.buttons, ["OK"]);
     await clickModalButton("OK");
@@ -282,18 +245,18 @@ describe("Flatpak update notice E2E", () => {
   it("keeps Download & Install for non-Flatpak builds", async () => {
     const current = await api("getAppVersion");
     const version = newerVersionThan(current);
-    await freshRenderer();
+    await reloadRenderer();
     await installScenario({ flatpak: false, channel: "stable", version });
 
     await clickManualCheck();
-    const prompt = await waitForModal("Update Available!");
+    const prompt = await waitForModal("Update Available!", { timeout: 15_000 });
     assert.deepEqual(prompt.buttons, ["Download & Install", "Later"]);
     await clickModalButton("Download & Install");
     await browser.waitUntil(async () => (await readProbe()).downloads === 1, {
       timeout: 15_000,
       timeoutMsg: "the update download was not started",
     });
-    await waitForModal("Update Ready!");
+    await waitForModal("Update Ready!", { timeout: 15_000 });
     await clickModalButton("Later");
     const probe = await readProbe();
     assert.deepEqual(probe.opened, []);

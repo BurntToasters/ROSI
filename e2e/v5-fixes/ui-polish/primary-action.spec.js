@@ -106,7 +106,60 @@ async function scenario(name, failureModes, body) {
   }
 }
 
-const settle = (ms = 600) => new Promise((resolve) => setTimeout(resolve, ms));
+// Resolves after two animation frames, so every microtask and frame callback
+// queued by the last action has run.
+async function nextFrames() {
+  await browser.executeAsync((done) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => done(true)));
+  });
+}
+
+// Wraps bridge methods so the page counts their calls. Each call passes
+// through. restoreStubs() puts the real methods back.
+async function countBridgeCalls(...names) {
+  await browser.execute((methods) => {
+    const bridge = window.__ROSI_E2E__.api;
+    const watch = (window.__primaryWatch ??= { original: {}, count: {} });
+    for (const name of methods) {
+      if (!(name in watch.original)) watch.original[name] = bridge[name];
+      watch.count[name] = 0;
+      bridge[name] = (...args) => {
+        watch.count[name] += 1;
+        return watch.original[name].apply(bridge, args);
+      };
+    }
+  }, names);
+}
+
+function watchedCallCount(name) {
+  return browser.execute(
+    (method) => window.__primaryWatch?.count[method] ?? 0,
+    name,
+  );
+}
+
+// Counts every write to the readiness hint. A queue refusal rewrites the hint
+// text each time, even when the text is the same.
+async function watchHintWrites() {
+  await browser.execute(() => {
+    window.__primaryHintObserver?.disconnect();
+    window.__primaryHintWrites = 0;
+    const hint = document.getElementById("downloadReadiness");
+    const observer = new MutationObserver((records) => {
+      window.__primaryHintWrites += records.length;
+    });
+    observer.observe(hint, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+    window.__primaryHintObserver = observer;
+  });
+}
+
+async function waitForHintWrite(message) {
+  await waitFor(() => window.__primaryHintWrites >= 1, message, 10_000);
+}
 
 async function waitForActivity(predicate, message, timeout = 120_000) {
   let match = null;
@@ -256,6 +309,12 @@ async function restoreStubs() {
     }
     delete window.__primaryOriginalOpen;
     delete window.__primaryOriginalDownload;
+    if (window.__primaryWatch) {
+      Object.assign(window.__ROSI_E2E__.api, window.__primaryWatch.original);
+      delete window.__primaryWatch;
+    }
+    window.__primaryHintObserver?.disconnect();
+    delete window.__primaryHintObserver;
     if (window.__primaryUnsubscribe) window.__primaryUnsubscribe();
     delete window.__primaryUnsubscribe;
     // Clipboard overrides are own properties; deleting them restores the prototype.
@@ -368,9 +427,22 @@ describe("ROSI primary action: Enter, queue refusal, result state, copy source",
           },
         );
 
+        await countBridgeCalls("cancelDownload", "downloadVideo");
         await (await browser.$("#url")).click();
         await browser.keys("Enter");
-        await settle(1500);
+        // Enter is handled in the same task, so a wrong Cancel or a second
+        // start would already have called the bridge; the frames flush the rest.
+        await nextFrames();
+        assert.equal(
+          await watchedCallCount("cancelDownload"),
+          0,
+          "Enter called cancelDownload",
+        );
+        assert.equal(
+          await watchedCallCount("downloadVideo"),
+          0,
+          "Enter started another download",
+        );
 
         const during = await readDownloadButton();
         const cancelledDuringRun = (await activityFor(url)).some(
@@ -388,7 +460,6 @@ describe("ROSI primary action: Enter, queue refusal, result state, copy source",
         );
         // The run must stay alive after Enter. Activity is written only when a run
         // ends, so the yt-dlp process and the loading state are the signals here.
-        await settle(4000);
         const stillRunning = processesMatching("slow.mp4").length > 0;
         const stillLoading = (await readDownloadButton()).loading === true;
         const cancelledLater = (await activityFor(url)).some(
@@ -522,8 +593,9 @@ describe("ROSI primary action: Enter, queue refusal, result state, copy source",
 
         // Enter with the same link goes through the same gate.
         await (await browser.$("#url")).click();
+        await watchHintWrites();
         await browser.keys("Enter");
-        await settle(800);
+        await waitForHintWrite("Enter was not refused with the queue reason");
         assert.equal(
           await stubCallCount(),
           0,
@@ -539,7 +611,7 @@ describe("ROSI primary action: Enter, queue refusal, result state, copy source",
           if (!replay) throw new Error("seed row has no Download again action");
           replay.click();
         }, seedEntry.id);
-        await settle(800);
+        await waitForHintWrite("Download again was not refused");
         assert.equal(
           await stubCallCount(),
           0,
@@ -646,7 +718,8 @@ describe("ROSI primary action: Enter, queue refusal, result state, copy source",
       // Focus the URL field and leave it: that blur runs a readiness sync.
       await (await browser.$("#url")).click();
       await browser.execute(() => document.activeElement?.blur());
-      await settle(300);
+      // The blur handler runs in the same task; the frames flush the rest.
+      await nextFrames();
       const afterBlur = await readDownloadButton();
       assert.equal(
         afterBlur.text,
@@ -814,7 +887,9 @@ describe("ROSI primary action: Enter, queue refusal, result state, copy source",
       await browser.execute(() => {
         document.getElementById("downloadBtn")?.click();
       });
-      await settle(1000);
+      // A disabled button dispatches no click, so nothing can start; the frames
+      // flush any handler that was queued anyway.
+      await nextFrames();
       assert.equal(
         await stubCallCount(),
         0,

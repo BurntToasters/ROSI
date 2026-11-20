@@ -4,7 +4,15 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, clickById, waitForAppReady } from "../../helpers/app-bridge.js";
+import {
+  api,
+  clickById,
+  clickModalButton,
+  setControl,
+  waitFor,
+  waitForAppReady,
+  waitForModal,
+} from "../../helpers/ui.js";
 import { e2eBinaryPath, REPO_ROOT } from "../../helpers/profile.js";
 
 const stamp = new Date()
@@ -136,52 +144,11 @@ async function scenario(name, body) {
   }
 }
 
-async function setControl(id, value) {
-  await browser.execute(
-    (target, next) => {
-      const control = document.getElementById(target);
-      if (!control) throw new Error(`missing control ${target}`);
-      if (control.type === "checkbox") control.checked = Boolean(next);
-      else control.value = String(next);
-      control.dispatchEvent(new Event("change", { bubbles: true }));
-    },
-    id,
-    value,
-  );
-}
-
-async function waitFor(
-  predicate,
-  message,
-  timeout = 10_000,
-  argument = undefined,
-) {
-  await browser.waitUntil(async () => browser.execute(predicate, argument), {
-    timeout,
-    interval: 100,
-    timeoutMsg: message,
-  });
-}
-
-async function waitForModal(open) {
-  await waitFor(
-    (want) =>
-      document.getElementById("app-modal")?.classList.contains("active") ===
-      want,
-    `modal did not ${open ? "open" : "close"}`,
-    5_000,
-    open,
-  );
-}
-
-async function clickModalButton(label) {
-  await browser.execute((wantedLabel) => {
-    const button = [...document.querySelectorAll("#modal-buttons button")].find(
-      (candidate) => candidate.textContent.trim() === wantedLabel,
-    );
-    if (!button) throw new Error(`missing modal action ${wantedLabel}`);
-    button.click();
-  }, label);
+// True when no CSS transition is running. Infinite animations are ignored.
+function transitionsSettled() {
+  return document
+    .getAnimations({ subtree: true })
+    .every((animation) => !(animation instanceof CSSTransition));
 }
 
 // The WebDriver plugin dispatches keys as synthetic KeyboardEvents, which do not
@@ -278,15 +245,16 @@ async function setProfile(mode) {
 // not reach the requested size within 5 s is recorded with resized: false.
 async function resizeWindow(width, height) {
   await browser.setWindowSize(width, height);
-  const deadline = Date.now() + 5_000;
   let outer = await browser.getWindowSize();
-  while (
-    (outer.width !== width || outer.height !== height) &&
-    Date.now() < deadline
-  ) {
-    await browser.pause(100);
-    outer = await browser.getWindowSize();
-  }
+  await browser
+    .waitUntil(
+      async () => {
+        outer = await browser.getWindowSize();
+        return outer.width === width && outer.height === height;
+      },
+      { timeout: 5_000, interval: 100, timeoutMsg: "window was not resized" },
+    )
+    .catch(() => {});
   return {
     outerWidth: outer.width,
     outerHeight: outer.height,
@@ -303,7 +271,11 @@ async function captureViewport(theme, width, height, increasedText) {
     document.documentElement.style.fontSize = increased ? "125%" : "";
     document.documentElement.dataset.reducedMotionProbe = "true";
   }, increasedText);
-  await browser.pause(250);
+  await waitFor(
+    transitionsSettled,
+    "viewport transitions did not settle",
+    5_000,
+  );
   const actual = await browser.execute(() => ({
     width: window.innerWidth,
     height: window.innerHeight,
@@ -682,8 +654,23 @@ describe("ROSI full-app UI polish", () => {
         };
       });
       await setSidebarOpen(true);
-      // Give any save that opening the sidebar might trigger time to report.
-      await browser.pause(1_000);
+      // A save started by opening the sidebar is scheduled in the same task or
+      // a frame later, and reports once the store is idle again.
+      await browser.executeAsync((done) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => done(true)));
+      });
+      await waitFor(
+        () => {
+          const store = window.__ROSI_E2E__.modules.settings.settingsStore;
+          return (
+            !store.persistDebounceTimer &&
+            !store.settingsSaveInFlight &&
+            store.settingsSaveWaiters.length === 0
+          );
+        },
+        "settings saves did not go idle after opening the sidebar",
+        10_000,
+      );
       const openSaves = await browser.execute(() => {
         window.__ROSI_E2E__.api.saveSettings =
           window.__idleOriginalSaveSettings;

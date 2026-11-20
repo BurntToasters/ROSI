@@ -5,7 +5,7 @@ import https from "node:https";
 import http from "node:http";
 import path from "node:path";
 import { browser } from "@wdio/globals";
-import { api, waitForAppReady } from "../helpers/app-bridge.js";
+import { api, waitForAppReady } from "../helpers/ui.js";
 import { deterministicBytes, sha256 } from "../helpers/media-server.js";
 
 const directory = process.env.ROSI_SECURITY_REPAIR_DIRECTORY;
@@ -19,6 +19,10 @@ const tlsRequests = [];
 const untrustedTlsRequests = [];
 const stalledConnections = { hits: 0, closed: 0 };
 const stalledThumbnails = { hits: 0, closed: 0 };
+// The synthetic DNS lookup holds its worker for 2 s (E2E_DNS_DELAY in
+// src-tauri/src/network_security/e2e.rs) and leaves no trace when it ends, so
+// the wait for a late connection is fixed: that delay plus a margin.
+const PAST_SYNTHETIC_DNS_MS = 2_500;
 // Snapshot taken only when a cancelled stream fails to settle. It records the
 // full activity reply, queue state, stream counters, and the tail of the app's
 // rosi.log, and writes the activity reply next to the report when it can.
@@ -1363,7 +1367,7 @@ describe("ROSI URL boundary and release proof repairs", () => {
         .filter(Boolean)
         .map((line) => JSON.parse(line));
     const waitPastSyntheticDns = () =>
-      new Promise((resolve) => setTimeout(resolve, 2_500));
+      new Promise((resolve) => setTimeout(resolve, PAST_SYNTHETIC_DNS_MS));
     const waitForDnsStart = async (host) =>
       browser.waitUntil(
         () =>

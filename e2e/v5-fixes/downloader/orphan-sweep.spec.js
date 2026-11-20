@@ -30,12 +30,26 @@ describe("V5 fix: orphaned staging sweep", () => {
   it("sweeps stale entries and never follows symlinks", async () => {
     await waitForAppReady();
     const report = { finding: 5, checks: [] };
-    const deadline = Date.now() + 30_000;
-    while (
-      Date.now() < deadline &&
-      fs.readdirSync(downloads).includes(base(manifest.staleDir))
-    ) {
-      await browser.pause(250);
+    // Wait for the sweep to remove the stale dirs. A timeout falls through so
+    // the checks below record which invariant failed.
+    try {
+      await browser.waitUntil(
+        () => {
+          const entries = fs.readdirSync(downloads);
+          return (
+            !entries.includes(base(manifest.staleDir)) &&
+            !entries.includes(base(manifest.unmergedDir)) &&
+            !fs.existsSync(manifest.recordedStaleDir)
+          );
+        },
+        {
+          timeout: 30_000,
+          interval: 250,
+          timeoutMsg: "startup sweep did not remove the stale staging dirs",
+        },
+      );
+    } catch {
+      // Reported by the invariant checks.
     }
     const names = fs.readdirSync(downloads);
     const recovered = names.filter(
