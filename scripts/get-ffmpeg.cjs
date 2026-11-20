@@ -16,14 +16,21 @@
  */
 
 const fs = require("fs");
+const os = require("os");
+const crypto = require("crypto");
 const path = require("path");
 const https = require("https");
-const http = require("http");
 const { execFileSync } = require("child_process");
 
 // FFMPEG_DL_SERVER comes from .env via `dotenv -e .env --` (see package.json).
 
 const projectRoot = path.resolve(__dirname, "..");
+const CHECKSUMS_PATH = path.join(
+  projectRoot,
+  "resources",
+  "ffmpeg",
+  "checksums.json",
+);
 
 // ─── Platform / arch maps ────────────────────────────────────────────────────
 
@@ -158,81 +165,149 @@ function parseArgs(args) {
   ];
 }
 
-/** Download a URL to a local file path, following redirects.
+const MAX_REDIRECTS = 5;
+const IDLE_TIMEOUT_MS = 60_000;
+
+/**
+ * Returns the URL unchanged when it is a plain https URL.
+ * @param {string} url
+ * @param {string} label
+ * @returns {string}
+ */
+function assertHttpsUrl(url, label) {
+  /** @type {URL} */
+  let parsed;
+  try {
+    parsed = new URL(String(url));
+  } catch {
+    throw new Error(`${label} is not a valid URL: ${url}`);
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error(`${label} must use https (got ${parsed.protocol}//).`);
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error(`${label} must not contain credentials.`);
+  }
+  return String(url);
+}
+
+/**
+ * Validates FFMPEG_DL_SERVER and returns it without a trailing slash.
+ * @param {Record<string, string | undefined>} env
+ * @returns {string}
+ */
+function assertHttpsServer(env = process.env) {
+  const server = env.FFMPEG_DL_SERVER;
+  if (!server) throw new Error("FFMPEG_DL_SERVER is not set.");
+  assertHttpsUrl(server, "FFMPEG_DL_SERVER");
+  return server.replace(/\/+$/, "");
+}
+
+/**
+ * Download an https URL to a local file path. Every redirect must stay on
+ * https, and a short body or any failure removes the partial file.
  * @param {string} url
  * @param {string} destPath
+ * @param {{ get?: Function }} [options]
  * @returns {Promise<void>}
  */
-function download(url, destPath) {
+function download(url, destPath, options = {}) {
+  const get =
+    options.get ||
+    ((/** @type {string} */ target, /** @type {Function} */ onResponse) =>
+      https.get(target, onResponse));
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(destPath);
+    /** @type {fs.WriteStream | null} */
+    let file = null;
+    let settled = false;
     let receivedBytes = 0;
-    let totalBytes = 0;
     let lastLoggedPercent = -1;
+
+    /** @param {Error} err */
+    function fail(err) {
+      if (settled) return;
+      settled = true;
+      const finish = () => {
+        fs.rm(destPath, { force: true }, () => reject(err));
+      };
+      if (file) file.close(finish);
+      else finish();
+    }
 
     /**
      * @param {string} requestUrl
+     * @param {number} redirects
      */
-    function doRequest(requestUrl) {
-      const proto = requestUrl.startsWith("https://") ? https : http;
-      proto
-        .get(requestUrl, (res) => {
-          if (
-            res.statusCode === 301 ||
-            res.statusCode === 302 ||
-            res.statusCode === 307
-          ) {
-            const location = res.headers["location"];
-            if (!location) {
-              reject(
-                new Error(
-                  `Redirect with no Location header from ${requestUrl}`,
-                ),
-              );
-              return;
-            }
-            res.resume();
-            doRequest(location);
+    function doRequest(requestUrl, redirects) {
+      try {
+        assertHttpsUrl(requestUrl, "Download URL");
+      } catch (err) {
+        fail(err instanceof Error ? err : new Error(String(err)));
+        return;
+      }
+      const request = get(requestUrl, (/** @type {any} */ res) => {
+        if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
+          res.resume();
+          const location = res.headers["location"];
+          if (!location) {
+            fail(
+              new Error(`Redirect with no Location header from ${requestUrl}`),
+            );
             return;
           }
-
-          if (res.statusCode !== 200) {
-            file.close();
-            fs.unlink(destPath, () => {});
-            reject(new Error(`HTTP ${res.statusCode} for ${requestUrl}`));
+          if (redirects >= MAX_REDIRECTS) {
+            fail(new Error(`Too many redirects from ${url}`));
             return;
           }
+          doRequest(new URL(location, requestUrl).href, redirects + 1);
+          return;
+        }
 
-          totalBytes = parseInt(res.headers["content-length"] || "0", 10);
+        if (res.statusCode !== 200) {
+          res.resume();
+          fail(new Error(`HTTP ${res.statusCode} for ${requestUrl}`));
+          return;
+        }
 
-          res.on("data", (chunk) => {
-            receivedBytes += chunk.length;
-            if (totalBytes > 0) {
-              const pct = Math.floor((receivedBytes / totalBytes) * 100);
-              if (pct !== lastLoggedPercent && pct % 10 === 0) {
-                process.stdout.write(`  ${pct}%\r`);
-                lastLoggedPercent = pct;
-              }
+        const totalBytes = parseInt(res.headers["content-length"] || "0", 10);
+        file = fs.createWriteStream(destPath);
+        res.on("data", (/** @type {Buffer} */ chunk) => {
+          receivedBytes += chunk.length;
+          if (totalBytes > 0) {
+            const pct = Math.floor((receivedBytes / totalBytes) * 100);
+            if (pct !== lastLoggedPercent && pct % 10 === 0) {
+              process.stdout.write(`  ${pct}%\r`);
+              lastLoggedPercent = pct;
             }
-          });
-
-          res.pipe(file);
-          file.on("finish", () => {
-            file.close(() => resolve());
-          });
-          file.on("error", (err) => {
-            fs.unlink(destPath, () => {});
-            reject(err);
-          });
-        })
-        .on("error", (err) => {
-          file.close();
-          fs.unlink(destPath, () => {});
-          reject(err);
+          }
         });
+        res.on("error", fail);
+        res.on("aborted", () => fail(new Error("Download was interrupted.")));
+        file.on("error", fail);
+        file.on("finish", () => {
+          if (totalBytes > 0 && receivedBytes !== totalBytes) {
+            fail(
+              new Error(
+                `Download incomplete: got ${receivedBytes} of ${totalBytes} bytes (Content-Length).`,
+              ),
+            );
+            return;
+          }
+          if (settled) return;
+          settled = true;
+          resolve();
+        });
+        res.pipe(file);
+      });
+      request.on("error", fail);
+      if (typeof request.setTimeout === "function") {
+        request.setTimeout(IDLE_TIMEOUT_MS, () =>
+          request.destroy(new Error(`Timed out waiting for ${requestUrl}`)),
+        );
+      }
     }
 
-    doRequest(url);
+    doRequest(url, 0);
   });
 }
 
@@ -292,6 +367,167 @@ function targetIsPresent({ platform, arch }) {
   );
 }
 
+const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
+
+/**
+ * Reads checksums.json. A missing file is null; a damaged one fails closed.
+ * @param {string} file
+ * @returns {Record<string, any> | null}
+ */
+function loadManifest(file = CHECKSUMS_PATH) {
+  if (!fs.existsSync(file)) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("not an object");
+    }
+    return parsed;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`resources/ffmpeg/checksums.json is unreadable: ${msg}`);
+  }
+}
+
+/**
+ * @param {string} dir
+ * @param {string} [prefix]
+ * @returns {string[]} relative paths of regular files
+ */
+function listStagedFiles(dir, prefix = "") {
+  /** @type {string[]} */
+  const files = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isSymbolicLink()) {
+      throw new Error(`Archive contains a symlink (${relative}); refusing it.`);
+    }
+    if (entry.isDirectory()) {
+      files.push(...listStagedFiles(path.join(dir, entry.name), relative));
+    } else if (entry.isFile()) {
+      files.push(relative);
+    } else {
+      throw new Error(`Archive contains a special file (${relative}).`);
+    }
+  }
+  return files;
+}
+
+/**
+ * @typedef {{ stageDir: string, destDir: string, platform: string, arch: string }} StagePaths
+ * @typedef {StagePaths & { manifest: Record<string, any> | null }} VerifyOptions
+ */
+
+/**
+ * Checks extracted binaries against the manifest, then installs them into
+ * destDir. Every file is verified before anything is copied, and the install
+ * swaps files in with a rollback, so a failure leaves destDir as it was.
+ * @param {VerifyOptions} options
+ * @returns {{ verified: string[], unverified: string[] }}
+ */
+function verifyAndInstall({ stageDir, destDir, platform, arch, manifest }) {
+  const ext = platform === "win" ? ".exe" : "";
+  const key = `${platform}:${arch}`;
+  const entry = manifest?.[key];
+  const files = listStagedFiles(stageDir);
+  /** @type {string[]} */
+  const verified = [];
+  /** @type {string[]} */
+  const unverified = [];
+
+  for (const binary of ["ffmpeg", "ffprobe"]) {
+    const fileName = `${binary}${ext}`;
+    const expectedPath = `resources/ffmpeg/${platform}/${arch}/${fileName}`;
+    const expected =
+      entry?.binaries?.[binary] ??
+      (binary === "ffmpeg" && entry?.path && entry?.sha256
+        ? { path: entry.path, sha256: entry.sha256 }
+        : null);
+    const present = files.includes(fileName);
+    if (!expected) {
+      if (present) unverified.push(binary);
+      continue;
+    }
+    if (
+      typeof expected.sha256 !== "string" ||
+      !SHA256_PATTERN.test(expected.sha256)
+    ) {
+      throw new Error(`${key} ${binary}: malformed sha256 in checksums.json.`);
+    }
+    if (expected.path !== expectedPath) {
+      throw new Error(
+        `${key} ${binary}: checksums.json path ${expected.path} does not match ${expectedPath}.`,
+      );
+    }
+    if (!present) {
+      throw new Error(
+        `${key}: archive has no ${fileName} but checksums.json lists it.`,
+      );
+    }
+    const actual = crypto
+      .createHash("sha256")
+      .update(fs.readFileSync(path.join(stageDir, fileName)))
+      .digest("hex");
+    if (actual !== expected.sha256.toLowerCase()) {
+      throw new Error(
+        `${key}: SHA-256 mismatch for ${binary}\n  expected: ${expected.sha256}\n  actual:   ${actual}`,
+      );
+    }
+    verified.push(binary);
+  }
+
+  installFiles(stageDir, destDir, files);
+  return { verified, unverified };
+}
+
+/**
+ * @param {string} stageDir
+ * @param {string} destDir
+ * @param {string[]} files
+ */
+function installFiles(stageDir, destDir, files) {
+  const tag = `${process.pid}-${Date.now()}`;
+  /** @type {{ source: string, final: string, fresh: string, old: string | null }[]} */
+  const plan = files.map((relative) => {
+    const final = path.join(destDir, ...relative.split("/"));
+    return {
+      source: path.join(stageDir, ...relative.split("/")),
+      final,
+      fresh: `${final}.new-${tag}`,
+      old: null,
+    };
+  });
+  /** @type {typeof plan} */
+  const swapped = [];
+  try {
+    for (const item of plan) {
+      fs.mkdirSync(path.dirname(item.final), { recursive: true });
+      fs.copyFileSync(item.source, item.fresh);
+    }
+    for (const item of plan) {
+      if (fs.existsSync(item.final)) {
+        item.old = `${item.final}.old-${tag}`;
+        fs.renameSync(item.final, item.old);
+      }
+      swapped.push(item);
+      fs.renameSync(item.fresh, item.final);
+    }
+  } catch (err) {
+    for (const item of swapped.reverse()) {
+      try {
+        fs.rmSync(item.final, { force: true });
+        if (item.old) fs.renameSync(item.old, item.final);
+      } catch {
+        /* keep rolling back the rest */
+      }
+    }
+    for (const item of plan) fs.rmSync(item.fresh, { force: true });
+    throw err;
+  }
+  for (const item of plan) {
+    if (item.old) fs.rmSync(item.old, { force: true });
+  }
+}
+
 async function main() {
   // --missing-only: fetch only targets whose ffmpeg/ffprobe are absent. Used
   // by workspace:bootstrap so release VMs self-provision; present binaries
@@ -307,17 +543,31 @@ async function main() {
     }
   }
 
-  // Validate FFMPEG_DL_SERVER
-  const serverBase = process.env.FFMPEG_DL_SERVER;
-  if (!serverBase) {
-    console.error("\nError: FFMPEG_DL_SERVER is not set.");
+  /** @type {string} */
+  let base = "";
+  try {
+    base = assertHttpsServer();
+  } catch (err) {
+    console.error(
+      `\nError: ${err instanceof Error ? err.message : String(err)}`,
+    );
     console.error("Add it to your .env file:");
     console.error(
       "  FFMPEG_DL_SERVER=https://your-server.example/ffmpeg/latest/",
     );
     process.exit(1);
   }
-  const base = serverBase.replace(/\/$/, ""); // strip trailing slash
+
+  /** @type {Record<string, any> | null} */
+  let manifest = null;
+  try {
+    manifest = loadManifest();
+  } catch (err) {
+    console.error(
+      `\nError: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    process.exit(1);
+  }
 
   // Validate 7z
   const sevenZipBin = find7z();
@@ -339,7 +589,9 @@ async function main() {
     const urlSegment = PLATFORM_URL_SEGMENT[platform];
     const filename = `ffmpeg_${urlSegment}_${arch}.7z`;
     const url = `${base}/${filename}`;
-    const tmpFile = path.join(projectRoot, filename);
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "rosi-ffmpeg-"));
+    const tmpFile = path.join(workDir, filename);
+    const stageDir = path.join(workDir, "extracted");
     const destDir = path.join(
       projectRoot,
       "resources",
@@ -347,45 +599,57 @@ async function main() {
       platform,
       arch,
     );
+    const tag = `[${platform}:${arch}]`;
+    let failure = "";
 
-    console.log(`[${platform}:${arch}] Downloading ${filename} ...`);
     try {
-      await download(url, tmpFile);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`\n[${platform}:${arch}] Download failed: ${msg}`);
-      process.exit(1);
-    }
-    console.log(`[${platform}:${arch}] Download complete.`);
-
-    console.log(
-      `[${platform}:${arch}] Extracting to resources/ffmpeg/${platform}/${arch}/ ...`,
-    );
-    try {
-      extract7z(sevenZipBin, tmpFile, destDir);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`\n[${platform}:${arch}] Extraction failed: ${msg}`);
-      // Clean up archive
+      console.log(`${tag} Downloading ${filename} ...`);
       try {
-        fs.unlinkSync(tmpFile);
-      } catch {
-        /* ignore */
+        await download(url, tmpFile);
+        console.log(`${tag} Download complete.`);
+      } catch (err) {
+        failure = `Download failed: ${err instanceof Error ? err.message : String(err)}`;
       }
+
+      if (!failure) {
+        console.log(`${tag} Extracting for verification ...`);
+        try {
+          extract7z(sevenZipBin, tmpFile, stageDir);
+        } catch (err) {
+          failure = `Extraction failed: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      }
+
+      if (!failure) {
+        try {
+          const result = verifyAndInstall({
+            stageDir,
+            destDir,
+            platform,
+            arch,
+            manifest,
+          });
+          for (const binary of result.unverified) {
+            console.warn(
+              `${tag} Warning: no checksums.json entry for ${binary}; installed unverified.`,
+            );
+          }
+          if (result.verified.length > 0) {
+            console.log(`${tag} Verified: ${result.verified.join(", ")}`);
+          }
+        } catch (err) {
+          failure = `Verification or install failed: ${err instanceof Error ? err.message : String(err)}\n${tag} Nothing was installed.`;
+        }
+      }
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+
+    if (failure) {
+      console.error(`\n${tag} ${failure}`);
       process.exit(1);
     }
-
-    // Clean up archive
-    try {
-      fs.unlinkSync(tmpFile);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(
-        `[${platform}:${arch}] Warning: could not delete temp archive: ${msg}`,
-      );
-    }
-
-    console.log(`[${platform}:${arch}] Done.\n`);
+    console.log(`${tag} Done.\n`);
   }
 
   console.log(
@@ -394,7 +658,17 @@ async function main() {
   console.log(`  Run 'npm run ffmpeg:check:current' to verify.\n`);
 }
 
-main().catch((err) => {
-  console.error("\nUnexpected error:", err);
-  process.exit(1);
-});
+module.exports = {
+  assertHttpsServer,
+  assertHttpsUrl,
+  download,
+  loadManifest,
+  verifyAndInstall,
+};
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("\nUnexpected error:", err);
+    process.exit(1);
+  });
+}

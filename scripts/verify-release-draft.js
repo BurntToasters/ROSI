@@ -38,6 +38,8 @@ const {
   githubCliEnvironment,
 } = require("./github-cli.cjs");
 const { isExplicitTruthy } = require("./release-policy.cjs");
+const { gpgFlavor, gpgPath, resolveGpg } = require("./fetch-ytdlp.cjs");
+
 const {
   assertExpectedRelease,
   assertNoMisnamedVersionDrafts,
@@ -248,6 +250,25 @@ function sha256Contents(contents) {
   return hash.digest("hex");
 }
 
+let cachedGpgTools = null;
+
+// Real runs find gpg on PATH or in Git for Windows. An injected spawn is a
+// test double, so it never probes the machine.
+function gpgToolsFor({ spawn, gpg, platform }) {
+  const real = spawn === spawnSync && gpg === undefined;
+  if (real && cachedGpgTools?.platform === platform) {
+    return cachedGpgTools.tools;
+  }
+  const command = gpg ?? (spawn === spawnSync ? resolveGpg() : "gpg");
+  const flavor = gpgFlavor(command, { platform });
+  const tools = {
+    command,
+    toGpg: (filePath) => gpgPath(filePath, platform, flavor),
+  };
+  if (real) cachedGpgTools = { platform, tools };
+  return tools;
+}
+
 function keyIdentifierMatches(identifier, keyId) {
   const normalized = String(identifier || "").toUpperCase();
   return normalized === keyId || normalized.endsWith(keyId);
@@ -256,6 +277,8 @@ function keyIdentifierMatches(identifier, keyId) {
 export function resolveExpectedGpgSigner({
   keyId = process.env.GPG_KEY_ID,
   spawn = spawnSync,
+  gpg,
+  platform = process.platform,
 } = {}) {
   const normalizedKeyId = String(keyId || "")
     .trim()
@@ -268,8 +291,9 @@ export function resolveExpectedGpgSigner({
       "GPG_KEY_ID must identify the trusted release signer; verification fails closed.",
     );
   }
+  const { command } = gpgToolsFor({ spawn, gpg, platform });
   const result = spawn(
-    "gpg",
+    command,
     [
       "--batch",
       "--with-colons",
@@ -356,16 +380,19 @@ export function verifyGpgDetachedSignature({
   signedPath,
   expectedFingerprint,
   spawn = spawnSync,
+  gpg,
+  platform = process.platform,
 }) {
+  const { command, toGpg } = gpgToolsFor({ spawn, gpg, platform });
   const result = spawn(
-    "gpg",
+    command,
     [
       "--batch",
       "--no-auto-key-retrieve",
       "--status-fd=1",
       "--verify",
-      signaturePath,
-      signedPath,
+      toGpg(signaturePath),
+      toGpg(signedPath),
     ],
     { encoding: "utf8", timeout: 120_000, maxBuffer: 1024 * 1024 },
   );

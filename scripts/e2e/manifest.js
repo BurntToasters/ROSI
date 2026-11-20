@@ -11,6 +11,59 @@ export const E2E_SUITE_MANIFEST = JSON.parse(
   fs.readFileSync(SUITE_MANIFEST_PATH, "utf8"),
 );
 
+const SKIP_PLATFORMS = ["darwin", "linux", "win32"];
+
+// An allowance names a platform and says why the skip is acceptable there.
+function validateSkipAllowance(allowance, owner) {
+  if (!allowance || typeof allowance !== "object" || Array.isArray(allowance)) {
+    throw new Error(
+      `e2e/suites.json ${owner} has a skip allowance that is not an object`,
+    );
+  }
+  if (!SKIP_PLATFORMS.includes(allowance.platform)) {
+    throw new Error(
+      `e2e/suites.json ${owner} has an unknown platform allowance`,
+    );
+  }
+  if (typeof allowance.reason !== "string" || allowance.reason.trim() === "") {
+    throw new Error(
+      `e2e/suites.json ${owner} has a skip allowance with no reason`,
+    );
+  }
+}
+
+// Case allowances cover a skip inside a v5-fixes runner report.
+function validateCaseSkips(manifest) {
+  const entries = manifest.allowedCaseSkips ?? [];
+  if (!Array.isArray(entries)) {
+    throw new Error("e2e/suites.json allowedCaseSkips must be an array");
+  }
+  const areas = new Set(
+    Object.values(manifest.dynamicV5Fixes?.groupAreas ?? {})
+      .flat()
+      .map((area) => `v5-fixes/${area}`),
+  );
+  const seen = new Set();
+  for (const entry of entries) {
+    validateSkipAllowance(entry, `case skip ${entry?.scenario}/${entry?.case}`);
+    if (!areas.has(entry.scenario)) {
+      throw new Error(
+        `e2e/suites.json case skip names an unknown scenario: ${entry.scenario}`,
+      );
+    }
+    if (typeof entry.case !== "string" || entry.case.trim() === "") {
+      throw new Error(
+        `e2e/suites.json case skip in ${entry.scenario} has no case name`,
+      );
+    }
+    const key = `${entry.scenario}|${entry.case}|${entry.platform}`;
+    if (seen.has(key)) {
+      throw new Error(`e2e/suites.json has a duplicate case skip: ${key}`);
+    }
+    seen.add(key);
+  }
+}
+
 export function validateSuiteManifest(manifest) {
   if (manifest?.schemaVersion !== 1) {
     throw new Error("e2e/suites.json has an unsupported schemaVersion");
@@ -63,16 +116,11 @@ export function validateSuiteManifest(manifest) {
         `e2e/suites.json scenario ${scenario.name} has invalid skip allowances`,
       );
     }
-    if (
-      scenario.allowedSkips.some(
-        (platform) => !["darwin", "linux", "win32"].includes(platform),
-      )
-    ) {
-      throw new Error(
-        `e2e/suites.json scenario ${scenario.name} has an unknown platform allowance`,
-      );
+    for (const allowance of scenario.allowedSkips) {
+      validateSkipAllowance(allowance, `scenario ${scenario.name}`);
     }
   }
+  validateCaseSkips(manifest);
   const areaGroups = manifest.dynamicV5Fixes?.groupAreas ?? {};
   const mappedAreas = new Set();
   for (const [groupId, areas] of Object.entries(areaGroups)) {
@@ -217,13 +265,52 @@ export const ROUND2_NATIVE_OBSERVATIONS = Object.freeze([
   "download-retry-cleans-staging",
   "windows-job-object-leader-exit",
 ]);
+// Scenario name -> [{ platform, reason }] for a whole scenario that may skip.
 export const ALLOWED_E2E_SKIPS = Object.freeze(
   Object.fromEntries(
     E2E_SUITE_MANIFEST.scenarios
       .filter((scenario) => scenario.allowedSkips.length > 0)
-      .map((scenario) => [scenario.name, Object.freeze(scenario.allowedSkips)]),
+      .map((scenario) => [
+        scenario.name,
+        Object.freeze(
+          scenario.allowedSkips.map((entry) => Object.freeze(entry)),
+        ),
+      ]),
   ),
 );
+// [{ scenario, case, platform, reason }] for a case skipped inside a runner.
+export const ALLOWED_CASE_SKIPS = Object.freeze(
+  (E2E_SUITE_MANIFEST.allowedCaseSkips ?? []).map((entry) =>
+    Object.freeze(entry),
+  ),
+);
+
+/**
+ * Problems for cases a runner report marks skipped. Each skip needs its own
+ * reason and an allowance for this scenario, case, and platform.
+ */
+export function caseSkipProblems(
+  scenarioName,
+  skips,
+  platform = process.platform,
+) {
+  const problems = [];
+  for (const skip of skips) {
+    if (typeof skip.reason !== "string" || skip.reason.trim() === "") {
+      problems.push(`${skip.case} was skipped with no reason`);
+    }
+    const allowed = ALLOWED_CASE_SKIPS.some(
+      (entry) =>
+        entry.scenario === scenarioName &&
+        entry.case === skip.case &&
+        entry.platform === platform,
+    );
+    if (!allowed) {
+      problems.push(`${skip.case} skipped without an allowance on ${platform}`);
+    }
+  }
+  return problems;
+}
 
 export function groupedScenarioResults(scenarios, expectedScenarios) {
   const expected = new Set(expectedScenarios);
@@ -269,8 +356,11 @@ export function scenarioOutcomeProblems(
     }
     const scenario = scenarios.find((candidate) => candidate?.name === name);
     if (scenario.status === "passed") continue;
-    const allowedPlatforms = ALLOWED_E2E_SKIPS[name] ?? [];
-    if (scenario.status === "skipped" && allowedPlatforms.includes(platform)) {
+    const allowances = ALLOWED_E2E_SKIPS[name] ?? [];
+    if (
+      scenario.status === "skipped" &&
+      allowances.some((entry) => entry.platform === platform)
+    ) {
       continue;
     }
     problems.push(`${name} has unacceptable status ${scenario.status}`);

@@ -35,12 +35,99 @@ function resolveBundledFfmpeg() {
   return fs.existsSync(candidate) ? candidate : null;
 }
 
+/** The executable named by a Chocolatey shim's --shimgen-noop output. */
+export function parseShimTarget(output) {
+  const match = /^\s*path to executable:\s*(.+?)\s*$/im.exec(output);
+  return match ? match[1] : null;
+}
+
+function findFileBounded(directory, fileName, depthRemaining, readdir) {
+  if (depthRemaining < 0) return null;
+  let entries;
+  try {
+    entries = readdir(directory, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const file = entries.find(
+    (entry) => entry.isFile() && entry.name.toLowerCase() === fileName,
+  );
+  if (file) return path.win32.join(directory, file.name);
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const nested = findFileBounded(
+      path.win32.join(directory, entry.name),
+      fileName,
+      depthRemaining - 1,
+      readdir,
+    );
+    if (nested) return nested;
+  }
+  return null;
+}
+
+/**
+ * The executable a Chocolatey shim launches. A shim starts the real binary as
+ * a child, so the app must be given the binary itself. Other paths and
+ * non-Windows hosts are returned unchanged; an unresolvable shim throws.
+ * Mirrors resolveChocolateyTarget in e2e/native-downloads-run.mjs.
+ */
+export function resolveChocolateyTarget(
+  found,
+  {
+    platform = process.platform,
+    env = process.env,
+    spawn = spawnSync,
+    exists = fs.existsSync,
+    readdir = fs.readdirSync,
+  } = {},
+) {
+  if (platform !== "win32") return found;
+  const chocolateyRoot = env.ChocolateyInstall || "C:\\ProgramData\\chocolatey";
+  const shimDirectory = path.win32.join(chocolateyRoot, "bin");
+  if (path.win32.dirname(found).toLowerCase() !== shimDirectory.toLowerCase()) {
+    return found;
+  }
+  const shimgen = spawn(found, ["--shimgen-noop"], {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 30_000,
+  });
+  const reported = parseShimTarget(
+    `${shimgen.stdout ?? ""}\n${shimgen.stderr ?? ""}`,
+  );
+  if (reported && exists(reported)) return reported;
+
+  const libRoot = path.win32.join(chocolateyRoot, "lib");
+  let packages = [];
+  try {
+    packages = readdir(libRoot, { withFileTypes: true }).filter(
+      (entry) => entry.isDirectory() && /^ffmpeg/i.test(entry.name),
+    );
+  } catch {
+    packages = [];
+  }
+  for (const entry of packages) {
+    const match = findFileBounded(
+      path.win32.join(libRoot, entry.name, "tools"),
+      "ffmpeg.exe",
+      4,
+      readdir,
+    );
+    if (match) return match;
+  }
+  throw new Error(
+    `Could not resolve the real ffmpeg.exe behind the Chocolatey shim ${found}.`,
+  );
+}
+
 /** A real FFmpeg for the conversion scenarios (never the dev stub). */
 export function resolveTestFfmpeg() {
   const bundled = resolveBundledFfmpeg();
   if (bundled) return { binary: bundled, source: "bundled", customPath: "" };
-  const candidate = process.env.ROSI_E2E_FFMPEG || which("ffmpeg");
-  if (!candidate || !fs.existsSync(candidate)) return null;
+  const found = process.env.ROSI_E2E_FFMPEG || which("ffmpeg");
+  if (!found || !fs.existsSync(found)) return null;
+  const candidate = resolveChocolateyTarget(found);
   const probe = spawnSync(candidate, ["-hide_banner", "-version"], {
     encoding: "utf8",
   });

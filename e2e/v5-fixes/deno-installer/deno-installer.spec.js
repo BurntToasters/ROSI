@@ -169,8 +169,10 @@ describe("V5 fix: Deno installer fails before any dialog and offers instructions
   it("reminder failure shows the backend error and the official instructions", async () => {
     await scenario("reminder-failure-offers-instructions", async () => {
       if (IS_LINUX) {
+        // Skipped proves nothing; the gate needs an allowance for this check.
         return {
           skipped: true,
+          invariantPassed: null,
           reason: "Linux shows only instructions; no automatic install exists",
         };
       }
@@ -254,8 +256,10 @@ describe("V5 fix: Deno installer fails before any dialog and offers instructions
   it("wizard failure shows the backend error and the official instructions", async () => {
     await scenario("wizard-failure-offers-instructions", async () => {
       if (IS_LINUX) {
+        // Skipped proves nothing; the gate needs an allowance for this check.
         return {
           skipped: true,
+          invariantPassed: null,
           reason: "Linux shows only instructions; no automatic install exists",
         };
       }

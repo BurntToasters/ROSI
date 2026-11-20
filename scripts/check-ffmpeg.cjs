@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { spawnSync } = require("child_process");
 
 const projectRoot = path.resolve(__dirname, "..");
 const checksumsPath = path.join(
@@ -187,6 +188,35 @@ function loadChecksums() {
   return JSON.parse(fs.readFileSync(checksumsPath, "utf8"));
 }
 
+/** Reads the version from an `ffmpeg -version` banner; null when absent. */
+function ffmpegVersionFromOutput(text) {
+  const match = /^ffmpeg version (\S+)/m.exec(String(text ?? ""));
+  return match ? match[1] : null;
+}
+
+function runVersionProbe(binaryPath) {
+  const result = spawnSync(binaryPath, ["-version"], {
+    encoding: "utf8",
+    timeout: 15_000,
+    windowsHide: true,
+  });
+  return result.error || result.status !== 0 ? "" : String(result.stdout);
+}
+
+/** The version, or null when this host cannot run the binary. */
+function probeFfmpegVersion(binaryPath, probe) {
+  return ffmpegVersionFromOutput(probe(binaryPath));
+}
+
+/**
+ * One manifest entry. A version that cannot be probed (another architecture)
+ * keeps the one already recorded. Readers ignore the extra field.
+ */
+function buildChecksumEntry({ binaries, version, previous }) {
+  const known = version || previous?.version;
+  return known ? { version: known, binaries } : { binaries };
+}
+
 function generateChecksumManifest(targets) {
   const manifest = loadChecksums() || {};
   for (const target of targets) {
@@ -208,9 +238,14 @@ function generateChecksumManifest(targets) {
       };
     }
 
-    manifest[key] = {
+    manifest[key] = buildChecksumEntry({
       binaries,
-    };
+      version: probeFfmpegVersion(
+        path.join(projectRoot, required.ffmpeg),
+        runVersionProbe,
+      ),
+      previous: manifest[key],
+    });
   }
   fs.writeFileSync(
     checksumsPath,
@@ -333,20 +368,26 @@ function validateTargets(targets, requireChecksums = false) {
   }
 }
 
-const {
-  targets,
-  generateChecksums: shouldGenerate,
-  requireChecksums,
-} = parseArgs(process.argv.slice(2));
-if (shouldGenerate) {
-  validateTargets(targets, requireChecksums);
-  generateChecksumManifest(targets);
-} else {
-  validateTargets(targets, requireChecksums);
+function main() {
+  const {
+    targets,
+    generateChecksums: shouldGenerate,
+    requireChecksums,
+  } = parseArgs(process.argv.slice(2));
+  if (shouldGenerate) {
+    validateTargets(targets, requireChecksums);
+    generateChecksumManifest(targets);
+  } else {
+    validateTargets(targets, requireChecksums);
+  }
+  const checksumNote = loadChecksums()
+    ? " (checksums verified)"
+    : " (no checksum manifest found)";
+  console.log(
+    `FFmpeg/ffprobe prebuild check passed for: ${targets.map((t) => `${t.platform}:${t.arch}`).join(", ")}${checksumNote}`,
+  );
 }
-const checksumNote = loadChecksums()
-  ? " (checksums verified)"
-  : " (no checksum manifest found)";
-console.log(
-  `FFmpeg/ffprobe prebuild check passed for: ${targets.map((t) => `${t.platform}:${t.arch}`).join(", ")}${checksumNote}`,
-);
+
+module.exports = { buildChecksumEntry, ffmpegVersionFromOutput };
+
+if (require.main === module) main();

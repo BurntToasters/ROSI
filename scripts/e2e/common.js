@@ -113,25 +113,109 @@ export function e2eBackgroundValue({ env, platform }) {
   return "1";
 }
 
-export function gitCommit() {
+// Paths the release gate allows to be dirty. The release scripts and the E2E
+// gate share this one definition.
+export const RELEASE_SESSION_RELATIVE_PATH = path.join(
+  "release",
+  ".build-session.json",
+);
+export const QUALITY_GATE_RELATIVE_PATH = path.join(
+  "coverage",
+  ".release-quality.json",
+);
+// Native Tauri builds rewrite these tracked outputs. Keep the allowlist exact:
+// a new or unexpected file under gen/ must still invalidate release proof.
+const GENERATED_TAURI_SCHEMA_PATHS = new Set(
+  [
+    "acl-manifests.json",
+    "capabilities.json",
+    "desktop-schema.json",
+    "linux-schema.json",
+    "macOS-schema.json",
+    "windows-schema.json",
+  ].map((name) => `src-tauri/gen/schemas/${name}`),
+);
+
+/** Paths from `git status --porcelain=v1` (keeps leading spaces in status text). */
+export function porcelainPaths(statusText) {
+  return statusText
+    .split("\n")
+    .map((line) => line.replace(/\r$/, ""))
+    .filter(Boolean)
+    .map((line) => {
+      // XY PATH  or  XY ORIG -> PATH  (XY is always two status columns)
+      const pathPart = line.length >= 3 ? line.slice(3) : line;
+      return pathPart.includes(" -> ")
+        ? pathPart.split(" -> ").at(-1)
+        : pathPart;
+    });
+}
+
+export function isIgnorableReleaseDirtyPath(filePath) {
+  // Git porcelain uses forward slashes on every platform, while the paths
+  // used to read the generated proofs follow the host platform separator.
+  const normalizedPath = filePath.replaceAll("\\", "/");
+  const releaseSessionPath = RELEASE_SESSION_RELATIVE_PATH.replaceAll(
+    "\\",
+    "/",
+  );
+  const qualityGatePath = QUALITY_GATE_RELATIVE_PATH.replaceAll("\\", "/");
+  return (
+    GENERATED_TAURI_SCHEMA_PATHS.has(normalizedPath) ||
+    normalizedPath === releaseSessionPath ||
+    normalizedPath === qualityGatePath
+  );
+}
+
+export function gitCommit(cwd = REPO_ROOT) {
   const result = spawnSync("git", ["rev-parse", "HEAD"], {
-    cwd: REPO_ROOT,
+    cwd,
     encoding: "utf8",
   });
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
-export function gitSourceTree() {
+export function gitSourceTree(cwd = REPO_ROOT) {
   const result = spawnSync("git", ["rev-parse", "HEAD^{tree}"], {
-    cwd: REPO_ROOT,
+    cwd,
     encoding: "utf8",
   });
   return result.status === 0 ? result.stdout.trim() : null;
+}
+
+// Git-ignored Cargo configs change how the binary is built, so git status
+// cannot vouch for them. Cargo reads these from src-tauri and its parents.
+const LOCAL_CARGO_CONFIG_FILES = [
+  ["src-tauri", ".cargo", "config.toml"],
+  ["src-tauri", ".cargo", "config"],
+  [".cargo", "config.toml"],
+  [".cargo", "config"],
+];
+
+/**
+ * Hash of every local Cargo config that exists, or null when there is none.
+ * A config that exists but cannot be read throws, so callers fail closed.
+ */
+export function localCargoConfigSha256(cwd = REPO_ROOT) {
+  const hash = crypto.createHash("sha256");
+  let found = false;
+  for (const parts of LOCAL_CARGO_CONFIG_FILES) {
+    const file = path.join(cwd, ...parts);
+    if (!fs.existsSync(file)) continue;
+    found = true;
+    hash.update(`${parts.join("/")}\0`);
+    hash.update(fs.readFileSync(file));
+    hash.update("\0");
+  }
+  return found ? hash.digest("hex") : null;
 }
 
 /**
- * Whether the working tree differs from HEAD, plus a hash of the exact status
- * listing. An unreadable status fails closed: it counts as dirty, with no hash.
+ * Whether the working tree differs from HEAD, plus a hash of the status
+ * listing, and a hash of any local Cargo config. Paths on the release
+ * allowlist (generated Tauri schemas, release proofs) are left out, matching
+ * the release checks. An unreadable status or config fails closed: it counts as
+ * dirty, with no hash.
  */
 export function gitWorktreeState(cwd = REPO_ROOT) {
   const result = spawnSync("git", ["status", "--porcelain=v1", "-uall"], {
@@ -139,15 +223,68 @@ export function gitWorktreeState(cwd = REPO_ROOT) {
     encoding: "utf8",
   });
   if (result.status !== 0 || typeof result.stdout !== "string") {
-    return { worktreeDirty: true, worktreeStatusSha256: null };
+    return {
+      worktreeDirty: true,
+      worktreeStatusSha256: null,
+      localCargoConfigSha256: null,
+    };
   }
+  let cargoConfigSha256 = null;
+  let cargoConfigReadable = true;
+  try {
+    cargoConfigSha256 = localCargoConfigSha256(cwd);
+  } catch {
+    cargoConfigReadable = false;
+  }
+  const kept = result.stdout
+    .split("\n")
+    .filter(
+      (line) =>
+        line.length > 0 &&
+        !porcelainPaths(line).every((filePath) =>
+          isIgnorableReleaseDirtyPath(filePath),
+        ),
+    )
+    .map((line) => `${line}\n`)
+    .join("");
   return {
-    worktreeDirty: result.stdout.length > 0,
+    worktreeDirty: kept.length > 0 || !cargoConfigReadable,
     worktreeStatusSha256: crypto
       .createHash("sha256")
-      .update(result.stdout)
+      .update(kept)
       .digest("hex"),
+    localCargoConfigSha256: cargoConfigSha256,
   };
+}
+
+/** Commit, source tree and worktree state read together. */
+export function gitSourceSnapshot(cwd = REPO_ROOT) {
+  return {
+    commit: gitCommit(cwd),
+    sourceTree: gitSourceTree(cwd),
+    ...gitWorktreeState(cwd),
+  };
+}
+
+/**
+ * What differs between two snapshots. An unreadable value (null) never counts
+ * as unchanged, so evidence cannot be trusted when git could not be read.
+ */
+export function sourceChangeProblems(before, after) {
+  const checks = [
+    ["commit", "commit"],
+    ["source tree", "sourceTree"],
+    ["worktree status", "worktreeStatusSha256"],
+    ["local Cargo config", "localCargoConfigSha256"],
+  ];
+  const problems = [];
+  for (const [label, key] of checks) {
+    const unreadable =
+      key !== "localCargoConfigSha256" &&
+      (before[key] === null || after[key] === null);
+    if (unreadable || before[key] !== after[key]) problems.push(label);
+  }
+  return problems;
 }
 
 export function cleanupProfile(profileDir) {

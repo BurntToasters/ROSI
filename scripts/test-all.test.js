@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createInitialResults, main } from "./test-all.js";
+import { createInitialResults, main, runCommand } from "./test-all.js";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -193,4 +193,29 @@ test("main fails release proof mode when proof cannot be recorded", () => {
   });
 
   assert.equal(exitCode, 1);
+});
+
+test("runCommand passes a step that writes more than 1 MiB of output", () => {
+  const results = { chatty: { status: "pending" } };
+  let seen = 0;
+  const log = console.log;
+  console.log = () => {};
+  let ok;
+  try {
+    ok = runCommand(
+      "chatty",
+      process.execPath,
+      ["-e", "process.stdout.write('x'.repeat(4 * 1024 * 1024))"],
+      (output) => {
+        seen = output.length;
+      },
+      results,
+    );
+  } finally {
+    console.log = log;
+  }
+
+  assert.equal(ok, true);
+  assert.equal(results.chatty.status, "passed");
+  assert.equal(seen, 4 * 1024 * 1024);
 });

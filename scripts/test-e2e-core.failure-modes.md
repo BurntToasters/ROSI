@@ -53,7 +53,11 @@ Before adding the profile, protect these failure cases:
     fractional, or string timeout is rejected before spawning.
 17. **Evidence from a dirty or unreadable worktree looks clean.** Every report
     records `worktreeDirty` and `worktreeStatusSha256` (hash of
-    `git status --porcelain=v1 -uall`), captured before the build. An
+    `git status --porcelain=v1 -uall`, minus the release allowlist paths the
+    release checks also ignore). The gate takes one snapshot of commit, source
+    tree and worktree state before the build, records that snapshot, and reads
+    it again after the run. Any difference fails the invocation with the
+    evidence still written (`sourceChangedDuringRun` lists what changed). An
     unreadable status records dirty with a null hash, never clean.
 18. **A partial run overwrites the canonical report or clears canonical
     screenshots.** `partialRunKind` sends core, ad-hoc, and group runs to
@@ -63,3 +67,13 @@ Before adding the profile, protect these failure cases:
     `validateSuiteManifest`, which rejects a null profile body and a core
     profile without FFmpeg and FFprobe. `profileDefinition` only reports an
     unknown profile name.
+20. **A generated schema file makes the pre-build snapshot dirty.** A plain
+    cargo build rewrites the tracked `acl-manifests.json` and the E2E build
+    restores it. The worktree state skips the allowlist shared with the
+    release scripts (one definition in `scripts/e2e/common.js`), so that file
+    alone never makes the snapshot dirty or changes its hash.
+21. **A git-ignored local Cargo config changes the build unseen.** Reports
+    record `localCargoConfigSha256` (hash of `src-tauri/.cargo/config(.toml)`
+    and `.cargo/config(.toml)`, or null). Release proof requires it to equal
+    the hash on disk now; a report without the field only passes when no such
+    config exists. An unreadable config counts as dirty.

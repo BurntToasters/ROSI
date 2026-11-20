@@ -9,32 +9,19 @@ import {
   SCREENSHOT_SCENARIO_NAMES,
   scenarioOutcomeProblems,
 } from "./test-e2e.js";
+import {
+  QUALITY_GATE_RELATIVE_PATH,
+  RELEASE_SESSION_RELATIVE_PATH,
+  isIgnorableReleaseDirtyPath,
+  localCargoConfigSha256,
+  porcelainPaths,
+} from "./e2e/common.js";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const defaultRoot = path.resolve(scriptDirectory, "..");
-const RELEASE_SESSION_RELATIVE_PATH = path.join(
-  "release",
-  ".build-session.json",
-);
-const QUALITY_GATE_RELATIVE_PATH = path.join(
-  "coverage",
-  ".release-quality.json",
-);
 const DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const HEX_SHA256 = /^[a-f0-9]{64}$/i;
 const HEX_GIT = /^[a-f0-9]{40}$/i;
-// Native Tauri builds rewrite these tracked outputs. Keep the allowlist exact:
-// a new or unexpected file under gen/ must still invalidate release proof.
-const GENERATED_TAURI_SCHEMA_PATHS = new Set(
-  [
-    "acl-manifests.json",
-    "capabilities.json",
-    "desktop-schema.json",
-    "linux-schema.json",
-    "macOS-schema.json",
-    "windows-schema.json",
-  ].map((name) => `src-tauri/gen/schemas/${name}`),
-);
 
 function command(commandName, args, root) {
   // trimEnd only: git porcelain uses " M path" / "M  path". trim() would turn
@@ -44,37 +31,6 @@ function command(commandName, args, root) {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   }).trimEnd();
-}
-
-/** Paths from `git status --porcelain=v1` (keeps leading spaces in status text). */
-function porcelainPaths(statusText) {
-  return statusText
-    .split("\n")
-    .map((line) => line.replace(/\r$/, ""))
-    .filter(Boolean)
-    .map((line) => {
-      // XY PATH  or  XY ORIG -> PATH  (XY is always two status columns)
-      const pathPart = line.length >= 3 ? line.slice(3) : line;
-      return pathPart.includes(" -> ")
-        ? pathPart.split(" -> ").at(-1)
-        : pathPart;
-    });
-}
-
-function isIgnorableReleaseDirtyPath(filePath) {
-  // Git porcelain uses forward slashes on every platform, while the paths
-  // used to read the generated proofs follow the host platform separator.
-  const normalizedPath = filePath.replaceAll("\\", "/");
-  const releaseSessionPath = RELEASE_SESSION_RELATIVE_PATH.replaceAll(
-    "\\",
-    "/",
-  );
-  const qualityGatePath = QUALITY_GATE_RELATIVE_PATH.replaceAll("\\", "/");
-  return (
-    GENERATED_TAURI_SCHEMA_PATHS.has(normalizedPath) ||
-    normalizedPath === releaseSessionPath ||
-    normalizedPath === qualityGatePath
-  );
 }
 
 function sha256File(filePath) {
@@ -228,6 +184,24 @@ function fullSuiteExpectedScenarios(root) {
   return e2eRunPlan({ onlySpec: null, v5AreaNames }).expectedScenarios;
 }
 
+/**
+ * A git-ignored local Cargo config changes how the binary is built. The report
+ * records its hash, and it must equal the one on disk now. A report from an
+ * older gate has no hash, which only matches a checkout with no such config.
+ */
+export function localCargoConfigProblem(report, root) {
+  let current;
+  try {
+    current = localCargoConfigSha256(root);
+  } catch (error) {
+    return `The local Cargo config cannot be read: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  if ((report.localCargoConfigSha256 ?? null) !== current) {
+    return "Full E2E evidence was built with a different local Cargo config than this checkout has; rerun the E2E gate.";
+  }
+  return null;
+}
+
 export function verifyFullE2eEvidence(proof, root, identity) {
   const { reportPath, binaryPath } = expectedE2eEvidencePaths(root, identity);
   let report;
@@ -252,6 +226,8 @@ export function verifyFullE2eEvidence(proof, root, identity) {
       "Full E2E evidence has no worktree state; rerun the E2E gate with this version of the gate.",
     );
   }
+  const cargoConfigProblem = localCargoConfigProblem(report, root);
+  if (cargoConfigProblem) throw new Error(cargoConfigProblem);
   // The same full-suite inventory the gate builds: the manifest scenarios plus
   // one scenario per discovered v5-fixes area.
   const expectedScenarios = fullSuiteExpectedScenarios(root);
@@ -262,8 +238,9 @@ export function verifyFullE2eEvidence(proof, root, identity) {
         expectedScenarios,
       )
     : ["scenario results are missing"];
-  // Every screenshot scenario's shots count: the main UI pass and the ui-polish
-  // area, so a missing ui-polish shot fails the same count and name checks.
+  // Every screenshot scenario's shots count: the main UI pass, the setup
+  // wizard and the ui-polish area, so a missing shot in any of them fails the
+  // same count and name checks.
   const screenshotScenarios = Array.isArray(report.scenarios)
     ? report.scenarios.filter((scenario) =>
         SCREENSHOT_SCENARIO_NAMES.includes(scenario?.name),

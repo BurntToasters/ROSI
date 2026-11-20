@@ -58,6 +58,7 @@ if (patch.error || patch.status !== 0) {
 }
 fs.writeFileSync(path.join(artifactRoot, "working-tree.patch"), patch.stdout);
 
+const startedAt = new Date().toISOString();
 const profile = createE2eProfile();
 const resultsDirectory = path.join(artifactRoot, "app");
 const result = spawnSync(
@@ -104,7 +105,8 @@ try {
 } catch {}
 const body = {
   suite: "v5-fixes-async-proxy",
-  startedAt: new Date().toISOString(),
+  startedAt,
+  finishedAt: new Date().toISOString(),
   exitStatus: result.status,
   signal: result.signal ?? null,
   launchError,

@@ -65,11 +65,30 @@ function assertZstdRunnable() {
   }
 }
 
+// Returns the event of the workflow run behind a check run, or null when it
+// cannot be resolved. Callers treat null as a failure.
+function workflowRunEvent({ run, owner, repo, api }) {
+  const suiteId = Number(run.check_suite?.id);
+  if (!Number.isSafeInteger(suiteId) || suiteId <= 0) return null;
+  const response = api(
+    "GET",
+    `/repos/${owner}/${repo}/actions/runs?check_suite_id=${suiteId}&per_page=100`,
+  );
+  const workflowRuns = (
+    Array.isArray(response?.workflow_runs) ? response.workflow_runs : []
+  ).filter((entry) => Number(entry?.check_suite_id) === suiteId);
+  if (workflowRuns.length !== 1) return null;
+  const event = workflowRuns[0].event;
+  return typeof event === "string" && event ? event : null;
+}
+
 /**
  * Reads the hosted `ci-gate` check run for `sha` and returns a reason string
  * when it does not prove a green CI run, or null when it does. Only the newest
  * run from the GitHub Actions app counts, so a same-named check from another
- * app or an older failed run cannot stand in for a passing one.
+ * app or an older failed run cannot stand in for a passing one. Runs from the
+ * weekly scheduled workflow never count: they skip the heavy jobs. A run whose
+ * workflow event cannot be resolved fails closed.
  */
 function hostedCiProblem({ sha, owner, repo, api }) {
   const endpoint =
@@ -84,9 +103,22 @@ function hostedCiProblem({ sha, owner, repo, api }) {
         Number(run.app?.id) === REQUIRED_CHECK_APP_ID,
     )
     .sort((left, right) => Number(right.id) - Number(left.id));
-  const run = runs[0];
-  if (!run) {
+  if (runs.length === 0) {
     return `no ${CI_GATE_CHECK} check run from GitHub Actions exists for this commit`;
+  }
+  let run = null;
+  for (const candidate of runs) {
+    const event = workflowRunEvent({ run: candidate, owner, repo, api });
+    if (!event) {
+      return `could not resolve the workflow event of ${CI_GATE_CHECK} run ${candidate.id}`;
+    }
+    if (event !== "schedule") {
+      run = candidate;
+      break;
+    }
+  }
+  if (!run) {
+    return `only scheduled ${CI_GATE_CHECK} runs exist for this commit, and they do not run the full gate`;
   }
   if (run.status !== "completed") {
     return `${CI_GATE_CHECK} is ${run.status || "not completed"}`;

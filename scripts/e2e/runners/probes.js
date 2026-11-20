@@ -33,8 +33,8 @@ const AUDIT_V5_MODES = Object.freeze([
 
 /**
  * Problems with one probe report, given the identity the gate expects. The
- * probes exit zero once their observations complete, so a false invariant
- * here is a reproduced product defect and fails the gate.
+ * probes exit zero once their observations complete, so an invariant that is
+ * false, missing, or not exactly true fails the gate.
  */
 export function probeReportProblems(report, expected) {
   const label = expected.label;
@@ -53,9 +53,9 @@ export function probeReportProblems(report, expected) {
     problems.push(`${label} recorded no observations`);
   }
   for (const item of observations) {
-    if (item?.invariantPassed === false) {
+    if (item?.invariantPassed !== true) {
       problems.push(
-        `${label}: ${item.name ?? item.id ?? "observation"} invariant failed`,
+        `${label}: ${item?.name ?? item?.id ?? "observation"} invariant not proven`,
       );
     }
   }

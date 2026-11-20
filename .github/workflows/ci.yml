@@ -5,7 +5,8 @@ name: CI
 # Jobs run tests and smoke builds, not signed release artifacts.
 #
 # The weekly schedule runs only the security and live-feed jobs. Heavy jobs are
-# skipped on schedule, and ci-gate expects exactly that.
+# skipped on schedule. It reports through scheduled-gate, never ci-gate, so a
+# scheduled run cannot stand in for release proof.
 #
 # yt-dlp binaries are fetched by `npm run ytdlp:fetch:all`, which uses gpg to
 # verify signatures. The ubuntu, macos and windows hosted images ship gpg. A
@@ -63,7 +64,8 @@ jobs:
   quality-gate:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    # Above the 90 minute E2E bound in test-all so it can write its failure log.
+    timeout-minutes: 105
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -170,7 +172,7 @@ jobs:
         shell: bash
         run: |
           case "$RUNNER_OS" in
-            Windows) choco install ffmpeg --no-progress -y ;;
+            Windows) choco install ffmpeg --version 9.0.2 --no-progress -y ;;
             macOS) brew install ffmpeg ;;
           esac
       - name: Print FFmpeg version
@@ -332,8 +334,25 @@ jobs:
       - name: Vendored tauri-plugin-updater version and advisory check
         run: node scripts/check-vendored-updater.mjs
 
+  # Scheduled runs only: security and live feed. Deliberately not named ci-gate.
+  scheduled-gate:
+    if: ${{ always() && github.event_name == 'schedule' }}
+    needs:
+      - updater-manifest
+      - security-audit
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require scheduled checks
+        env:
+          UPDATER_MANIFEST: ${{ needs.updater-manifest.result }}
+          SECURITY_AUDIT: ${{ needs.security-audit.result }}
+        run: |
+          set -euo pipefail
+          test "$UPDATER_MANIFEST" = success
+          test "$SECURITY_AUDIT" = success
+
   ci-gate:
-    if: ${{ always() }}
+    if: ${{ always() && github.event_name != 'schedule' }}
     needs:
       - commit-message-policy
       - quality-gate
@@ -359,14 +378,6 @@ jobs:
           set -euo pipefail
           test "$UPDATER_MANIFEST" = success
           test "$SECURITY_AUDIT" = success
-          if [ "$EVENT_NAME" = schedule ]; then
-            # Scheduled runs cover security and the live feed only.
-            test "$QUALITY_GATE" = skipped
-            test "$RUST_CHECK" = skipped
-            test "$SMOKE_BUILD" = skipped
-            test "$COMMIT_MESSAGE_POLICY" = skipped
-            exit 0
-          fi
           test "$QUALITY_GATE" = success
           test "$RUST_CHECK" = success
           test "$SMOKE_BUILD" = success

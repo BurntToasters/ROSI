@@ -4,7 +4,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { REPO_ROOT } from "../../../e2e/helpers/profile.js";
+import { sha256 } from "../../../e2e/helpers/media-server.js";
 import { ARTIFACT_DIR, e2eChildEnv, relativeToRepo } from "../common.js";
+import { caseSkipProblems } from "../manifest.js";
 import { verifyRunnerReport } from "../runner-report.js";
 import { pruneRunnerArtifacts } from "../prune-artifacts.js";
 
@@ -66,6 +68,8 @@ export function runV5FixesRunner(area, binary, ffmpeg) {
     pattern: V5_RUN_DIR_PATTERN,
     keep: V5_RETAINED_RUN_FOLDERS,
   });
+  // The gate checks each report against the hash of the binary it launched.
+  const binarySha256 = sha256(fs.readFileSync(binary));
   const result = spawnSync(process.execPath, [area.runner], {
     cwd: REPO_ROOT,
     env: e2eChildEnv({
@@ -80,14 +84,57 @@ export function runV5FixesRunner(area, binary, ffmpeg) {
   });
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
-  return result;
+  return { ...result, binarySha256 };
+}
+
+/**
+ * Skips a runner report records: cases or checks marked skipped, plus skipped
+ * records in the top-level checks and observations lists. Returns
+ * [{ case, reason }]; a check is named "<case>/<check>".
+ */
+export function reportedSkips(report) {
+  const isSkip = (item) => item?.skipped === true || item?.status === "skipped";
+  const reasonOf = (item) => {
+    const reason = item.reason ?? item.skipReason;
+    return typeof reason === "string" ? reason : "";
+  };
+  const nameOf = (item) => item.name ?? item.mode ?? "unnamed";
+  const skips = [];
+  const cases = Array.isArray(report?.cases) ? report.cases : [];
+  for (const entry of cases) {
+    if (isSkip(entry)) {
+      skips.push({ case: nameOf(entry), reason: reasonOf(entry) });
+    }
+    const checks = Array.isArray(entry?.checks) ? entry.checks : [];
+    for (const check of checks.filter(isSkip)) {
+      skips.push({
+        case: `${nameOf(entry ?? {})}/${nameOf(check)}`,
+        reason: reasonOf(check),
+      });
+    }
+  }
+  for (const key of ["checks", "observations", "previewCookieObservations"]) {
+    const records = Array.isArray(report?.[key]) ? report[key] : [];
+    for (const record of records.filter(isSkip)) {
+      skips.push({ case: nameOf(record), reason: reasonOf(record) });
+    }
+  }
+  return skips;
 }
 
 /**
  * Finds the newest report.json a runner wrote during this gate run under
- * e2e/artifacts/v5-fixes-<area>/<stamp>/. Returns { file, problem }.
+ * e2e/artifacts/v5-fixes-<area>/<stamp>/. Returns { file, problem, skipped }.
+ * `expected.binarySha256` is the gate's binary hash; the report must carry the
+ * same one and a startedAt inside this invocation. Skipped cases need an
+ * allowance in e2e/suites.json for `expected.platform`.
  */
-export function findRunnerReport(area, artifactDir, gateStartedMs) {
+export function findRunnerReport(
+  area,
+  artifactDir,
+  gateStartedMs,
+  expected = {},
+) {
   const root = path.join(artifactDir, `v5-fixes-${area.area}`);
   if (!fs.existsSync(root)) {
     return { file: null, problem: "no runner report directory was written" };
@@ -116,12 +163,30 @@ export function findRunnerReport(area, artifactDir, gateStartedMs) {
   // Network and persistence runners use different verdict keys; both count.
   // Their embedded self-hash is not checked here: network and async-proxy
   // hash their body before adding `passed`, and persistence writes a sidecar.
-  const problems = verifyRunnerReport(report, {
-    label: area.area,
-    verdict: true,
-  });
-  if (problems.length > 0) return { file, problem: problems.join("; ") };
-  return { file, problem: null };
+  const problems = [];
+  if (typeof expected.binarySha256 !== "string" || !expected.binarySha256) {
+    problems.push(`${area.area} has no gate binary hash to verify against`);
+  }
+  problems.push(
+    ...verifyRunnerReport(report, {
+      label: area.area,
+      verdict: true,
+      binarySha256: expected.binarySha256 || undefined,
+      startedAfter: gateStartedMs,
+    }),
+  );
+  const skipped = reportedSkips(report);
+  problems.push(
+    ...caseSkipProblems(
+      `v5-fixes/${area.area}`,
+      skipped,
+      expected.platform ?? process.platform,
+    ),
+  );
+  if (problems.length > 0) {
+    return { file, problem: problems.join("; "), skipped };
+  }
+  return { file, problem: null, skipped };
 }
 
 /**
@@ -150,12 +215,19 @@ function v5PassShots(pass) {
   return { shots, problem: null };
 }
 
-export function v5AreaScenario(area, pass, runnerResult, gateStartedMs) {
+export function v5AreaScenario(
+  area,
+  pass,
+  runnerResult,
+  gateStartedMs,
+  platform = process.platform,
+) {
   const problems = [];
   if (area.skipFiles.length > 0) {
     problems.push(`skips or focuses tests in ${area.skipFiles.join(", ")}`);
   }
   let report = null;
+  let skippedCases = [];
   if (area.runner) {
     if (!runnerResult) {
       problems.push("runner did not run");
@@ -164,8 +236,12 @@ export function v5AreaScenario(area, pass, runnerResult, gateStartedMs) {
         `runner exited with ${runnerResult.status ?? runnerResult.signal ?? runnerResult.error?.message}`,
       );
     } else {
-      const found = findRunnerReport(area, ARTIFACT_DIR, gateStartedMs);
+      const found = findRunnerReport(area, ARTIFACT_DIR, gateStartedMs, {
+        binarySha256: runnerResult.binarySha256,
+        platform,
+      });
       report = found.file ? relativeToRepo(found.file) : null;
+      skippedCases = found.skipped ?? [];
       if (found.problem) problems.push(found.problem);
     }
   } else if (
@@ -189,6 +265,8 @@ export function v5AreaScenario(area, pass, runnerResult, gateStartedMs) {
   };
   // Only areas that record screenshots carry a shots list.
   if (shots.length > 0) scenario.shots = shots;
+  // Allowed skips stay visible in the evidence report.
+  if (skippedCases.length > 0) scenario.skippedCases = skippedCases;
   if (problems.length > 0) scenario.reason = problems.join("; ");
   return scenario;
 }

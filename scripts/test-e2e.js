@@ -21,10 +21,9 @@ import {
   ARTIFACT_DIR,
   cleanupProfile,
   e2eBackgroundValue,
-  gitCommit,
-  gitSourceTree,
-  gitWorktreeState,
+  gitSourceSnapshot,
   relativeToRepo,
+  sourceChangeProblems,
   which,
 } from "./e2e/common.js";
 import {
@@ -281,8 +280,12 @@ async function runE2e(timing, options = {}) {
   if (background !== null) process.env.ROSI_E2E_BACKGROUND = background;
   reexecUnderXvfb();
   const startedAt = new Date().toISOString();
-  // Recorded before the build so it describes the source the binary came from.
-  const worktree = gitWorktreeState();
+  // Commit, source tree and worktree state are read together before the build,
+  // so the evidence describes the source the binary came from. They are read
+  // again after the run and any change fails the invocation. A plain cargo
+  // build rewrites the tracked acl-manifests.json and the E2E build restores
+  // it; that file is on the release allowlist, so it does not show up here.
+  const sourceAtStart = gitSourceSnapshot();
   // The full suite is release evidence and must always run against a freshly
   // compiled binary. Reuse is limited to an explicitly selected ad-hoc spec.
   const reuseRequested = process.env.ROSI_E2E_REUSE === "1";
@@ -660,6 +663,14 @@ async function runE2e(timing, options = {}) {
     legacyPasses.map((pass) => [pass.legacyCase, readLogTail(pass, 15)]),
   );
   const appLogTail = readLogTail(mainPass, 40);
+  const sourceChanges = sourceChangeProblems(
+    sourceAtStart,
+    gitSourceSnapshot(),
+  );
+  if (sourceChanges.length > 0) {
+    const detail = `source changed during the run (${sourceChanges.join(", ")}); the binary no longer matches the checkout`;
+    failure = failure ? `${failure}; ${detail}` : detail;
+  }
   await timedStage(timing, "cleanup:profiles", () => {
     for (const pass of wdioPasses) {
       cleanupProfile(pass.profile.profileDir);
@@ -688,9 +699,8 @@ async function runE2e(timing, options = {}) {
         : {}),
       expectedScenarios,
       version: packageJson.version,
-      commit: gitCommit(),
-      sourceTree: gitSourceTree(),
-      ...worktree,
+      ...sourceAtStart,
+      sourceChangedDuringRun: sourceChanges,
       packageLockSha256: sha256(
         fs.readFileSync(path.join(REPO_ROOT, "package-lock.json")),
       ),

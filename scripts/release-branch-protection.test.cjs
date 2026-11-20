@@ -130,7 +130,15 @@ test("CI gate aggregates every independent proof check", () => {
     "utf8",
   );
   assert.match(workflow, /^  ci-gate:\r?$/m);
-  assert.match(workflow, /^    if: \$\{\{ always\(\) \}\}\r?$/m);
+  const gateJob = workflow.match(
+    /^  ci-gate:\r?\n[\s\S]*?(?=^  [a-z][a-z-]+:\r?$|(?![\s\S]))/m,
+  )?.[0];
+  assert.ok(gateJob);
+  assert.match(
+    gateJob,
+    /^    if: \$\{\{ always\(\) && github\.event_name != 'schedule' \}\}\r?$/m,
+  );
+  assert.doesNotMatch(gateJob, /EVENT_NAME" = schedule/);
   for (const job of [
     "commit-message-policy",
     "quality-gate",
@@ -141,6 +149,48 @@ test("CI gate aggregates every independent proof check", () => {
   ]) {
     assert.match(workflow, new RegExp(`^      - ${job}\\r?$`, "m"));
   }
+});
+
+test("the scheduled path has its own gate and never posts ci-gate", () => {
+  const workflow = require("node:fs").readFileSync(
+    require("node:path").join(
+      __dirname,
+      "..",
+      ".github",
+      "workflows",
+      "ci.yml",
+    ),
+    "utf8",
+  );
+  const scheduledJob = workflow.match(
+    /^  scheduled-gate:\r?\n[\s\S]*?(?=^  [a-z][a-z-]+:\r?$|(?![\s\S]))/m,
+  )?.[0];
+  assert.ok(scheduledJob);
+  assert.match(
+    scheduledJob,
+    /^    if: \$\{\{ always\(\) && github\.event_name == 'schedule' \}\}\r?$/m,
+  );
+  assert.match(scheduledJob, /^      - updater-manifest\r?$/m);
+  assert.match(scheduledJob, /^      - security-audit\r?$/m);
+  assert.doesNotMatch(scheduledJob, /^    name: ci-gate/m);
+});
+
+test("quality-gate timeout exceeds the E2E bound inside test-all", () => {
+  const workflow = require("node:fs").readFileSync(
+    require("node:path").join(
+      __dirname,
+      "..",
+      ".github",
+      "workflows",
+      "ci.yml",
+    ),
+    "utf8",
+  );
+  const qualityJob = workflow.match(
+    /^  quality-gate:\r?\n[\s\S]*?(?=^  [a-z][a-z-]+:\r?$)/m,
+  )?.[0];
+  assert.ok(qualityJob);
+  assert.match(qualityJob, /^    timeout-minutes: 105\r?$/m);
 });
 
 test("CI avoids duplicate PR branch runs and duplicate Ubuntu checks", () => {

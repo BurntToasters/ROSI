@@ -162,3 +162,15 @@ Test seams used, and what they do not prove:
     its shots during the run and appends exactly one `v5-screenshots` record in its
     `after` hook. A second record would make the gate report the scenario as incomplete,
     so the spec must never write one per screenshot.
+
+## U9 measurement timing (continued)
+
+46. **The reset links are measured during the theme colour transition.** This is a
+    measurement fault, not a product regression: the text colour is read while it is
+    still near the background (every link at 1.09:1 was seen once). Check
+    `light-settings-reset-contrast` waits first (`readResetReadiness`): the theme
+    attribute equals `light`, `getAnimations()` has no unfinished animation or
+    transition on any link or ancestor, and the colour, background and opacity
+    signature of the links and their ancestors is identical on two consecutive reads.
+    A failing link is reported with its colour, background and opacity. Not a regression
+    check on its own.

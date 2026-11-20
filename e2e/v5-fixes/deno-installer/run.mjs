@@ -95,9 +95,17 @@ function runSpec(profile, env, specDir) {
       fs.readFileSync(path.join(specDir, "report.json"), "utf8"),
     ).checks;
   } catch {}
+  // A skipped check reports null; the gate decides whether the skip is allowed.
   const allPassed =
     checks.length > 0 &&
-    checks.every((check) => check.invariantPassed === true);
+    checks.every(
+      (check) =>
+        check.invariantPassed === true ||
+        (check.skipped === true &&
+          check.invariantPassed === null &&
+          typeof check.reason === "string" &&
+          check.reason.trim() !== ""),
+    );
   return {
     name: SPEC_NAME,
     spec: SPEC_FILE,

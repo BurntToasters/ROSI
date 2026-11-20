@@ -18,6 +18,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const { assertHttpsServer } = require("./get-ffmpeg.cjs");
 
 const projectRoot = path.resolve(__dirname, "..");
 const ffmpegDir = path.join(projectRoot, "resources", "ffmpeg");
@@ -76,9 +77,21 @@ function copyTree(from, to) {
   });
 }
 
+/**
+ * Refuses a missing or non-https server before anything is backed up.
+ * @param {Record<string, string | undefined>} env
+ * @returns {string}
+ */
+function preflight(env = process.env) {
+  return assertHttpsServer(env);
+}
+
 function main() {
-  if (!process.env.FFMPEG_DL_SERVER) {
-    console.error("Error: FFMPEG_DL_SERVER is not set. Add it to .env.");
+  try {
+    preflight();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`Error: ${msg} Set an https URL in .env.`);
     process.exit(1);
   }
 
@@ -122,6 +135,8 @@ function main() {
   );
   console.log("  resources/ffmpeg/checksums.json.\n");
 }
+
+module.exports = { preflight };
 
 if (require.main === module) {
   main();

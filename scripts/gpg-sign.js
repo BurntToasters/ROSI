@@ -15,7 +15,10 @@ import githubCli from "./github-cli.cjs";
 import { assertStableReleaseOverridesAllowed } from "./release-policy.cjs";
 import draftMetadata from "./release-draft-metadata.cjs";
 import { isDirectExecutionOf } from "./direct-execution.mjs";
+import { createRequire } from "module";
 
+const require = createRequire(import.meta.url);
+const { gpgFlavor, gpgPath, resolveGpg } = require("./fetch-ytdlp.cjs");
 const { assertGitHubCliAuthenticated, githubApi, uploadReleaseAsset } =
   githubCli;
 const {
@@ -969,7 +972,30 @@ function writeBuildCommitRecords({
   });
 }
 
-function signFile(filePath) {
+let cachedGpgTools = null;
+
+// Real runs find gpg on PATH or in Git for Windows. An injected spawn is a
+// test double, so it never probes the machine.
+function gpgToolsFor({ spawn, gpg, platform }) {
+  const real = spawn === spawnSync && gpg === undefined;
+  if (real && cachedGpgTools && cachedGpgTools.platform === platform) {
+    return cachedGpgTools.tools;
+  }
+  const command = gpg ?? (spawn === spawnSync ? resolveGpg() : "gpg");
+  const flavor = gpgFlavor(command, { platform });
+  const tools = {
+    command,
+    toGpg: (filePath) => gpgPath(filePath, platform, flavor),
+  };
+  if (real) cachedGpgTools = { platform, tools };
+  return tools;
+}
+
+function signFile(
+  filePath,
+  { spawn = spawnSync, gpg, platform = process.platform } = {},
+) {
+  const { command, toGpg } = gpgToolsFor({ spawn, gpg, platform });
   const asc = `${filePath}.asc`;
   const args = ["--batch", "--yes", "--armor", "--detach-sign"];
   if (GPG_KEY_ID) {
@@ -979,9 +1005,9 @@ function signFile(filePath) {
   if (usePassphraseStdin) {
     args.push("--pinentry-mode", "loopback", "--passphrase-fd", "0");
   }
-  args.push("--output", asc, filePath);
+  args.push("--output", toGpg(asc), toGpg(filePath));
 
-  const result = spawnSync("gpg", args, {
+  const result = spawn(command, args, {
     stdio: "pipe",
     input: usePassphraseStdin ? `${GPG_PASSPHRASE}\n` : undefined,
     timeout: 120_000,
@@ -1421,6 +1447,42 @@ async function uploadAssetWithReplace(
   }
 }
 
+/** Upload file names that already exist as release assets, sorted. */
+function findAssetConflicts(existingAssets, files) {
+  const present = new Set(
+    existingAssets.map((asset) => asset?.name).filter(Boolean),
+  );
+  return Array.from(new Set(files.map((filePath) => path.basename(filePath))))
+    .filter((name) => present.has(name))
+    .sort();
+}
+
+/**
+ * Finds every name clash first, refuses a published release up front when
+ * replacement is not allowed, then uploads with the flag passed through.
+ */
+async function uploadAllAssets(
+  release,
+  files,
+  {
+    allowReplace = ALLOW_ASSET_REPLACE,
+    listAssets = listReleaseAssets,
+    upload = uploadAssetWithReplace,
+    log = console.log,
+  } = {},
+) {
+  const conflicts = findAssetConflicts(await listAssets(release.id), files);
+  if (conflicts.length > 0 && !release.draft && !allowReplace) {
+    throw new Error(
+      `Refusing to replace existing asset(s) on published release ${TAG}: ${conflicts.join(", ")}. Set ALLOW_ASSET_REPLACE=true to override.`,
+    );
+  }
+  for (const filePath of files) {
+    await upload(release, filePath, { allowPublishedReplace: allowReplace });
+    log(`  ^ ${path.basename(filePath)}`);
+  }
+}
+
 async function syncBetaManifestsToLatestStable(
   uploadedFiles,
   currentReleaseId,
@@ -1746,9 +1808,13 @@ async function main() {
     process.exit(1);
   }
   try {
-    execSync("gpg --version", { stdio: "pipe" });
-  } catch {
-    console.error("gpg not found. Install GnuPG and try again.");
+    gpgToolsFor({
+      spawn: spawnSync,
+      gpg: undefined,
+      platform: process.platform,
+    });
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
   }
 
@@ -1793,10 +1859,7 @@ async function main() {
     buildCommitFiles,
     signatureFiles: ascFiles,
   });
-  for (const f of everything) {
-    await uploadAssetWithReplace(release, f);
-    console.log(`  ^ ${path.basename(f)}`);
-  }
+  await uploadAllAssets(release, everything);
   // Beta clients poll /releases/latest for latest-*-beta-*.json. Sync those
   // manifests onto the latest *stable* release during every beta sign upload,
   // including while this tag is still a draft. That is intentional: each
@@ -1879,6 +1942,8 @@ export {
   checksumGroupsForArtifacts,
   pickNewestByBasename,
   isSignable,
+  signFile,
+  uploadAllAssets,
   isChecksumTextName,
   isDirectExecution,
   isExplicitTruthy,
@@ -1886,6 +1951,7 @@ export {
   isTransactionalStagingAssetName,
   listAllGithubPages,
   expectedPublishedBetaManifestNames,
+  findAssetConflicts,
   requiredPublishedBetaManifestNames,
   requiredLinuxTargetKeys,
   resolveUpdaterTargets,

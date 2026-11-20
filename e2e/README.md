@@ -3,7 +3,8 @@
 `npm run test:e2e` (`scripts/test-e2e.js`) is the full E2E gate. It builds the
 E2E binary once, runs every suite below against that binary, writes evidence to
 `e2e/artifacts/`, and fails if any suite fails, skips without an allowance in
-`ALLOWED_E2E_SKIPS`, or does not report. CI runs the same command.
+`ALLOWED_E2E_SKIPS`, or does not report. Every allowance names a platform and a
+non-empty `reason` in `e2e/suites.json`. CI runs the same command.
 
 `ROSI_E2E_ONLY=<spec>` runs one ad-hoc spec for debugging. Its verdict comes
 from that spec alone, and its report sets `fullSuite: false` and `onlySpec`, so
@@ -40,12 +41,11 @@ the build, fixtures, every WebdriverIO pass, every runner, and total elapsed
 time. The command prints the slowest stages. Three consecutive warm runs on the
 local Mac arm64 machine took **165.632 s**, **162.064 s**, and **165.769 s**;
 their incremental builds took **7.080–9.530 s**. Each run passed all 42
-expected scenarios and retained 14 hashed screenshots. See the [stability
-summary](artifacts/core/darwin-arm64/stability-2026-11-08T06-20-16-991Z-43959-b2e36bde-1908-498d-baea-8bb007076916/runs/stability-report.json)
-and its [first](artifacts/core/darwin-arm64/stability-2026-11-08T06-20-16-991Z-43959-b2e36bde-1908-498d-baea-8bb007076916/runs/run-1.json),
-[second](artifacts/core/darwin-arm64/stability-2026-11-08T06-20-16-991Z-43959-b2e36bde-1908-498d-baea-8bb007076916/runs/run-2.json),
-and [third](artifacts/core/darwin-arm64/stability-2026-11-08T06-20-16-991Z-43959-b2e36bde-1908-498d-baea-8bb007076916/runs/run-3.json)
-run reports. These measurements reflect that machine and its local caches; they
+expected scenarios and retained 14 hashed screenshots. The stability summary was
+`e2e/artifacts/core/darwin-arm64/stability-2026-11-08T06-20-16-991Z-43959-b2e36bde-1908-498d-baea-8bb007076916/runs/stability-report.json`, with the first, second, and third run
+reports beside it as `run-1.json`, `run-2.json`, and `run-3.json`. The
+`e2e/artifacts/` tree is git-ignored, so those files exist only on the machine
+that produced them. These measurements reflect that machine and its local caches; they
 do not predict runtimes on other hardware or operating systems. Core reports
 cannot be used as full release proof.
 
@@ -64,26 +64,26 @@ the release record must state which mode produced the report. The
 effects (the reset bridge call, the "Main window closed." log line), not fixed
 delays, so both modes use the same waits.
 
-| Suite                                                               | Area                                                                              | How the gate runs it                                                          |
-| ------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `specs/legacy-import.spec.js`                                       | Legacy import                                                                     | WebdriverIO pass, twice: import and corrupt settings                          |
-| `specs/main.spec.js`                                                | Persistence, settings, UI, downloads, close flow                                  | WebdriverIO main pass                                                         |
-| `specs/security-release-offline-queue.spec.js`                      | Security and network (offline queue)                                              | WebdriverIO pass                                                              |
-| `specs/security-release-checks.spec.js`                             | Security and network                                                              | WebdriverIO pass                                                              |
-| `state-updater.spec.js`                                             | Updater and state                                                                 | WebdriverIO pass                                                              |
-| `renderer-updates.spec.js`                                          | Renderer                                                                          | WebdriverIO pass                                                              |
-| `native-downloads.spec.js` via `native-downloads-run.mjs`           | Download and process (native)                                                     | Runner, verified report                                                       |
-| `long-term-persistence.spec.js` via `long-term-persistence-run.mjs` | Persistence                                                                       | Runner, verified report                                                       |
-| `download-process.spec.js` via `run-download-process.mjs`           | Download and process                                                              | Runner, verified report (macOS and Linux)                                     |
-| `download-process-targeted.spec.js` via `run-download-process.mjs`  | Download and process (captions, sidecars, GPU, playlists)                         | Same runner with `ROSI_REPAIRS_SPEC`, verified report (macOS and Linux)       |
-| `download-session.spec.js` via `download-session-run.mjs`           | Download and process (artwork, queue drain)                                       | Runner, `result.json` verified under `e2e/artifacts/audit4-repairs/`          |
-| `platform-probes/probes.spec.js` via `run-probes.mjs`               | Security (`--security`), renderer (`--ui`), process termination (`--termination`) | Four launches, one per mode, macOS only. Every `invariantPassed` must be true |
-| `renderer-dom-checks/run.cjs`                                       | Renderer and updater (jsdom, no app)                                              | Node runner, all 15 checks must pass                                          |
-| `e2e/v5-fixes/<area>/*.spec.js` (no `run.mjs` in the area)          | Whatever the area covers                                                          | WebdriverIO pass per area, one fresh profile each                             |
-| `e2e/v5-fixes/<area>/run.mjs` and the specs it drives               | Whatever the area covers                                                          | Runner only, after the build; verified report (see below)                     |
-| `e2e/v5-fixes/network/run.mjs`                                      | Security and network policy                                                       | Runner, `report.json` under `e2e/artifacts/v5-fixes-network/`                 |
-| `e2e/v5-fixes/persistence/run.mjs`                                  | Persistence acceptance                                                            | Runner, `report.json` under `e2e/artifacts/v5-fixes-persistence/`             |
-| `e2e/v5-fixes/downloader/run.mjs`                                   | Downloader (install fallback, orphan sweep, panic log)                            | Runner, `report.json` under `e2e/artifacts/v5-fixes-downloader/`              |
+| Suite                                                               | Area                                                                              | How the gate runs it                                                            |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `specs/legacy-import.spec.js`                                       | Legacy import                                                                     | WebdriverIO pass, twice: import and corrupt settings                            |
+| `specs/main.spec.js`                                                | Persistence, settings, UI, downloads, close flow                                  | WebdriverIO main pass                                                           |
+| `specs/security-release-offline-queue.spec.js`                      | Security and network (offline queue)                                              | WebdriverIO pass                                                                |
+| `specs/security-release-checks.spec.js`                             | Security and network                                                              | WebdriverIO pass                                                                |
+| `state-updater.spec.js`                                             | Updater and state                                                                 | WebdriverIO pass                                                                |
+| `renderer-updates.spec.js`                                          | Renderer                                                                          | WebdriverIO pass                                                                |
+| `native-downloads.spec.js` via `native-downloads-run.mjs`           | Download and process (native)                                                     | Runner, verified report                                                         |
+| `long-term-persistence.spec.js` via `long-term-persistence-run.mjs` | Persistence                                                                       | Runner, verified report                                                         |
+| `download-process.spec.js` via `run-download-process.mjs`           | Download and process                                                              | Runner, verified report (macOS and Linux)                                       |
+| `download-process-targeted.spec.js` via `run-download-process.mjs`  | Download and process (captions, sidecars, GPU, playlists)                         | Same runner with `ROSI_REPAIRS_SPEC`, verified report (macOS and Linux)         |
+| `download-session.spec.js` via `download-session-run.mjs`           | Download and process (artwork, queue drain)                                       | Runner, `result.json` verified under `e2e/artifacts/audit4-repairs/`            |
+| `platform-probes/probes.spec.js` via `run-probes.mjs`               | Security (`--security`), renderer (`--ui`), process termination (`--termination`) | Four launches, one per mode, macOS only. Every `invariantPassed` must be `true` |
+| `renderer-dom-checks/run.cjs`                                       | Renderer and updater (jsdom, no app)                                              | Node runner, all 15 checks must pass                                            |
+| `e2e/v5-fixes/<area>/*.spec.js` (no `run.mjs` in the area)          | Whatever the area covers                                                          | WebdriverIO pass per area, one fresh profile each                               |
+| `e2e/v5-fixes/<area>/run.mjs` and the specs it drives               | Whatever the area covers                                                          | Runner only, after the build; verified report (see below)                       |
+| `e2e/v5-fixes/network/run.mjs`                                      | Security and network policy                                                       | Runner, `report.json` under `e2e/artifacts/v5-fixes-network/`                   |
+| `e2e/v5-fixes/persistence/run.mjs`                                  | Persistence acceptance                                                            | Runner, `report.json` under `e2e/artifacts/v5-fixes-persistence/`               |
+| `e2e/v5-fixes/downloader/run.mjs`                                   | Downloader (install fallback, orphan sweep, panic log)                            | Runner, `report.json` under `e2e/artifacts/v5-fixes-downloader/`                |
 
 The report keeps the original flat `expectedScenarios` inventory for release
 checks and adds `scenarioGroups` so outcomes can be read by feature. Existing
@@ -153,6 +153,15 @@ result is inferred from existing E2E report files.
   written by this run. A report counts when its `report.json` lives under
   `e2e/artifacts/v5-fixes-<area>/<timestamp>/`, its mtime is at or after the
   gate start, it parses, and it has `passed: true` (or `allPassed: true`).
+  It must also carry `binarySha256` equal to the hash of the E2E binary the
+  gate launched, and `startedAt` and `finishedAt` timestamps with `startedAt`
+  not before the gate invocation started.
+- A case a runner skips still has to be allowed. The gate reads skipped cases
+  (`status: "skipped"`) and skipped checks (`skipped: true`) from the report.
+  Each needs an entry in `allowedCaseSkips` in `e2e/suites.json` naming the
+  scenario (`v5-fixes/<area>`), the case (`<case>` or `<case>/<check>`), the
+  platform, and a non-empty `reason`. A skip without an entry fails the area.
+  Allowed skips are listed as `skippedCases` in the scenario.
 - The gate passes `ROSI_E2E_ARTIFACT_DIR=e2e/artifacts/v5-fixes-<area>` to the
   runner. Each run writes its report into a timestamped child directory there,
   so earlier runs are kept and told apart by mtime.
@@ -207,8 +216,9 @@ a UI change is in scope.
 - A `v5-fixes` spec must not contain `describe.skip`, `it.skip`, `.only`, `xit`
   or `this.skip()`. The gate fails the area if it does.
 - A `v5-fixes` runner must be named `run.mjs`, write `report.json` under
-  `e2e/artifacts/v5-fixes-<area>/<timestamp>/`, include `passed`, and exit
-  nonzero on failure.
+  `e2e/artifacts/v5-fixes-<area>/<timestamp>/`, include `passed` (or
+  `allPassed`), `binarySha256`, `startedAt`, and `finishedAt`, and exit nonzero
+  on failure.
 - A `run.mjs` area's specs must not also need the generic pass. Keep them in
   the area and let the runner set their env.
 - Runners that start their own media server run after the gate's media server

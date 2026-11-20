@@ -31,8 +31,8 @@
     },
     {
       "id": "lifecycle",
-      "owners": ["state-repairs", "v5-fixes"],
-      "v5FixAreas": ["queue-coordinator"]
+      "owners": ["main", "state-repairs"],
+      "v5FixAreas": []
     },
     {
       "id": "network-policy",
@@ -536,7 +536,16 @@
       "name": "xdg-download-dir",
       "feature": "dock-ui",
       "owner": "main",
-      "allowedSkips": ["darwin", "win32"]
+      "allowedSkips": [
+        {
+          "platform": "darwin",
+          "reason": "XDG user directories exist only on Linux."
+        },
+        {
+          "platform": "win32",
+          "reason": "XDG user directories exist only on Linux."
+        }
+      ]
     },
     {
       "name": "ui-screenshots",
@@ -758,7 +767,12 @@
       "name": "download-process-repairs",
       "feature": "downloads",
       "owner": "process-repairs",
-      "allowedSkips": ["win32"]
+      "allowedSkips": [
+        {
+          "platform": "win32",
+          "reason": "The probes need POSIX helpers (Python 3, sh, SIGKILL process groups) and have no Windows port."
+        }
+      ]
     },
     {
       "name": "activity-clear",
@@ -768,7 +782,7 @@
     },
     {
       "name": "close-flow",
-      "feature": "dock-ui",
+      "feature": "lifecycle",
       "owner": "main",
       "allowedSkips": []
     },
@@ -794,7 +808,12 @@
       "name": "audit3-native-targeted",
       "feature": "downloads",
       "owner": "process-repairs",
-      "allowedSkips": ["win32"]
+      "allowedSkips": [
+        {
+          "platform": "win32",
+          "reason": "The probes need POSIX helpers (Python 3, sh, SIGKILL process groups) and have no Windows port."
+        }
+      ]
     },
     {
       "name": "audit4-repairs",
@@ -806,13 +825,48 @@
       "name": "audit-v5-beta2",
       "feature": "platform-verification",
       "owner": "audit-v5-beta2",
-      "allowedSkips": ["linux", "win32"]
+      "allowedSkips": [
+        {
+          "platform": "linux",
+          "reason": "The probes need macOS ps and /usr/bin/python3 for the termination probe."
+        },
+        {
+          "platform": "win32",
+          "reason": "The probes need macOS ps and /usr/bin/python3 for the termination probe."
+        }
+      ]
     },
     {
       "name": "round3-renderer-repairs",
       "feature": "dock-ui",
       "owner": "round3-renderer",
       "allowedSkips": []
+    }
+  ],
+  "allowedCaseSkips": [
+    {
+      "scenario": "v5-fixes/downloader",
+      "case": "install-fallback",
+      "platform": "linux",
+      "reason": "Needs an exFAT mount. The runner builds one only on macOS; elsewhere it needs ROSI_V5_FIX_EXFAT_MOUNT."
+    },
+    {
+      "scenario": "v5-fixes/downloader",
+      "case": "install-fallback",
+      "platform": "win32",
+      "reason": "Needs an exFAT mount. The runner builds one only on macOS; elsewhere it needs ROSI_V5_FIX_EXFAT_MOUNT."
+    },
+    {
+      "scenario": "v5-fixes/deno-installer",
+      "case": "deno-installer/reminder-failure-offers-instructions",
+      "platform": "linux",
+      "reason": "Linux shows only instructions; no automatic install exists."
+    },
+    {
+      "scenario": "v5-fixes/deno-installer",
+      "case": "deno-installer/wizard-failure-offers-instructions",
+      "platform": "linux",
+      "reason": "Linux shows only instructions; no automatic install exists."
     }
   ],
   "profiles": {

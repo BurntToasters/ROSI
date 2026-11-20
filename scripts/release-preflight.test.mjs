@@ -23,14 +23,24 @@ function checkRun(overrides = {}) {
     status: "completed",
     conclusion: "success",
     app: { id: GITHUB_ACTIONS_APP_ID },
+    check_suite: { id: 5000 },
     ...overrides,
   };
 }
 
-// Stub for githubApi(method, endpoint): records calls and returns check runs.
-function ciApi(runs, calls = []) {
+// Stub for githubApi(method, endpoint): records calls, returns check runs and
+// the workflow run for a check suite. events maps suite id to a run event.
+function ciApi(runs, calls = [], { events = {}, workflowRuns } = {}) {
   return (method, endpoint) => {
     calls.push({ method, endpoint });
+    const suite = endpoint.match(/actions\/runs\?check_suite_id=(\d+)/);
+    if (suite) {
+      const id = Number(suite[1]);
+      const found = workflowRuns
+        ? workflowRuns(id)
+        : [{ check_suite_id: id, event: events[id] ?? "push" }];
+      return { total_count: found.length, workflow_runs: found };
+    }
     return { total_count: runs.length, check_runs: runs };
   };
 }
@@ -65,7 +75,7 @@ test("a successful ci-gate on the exact HEAD commit passes and is queried by SHA
   const calls = [];
   const result = ciCheck({ api: ciApi([checkRun()], calls) });
   assert.equal(result.verified, true);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
   assert.equal(calls[0].method, "GET");
   assert.match(
     calls[0].endpoint,
@@ -104,6 +114,88 @@ test("the newest ci-gate run decides, so a later re-run success passes", () => {
     runs: [checkRun({ id: 100, conclusion: "failure" }), checkRun({ id: 200 })],
   });
   assert.equal(result.verified, true);
+});
+
+test("a scheduled ci-gate never counts, even when it is the newest and green", () => {
+  const suite = (id) => ({ check_suite: { id } });
+  const events = { 7000: "schedule", 7001: "push" };
+  assert.throws(
+    () =>
+      ciCheck({
+        api: ciApi(
+          [
+            checkRun({ id: 100, ...suite(7001), conclusion: "failure" }),
+            checkRun({ id: 200, ...suite(7000) }),
+          ],
+          [],
+          { events },
+        ),
+      }),
+    /ci-gate concluded failure/,
+  );
+  assert.throws(
+    () =>
+      ciCheck({
+        api: ciApi([checkRun({ id: 200, ...suite(7000) })], [], { events }),
+      }),
+    (error) =>
+      error.message.includes("ci-gate") &&
+      error.message.includes("scheduled") &&
+      error.message.includes(OVERRIDE),
+  );
+});
+
+test("a green ci-gate from a push run passes even with a newer scheduled run", () => {
+  const suite = (id) => ({ check_suite: { id } });
+  const result = ciCheck({
+    api: ciApi(
+      [
+        checkRun({ id: 100, ...suite(7001) }),
+        checkRun({ id: 200, ...suite(7000) }),
+      ],
+      [],
+      { events: { 7000: "schedule", 7001: "pull_request" } },
+    ),
+  });
+  assert.equal(result.verified, true);
+});
+
+test("an unresolvable ci-gate workflow event fails closed", () => {
+  const cases = {
+    "no check suite on the run": {
+      runs: [checkRun({ check_suite: undefined })],
+    },
+    "no workflow run for the suite": {
+      runs: [checkRun()],
+      workflowRuns: () => [],
+    },
+    "workflow run without an event": {
+      runs: [checkRun()],
+      workflowRuns: (id) => [{ check_suite_id: id }],
+    },
+    "workflow run for a different suite": {
+      runs: [checkRun()],
+      workflowRuns: () => [{ check_suite_id: 1, event: "push" }],
+    },
+  };
+  for (const [label, { runs, workflowRuns }] of Object.entries(cases)) {
+    assert.throws(
+      () => ciCheck({ api: ciApi(runs, [], { workflowRuns }) }),
+      (error) =>
+        error.message.includes("ci-gate") && error.message.includes(OVERRIDE),
+      label,
+    );
+  }
+  assert.throws(
+    () =>
+      ciCheck({
+        api: (method, endpoint) => {
+          if (endpoint.includes("actions/runs")) throw new Error("HTTP 403");
+          return { check_runs: [checkRun()] };
+        },
+      }),
+    /403/,
+  );
 });
 
 test("a GitHub API error fails closed without the override", () => {
@@ -218,7 +310,7 @@ test("runPreflight queries ci-gate for HEAD before it reports ok", () => {
     ...deps.options,
     log: { log: (m) => messages.push(m), warn: () => {} },
   });
-  assert.equal(deps.calls.length, 1);
+  assert.equal(deps.calls.length, 2);
   assert.match(deps.calls[0].endpoint, new RegExp(SHA));
   assert.ok(messages.some((m) => m.includes("release-preflight: ok")));
 });

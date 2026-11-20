@@ -20,13 +20,13 @@ if command -v cygpath >/dev/null 2>&1; then
   msgfile=$(cygpath -w "$msgfile")
 fi
 
-# Git hooks run under sh on Windows; route through cmd.exe so we never hit
-# a missing node on the POSIX PATH (same pattern as pre-commit).
+# Call node directly. Routing through cmd.exe would re-parse the message file
+# path (spaces, &, ^, quotes).
 run_node() {
-  if [ "${OS:-}" = "Windows_NT" ] && command -v cmd.exe >/dev/null 2>&1; then
-    cmd.exe //d //c node "$@"
-  elif command -v node >/dev/null 2>&1; then
+  if command -v node >/dev/null 2>&1; then
     node "$@"
+  elif command -v node.exe >/dev/null 2>&1; then
+    node.exe "$@"
   else
     return 127
   fi

@@ -7,11 +7,9 @@
 set -e
 
 run_npm() {
-  # Git hooks run under sh on Windows; route through cmd.exe so we never hit
-  # the POSIX npm shim in "C:\Program Files\nodejs\npm".
-  if [ "${OS:-}" = "Windows_NT" ] && command -v cmd.exe >/dev/null 2>&1; then
-    cmd.exe //d //c npm.cmd "$@"
-  elif command -v npm.cmd >/dev/null 2>&1; then
+  # Call npm.cmd directly on Windows (not the POSIX npm shim) and avoid
+  # cmd.exe re-parsing of arguments.
+  if command -v npm.cmd >/dev/null 2>&1; then
     npm.cmd "$@"
   else
     npm "$@"

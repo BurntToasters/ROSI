@@ -14,7 +14,15 @@ import {
   partialRunKind,
   runArtifactPaths,
 } from "./e2e/core.js";
-import { gitWorktreeState, run } from "./e2e/common.js";
+import {
+  gitSourceSnapshot,
+  gitWorktreeState,
+  isIgnorableReleaseDirtyPath,
+  localCargoConfigSha256,
+  run,
+  sourceChangeProblems,
+} from "./e2e/common.js";
+import * as releaseSession from "./release-session.js";
 import {
   E2E_SUITE_MANIFEST,
   scenarioOutcomeProblems,
@@ -271,6 +279,7 @@ test("worktree state records dirtiness and a hash of the porcelain status", () =
     assert.deepEqual(gitWorktreeState(dir), {
       worktreeDirty: false,
       worktreeStatusSha256: sha256(""),
+      localCargoConfigSha256: null,
     });
     fs.writeFileSync(path.join(dir, "untracked.txt"), "pending work");
     const status = git(["status", "--porcelain=v1", "-uall"]).stdout;
@@ -278,6 +287,7 @@ test("worktree state records dirtiness and a hash of the porcelain status", () =
     assert.deepEqual(gitWorktreeState(dir), {
       worktreeDirty: true,
       worktreeStatusSha256: sha256(status),
+      localCargoConfigSha256: null,
     });
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -290,7 +300,146 @@ test("worktree state fails closed outside a git checkout", () => {
     assert.deepEqual(gitWorktreeState(dir), {
       worktreeDirty: true,
       worktreeStatusSha256: null,
+      localCargoConfigSha256: null,
     });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function initCommittedRepo(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const git = (args) =>
+    spawnSync(
+      "git",
+      ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args],
+      { cwd: dir, encoding: "utf8" },
+    );
+  assert.equal(git(["init", "-q"]).status, 0);
+  const schemas = path.join(dir, "src-tauri", "gen", "schemas");
+  fs.mkdirSync(schemas, { recursive: true });
+  fs.writeFileSync(path.join(schemas, "acl-manifests.json"), "{}");
+  fs.writeFileSync(path.join(dir, "tracked.txt"), "one");
+  assert.equal(git(["add", "-A"]).status, 0);
+  assert.equal(git(["commit", "-q", "-m", "init"]).status, 0);
+  return { dir, git, schemas };
+}
+
+test("worktree state ignores the release allowlist but not other paths", () => {
+  const { dir, git, schemas } = initCommittedRepo("rosi-worktree-allow-");
+  try {
+    fs.writeFileSync(path.join(schemas, "acl-manifests.json"), '{"a":1}');
+    assert.deepEqual(gitWorktreeState(dir), {
+      worktreeDirty: false,
+      worktreeStatusSha256: sha256(""),
+      localCargoConfigSha256: null,
+    });
+    fs.writeFileSync(path.join(schemas, "unexpected.json"), "{}");
+    fs.writeFileSync(path.join(dir, "tracked.txt"), "two");
+    const state = gitWorktreeState(dir);
+    const raw = git(["status", "--porcelain=v1", "-uall"]).stdout;
+    const kept = raw
+      .split("\n")
+      .filter((line) => line && !line.includes("acl-manifests.json"))
+      .map((line) => `${line}\n`)
+      .join("");
+    assert.match(kept, /unexpected\.json/);
+    assert.equal(state.worktreeDirty, true);
+    assert.equal(state.worktreeStatusSha256, sha256(kept));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the release allowlist has one definition shared by both scripts", () => {
+  assert.equal(
+    releaseSession.isIgnorableReleaseDirtyPath,
+    isIgnorableReleaseDirtyPath,
+  );
+  assert.equal(
+    isIgnorableReleaseDirtyPath("src-tauri/gen/schemas/acl-manifests.json"),
+    true,
+  );
+  assert.equal(isIgnorableReleaseDirtyPath("src-tauri/gen/other.json"), false);
+});
+
+test("a local Cargo config is hashed into the worktree state", () => {
+  const { dir } = initCommittedRepo("rosi-worktree-cargo-");
+  try {
+    assert.equal(localCargoConfigSha256(dir), null);
+    const cargoDir = path.join(dir, "src-tauri", ".cargo");
+    fs.mkdirSync(cargoDir, { recursive: true });
+    fs.writeFileSync(path.join(cargoDir, "config.toml"), "jobs-one");
+    const first = localCargoConfigSha256(dir);
+    assert.match(first, /^[a-f0-9]{64}$/);
+    assert.equal(gitWorktreeState(dir).localCargoConfigSha256, first);
+    fs.writeFileSync(path.join(cargoDir, "config.toml"), "jobs-two");
+    assert.notEqual(localCargoConfigSha256(dir), first);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("release proof refuses a report whose Cargo config differs from the current one", () => {
+  const { dir } = initCommittedRepo("rosi-cargo-proof-");
+  try {
+    const mismatch = releaseSession.localCargoConfigProblem;
+    assert.equal(mismatch({ localCargoConfigSha256: null }, dir), null);
+    assert.equal(mismatch({}, dir), null);
+    const cargoDir = path.join(dir, "src-tauri", ".cargo");
+    fs.mkdirSync(cargoDir, { recursive: true });
+    fs.writeFileSync(path.join(cargoDir, "config.toml"), "[build]");
+    assert.match(mismatch({}, dir), /Cargo config/);
+    assert.match(
+      mismatch({ localCargoConfigSha256: null }, dir),
+      /Cargo config/,
+    );
+    assert.match(
+      mismatch({ localCargoConfigSha256: "a".repeat(64) }, dir),
+      /Cargo config/,
+    );
+    assert.equal(
+      mismatch({ localCargoConfigSha256: localCargoConfigSha256(dir) }, dir),
+      null,
+    );
+    fs.rmSync(path.join(cargoDir, "config.toml"));
+    assert.match(
+      mismatch({ localCargoConfigSha256: "a".repeat(64) }, dir),
+      /Cargo config/,
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a commit, tree or worktree change during a run is reported", () => {
+  const { dir, git } = initCommittedRepo("rosi-source-change-");
+  try {
+    const start = gitSourceSnapshot(dir);
+    assert.match(start.commit, /^[a-f0-9]{40}$/);
+    assert.match(start.sourceTree, /^[a-f0-9]{40}$/);
+    assert.deepEqual(sourceChangeProblems(start, gitSourceSnapshot(dir)), []);
+    fs.writeFileSync(path.join(dir, "late.txt"), "edit during run");
+    const edited = gitSourceSnapshot(dir);
+    assert.match(sourceChangeProblems(start, edited).join(), /worktree/);
+    git(["add", "-A"]);
+    git(["commit", "-q", "-m", "late"]);
+    const committed = gitSourceSnapshot(dir);
+    const problems = sourceChangeProblems(start, committed).join();
+    assert.match(problems, /commit/);
+    assert.match(problems, /source tree/);
+    assert.match(
+      sourceChangeProblems(start, {
+        ...start,
+        localCargoConfigSha256: "b".repeat(64),
+      }).join(),
+      /Cargo config/,
+    );
+    // An unreadable snapshot never matches a readable one.
+    assert.notDeepEqual(
+      sourceChangeProblems(start, { ...start, commit: null }),
+      [],
+    );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

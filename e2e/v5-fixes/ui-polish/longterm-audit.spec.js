@@ -599,7 +599,9 @@ async function measureContrast(mode) {
 
 // The reset links are measured only once the settings panel has finished
 // sliding in: open, identity transform, every ancestor at opacity 1, and no
-// link hovered or focused (their own opacity rises on hover and focus).
+// link hovered or focused (their own opacity rises on hover and focus). The
+// theme must be applied, no animation or transition may run on a link or its
+// ancestors, and the colours must match the previous read.
 async function readResetReadiness() {
   return readPage(() => {
     const sidebar = document.getElementById("sidebar");
@@ -619,9 +621,43 @@ async function readResetReadiness() {
       }
       return true;
     };
+    const chainOf = (element) => {
+      const chain = [];
+      for (let node = element; node; node = node.parentElement)
+        chain.push(node);
+      return chain;
+    };
+    // Unfinished animations or transitions on the link or any ancestor.
+    const animating = [];
+    for (const link of links) {
+      for (const node of chainOf(link)) {
+        for (const animation of node.getAnimations()) {
+          if (animation.playState !== "finished") {
+            animating.push(
+              `${node.id || node.className || node.tagName}:${animation.transitionProperty ?? animation.animationName ?? "animation"}`,
+            );
+          }
+        }
+      }
+    }
+    // Colour, background and opacity of each link and its ancestors, to
+    // compare two consecutive reads.
+    const signature = links
+      .map((link) =>
+        chainOf(link)
+          .map((node) => {
+            const style = getComputedStyle(node);
+            return `${style.color}|${style.backgroundColor}|${style.opacity}`;
+          })
+          .join(";"),
+      )
+      .join("#");
     const transform = getComputedStyle(sidebar).transform;
     const active = document.activeElement;
     return window.__longtermAscii({
+      theme: document.documentElement.dataset.theme ?? null,
+      animating: [...new Set(animating)],
+      signature,
       open: sidebar.classList.contains("open"),
       transformIdentity:
         transform === "none" || transform === "matrix(1, 0, 0, 1, 0, 0)",
@@ -636,7 +672,7 @@ async function readResetReadiness() {
   });
 }
 
-async function waitForResetReadiness() {
+async function waitForResetReadiness(theme) {
   // Move focus off any reset link first, so its own opacity is not raised.
   await browser.execute(() => {
     const active = document.activeElement;
@@ -647,15 +683,24 @@ async function waitForResetReadiness() {
       active.blur();
     }
   });
+  let previous = null;
   return waitForState(
     readResetReadiness,
-    (state) =>
-      state.open &&
-      state.count > 0 &&
-      state.transformIdentity &&
-      state.ancestorsOpaque.every(Boolean) &&
-      !state.hovered &&
-      !state.focused,
+    (state) => {
+      const stable = previous !== null && state.signature === previous;
+      previous = state.signature;
+      return (
+        state.open &&
+        state.count > 0 &&
+        state.theme === theme &&
+        state.transformIdentity &&
+        state.ancestorsOpaque.every(Boolean) &&
+        state.animating.length === 0 &&
+        !state.hovered &&
+        !state.focused &&
+        stable
+      );
+    },
     "settings reset links never settled for measurement",
     15_000,
   );
@@ -1246,28 +1291,35 @@ describe("ROSI long-term audit: summary, preview, busy buttons, toasts, activity
         },
       );
 
-      await scenario("light-settings-reset-contrast", [38, 39], async () => {
-        await setControl("flatUiToggle", false);
-        await setControl("themeSelect", "light");
-        await waitForState(
-          readThemeState,
-          (state) => state.theme === "light" && state.flat !== "true",
-          "light theme did not apply",
-        );
-        await setSidebarOpen(true);
-        const settled = await waitForResetReadiness();
-        const resets = await measureContrast("reset-links");
-        assert.ok(resets.length > 0, "no visible settings reset link");
-        const failing = resets.filter((reset) => reset.ratio < 4.5);
-        assert.deepEqual(
-          failing.map((reset) => `${reset.label} ${reset.ratio.toFixed(2)}:1`),
-          [],
-          "light reset links below 4.5:1",
-        );
-        await screenshot("longterm-audit-u9-light-reset");
-        await setSidebarOpen(false);
-        return { settled, resets };
-      });
+      await scenario(
+        "light-settings-reset-contrast",
+        [38, 39, 46],
+        async () => {
+          await setControl("flatUiToggle", false);
+          await setControl("themeSelect", "light");
+          await waitForState(
+            readThemeState,
+            (state) => state.theme === "light" && state.flat !== "true",
+            "light theme did not apply",
+          );
+          await setSidebarOpen(true);
+          const settled = await waitForResetReadiness("light");
+          const resets = await measureContrast("reset-links");
+          assert.ok(resets.length > 0, "no visible settings reset link");
+          const failing = resets.filter((reset) => reset.ratio < 4.5);
+          assert.deepEqual(
+            failing.map(
+              (reset) =>
+                `${reset.label} ${reset.ratio.toFixed(2)}:1 color ${reset.color} on ${reset.background} opacity ${reset.opacity}`,
+            ),
+            [],
+            "light reset links below 4.5:1",
+          );
+          await screenshot("longterm-audit-u9-light-reset");
+          await setSidebarOpen(false);
+          return { settled, resets };
+        },
+      );
     } finally {
       await setSidebarOpen(false);
       await setControl("flatUiToggle", startFlat);

@@ -35,7 +35,8 @@ const rustTimeoutMs = process.platform === "win32" ? 1_200_000 : 600_000;
 // The gate runs every wired E2E suite in sequence, so it needs more headroom
 // than the single-pass budget it used before those suites were wired in.
 // Full native E2E on hosted Linux runners exceeded 45 minutes, so this bound is
-// 90 minutes. The CI quality-gate job has no job timeout, so this is the bound.
+// 90 minutes. The CI quality-gate job timeout is 105 minutes, above this bound,
+// so the failure log is written before the job is killed.
 const e2eTimeoutMs = 5_400_000;
 
 function createInitialResults() {
@@ -233,6 +234,8 @@ function runCommand(name, command, args, parser, results, options = {}) {
     shell: useShell,
     windowsHide: true,
     timeout,
+    // Chatty steps (cargo, E2E) pass the 1 MiB default and die with ENOBUFS.
+    maxBuffer: Infinity,
     env: options.env ? { ...process.env, ...options.env } : process.env,
   });
 

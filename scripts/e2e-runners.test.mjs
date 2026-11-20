@@ -19,7 +19,16 @@ import { probeReportProblems } from "./e2e/runners/probes.js";
 import {
   V5_RUN_DIR_PATTERN,
   findRunnerReport,
+  reportedSkips,
 } from "./e2e/runners/v5-fixes.js";
+import {
+  ALLOWED_CASE_SKIPS,
+  ALLOWED_E2E_SKIPS,
+  E2E_SUITE_MANIFEST,
+  caseSkipProblems,
+  scenarioOutcomeProblems,
+  validateSuiteManifest,
+} from "./e2e/manifest.js";
 
 const sha256 = (value) =>
   crypto.createHash("sha256").update(value).digest("hex");
@@ -381,6 +390,10 @@ test("pruneRunnerArtifacts reports a removal that fails and still processes the 
     t.skip("root ignores directory permissions");
     return;
   }
+  if (process.platform === "win32") {
+    t.skip("chmod cannot make a folder undeletable on Windows");
+    return;
+  }
   withTempDir((root) => {
     makeRuns(root, 3);
     const locked = path.join(root, "run-001");
@@ -526,6 +539,10 @@ test("probeReportProblems accepts a valid probe report and rejects each defect",
   assert.deepEqual(probeReportProblems(writerReport(body), probeExpected), []);
   const defects = [
     { observations: [{ name: "one", invariantPassed: false }] },
+    { observations: [{ name: "one" }] },
+    { observations: [{ name: "one", invariantPassed: null }] },
+    { observations: [{ name: "one", invariantPassed: "true" }] },
+    { observations: [{ name: "one", invariantPassed: true }, { name: "two" }] },
     { observations: [] },
     { commit: "d".repeat(40) },
     { version: "9.9.9" },
@@ -566,36 +583,58 @@ test("round2NativeReportProblems still rejects a report that did not pass", () =
   assert.ok(problems.some((problem) => /does not pass/.test(problem)));
 });
 
+// Writes one runner report under <root>/v5-fixes-<area>/stamp/report.json.
+function runnerReportFixture(
+  root,
+  areaName,
+  body,
+  { secondsAgo = 0, now } = {},
+) {
+  const areaDir = path.join(root, `v5-fixes-${areaName}`);
+  fs.rmSync(areaDir, { recursive: true, force: true });
+  fs.mkdirSync(path.join(areaDir, "stamp"), { recursive: true });
+  const file = path.join(areaDir, "stamp", "report.json");
+  fs.writeFileSync(
+    file,
+    typeof body === "string" ? body : JSON.stringify(body),
+  );
+  setMtime(file, secondsAgo, now);
+  return file;
+}
+
+const GATE_BINARY = { binarySha256: HASH_A, platform: "linux" };
+
+function freshBody(now, extra = {}) {
+  return {
+    passed: true,
+    binarySha256: HASH_A,
+    startedAt: new Date(now - 30_000).toISOString(),
+    finishedAt: new Date(now - 10_000).toISOString(),
+    ...extra,
+  };
+}
+
 test("findRunnerReport accepts passed or allPassed and rejects failures, stale reports, and bad JSON", () => {
   withTempDir((root) => {
     const area = { area: "demo" };
     const now = Date.now();
     const gateStartedMs = now - 60_000;
-    const write = (stamp, text, secondsAgo = 0) => {
-      const dir = path.join(root, "v5-fixes-demo", stamp);
-      fs.mkdirSync(dir, { recursive: true });
-      const file = path.join(dir, "report.json");
-      fs.writeFileSync(file, text);
-      setMtime(file, secondsAgo, now);
-      return file;
+    const check = (body, options) => {
+      runnerReportFixture(root, "demo", body, { now, ...options });
+      return findRunnerReport(area, root, gateStartedMs, GATE_BINARY);
     };
-    const check = (stamp, text, secondsAgo = 0) => {
-      fs.rmSync(path.join(root, "v5-fixes-demo"), {
-        recursive: true,
-        force: true,
-      });
-      write(stamp, text, secondsAgo);
-      return findRunnerReport(area, root, gateStartedMs);
-    };
-    assert.equal(check("a", JSON.stringify({ passed: true })).problem, null);
-    assert.equal(check("b", JSON.stringify({ allPassed: true })).problem, null);
+    assert.equal(check(freshBody(now)).problem, null);
+    assert.equal(
+      check(freshBody(now, { passed: undefined, allPassed: true })).problem,
+      null,
+    );
     assert.match(
-      check("c", JSON.stringify({ passed: false })).problem,
+      check(freshBody(now, { passed: false })).problem,
       /does not pass/,
     );
-    assert.match(check("d", "{not json")?.problem ?? "", /unreadable/);
+    assert.match(check("{not json")?.problem ?? "", /unreadable/);
     assert.match(
-      check("e", JSON.stringify({ passed: true }), 3600).problem,
+      check(freshBody(now), { secondsAgo: 3600 }).problem,
       /no report written during this run/,
     );
     fs.rmSync(path.join(root, "v5-fixes-demo"), {
@@ -603,8 +642,251 @@ test("findRunnerReport accepts passed or allPassed and rejects failures, stale r
       force: true,
     });
     assert.match(
-      findRunnerReport(area, root, gateStartedMs).problem,
+      findRunnerReport(area, root, gateStartedMs, GATE_BINARY).problem,
       /no runner report directory/,
     );
   });
+});
+
+test("findRunnerReport requires binarySha256 and a startedAt inside this invocation", () => {
+  withTempDir((root) => {
+    const area = { area: "demo" };
+    const now = Date.now();
+    const gateStartedMs = now - 60_000;
+    const problemFor = (change, expectedIdentity = GATE_BINARY) => {
+      runnerReportFixture(root, "demo", freshBody(now, change), { now });
+      return findRunnerReport(area, root, gateStartedMs, expectedIdentity)
+        .problem;
+    };
+    assert.equal(problemFor({}), null);
+    assert.match(
+      problemFor({ binarySha256: undefined }),
+      /binarySha256 differs/,
+    );
+    assert.match(problemFor({ binarySha256: HASH_B }), /binarySha256 differs/);
+    assert.match(problemFor({ binarySha256: "" }), /binarySha256 differs/);
+    assert.match(problemFor({ startedAt: undefined }), /timestamps/);
+    assert.match(problemFor({ startedAt: "not a date" }), /timestamps/);
+    assert.match(
+      problemFor({ startedAt: new Date(gateStartedMs - 1000).toISOString() }),
+      /timestamps/,
+    );
+    assert.match(problemFor({ finishedAt: undefined }), /timestamps/);
+    assert.match(
+      problemFor({ finishedAt: new Date(now - 40_000).toISOString() }),
+      /timestamps/,
+    );
+    // Without the gate's binary hash there is nothing to compare against.
+    assert.match(problemFor({}, {}), /binary hash/);
+    assert.match(problemFor({}, { binarySha256: "" }), /binary hash/);
+  });
+});
+
+test("findRunnerReport fails a skipped case unless it has an allowance for this platform", () => {
+  withTempDir((root) => {
+    const now = Date.now();
+    const gateStartedMs = now - 60_000;
+    const run = (areaName, extra, platform) => {
+      runnerReportFixture(root, areaName, freshBody(now, extra), { now });
+      return findRunnerReport({ area: areaName }, root, gateStartedMs, {
+        binarySha256: HASH_A,
+        platform,
+      });
+    };
+    const installSkip = {
+      cases: [
+        { name: "orphan-sweep", status: "passed" },
+        {
+          name: "install-fallback",
+          status: "skipped",
+          reason: "needs an exFAT mount",
+        },
+      ],
+    };
+    const allowed = run("downloader", installSkip, "linux");
+    assert.equal(allowed.problem, null);
+    assert.deepEqual(
+      allowed.skipped.map((entry) => entry.case),
+      ["install-fallback"],
+    );
+    assert.equal(run("downloader", installSkip, "win32").problem, null);
+    assert.match(
+      run("downloader", installSkip, "darwin").problem,
+      /install-fallback skipped without an allowance on darwin/,
+    );
+    const otherCase = {
+      cases: [{ name: "long-path", status: "skipped", reason: "because" }],
+    };
+    assert.match(
+      run("downloader", otherCase, "linux").problem,
+      /long-path skipped without an allowance/,
+    );
+    const noReason = {
+      cases: [{ name: "install-fallback", status: "skipped", reason: " " }],
+    };
+    assert.match(run("downloader", noReason, "linux").problem, /no reason/);
+    assert.match(
+      run("network", installSkip, "linux").problem,
+      /skipped without an allowance/,
+    );
+    const denoSkip = {
+      cases: [
+        {
+          name: "deno-installer",
+          status: "passed",
+          checks: [
+            {
+              name: "reminder-failure-offers-instructions",
+              skipped: true,
+              invariantPassed: null,
+              reason: "Linux shows only instructions",
+            },
+          ],
+        },
+      ],
+    };
+    assert.equal(run("deno-installer", denoSkip, "linux").problem, null);
+    assert.match(
+      run("deno-installer", denoSkip, "win32").problem,
+      /reminder-failure-offers-instructions skipped without an allowance/,
+    );
+    const observationSkip = {
+      observations: [{ name: "probe", skipped: true, reason: "x" }],
+    };
+    assert.match(
+      run("persistence", observationSkip, "linux").problem,
+      /probe skipped without an allowance/,
+    );
+  });
+});
+
+test("reportedSkips finds skipped cases, case checks, and top-level records", () => {
+  assert.deepEqual(reportedSkips(null), []);
+  assert.deepEqual(
+    reportedSkips({ cases: [{ name: "a", status: "passed" }] }),
+    [],
+  );
+  const skips = reportedSkips({
+    cases: [
+      { name: "a", status: "skipped", reason: "r1" },
+      {
+        name: "b",
+        status: "passed",
+        checks: [
+          { name: "ok", invariantPassed: true },
+          { name: "x", skipped: true, reason: "r2" },
+          { name: "y", status: "skipped" },
+        ],
+      },
+    ],
+    checks: [{ skipped: true }],
+    observations: [{ mode: "m", skipped: true, reason: "r3" }],
+  });
+  assert.deepEqual(
+    skips.map((entry) => [entry.case, entry.reason]),
+    [
+      ["a", "r1"],
+      ["b/x", "r2"],
+      ["b/y", ""],
+      ["unnamed", ""],
+      ["m", "r3"],
+    ],
+  );
+});
+
+test("caseSkipProblems accepts only a listed scenario, case, and platform with a reason", () => {
+  const skip = { case: "install-fallback", reason: "needs a mount" };
+  assert.deepEqual(
+    caseSkipProblems("v5-fixes/downloader", [skip], "linux"),
+    [],
+  );
+  assert.equal(
+    caseSkipProblems("v5-fixes/downloader", [skip], "darwin").length,
+    1,
+  );
+  assert.equal(caseSkipProblems("v5-fixes/network", [skip], "linux").length, 1);
+  assert.equal(
+    caseSkipProblems(
+      "v5-fixes/downloader",
+      [{ case: "install-fallback", reason: "" }],
+      "linux",
+    ).length,
+    1,
+  );
+});
+
+test("every skip allowance in the manifest carries a platform and a reason", () => {
+  assert.ok(Object.keys(ALLOWED_E2E_SKIPS).length > 0);
+  for (const [name, allowances] of Object.entries(ALLOWED_E2E_SKIPS)) {
+    assert.ok(allowances.length > 0, name);
+    for (const allowance of allowances) {
+      assert.ok(["darwin", "linux", "win32"].includes(allowance.platform));
+      assert.ok(allowance.reason.trim().length > 0, name);
+    }
+  }
+  assert.ok(ALLOWED_CASE_SKIPS.length > 0);
+  for (const allowance of ALLOWED_CASE_SKIPS) {
+    assert.ok(allowance.reason.trim().length > 0, allowance.case);
+  }
+});
+
+test("validateSuiteManifest rejects an allowance with no reason or an unknown platform", () => {
+  const clone = () => structuredClone(E2E_SUITE_MANIFEST);
+  assert.doesNotThrow(() => validateSuiteManifest(clone()));
+  const skipScenario = (manifest) =>
+    manifest.scenarios.find((scenario) => scenario.allowedSkips.length > 0);
+  const breakers = [
+    (m) => {
+      skipScenario(m).allowedSkips[0].reason = "";
+    },
+    (m) => {
+      skipScenario(m).allowedSkips[0].reason = "   ";
+    },
+    (m) => {
+      delete skipScenario(m).allowedSkips[0].reason;
+    },
+    (m) => {
+      skipScenario(m).allowedSkips[0] = "win32";
+    },
+    (m) => {
+      skipScenario(m).allowedSkips[0].platform = "freebsd";
+    },
+    (m) => {
+      m.allowedCaseSkips[0].reason = "";
+    },
+    (m) => {
+      delete m.allowedCaseSkips[0].reason;
+    },
+    (m) => {
+      m.allowedCaseSkips[0].platform = "freebsd";
+    },
+    (m) => {
+      m.allowedCaseSkips[0].case = "";
+    },
+    (m) => {
+      m.allowedCaseSkips[0].scenario = "v5-fixes/no-such-area";
+    },
+    (m) => {
+      m.allowedCaseSkips.push({ ...m.allowedCaseSkips[0] });
+    },
+    (m) => {
+      m.allowedCaseSkips = "none";
+    },
+  ];
+  for (const [index, mutate] of breakers.entries()) {
+    const manifest = clone();
+    mutate(manifest);
+    assert.throws(
+      () => validateSuiteManifest(manifest),
+      Error,
+      `breaker ${index}`,
+    );
+  }
+});
+
+test("scenarioOutcomeProblems allows a skipped scenario only on a platform with an allowance", () => {
+  const name = "download-process-repairs";
+  const skipped = [{ name, status: "skipped" }];
+  assert.deepEqual(scenarioOutcomeProblems(skipped, "win32", [name]), []);
+  assert.equal(scenarioOutcomeProblems(skipped, "linux", [name]).length, 1);
 });

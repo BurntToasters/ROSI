@@ -35,6 +35,11 @@ if (
     "Build a fresh E2E binary with npm run test:e2e before running these probes.",
   );
 }
+const binarySha256 = crypto
+  .createHash("sha256")
+  .update(fs.readFileSync(binary))
+  .digest("hex");
+const startedAt = new Date().toISOString();
 fs.mkdirSync(artifactRoot, { recursive: true });
 
 // Windows keeps app handles open briefly after exit, so a profile removal can
@@ -208,6 +213,8 @@ for (const mode of Object.keys(seeds)) {
 }
 
 const report = {
+  binarySha256,
+  startedAt,
   finishedAt: new Date().toISOString(),
   allPassed: observations.every(
     (entry) => entry.invariantPassed === true && entry.runnerExitCode === 0,

@@ -20,6 +20,9 @@ import {
   buildCommitAssetName,
   buildCommitRecord,
   buildUploadList,
+  findAssetConflicts,
+  signFile,
+  uploadAllAssets,
   writeBuildCommitRecords,
 } from "./gpg-sign.js";
 import {
@@ -28,7 +31,10 @@ import {
   requiredDraftAssetNames,
   requiredDraftBuildCommitNames,
   requiredDraftChecksumNames,
+  resolveExpectedGpgSigner,
+  verifyGpgDetachedSignature,
 } from "./verify-release-draft.js";
+import { parseShimTarget, resolveChocolateyTarget } from "./e2e/fixtures.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const now = Date.parse("2026-10-03T12:00:00Z");
@@ -836,4 +842,233 @@ test("R2: the type declarations export the build-record API", () => {
   ]) {
     assert.match(verifyTypes, new RegExp(`export function ${name}\\b`), name);
   }
+});
+
+// T7 failure modes: a published release with a clashing asset name must be
+// refused before any upload; the replace flag must reach each upload; a draft
+// replaces without the flag; no conflict means nothing is refused.
+function uploadHarness({ existingNames = [], draft = true }) {
+  const uploads = [];
+  return {
+    uploads,
+    release: { id: 7, draft, upload_url: "https://uploads.example/assets" },
+    listAssets: async () => existingNames.map((name, id) => ({ id, name })),
+    upload: async (release, filePath, options) => {
+      uploads.push({ name: path.basename(filePath), options });
+    },
+  };
+}
+
+const RELEASE_FILES = ["a.exe", "a.exe.asc", "latest.json"].map((name) =>
+  path.join(os.tmpdir(), "rosi-t7-release", name),
+);
+
+test("T7: a published release with a conflict is refused before any upload", async () => {
+  const h = uploadHarness({ existingNames: ["latest.json"], draft: false });
+  await assert.rejects(
+    uploadAllAssets(h.release, RELEASE_FILES, {
+      allowReplace: false,
+      listAssets: h.listAssets,
+      upload: h.upload,
+    }),
+    (error) =>
+      error.message.includes("latest.json") &&
+      error.message.includes("ALLOW_ASSET_REPLACE"),
+  );
+  assert.deepEqual(h.uploads, []);
+});
+
+test("T7: the replace flag reaches every upload on a published release", async () => {
+  const h = uploadHarness({ existingNames: ["latest.json"], draft: false });
+  await uploadAllAssets(h.release, RELEASE_FILES, {
+    allowReplace: true,
+    listAssets: h.listAssets,
+    upload: h.upload,
+  });
+  assert.equal(h.uploads.length, 3);
+  for (const upload of h.uploads) {
+    assert.equal(upload.options.allowPublishedReplace, true, upload.name);
+  }
+});
+
+test("T7: a draft replaces without the flag and a clean publish needs none", async () => {
+  const draft = uploadHarness({ existingNames: ["a.exe"], draft: true });
+  await uploadAllAssets(draft.release, RELEASE_FILES, {
+    allowReplace: false,
+    listAssets: draft.listAssets,
+    upload: draft.upload,
+  });
+  assert.equal(draft.uploads.length, 3);
+  assert.equal(draft.uploads[0].options.allowPublishedReplace, false);
+
+  const clean = uploadHarness({ existingNames: ["other.zip"], draft: false });
+  await uploadAllAssets(clean.release, RELEASE_FILES, {
+    allowReplace: false,
+    listAssets: clean.listAssets,
+    upload: clean.upload,
+  });
+  assert.equal(clean.uploads.length, 3);
+});
+
+test("T7: conflicts are found across the whole list, not file by file", () => {
+  assert.deepEqual(
+    findAssetConflicts(
+      [{ name: "latest.json" }, { name: "a.exe" }, { name: "zzz" }],
+      RELEASE_FILES,
+    ),
+    ["a.exe", "latest.json"],
+  );
+  assert.deepEqual(findAssetConflicts([], RELEASE_FILES), []);
+});
+
+// T14 failure modes: Git's usr\bin gpg needs /c/ paths; PATH gpg keeps plain
+// paths; the chosen executable is the one that is spawned.
+const GIT_GPG = "C:\\Program Files\\Git\\usr\\bin\\gpg.exe";
+
+test("T14: signing spawns the resolved gpg with MSYS paths for Git gpg", () => {
+  const calls = [];
+  const spawn = (command, args) => {
+    calls.push({ command, args });
+    return { status: 0, stdout: "", stderr: "" };
+  };
+  const asc = signFile("C:\\release\\ROSI.dmg", {
+    spawn,
+    gpg: GIT_GPG,
+    platform: "win32",
+  });
+  assert.equal(calls[0].command, GIT_GPG);
+  assert.ok(calls[0].args.includes("/c/release/ROSI.dmg.asc"), calls[0].args);
+  assert.ok(calls[0].args.includes("/c/release/ROSI.dmg"), calls[0].args);
+  assert.equal(asc, "C:\\release\\ROSI.dmg.asc");
+});
+
+test("T14: signing keeps plain paths for other platforms and gpg builds", () => {
+  const calls = [];
+  const spawn = (command, args) => {
+    calls.push({ command, args });
+    return { status: 0, stdout: "", stderr: "" };
+  };
+  signFile("/tmp/r/ROSI.dmg", { spawn, gpg: "gpg", platform: "linux" });
+  assert.equal(calls[0].command, "gpg");
+  assert.ok(calls[0].args.includes("/tmp/r/ROSI.dmg.asc"));
+});
+
+test("T14: draft verification uses the resolved gpg and converts paths", () => {
+  const calls = [];
+  const spawn = (command, args) => {
+    calls.push({ command, args });
+    return { status: 0, stdout: "", stderr: "" };
+  };
+  assert.throws(
+    () =>
+      verifyGpgDetachedSignature({
+        signaturePath: "C:\\tmp\\x.asc",
+        signedPath: "C:\\tmp\\x",
+        expectedFingerprint: "A".repeat(40),
+        spawn,
+        gpg: GIT_GPG,
+        platform: "win32",
+      }),
+    /exactly one/,
+  );
+  assert.equal(calls[0].command, GIT_GPG);
+  assert.ok(calls[0].args.includes("/c/tmp/x.asc"), calls[0].args);
+  assert.ok(calls[0].args.includes("/c/tmp/x"), calls[0].args);
+
+  const listCalls = [];
+  assert.throws(
+    () =>
+      resolveExpectedGpgSigner({
+        keyId: "ABCDEF0123456789",
+        spawn: (command, args) => {
+          listCalls.push({ command, args });
+          return { status: 1, stdout: "", stderr: "" };
+        },
+        gpg: GIT_GPG,
+        platform: "win32",
+      }),
+    /not present/,
+  );
+  assert.equal(listCalls[0].command, GIT_GPG);
+});
+
+// T9 failure modes: a Chocolatey shim resolves to its real binary; a path
+// outside the shim directory and non-Windows hosts pass through; an
+// unresolvable shim fails loudly instead of being handed to the app.
+const CHOCO = "C:\\ProgramData\\chocolatey";
+const SHIM = `${CHOCO}\\bin\\ffmpeg.exe`;
+const REAL = `${CHOCO}\\lib\\ffmpeg\\tools\\ffmpeg\\bin\\ffmpeg.exe`;
+
+function shimDeps(overrides = {}) {
+  return {
+    platform: "win32",
+    env: { ChocolateyInstall: CHOCO },
+    spawn: () => ({ stdout: `path to executable: ${REAL}\n`, stderr: "" }),
+    exists: (candidate) => candidate === REAL,
+    readdir: () => [],
+    ...overrides,
+  };
+}
+
+test("T9: the shim output names the real executable", () => {
+  assert.equal(parseShimTarget(`x\n path to executable: ${REAL} \ny`), REAL);
+  assert.equal(parseShimTarget("nothing useful"), null);
+});
+
+test("T9: a Chocolatey shim resolves to the real binary", () => {
+  assert.equal(resolveChocolateyTarget(SHIM, shimDeps()), REAL);
+});
+
+test("T9: other paths and other platforms are returned unchanged", () => {
+  assert.equal(
+    resolveChocolateyTarget("D:\\tools\\ffmpeg.exe", shimDeps()),
+    "D:\\tools\\ffmpeg.exe",
+  );
+  assert.equal(
+    resolveChocolateyTarget("/usr/bin/ffmpeg", shimDeps({ platform: "linux" })),
+    "/usr/bin/ffmpeg",
+  );
+});
+
+test("T9: a shim that reports nothing falls back to the package tools folder", () => {
+  const found = resolveChocolateyTarget(
+    SHIM,
+    shimDeps({
+      spawn: () => ({ stdout: "", stderr: "" }),
+      exists: () => false,
+      readdir: (directory) => {
+        const normalized = directory.replace(/\\/g, "/").toLowerCase();
+        if (normalized.endsWith("/chocolatey/lib")) {
+          return [
+            { name: "ffmpeg", isDirectory: () => true, isFile: () => false },
+          ];
+        }
+        if (normalized.endsWith("/lib/ffmpeg/tools")) {
+          return [
+            {
+              name: "ffmpeg.exe",
+              isDirectory: () => false,
+              isFile: () => true,
+            },
+          ];
+        }
+        return [];
+      },
+    }),
+  );
+  assert.equal(found, `${CHOCO}\\lib\\ffmpeg\\tools\\ffmpeg.exe`);
+});
+
+test("T9: an unresolvable shim throws", () => {
+  assert.throws(
+    () =>
+      resolveChocolateyTarget(
+        SHIM,
+        shimDeps({
+          spawn: () => ({ stdout: "", stderr: "" }),
+          exists: () => false,
+        }),
+      ),
+    /Chocolatey shim/,
+  );
 });
