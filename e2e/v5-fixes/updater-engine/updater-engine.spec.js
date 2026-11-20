@@ -549,6 +549,8 @@ describe("Updater engine failure modes", () => {
     await invoke("cancel_update_download");
     await waitForModal("Download Cancelled", MODAL_TIMEOUT);
     await clickModalButton("OK");
+    // The cancel notice must be gone, so only a late prompt can be open below.
+    await waitForModal(false, MODAL_TIMEOUT);
 
     releaseArtifact();
     await waitForTransferEnded(
