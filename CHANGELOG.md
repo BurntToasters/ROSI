@@ -18,6 +18,29 @@
 
 ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 
+## Changes in `v5.1.0-beta.3:`
+
+- **Downloads:** On Windows, finishing a download retries briefly when another program (such as an antivirus scanner) holds the file, instead of failing and leaving the file in staging.
+- **Downloads:** Cancelling a fragmented or multi-format download now cleans up its staging files.
+- **Downloads:** Replaying a download from Activity follows the "Ask where to save" setting, saves pending settings first, and no longer starts if another download began while the folder dialog was open.
+- **Downloads:** Long Windows paths and paths written with forward slashes are handled correctly.
+- **Processes:** On macOS and Linux, yt-dlp and FFmpeg now stop when ROSI is killed or crashes, including the FFmpeg that yt-dlp starts itself on Linux.
+- **Processes:** On macOS, closing or quitting the window no longer blocks the interface while active downloads stop.
+- **Performance:** On Windows, ROSI keeps one helper launcher per configuration for each run in local app data, instead of making new copies for every preview, format fetch and download.
+- **Performance:** Download, settings, queue and Activity commands no longer block the network relay that downloads use.
+- **Network:** The download proxy rejects request headers with bare line feeds or control characters, and hosts with more than 32 DNS answers are no longer blocked.
+- **Settings:** The Windows system-folder check compares real paths, so short (8.3) names and trailing dots no longer get past it, and an ordinary folder named "windows" is no longer refused.
+- **Settings:** A settings save that fails while ROSI closes is shown at once. A failed save is no longer reported as saved.
+- **Setup:** Finish and Next are blocked while Skip is saving in the setup wizard.
+- **Dialogs:** A confirmation interrupted by a more urgent dialog comes back afterwards, so restart, update and reset prompts can no longer hang.
+- **Dialogs:** Error and warning toasts stay on screen for 8 seconds again.
+- **Presets:** A failed preset save or delete is undone in the window, and a double click no longer submits twice.
+- **Accessibility:** In Windows High Contrast, toggles, progress bars and the selected wizard card stay visible. With "increase contrast" or "reduce transparency" turned on, panels are opaque.
+- **Accessibility:** Focus stays inside the sidebar and dialogs, skipping hidden and inactive controls.
+- **Formats:** A failed format fetch reports the end of yt-dlp's error output instead of all of its output. Download sizes show consistently across the queue, Activity and statistics.
+- **Tests:** Release preflight refuses the green `ci-gate` posted by the weekly scheduled CI run, and E2E proof fails if the source changes during the run.
+- **Tests:** E2E specs wait for the state they need instead of sleeping for a fixed time, and share one set of helpers.
+
 ## Changes in `v5.1.0-beta.2:`
 
 - **Updater:** macOS in-app updates keep ROSI pinned in the Dock. The updater now replaces only the app's contents instead of moving the whole `ROSI.app` bundle, so the Dock icon no longer points at the deleted backup. Recovery and the administrator install path work the same way, including backups made by 5.0.x.

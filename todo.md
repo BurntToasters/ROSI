@@ -2,31 +2,33 @@
 
 ## Before the next release
 
-- [ ] Commit the current working tree, then rerun `npm run test:e2e` on the clean tree. Release proof now rejects E2E evidence recorded from a dirty tree.
-- [ ] Get Windows and Linux CI green on the release commit. Release preflight now requires a passing `ci-gate` check on HEAD.
-- [ ] Re-sign each platform's release assets with the current `gpg-sign`. Drafts need one `build-commit-<platform>.json` per platform, and drafts built before this change don't have them.
+- [ ] Get Windows and Linux CI green on the release commit. Release preflight requires a passing `ci-gate` check on HEAD, and it now refuses the green `ci-gate` posted by the weekly scheduled run.
+- [ ] Re-sign each platform's release assets with the current `gpg-sign`. Drafts need one `build-commit-<platform>.json` per platform, and drafts built before that change don't have them. `gpg-sign` has no re-sign-only mode, so this means a rebuild per platform.
+- [ ] Re-review the RustSec ignore list before 2026-12-01. `security-audit` fails after that date until it is reviewed.
+- [ ] Check the moderate Dependabot alert on the default branch.
 
-## Needs Windows or Linux
+## Verify in CI (written on Windows, not run on macOS or Linux)
 
-- [ ] Compile and run the Windows changes: the merged `MoveFileExW` helper (`fs_util.rs`, `staging.rs`) and the NTSTATUS error for `NtResumeProcess` (`process_util.rs`). Cross-checking from macOS fails because `aws-lc-sys` needs the Windows SDK headers.
-- [ ] Compile and test the Linux `PR_SET_PDEATHSIG` spawner thread (`process_util.rs`). Kill ROSI and confirm that yt-dlp and FFmpeg exit with it.
-- [ ] Measure whether `install_executable_alias` (`ffmpeg_guard.rs`) copies the whole executable for every preview, format fetch and download on Windows. If it does, keep one alias pair for each app run.
-- [ ] Check the near-opaque panels (settings, dialogs, toasts, wizard) in a real window on each platform, including WebKitGTK and Windows High Contrast.
+- [ ] POSIX process watchdog (`process_watchdog.rs`): kill ROSI during a download on macOS and Linux and confirm yt-dlp, FFmpeg and the watchdog exit. The `download-process` suite has a scenario for this.
+- [ ] Linux: the warning logged when a child is spawned without `PR_SET_PDEATHSIG` (`process_util.rs`).
+- [ ] macOS: close and quit stop active work on a background thread (`window.rs`). `request_quit` now runs its shutdown on a spawned thread on every platform.
+- [ ] POSIX-only specs whose fixed sleeps were replaced with state waits: `e2e/download-process.spec.js`, `e2e/platform-probes/probes.spec.js`, `e2e/deep-probes/probes.spec.js`. The deep-probes queue-owner race now waits for an empty queue, not for the backend slot release.
+- [ ] Windows CI installs FFmpeg 9.0.2 from Chocolatey (`ci.yml`). Confirm that version exists there and that the E2E fixtures resolve the Chocolatey shim to the real binary.
+
+## Manual checks
+
+- [ ] Near-opaque panels (settings, dialogs, toasts, wizard) in a real window on WebKitGTK.
+- [ ] Windows High Contrast and `prefers-contrast: more`: toggles, progress fills and the selected wizard card stay visible. The E2E WebView2 cannot be switched into forced colours, so `high-contrast.spec.js` only proves the rules exist and target the right selectors.
 
 ## Known gaps
 
-- [ ] macOS: yt-dlp and FFmpeg can outlive ROSI after an abort. macOS has no `PR_SET_PDEATHSIG` equivalent; a watchdog pipe is one option.
-- [ ] Linux: processes that yt-dlp starts itself (for example its own FFmpeg) don't inherit `PR_SET_PDEATHSIG`.
-- [ ] Pin the FFmpeg version CI installs on Windows (choco) once a known-good version is confirmed.
+- [ ] A few E2E sleeps remain because nothing observable marks their end. Each is a named constant with a reason:
+  - `AUTO_PREVIEW_SETTLE_MS` in `full-audit-a.spec.js` and `full-audit-b.spec.js` needs the preview controller's pending or in-flight state in `src/e2e-hook.ts`.
+  - `PAST_SYNTHETIC_DNS_MS` (`security-release-checks.spec.js`) and `DNS_DRAIN_WINDOW_MS` (`download-process.spec.js`) need a Rust counter of finished synthetic DNS lookups.
+  - `STALE_EVENT_WINDOW_MS` (`download-process.spec.js`) needs a renderer counter of ignored stale events.
+- [ ] `scripts/round2-release-updater.test.mjs` imports `audit4-release.test.mjs`, so `npm run test:scripts` runs those tests twice.
+- [ ] Several ui-polish specs keep private bridge-stub registries, and `transitionsSettled` is repeated in three of them. Moving them to `e2e/helpers/ui.js` needs each spec's registry reads moved too.
 
-## Refactors (when the code is next touched)
+## Decided
 
-- [ ] Split the longest functions:
-  - `launchSetupWizard`: one function per step.
-  - `on_ytdlp_exit`: classify the exit first, then one handler per outcome.
-  - `start_download`, `run_conversion`, `initializeRenderer`, `initActivityPanel`, `bindSettingsControls` (by section), `validate_settings_patch`.
-- [ ] Move the E2E-only probes out of `network_security.rs` and `network_security_async.rs` into `#[cfg(feature = "e2e")]` submodules.
-- [ ] E2E specs:
-  - Replace fixed sleeps with `waitUntil` on the state being waited for.
-  - Share the remaining spec helpers. The `settle` and `modalState` copies differ by spec. `clickById` in `main.spec.js` and `deno-installer.spec.js` ignores a missing element, while the shared helper fails on one.
-- [ ] Decide whether a small pixel-diff baseline for a few key screenshots per platform is worth having. Today screenshots are hashed but never compared.
+- No pixel-diff screenshot baseline for 5.1. It would need image dependencies, per-platform and per-scale baselines, and masking of carets, timestamps and spinners. Screenshots stay hashed evidence.
