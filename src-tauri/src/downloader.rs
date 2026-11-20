@@ -590,11 +590,7 @@ fn cancel_locked(
         id: session.id,
         wait,
         children,
-        meta: CompletionMeta {
-            progress_message: show.then(|| CANCELLED_PROGRESS.to_string()),
-            suppress_legacy_complete: !show,
-            ..partial_completion_meta(session)
-        },
+        meta: with_cancel_notice(partial_completion_meta(session), show),
     })
 }
 
@@ -755,12 +751,89 @@ pub fn start_download(
     let snapshot = request.clone();
     let plan = progress::resolve_plan(&effective);
     let id = COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
+    let (session, network_cancel_receiver) =
+        new_session(id, snapshot, owner, plan, queue_progress, &effective);
+    install_session(id, session, completion)?;
+
+    let requested_ffmpeg = request
+        .ffmpeg_path
+        .clone()
+        .filter(|path| !path.is_empty())
+        .unwrap_or_else(|| effective.ffmpeg_path.clone());
+    let ffmpeg_command = crate::sidecars::effective_ffmpeg(Some(&requested_ffmpeg));
+    let ytdlp = crate::sidecars::ytdlp_path();
+    let url = request.url.clone();
+
+    if !validate_request(id, &request, &ytdlp) {
+        return Ok(id);
+    }
+    let Some(download_dir) = prepare_download_dir(id, &request) else {
+        return Ok(id);
+    };
+    let Some((download_stage, path_output_file)) = reserve_staging(id, &download_dir) else {
+        return Ok(id);
+    };
+    let Some(ffmpeg_guard) =
+        create_ffmpeg_guard(id, &request, &requested_ffmpeg, &path_output_file)
+    else {
+        return Ok(id);
+    };
+    let ffmpeg_location = ffmpeg_guard.location().to_string_lossy().into_owned();
+    let Some(network_guard) =
+        start_network_guard(id, network_cancel_receiver, &effective, &path_output_file)
+    else {
+        return Ok(id);
+    };
+    let proxy_url = network_guard.proxy_url().to_string();
+    let (args, status_messages) = build_command_args(
+        &request,
+        &effective,
+        &download_stage.directory,
+        &ffmpeg_location,
+        &path_output_file,
+        &proxy_url,
+    );
+    announce_command(id, &url, status_messages, &args);
+
+    if !active_not_cancelled(id) {
+        let _ = std::fs::remove_file(&path_output_file);
+        return Ok(id);
+    }
+
+    let Some(child) = spawn_and_register(id, &ytdlp, &args, &path_output_file) else {
+        return Ok(id);
+    };
+    watch_ytdlp(
+        child,
+        ExitWatch {
+            id,
+            proxy_url,
+            path_output_file,
+            stage: download_stage,
+            download_dir,
+            effective,
+            ffmpeg_command,
+            network_guard,
+            ffmpeg_guard,
+        },
+    );
+    Ok(id)
+}
+
+fn new_session(
+    id: u64,
+    request: DownloadRequestOptions,
+    owner: Owner,
+    plan: progress::Plan,
+    queue_progress: Option<QueueProgress>,
+    effective: &Settings,
+) -> (Box<Session>, watch::Receiver<bool>) {
     let (network_cancellation, network_cancel_receiver) = watch::channel(false);
-    let mut session = Box::new(Session {
+    let session = Box::new(Session {
         id,
         completion_id: crate::fs_util::uuid_v4(),
         started_at: crate::app_state::now_ms(),
-        request: snapshot,
+        request,
         owner,
         cancelled: false,
         network_cancellation,
@@ -778,6 +851,16 @@ pub fn start_download(
         partial_error: None,
         reporter: Reporter::new(plan, queue_progress, effective.show_taskbar_progress),
     });
+    (session, network_cancel_receiver)
+}
+
+/// Make the session current. A session of the same owner that holds the slot
+/// is cancelled and awaited first.
+fn install_session(
+    id: u64,
+    mut session: Box<Session>,
+    completion: Sender<DownloadCompletion>,
+) -> Result<(), OwnerConflict> {
     let mut completion = completion;
     loop {
         match session_owner::install(session, completion) {
@@ -787,7 +870,7 @@ pub fn start_download(
                     session_id: id,
                 })
             }
-            Some(Installed::Accepted) => break,
+            Some(Installed::Accepted) => return Ok(()),
             Some(Installed::Conflict { session_id }) => {
                 return Err(OwnerConflict {
                     message: "Download session already active with a different owner.".to_string(),
@@ -809,50 +892,56 @@ pub fn start_download(
             }
         }
     }
+}
 
-    let requested_ffmpeg = request
-        .ffmpeg_path
-        .clone()
-        .filter(|path| !path.is_empty())
-        .unwrap_or_else(|| effective.ffmpeg_path.clone());
-    let ffmpeg_command = crate::sidecars::effective_ffmpeg(Some(&requested_ffmpeg));
-    let ytdlp = crate::sidecars::ytdlp_path();
-    let url = request.url.clone();
+/// Fail the session after one progress line. The caller returns afterwards.
+fn fail_session(id: u64, progress: impl Into<String>, status: &str, meta: CompletionMeta) {
+    send_progress(id, progress);
+    complete_session(id, status, Outcome::Failed, meta);
+}
 
-    if !is_safe_http_url(&url) {
-        send_progress(id, "⚠️ Invalid or missing URL.");
-        complete_session(
+fn error_meta(error: String) -> CompletionMeta {
+    CompletionMeta {
+        error: Some(error),
+        ..CompletionMeta::default()
+    }
+}
+
+/// URL, folder and yt-dlp checks. `false` once the session has been failed.
+fn validate_request(id: u64, request: &DownloadRequestOptions, ytdlp: &Path) -> bool {
+    if !is_safe_http_url(&request.url) {
+        fail_session(
             id,
+            "⚠️ Invalid or missing URL.",
             "❌ Failed (Invalid URL).",
-            Outcome::Failed,
             CompletionMeta::default(),
         );
-        return Ok(id);
+        return false;
     }
     if request.output_path.trim().is_empty() {
-        send_progress(id, "⚠️ Invalid or missing download folder.");
-        complete_session(
+        fail_session(
             id,
+            "⚠️ Invalid or missing download folder.",
             "❌ Failed (Invalid Folder).",
-            Outcome::Failed,
             CompletionMeta::default(),
         );
-        return Ok(id);
+        return false;
     }
     if !ytdlp.exists() {
-        send_progress(
+        fail_session(
             id,
             format!("❌ Error: yt-dlp binary not found at {}", ytdlp.display()),
-        );
-        complete_session(
-            id,
             "❌ Failed (Missing Dependency).",
-            Outcome::Failed,
             CompletionMeta::default(),
         );
-        return Ok(id);
+        return false;
     }
+    true
+}
 
+/// Resolve and create the download folder. `None` once the session has been
+/// failed.
+fn prepare_download_dir(id: u64, request: &DownloadRequestOptions) -> Option<PathBuf> {
     let download_dir = resolve_path(&request.output_path);
     let download_path = download_dir.to_string_lossy().into_owned();
     with_session(id, move |session| {
@@ -864,138 +953,152 @@ pub fn start_download(
             format!("📂 Creating directory: {}", download_dir.display()),
         );
         if let Err(error) = std::fs::create_dir_all(&download_dir) {
-            send_progress(id, format!("❌ Error before starting download: {error}"));
-            complete_session(
+            fail_session(
                 id,
+                format!("❌ Error before starting download: {error}"),
                 "❌ Failed (Initial Setup Error).",
-                Outcome::Failed,
                 CompletionMeta::default(),
             );
-            return Ok(id);
+            return None;
         }
     } else if !download_dir.is_dir() {
-        send_progress(
+        fail_session(
             id,
             format!(
                 "❌ Download path is not a directory: {}",
                 download_dir.display()
             ),
-        );
-        complete_session(
-            id,
             "❌ Failed (Invalid Folder).",
-            Outcome::Failed,
             CompletionMeta::default(),
         );
-        return Ok(id);
+        return None;
     }
+    Some(download_dir)
+}
 
-    let download_stage = match reserve_download_stage(&download_dir) {
+/// Reserve the private staging directory and the path-output file. `None`
+/// once the session has been failed.
+fn reserve_staging(id: u64, download_dir: &Path) -> Option<(DownloadStage, PathBuf)> {
+    let download_stage = match reserve_download_stage(download_dir) {
         Ok(stage) => stage,
         Err(error) => {
-            send_progress(
+            fail_session(
                 id,
                 format!("❌ Could not reserve private download staging: {error}"),
-            );
-            complete_session(
-                id,
                 "❌ Failed (Initial Setup Error).",
-                Outcome::Failed,
-                CompletionMeta {
-                    error: Some(error),
-                    ..CompletionMeta::default()
-                },
+                error_meta(error),
             );
-            return Ok(id);
+            return None;
         }
     };
     let path_output_file = match reserve_path_output_file(&download_stage.directory, id) {
         Ok(path) => path,
         Err(error) => {
-            send_progress(
+            fail_session(
                 id,
                 format!("❌ Could not reserve download metadata: {error}"),
-            );
-            complete_session(
-                id,
                 "❌ Failed (Initial Setup Error).",
-                Outcome::Failed,
-                CompletionMeta {
-                    error: Some(error),
-                    ..CompletionMeta::default()
-                },
+                error_meta(error),
             );
-            return Ok(id);
+            return None;
         }
     };
+    Some((download_stage, path_output_file))
+}
+
+/// Set up the protected media tools. `None` once the session has been failed.
+fn create_ffmpeg_guard(
+    id: u64,
+    request: &DownloadRequestOptions,
+    requested_ffmpeg: &str,
+    path_output_file: &Path,
+) -> Option<crate::ffmpeg_guard::FfmpegToolGuard> {
     #[cfg(feature = "e2e")]
     let media_tool_setup = if request.url.contains("repair-ffprobe-only=1") {
-        crate::ffmpeg_guard::FfmpegToolGuard::create_ffprobe_only(Some(&requested_ffmpeg))
+        crate::ffmpeg_guard::FfmpegToolGuard::create_ffprobe_only(Some(requested_ffmpeg))
     } else {
-        crate::ffmpeg_guard::FfmpegToolGuard::create(Some(&requested_ffmpeg))
+        crate::ffmpeg_guard::FfmpegToolGuard::create(Some(requested_ffmpeg))
     };
     #[cfg(not(feature = "e2e"))]
-    let media_tool_setup = crate::ffmpeg_guard::FfmpegToolGuard::create(Some(&requested_ffmpeg));
-    let ffmpeg_guard = match media_tool_setup {
-        Ok(guard) => guard,
-        Err(error) => {
-            let _ = std::fs::remove_file(&path_output_file);
-            send_progress(id, format!("❌ Secure media-tool setup failed: {error}"));
-            complete_session(
-                id,
-                "❌ Download failed (secure media-tool setup error).",
-                Outcome::Failed,
-                CompletionMeta {
-                    error: Some(error),
-                    ..CompletionMeta::default()
-                },
-            );
-            return Ok(id);
-        }
+    let media_tool_setup = {
+        let _ = request;
+        crate::ffmpeg_guard::FfmpegToolGuard::create(Some(requested_ffmpeg))
     };
-    let ffmpeg_location = ffmpeg_guard.location().to_string_lossy().into_owned();
-    let network_guard =
-        match crate::network_security::NetworkSecurityGuard::start_with_cancel_signal(
-            network_cancel_receiver,
-            &effective.upstream_proxy,
-        ) {
-            Ok(guard) => guard,
-            Err(error) => {
-                let _ = std::fs::remove_file(&path_output_file);
-                if !active_not_cancelled(id) {
-                    return Ok(id);
-                }
-                send_progress(id, format!("❌ Secure network setup failed: {error}"));
-                complete_session(
-                    id,
-                    "❌ Download failed (secure network setup error).",
-                    Outcome::Failed,
-                    CompletionMeta {
-                        error: Some(error),
-                        ..CompletionMeta::default()
-                    },
-                );
-                return Ok(id);
+    match media_tool_setup {
+        Ok(guard) => Some(guard),
+        Err(error) => {
+            let _ = std::fs::remove_file(path_output_file);
+            fail_session(
+                id,
+                format!("❌ Secure media-tool setup failed: {error}"),
+                "❌ Download failed (secure media-tool setup error).",
+                error_meta(error),
+            );
+            None
+        }
+    }
+}
+
+/// Start the vetted proxy. `None` when it failed to start, or the session was
+/// cancelled meanwhile (which is already routed by its own finish).
+fn start_network_guard(
+    id: u64,
+    network_cancel_receiver: watch::Receiver<bool>,
+    effective: &Settings,
+    path_output_file: &Path,
+) -> Option<crate::network_security::NetworkSecurityGuard> {
+    match crate::network_security::NetworkSecurityGuard::start_with_cancel_signal(
+        network_cancel_receiver,
+        &effective.upstream_proxy,
+    ) {
+        Ok(guard) => Some(guard),
+        Err(error) => {
+            let _ = std::fs::remove_file(path_output_file);
+            if !active_not_cancelled(id) {
+                return None;
             }
-        };
+            fail_session(
+                id,
+                format!("❌ Secure network setup failed: {error}"),
+                "❌ Download failed (secure network setup error).",
+                error_meta(error),
+            );
+            None
+        }
+    }
+}
+
+/// The yt-dlp arguments, with the proxy placed before any `--` separator.
+fn build_command_args(
+    request: &DownloadRequestOptions,
+    effective: &Settings,
+    stage_dir: &Path,
+    ffmpeg_location: &str,
+    path_output_file: &Path,
+    proxy_url: &str,
+) -> (Vec<String>, Vec<String>) {
     let (args, status_messages) = build_ytdlp_args(YtdlpArgsInput {
-        download_dir: &download_stage.directory,
-        url: &url,
-        settings: &effective,
-        options: &request,
-        ffmpeg_location: Some(&ffmpeg_location),
-        path_output_file: Some(&path_output_file),
+        download_dir: stage_dir,
+        url: &request.url,
+        settings: effective,
+        options: request,
+        ffmpeg_location: Some(ffmpeg_location),
+        path_output_file: Some(path_output_file),
     });
     let mut args = args;
-    let proxy_url = network_guard.proxy_url().to_string();
     let proxy_index = args
         .iter()
         .position(|argument| argument == "--")
         .unwrap_or(args.len());
     args.splice(
         proxy_index..proxy_index,
-        ["--proxy".to_string(), proxy_url.clone()],
+        ["--proxy".to_string(), proxy_url.to_string()],
     );
+    (args, status_messages)
+}
+
+/// Report the start and the command line, hiding proxy and tool locations.
+fn announce_command(id: u64, url: &str, status_messages: Vec<String>, args: &[String]) {
     for message in status_messages {
         send_progress(id, message);
     }
@@ -1022,30 +1125,33 @@ pub fn start_download(
         .collect::<Vec<_>>()
         .join(" ");
     send_progress(id, format!("   Command: yt-dlp {display_args}"));
+}
 
-    if !active_not_cancelled(id) {
-        let _ = std::fs::remove_file(&path_output_file);
-        return Ok(id);
-    }
-
+/// Spawn yt-dlp and register the child with the session. `None` when the spawn
+/// failed or the session was cancelled meanwhile.
+fn spawn_and_register(
+    id: u64,
+    ytdlp: &Path,
+    args: &[String],
+    path_output_file: &Path,
+) -> Option<Arc<crate::process_util::ManagedChild>> {
     let certificate = crate::command_builders::ytdlp_e2e_ca_path();
     let mut extra_env = vec![("PYTHONUNBUFFERED", "1")];
     if let Some(certificate) = certificate.as_deref() {
         extra_env.push(("SSL_CERT_FILE", certificate));
     }
-    let mut command = crate::process_util::command(&ytdlp, &args, &extra_env, true);
+    let mut command = crate::process_util::command(ytdlp, args, &extra_env, true);
     let child = match crate::process_util::spawn(&mut command) {
         Ok(child) => child,
         Err(error) => {
-            let _ = std::fs::remove_file(&path_output_file);
-            send_progress(id, format!("❌ Failed to start download process: {error}"));
-            complete_session(
+            let _ = std::fs::remove_file(path_output_file);
+            fail_session(
                 id,
+                format!("❌ Failed to start download process: {error}"),
                 "❌ Download failed (process spawn error).",
-                Outcome::Failed,
                 CompletionMeta::default(),
             );
-            return Ok(id);
+            return None;
         }
     };
     let owned_child = Arc::clone(&child);
@@ -1061,10 +1167,38 @@ pub fn start_download(
     .unwrap_or(false);
     if !registered {
         crate::process_util::terminate_tree(&child);
-        let _ = std::fs::remove_file(&path_output_file);
-        return Ok(id);
+        let _ = std::fs::remove_file(path_output_file);
+        return None;
     }
+    Some(child)
+}
 
+/// What the exit watcher thread owns until yt-dlp ends.
+struct ExitWatch {
+    id: u64,
+    proxy_url: String,
+    path_output_file: PathBuf,
+    stage: DownloadStage,
+    download_dir: PathBuf,
+    effective: Settings,
+    ffmpeg_command: PathBuf,
+    network_guard: crate::network_security::NetworkSecurityGuard,
+    ffmpeg_guard: crate::ffmpeg_guard::FfmpegToolGuard,
+}
+
+/// Start the output readers and the thread that waits for yt-dlp to exit.
+fn watch_ytdlp(child: Arc<crate::process_util::ManagedChild>, watch: ExitWatch) {
+    let ExitWatch {
+        id,
+        proxy_url,
+        path_output_file,
+        stage,
+        download_dir,
+        effective,
+        ffmpeg_command,
+        network_guard,
+        ffmpeg_guard,
+    } = watch;
     let stdout_buffer = Arc::new(Mutex::new(String::new()));
     let stderr_buffer = Arc::new(Mutex::new(String::new()));
     let stdout_reader = {
@@ -1115,7 +1249,7 @@ pub fn start_download(
             stderr,
             diagnostics_complete,
             path_output_file,
-            stage: download_stage,
+            stage,
             download_dir,
             effective,
             ffmpeg_command,
@@ -1123,7 +1257,6 @@ pub fn start_download(
         drop(network_guard);
         drop(ffmpeg_guard);
     });
-    Ok(id)
 }
 
 struct YtdlpExit {
@@ -1315,6 +1448,42 @@ fn ytdlp_failure_reason(stderr: &str) -> Option<String> {
     Some(capped)
 }
 
+/// How a yt-dlp run ended, decided before any outcome handler runs.
+enum ExitOutcome {
+    /// The session was cancelled while yt-dlp ran.
+    Cancelled,
+    /// The helper output pipes stayed open after the process ended.
+    PipesOpen,
+    /// A non-zero or missing exit code.
+    Failed,
+    /// Exit code zero, or a playlist run that still produced files.
+    Downloaded,
+}
+
+fn remove_path_file(exit: &YtdlpExit) {
+    let _ = std::fs::remove_file(&exit.path_output_file);
+}
+
+fn joined_errors(errors: &[String]) -> Option<String> {
+    (!errors.is_empty()).then(|| errors.join("; "))
+}
+
+/// Add the cancellation notice, or silence it, to a completion's meta.
+fn with_cancel_notice(mut meta: CompletionMeta, cancel_notify: bool) -> CompletionMeta {
+    meta.progress_message = cancel_notify.then(|| CANCELLED_PROGRESS.to_string());
+    meta.suppress_legacy_complete = !cancel_notify;
+    meta
+}
+
+fn complete_cancelled(id: u64, meta: CompletionMeta, cancel_notify: bool) {
+    complete_session(
+        id,
+        CANCELLED_STATUS,
+        Outcome::Cancelled,
+        with_cancel_notice(meta, cancel_notify),
+    );
+}
+
 fn on_ytdlp_exit(mut exit: YtdlpExit) {
     if let Err(error) = exit.stage.snapshot_owned_contents() {
         crate::logging::error(&format!(
@@ -1327,50 +1496,37 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
         session.ytdlp = None;
         (session.cancelled, session.cancel_notify)
     }) else {
-        let _ = std::fs::remove_file(&exit.path_output_file);
+        remove_path_file(&exit);
         return;
     };
-    let path_output_file = exit.path_output_file.clone();
-    let cleanup = || {
-        let _ = std::fs::remove_file(&path_output_file);
-    };
+    match classify_exit(&mut exit, cancelled) {
+        ExitOutcome::Cancelled => finish_cancelled_exit(exit, cancel_notify),
+        ExitOutcome::PipesOpen => finish_pipes_open_exit(exit),
+        ExitOutcome::Failed => finish_failed_exit(exit),
+        ExitOutcome::Downloaded => finish_downloaded_exit(exit, cancel_notify),
+    }
+}
+
+fn classify_exit(exit: &mut YtdlpExit, cancelled: bool) -> ExitOutcome {
     if cancelled {
-        let (paths, failed, errors) = recover_staged_downloads(&mut exit);
-        cleanup();
-        complete_session(
-            id,
-            CANCELLED_STATUS,
-            Outcome::Cancelled,
-            CompletionMeta {
-                progress_message: cancel_notify.then(|| CANCELLED_PROGRESS.into()),
-                suppress_legacy_complete: !cancel_notify,
-                ..completion_meta_for_paths(
-                    paths,
-                    failed,
-                    (!errors.is_empty()).then(|| errors.join("; ")),
-                )
-            },
-        );
-        return;
+        return ExitOutcome::Cancelled;
     }
     if !exit.diagnostics_complete {
-        let (paths, mut failed, mut errors) = recover_staged_downloads(&mut exit);
-        cleanup();
-        let message = "yt-dlp output pipes remained open after the process ended.";
-        errors.push(message.to_string());
-        failed.extend(paths.iter().filter(|path| !path.exists()).cloned());
-        send_progress(id, format!("❌ Download failed: {message}"));
-        complete_session(
-            id,
-            "❌ Download failed (helper output did not close).",
-            Outcome::Failed,
-            completion_meta_for_paths(paths, failed, Some(errors.join("; "))),
-        );
-        return;
+        return ExitOutcome::PipesOpen;
     }
-    // A playlist run exits non-zero when any entry fails, even after the other
-    // entries downloaded. Keep going for the files it produced (including
-    // conversion) and report the run as partially failed at the end.
+    accept_partial_playlist(exit);
+    if exit.code != Some(0) {
+        ExitOutcome::Failed
+    } else {
+        ExitOutcome::Downloaded
+    }
+}
+
+/// A playlist run exits non-zero when any entry fails, even after the other
+/// entries downloaded. Keep going for the files it produced (including
+/// conversion) and report the run as partially failed at the end.
+fn accept_partial_playlist(exit: &mut YtdlpExit) {
+    let id = exit.id;
     if exit.code != Some(0) && exit.code.is_some() {
         let playlist_run = with_session(id, |session| {
             session
@@ -1380,7 +1536,7 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
                 .is_some_and(|playlist| playlist.mode != "current")
         })
         .unwrap_or(false);
-        if playlist_run && downloaded_file_paths(&exit).is_ok() {
+        if playlist_run && downloaded_file_paths(exit).is_ok() {
             let code = exit.code.unwrap_or_default();
             let failed_entries = exit
                 .stderr
@@ -1400,43 +1556,72 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
             exit.code = Some(0);
         }
     }
-    if exit.code != Some(0) {
-        let code = exit
-            .code
-            .map_or("null".to_string(), |code| code.to_string());
-        let tail: Vec<&str> = exit
-            .stderr
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .collect();
-        let tail = tail[tail.len().saturating_sub(12)..].join(" | ");
-        crate::logging::warn(&format!("yt-dlp exited with code {code}: {tail}"));
-        let failure = match ytdlp_failure_reason(&exit.stderr) {
-            Some(reason) => format!("{reason} (yt-dlp exited with code {code})"),
-            None => format!("yt-dlp process exited with code {code}"),
-        };
-        let (paths, failed, mut errors) = recover_staged_downloads(&mut exit);
-        errors.insert(0, failure.clone());
-        cleanup();
-        send_progress(id, format!("❌ Download failed: {failure}"));
-        if exit.stderr.contains("different Team IDs")
-            || exit.stderr.contains("[PYI-")
-            || exit.stderr.contains("Failed to load Python shared library")
-        {
-            send_progress(
-                id,
-                "   macOS blocked the bundled yt-dlp runtime (code signing). Install yt-dlp via Homebrew as a workaround, or use a rebuilt ROSI release with signed helpers.",
-            );
-        }
-        send_progress(id, "   Check console and stderr output above for details.");
-        complete_session(
+}
+
+fn finish_cancelled_exit(mut exit: YtdlpExit, cancel_notify: bool) {
+    let (paths, failed, errors) = recover_staged_downloads(&mut exit);
+    remove_path_file(&exit);
+    complete_cancelled(
+        exit.id,
+        completion_meta_for_paths(paths, failed, joined_errors(&errors)),
+        cancel_notify,
+    );
+}
+
+fn finish_pipes_open_exit(mut exit: YtdlpExit) {
+    let id = exit.id;
+    let (paths, mut failed, mut errors) = recover_staged_downloads(&mut exit);
+    remove_path_file(&exit);
+    let message = "yt-dlp output pipes remained open after the process ended.";
+    errors.push(message.to_string());
+    failed.extend(paths.iter().filter(|path| !path.exists()).cloned());
+    fail_session(
+        id,
+        format!("❌ Download failed: {message}"),
+        "❌ Download failed (helper output did not close).",
+        completion_meta_for_paths(paths, failed, Some(errors.join("; "))),
+    );
+}
+
+fn finish_failed_exit(mut exit: YtdlpExit) {
+    let id = exit.id;
+    let code = exit
+        .code
+        .map_or("null".to_string(), |code| code.to_string());
+    let tail: Vec<&str> = exit
+        .stderr
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    let tail = tail[tail.len().saturating_sub(12)..].join(" | ");
+    crate::logging::warn(&format!("yt-dlp exited with code {code}: {tail}"));
+    let failure = match ytdlp_failure_reason(&exit.stderr) {
+        Some(reason) => format!("{reason} (yt-dlp exited with code {code})"),
+        None => format!("yt-dlp process exited with code {code}"),
+    };
+    let (paths, failed, mut errors) = recover_staged_downloads(&mut exit);
+    errors.insert(0, failure.clone());
+    remove_path_file(&exit);
+    send_progress(id, format!("❌ Download failed: {failure}"));
+    if exit.stderr.contains("different Team IDs")
+        || exit.stderr.contains("[PYI-")
+        || exit.stderr.contains("Failed to load Python shared library")
+    {
+        send_progress(
             id,
-            "❌ Download failed.",
-            Outcome::Failed,
-            completion_meta_for_paths(paths, failed, Some(errors.join("; "))),
+            "   macOS blocked the bundled yt-dlp runtime (code signing). Install yt-dlp via Homebrew as a workaround, or use a rebuilt ROSI release with signed helpers.",
         );
-        return;
     }
+    fail_session(
+        id,
+        "   Check console and stderr output above for details.",
+        "❌ Download failed.",
+        completion_meta_for_paths(paths, failed, Some(errors.join("; "))),
+    );
+}
+
+fn finish_downloaded_exit(mut exit: YtdlpExit, cancel_notify: bool) {
+    let id = exit.id;
     let staged_downloads = match downloaded_file_paths(&exit) {
         Ok(paths) => paths,
         Err(error) => {
@@ -1445,7 +1630,7 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
                 "{error} Staging retained for recovery at {}.",
                 exit.stage.directory.display()
             );
-            cleanup();
+            remove_path_file(&exit);
             send_progress(
                 id,
                 "❌ Error determining downloaded file path after download.",
@@ -1455,75 +1640,77 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
                 id,
                 "❌ Failed (File Path Error).",
                 Outcome::Failed,
-                CompletionMeta {
-                    error: Some(error),
-                    ..CompletionMeta::default()
-                },
+                error_meta(error),
             );
             return;
         }
     };
     if exit.effective.convert_enabled {
-        cleanup();
-        send_progress(
-            id,
-            format!(
-                "✅ Download finished. Identified {} file{}.",
-                staged_downloads.len(),
-                if staged_downloads.len() == 1 { "" } else { "s" }
-            ),
-        );
-        let handed_off = with_session(id, |session| {
-            if session.cancelled {
-                false
-            } else {
-                session.ytdlp_exit_pending = false;
-                session.conversion_pending = true;
-                true
-            }
-        })
-        .unwrap_or(false);
-        if !handed_off {
-            // The path file was deleted above, so install the paths already read.
-            let (paths, failed, errors) = install_downloaded_file_paths(
-                staged_downloads,
-                &exit.download_dir,
-                &mut exit.stage,
-                exit.effective.write_subtitles,
-            );
-            complete_session(
-                id,
-                CANCELLED_STATUS,
-                Outcome::Cancelled,
-                CompletionMeta {
-                    progress_message: cancel_notify.then(|| CANCELLED_PROGRESS.into()),
-                    suppress_legacy_complete: !cancel_notify,
-                    ..completion_meta_for_paths(
-                        paths,
-                        failed,
-                        (!errors.is_empty()).then(|| errors.join("; ")),
-                    )
-                },
-            );
-            return;
+        hand_off_to_conversion(exit, staged_downloads, cancel_notify);
+    } else {
+        publish_without_conversion(exit, staged_downloads);
+    }
+}
+
+fn hand_off_to_conversion(
+    mut exit: YtdlpExit,
+    staged_downloads: Vec<PathBuf>,
+    cancel_notify: bool,
+) {
+    let id = exit.id;
+    remove_path_file(&exit);
+    send_progress(
+        id,
+        format!(
+            "✅ Download finished. Identified {} file{}.",
+            staged_downloads.len(),
+            if staged_downloads.len() == 1 { "" } else { "s" }
+        ),
+    );
+    let handed_off = with_session(id, |session| {
+        if session.cancelled {
+            false
+        } else {
+            session.ytdlp_exit_pending = false;
+            session.conversion_pending = true;
+            true
         }
-        run_conversion(
-            id,
+    })
+    .unwrap_or(false);
+    if !handed_off {
+        // The path file was deleted above, so install the paths already read.
+        let (paths, failed, errors) = install_downloaded_file_paths(
             staged_downloads,
-            exit.stage,
-            exit.download_dir,
-            exit.effective,
-            exit.ffmpeg_command,
+            &exit.download_dir,
+            &mut exit.stage,
+            exit.effective.write_subtitles,
+        );
+        complete_cancelled(
+            id,
+            completion_meta_for_paths(paths, failed, joined_errors(&errors)),
+            cancel_notify,
         );
         return;
     }
+    run_conversion(
+        id,
+        staged_downloads,
+        exit.stage,
+        exit.download_dir,
+        exit.effective,
+        exit.ffmpeg_command,
+    );
+}
+
+fn publish_without_conversion(mut exit: YtdlpExit, staged_downloads: Vec<PathBuf>) {
+    let id = exit.id;
     let (downloaded, failed_paths, errors) = install_downloaded_file_paths(
         staged_downloads,
         &exit.download_dir,
         &mut exit.stage,
         exit.effective.write_subtitles,
     );
-    cleanup();
+    remove_path_file(&exit);
     if !errors.is_empty() || downloaded.is_empty() {
         let errors = if errors.is_empty() {
             vec!["No completed downloaded files could be published.".to_string()]
@@ -1531,14 +1718,10 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
             errors
         };
         let error = errors.join("; ");
-        send_progress(
+        fail_session(
             id,
             format!("❌ Could not safely install downloaded files: {error}"),
-        );
-        complete_session(
-            id,
             "❌ Failed (File Installation Error).",
-            Outcome::Failed,
             completion_meta_for_paths(downloaded, failed_paths, Some(error)),
         );
         return;
@@ -1560,14 +1743,12 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
         Phase::Download
     };
     emit_phase(id, phase, 100.0, "Download complete", Some(false));
-    let mut meta = completion_meta_for_paths(downloaded, Vec::new(), None);
+    let meta = completion_meta_for_paths(downloaded, Vec::new(), None);
     let (cancelled, cancel_notify) =
         with_session(id, |session| (session.cancelled, session.cancel_notify))
             .unwrap_or((true, false));
     if cancelled {
-        meta.progress_message = cancel_notify.then(|| CANCELLED_PROGRESS.into());
-        meta.suppress_legacy_complete = !cancel_notify;
-        complete_session(id, CANCELLED_STATUS, Outcome::Cancelled, meta);
+        complete_cancelled(id, meta, cancel_notify);
     } else {
         complete_session(
             id,

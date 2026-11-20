@@ -98,7 +98,8 @@ async function settingsAfterLoadFailure(): Promise<{
   }
 }
 
-async function initializeRenderer() {
+/** Phase 1: close handshake listener and per-run renderer state. */
+function registerCloseListener(): Array<() => void> {
   const ipcCleanupFunctions: Array<() => void> = (refs.ipcCleanupFunctions = []);
   ipcCleanupFunctions.push(
     api.onPrepareForClose(async (generation) => {
@@ -117,6 +118,11 @@ async function initializeRenderer() {
     })
   );
   refs.pendingManualCompletions = new Map<number, RosiDownloadCompletion>();
+  return ipcCleanupFunctions;
+}
+
+/** Phase 2: load, track and apply the saved settings. */
+async function loadSettings() {
   try {
     settingsStore.settings = (await api.getSettings()) as RosiSettings;
   } catch (error) {
@@ -133,7 +139,10 @@ async function initializeRenderer() {
   }
   settingsStore.settings = trackSettings(settingsStore.settings);
   applyTheme(settingsStore.settings.theme ?? 'system');
+}
 
+/** Phase 3a: show the app version and wire the release notes link. */
+async function applyAppVersion() {
   try {
     const version = await api.getAppVersion();
     const versionLink = document.getElementById('versionLink');
@@ -165,7 +174,10 @@ async function initializeRenderer() {
       versionLink.textContent = 'Version unknown';
     }
   }
+}
 
+/** Phase 3b: hide platform-specific settings. */
+async function applyPlatformUi() {
   try {
     const platform = await api.getAppPlatform();
     const taskbarSetting = document.getElementById('taskbarProgressSetting');
@@ -181,6 +193,10 @@ async function initializeRenderer() {
   } catch (e) {
     logError('Could not resolve app platform for settings UI', e);
   }
+}
+
+/** Phase 3c: detect the Flatpak build and start the auto-updater. */
+async function detectBuildAndStartUpdater() {
   try {
     settingsStore.isFlatpakBuild = (await api.isFlatpak?.()) === true;
   } catch (e) {
@@ -194,7 +210,10 @@ async function initializeRenderer() {
       logError('Failed to setup auto-updater', e);
     }
   }
+}
 
+/** Phase 4: answer the backend close request after flushing settings. */
+function installCloseHandler() {
   setPrepareForCloseHandler(async (generation) => {
     try {
       const saved = await persistSettings({ immediate: true });
@@ -220,7 +239,10 @@ async function initializeRenderer() {
       });
     }
   });
+}
 
+/** Phase 5: resolve DOM references and prepare the profile buttons. */
+function resolveDomRefs() {
   refs.consoleToggle = byId<HTMLInputElement>('consoleToggle');
   refs.keepOriginalToggle = byId<HTMLInputElement>('keepOriginalToggle');
   refs.hookBrowserToggle = byId<HTMLInputElement>('hookBrowserToggle');
@@ -315,7 +337,10 @@ async function initializeRenderer() {
     ['audio', profileAudioBtn],
     ['custom', profileCustomBtn],
   ] as const;
+}
 
+/** Phase 6: apply the loaded settings to the controls. */
+function applySettingsToControls() {
   try {
     updateUIFromSettings();
   } catch (e) {
@@ -329,7 +354,10 @@ async function initializeRenderer() {
     }
   };
   syncDockFromSettings();
+}
 
+/** Phase 7: bind feature controls and backend events. */
+function bindFeatureControls(ipcCleanupFunctions: Array<() => void>) {
   // Sidebar controls
   bindAppShell();
 
@@ -382,7 +410,10 @@ async function initializeRenderer() {
     });
     cleanupUpdaterListeners();
   });
+}
 
+/** Phase 8: first-run wizard, or the regular startup checks. */
+function startWizardOrStartupChecks() {
   if (settingsStore.settings.firstLaunch) {
     launchSetupWizard(
       settingsStore.settings,
@@ -413,11 +444,28 @@ async function initializeRenderer() {
     void checkUpdatesOnStartup();
     setTimeout(maybeShowSupportModal, 1500);
   }
+}
 
+/** Phase 9: overlay and keyboard bindings that follow the wizard launch. */
+function bindOverlaysAndShortcuts() {
   bindLicensesOverlay();
   bindLicensesExternalLinks();
 
   bindKeyboardShortcuts();
+}
+
+async function initializeRenderer() {
+  const ipcCleanupFunctions = registerCloseListener();
+  await loadSettings();
+  await applyAppVersion();
+  await applyPlatformUi();
+  await detectBuildAndStartUpdater();
+  installCloseHandler();
+  resolveDomRefs();
+  applySettingsToControls();
+  bindFeatureControls(ipcCleanupFunctions);
+  startWizardOrStartupChecks();
+  bindOverlaysAndShortcuts();
 }
 
 document.addEventListener('DOMContentLoaded', () => {

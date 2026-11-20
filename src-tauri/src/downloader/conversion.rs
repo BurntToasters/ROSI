@@ -4,7 +4,7 @@
 use super::publication::{
     publish_caption_sidecars, publish_pending_sources, publish_same_extension_for_session,
     publish_staged_source, publish_staged_source_with_captions, push_completed_path,
-    retire_staged_source, PendingSourcePublication,
+    retire_staged_source, PendingSourcePublication, PublicationFailure,
 };
 use super::{
     active_not_cancelled, append_bounded, complete_session, emit_phase, output_format_from_path,
@@ -626,7 +626,7 @@ fn complete_conversion_batch(
 pub(super) fn run_conversion(
     id: u64,
     downloaded: Vec<PathBuf>,
-    mut stage: DownloadStage,
+    stage: DownloadStage,
     download_dir: PathBuf,
     effective: Settings,
     ffmpeg: PathBuf,
@@ -638,355 +638,359 @@ pub(super) fn run_conversion(
         } else {
             effective.convert_format.trim().to_lowercase()
         };
-        let count = downloaded.len();
-        let total_entries = count;
-        let mut completed = Vec::new();
-        let mut failed = Vec::new();
-        let mut failures = Vec::new();
-        let mut missing_ffmpeg = false;
-        for (index, input) in downloaded.iter().enumerate() {
-            if !active_not_cancelled(id) {
-                publish_pending_sources(PendingSourcePublication {
-                    id,
-                    inputs: &downloaded[index..],
-                    download_dir: &download_dir,
-                    stage: &mut stage,
-                    write_subtitles: effective.write_subtitles,
-                    completed: &mut completed,
-                    failed: &mut failed,
-                    failures: &mut failures,
-                });
-                complete_conversion_batch(
-                    id,
-                    target,
-                    total_entries,
-                    completed,
-                    failed,
-                    failures,
-                    true,
-                );
-                return;
+        ConversionBatch {
+            id,
+            downloaded,
+            stage,
+            download_dir,
+            effective,
+            ffmpeg,
+            target,
+            completed: Vec::new(),
+            failed: Vec::new(),
+            failures: Vec::new(),
+            missing_ffmpeg: false,
+        }
+        .run();
+    });
+}
+
+/// Whether the batch goes on to the next entry.
+enum EntryFlow {
+    Continue,
+    Cancelled,
+}
+
+/// One conversion run over the downloaded files, and its running result.
+struct ConversionBatch {
+    id: u64,
+    downloaded: Vec<PathBuf>,
+    stage: DownloadStage,
+    download_dir: PathBuf,
+    effective: Settings,
+    ffmpeg: PathBuf,
+    target: String,
+    completed: Vec<PathBuf>,
+    failed: Vec<PathBuf>,
+    failures: Vec<String>,
+    missing_ffmpeg: bool,
+}
+
+impl ConversionBatch {
+    fn run(mut self) {
+        let count = self.downloaded.len();
+        for index in 0..count {
+            let input = self.downloaded[index].clone();
+            if !active_not_cancelled(self.id) {
+                self.publish_remaining(index);
+                return self.finish(true);
             }
-            match convert_one(
-                id,
-                input,
-                &download_dir,
-                &target,
-                &effective,
-                &ffmpeg,
+            let converted = convert_one(
+                self.id,
+                &input,
+                &self.download_dir,
+                &self.target,
+                &self.effective,
+                &self.ffmpeg,
                 ConversionPosition { index, count },
-            ) {
-                Ok(result) if result.unchanged => {
-                    match publish_same_extension_for_session(
-                        id,
-                        input,
-                        &target,
-                        &download_dir,
-                        &mut stage,
-                        effective.write_subtitles,
-                    ) {
-                        Ok(output) => {
-                            completed.push(output);
-                        }
-                        Err(ConversionFailure::Cancelled) => {
-                            publish_pending_sources(PendingSourcePublication {
-                                id,
-                                inputs: &downloaded[index..],
-                                download_dir: &download_dir,
-                                stage: &mut stage,
-                                write_subtitles: effective.write_subtitles,
-                                completed: &mut completed,
-                                failed: &mut failed,
-                                failures: &mut failures,
-                            });
-                            complete_conversion_batch(
-                                id,
-                                target,
-                                total_entries,
-                                completed,
-                                failed,
-                                failures,
-                                true,
-                            );
-                            return;
-                        }
-                        Err(error) => {
-                            let detail = failure_message(&error);
-                            let failed_path = match &error {
-                                ConversionFailure::SetupPublished { path, .. } => {
-                                    push_completed_path(&mut completed, path.clone());
-                                    path.clone()
-                                }
-                                _ => input.clone(),
-                            };
-                            failed.push(failed_path.clone());
-                            failures.push(format!("{}: {detail}", failed_path.display()));
-                            record_conversion_failure(id, &failed_path, &detail);
-                            if input.exists() {
-                                stage.preserve_on_drop = true;
-                            }
-                        }
-                    }
-                }
-                Ok(result) => {
-                    let output = result.path;
-                    if !active_not_cancelled(id) {
-                        publish_pending_sources(PendingSourcePublication {
-                            id,
-                            inputs: &downloaded[index..],
-                            download_dir: &download_dir,
-                            stage: &mut stage,
-                            write_subtitles: effective.write_subtitles,
-                            completed: &mut completed,
-                            failed: &mut failed,
-                            failures: &mut failures,
-                        });
-                        if output.exists() && !completed.contains(&output) {
-                            completed.push(output);
-                        }
-                        complete_conversion_batch(
-                            id,
-                            target,
-                            total_entries,
-                            completed,
-                            failed,
-                            failures,
-                            true,
-                        );
-                        return;
-                    }
-                    let should_preserve_original = result.preserve_original;
-                    let mut preserve_publication_failed = false;
-                    if should_preserve_original {
-                        match publish_staged_source_with_captions(
-                            input,
-                            &download_dir,
-                            &mut stage,
-                            effective.write_subtitles,
-                        ) {
-                            Ok(path) => {
-                                send_progress(
-                                    id,
-                                    format!(
-                                        "ℹ️ Retained original to preserve artwork or unsupported or unverified captions: {}",
-                                        path.display()
-                                    ),
-                                );
-                                push_completed_path(&mut completed, path);
-                            }
-                            Err(error) => {
-                                preserve_publication_failed = true;
-                                let failed_path =
-                                    error.media_path.clone().unwrap_or_else(|| input.clone());
-                                if error.media_path.is_some() {
-                                    push_completed_path(&mut completed, failed_path.clone());
-                                }
-                                failed.push(failed_path.clone());
-                                failures.push(format!(
-                                    "{}: {}",
-                                    failed_path.display(),
-                                    error.detail
-                                ));
-                                record_conversion_failure(id, &failed_path, &error.detail);
-                            }
-                        }
-                    } else if effective.write_subtitles {
-                        if let Err(error) =
-                            publish_caption_sidecars(input, &output, &download_dir, &mut stage)
-                        {
-                            let detail = format!("Could not publish requested captions: {error}");
-                            let preserved = publish_staged_source_with_captions(
-                                input,
-                                &download_dir,
-                                &mut stage,
-                                true,
-                            );
-                            preserve_publication_failed = true;
-                            let (failed_path, detail) = match preserved {
-                                Ok(path) => {
-                                    push_completed_path(&mut completed, path.clone());
-                                    (path, detail)
-                                }
-                                Err(preserve_error) => {
-                                    let failed_path = preserve_error
-                                        .media_path
-                                        .clone()
-                                        .unwrap_or_else(|| input.clone());
-                                    if preserve_error.media_path.is_some() {
-                                        push_completed_path(&mut completed, failed_path.clone());
-                                    }
-                                    (failed_path, format!("{detail}; {}", preserve_error.detail))
-                                }
-                            };
-                            failed.push(failed_path.clone());
-                            failures.push(format!("{}: {detail}", failed_path.display()));
-                            record_conversion_failure(id, &failed_path, &detail);
-                        }
-                    }
-                    if !should_preserve_original
-                        && !effective.keep_original_after_convert
-                        && !preserve_publication_failed
-                    {
-                        match retire_staged_source(input, &download_dir, &mut stage) {
-                            Ok(None) => send_progress(
-                                id,
-                                format!("🗑️ Deleted owned original: {}", input.display()),
-                            ),
-                            Ok(Some(path)) => {
-                                send_progress(
-                                    id,
-                                    format!(
-                                        "ℹ️ Preserved replaced original file: {}",
-                                        path.display()
-                                    ),
-                                );
-                                push_completed_path(&mut completed, path);
-                            }
-                            Err(error) => {
-                                send_progress(
-                                    id,
-                                    format!(
-                                        "⚠️ Could not retire original safely: {}",
-                                        error.detail
-                                    ),
-                                );
-                                let failed_path =
-                                    error.media_path.clone().unwrap_or_else(|| input.clone());
-                                if error.media_path.is_some() {
-                                    push_completed_path(&mut completed, failed_path.clone());
-                                }
-                                failed.push(failed_path.clone());
-                                failures.push(format!(
-                                    "{}: {}",
-                                    failed_path.display(),
-                                    error.detail
-                                ));
-                                record_conversion_failure(id, &failed_path, &error.detail);
-                            }
-                        }
-                    } else if !should_preserve_original
-                        && effective.keep_original_after_convert
-                        && !preserve_publication_failed
-                    {
-                        match publish_staged_source(input, &download_dir, &mut stage) {
-                            Ok(path) => {
-                                send_progress(
-                                    id,
-                                    format!("ℹ️ Keeping original file: {}", path.display()),
-                                );
-                                push_completed_path(&mut completed, path);
-                            }
-                            Err(error) => {
-                                let failed_path =
-                                    error.media_path.clone().unwrap_or_else(|| input.clone());
-                                if error.media_path.is_some() {
-                                    push_completed_path(&mut completed, failed_path.clone());
-                                }
-                                failed.push(failed_path.clone());
-                                failures.push(format!(
-                                    "{}: {}",
-                                    failed_path.display(),
-                                    error.detail
-                                ));
-                                record_conversion_failure(id, &failed_path, &error.detail);
-                            }
-                        }
-                    }
-                    send_progress(
-                        id,
-                        format!("🎉 Successfully converted to {}", output.display()),
-                    );
-                    push_completed_path(&mut completed, output);
-                }
+            );
+            let flow = match converted {
+                Ok(result) if result.unchanged => self.finish_unchanged(index, &input),
+                Ok(result) => self.finish_converted(index, &input, result),
                 Err(ConversionFailure::Cancelled) => {
-                    publish_pending_sources(PendingSourcePublication {
-                        id,
-                        inputs: &downloaded[index..],
-                        download_dir: &download_dir,
-                        stage: &mut stage,
-                        write_subtitles: effective.write_subtitles,
-                        completed: &mut completed,
-                        failed: &mut failed,
-                        failures: &mut failures,
-                    });
-                    complete_conversion_batch(
-                        id,
-                        target,
-                        total_entries,
-                        completed,
-                        failed,
-                        failures,
-                        true,
-                    );
-                    return;
+                    self.publish_remaining(index);
+                    EntryFlow::Cancelled
                 }
                 Err(error) => {
-                    if matches!(&error, ConversionFailure::Spawn(spawn) if spawn.kind() == std::io::ErrorKind::NotFound)
-                    {
-                        missing_ffmpeg = true;
+                    self.keep_failed_entry(&input, error);
+                    EntryFlow::Continue
+                }
+            };
+            if matches!(flow, EntryFlow::Cancelled) {
+                return self.finish(true);
+            }
+        }
+        if self.missing_ffmpeg {
+            send_progress(
+                self.id,
+                format!("❌ FFmpeg was not found at {}.", self.ffmpeg.display()),
+            );
+            show_ffmpeg_missing_dialog(&self.ffmpeg);
+        }
+        if self.failed.is_empty() {
+            emit_convert_progress(self.id, Some(100.0), "Conversion complete");
+        }
+        self.finish(false);
+    }
+
+    /// Report the batch result. Consumes the batch, so its staging is released
+    /// after the session completes.
+    fn finish(self, cancelled: bool) {
+        let total_entries = self.downloaded.len();
+        complete_conversion_batch(
+            self.id,
+            self.target,
+            total_entries,
+            self.completed,
+            self.failed,
+            self.failures,
+            cancelled,
+        );
+    }
+
+    /// Publish the sources from `index` on that were not converted.
+    fn publish_remaining(&mut self, index: usize) {
+        publish_pending_sources(PendingSourcePublication {
+            id: self.id,
+            inputs: &self.downloaded[index..],
+            download_dir: &self.download_dir,
+            stage: &mut self.stage,
+            write_subtitles: self.effective.write_subtitles,
+            completed: &mut self.completed,
+            failed: &mut self.failed,
+            failures: &mut self.failures,
+        });
+    }
+
+    /// Record a failed entry in the batch result and on the session.
+    fn note_failure(&mut self, failed_path: PathBuf, detail: &str) {
+        self.failures
+            .push(format!("{}: {detail}", failed_path.display()));
+        record_conversion_failure(self.id, &failed_path, detail);
+        self.failed.push(failed_path);
+    }
+
+    /// A source publication failed. The media may have been published anyway.
+    fn note_publication_failure(&mut self, input: &Path, error: PublicationFailure) {
+        let failed_path = error
+            .media_path
+            .clone()
+            .unwrap_or_else(|| input.to_path_buf());
+        if error.media_path.is_some() {
+            push_completed_path(&mut self.completed, failed_path.clone());
+        }
+        self.note_failure(failed_path, &error.detail);
+    }
+
+    /// The input already has the target extension, so it is only published.
+    fn finish_unchanged(&mut self, index: usize, input: &Path) -> EntryFlow {
+        match publish_same_extension_for_session(
+            self.id,
+            input,
+            &self.target,
+            &self.download_dir,
+            &mut self.stage,
+            self.effective.write_subtitles,
+        ) {
+            Ok(output) => {
+                self.completed.push(output);
+            }
+            Err(ConversionFailure::Cancelled) => {
+                self.publish_remaining(index);
+                return EntryFlow::Cancelled;
+            }
+            Err(error) => {
+                let detail = failure_message(&error);
+                let failed_path = match &error {
+                    ConversionFailure::SetupPublished { path, .. } => {
+                        push_completed_path(&mut self.completed, path.clone());
+                        path.clone()
                     }
-                    let detail = failure_message(&error);
-                    let preserved = publish_staged_source_with_captions(
-                        input,
-                        &download_dir,
-                        &mut stage,
-                        effective.write_subtitles,
-                    );
-                    let failed_path = match preserved {
-                        Ok(path) => {
-                            send_progress(
-                                id,
-                                format!("❌ Conversion failed for {}: {detail}", path.display()),
-                            );
-                            push_completed_path(&mut completed, path.clone());
-                            path
-                        }
-                        Err(preserve_error) => {
-                            let failed_path = preserve_error
-                                .media_path
-                                .clone()
-                                .unwrap_or_else(|| input.clone());
-                            if preserve_error.media_path.is_some() {
-                                push_completed_path(&mut completed, failed_path.clone());
-                            }
-                            let detail = format!("{detail}; {}", preserve_error.detail);
-                            send_progress(
-                                id,
-                                format!(
-                                    "❌ Conversion failed for {}: {detail}",
-                                    failed_path.display()
-                                ),
-                            );
-                            failures.push(format!("{}: {detail}", failed_path.display()));
-                            record_conversion_failure(id, &failed_path, &detail);
-                            failed.push(failed_path);
-                            continue;
-                        }
-                    };
-                    record_conversion_failure(id, &failed_path, &detail);
-                    failed.push(failed_path.clone());
-                    failures.push(format!("{}: {detail}", failed_path.display()));
+                    _ => input.to_path_buf(),
+                };
+                self.note_failure(failed_path, &detail);
+                if input.exists() {
+                    self.stage.preserve_on_drop = true;
                 }
             }
         }
-        if missing_ffmpeg {
-            send_progress(
-                id,
-                format!("❌ FFmpeg was not found at {}.", ffmpeg.display()),
-            );
-            show_ffmpeg_missing_dialog(&ffmpeg);
+        EntryFlow::Continue
+    }
+
+    /// The input was converted: publish captions or the original as needed,
+    /// then record the converted output.
+    fn finish_converted(
+        &mut self,
+        index: usize,
+        input: &Path,
+        result: ConvertedOutput,
+    ) -> EntryFlow {
+        let output = result.path;
+        if !active_not_cancelled(self.id) {
+            self.publish_remaining(index);
+            if output.exists() && !self.completed.contains(&output) {
+                self.completed.push(output);
+            }
+            return EntryFlow::Cancelled;
         }
-        if failed.is_empty() {
-            emit_convert_progress(id, Some(100.0), "Conversion complete");
-        }
-        complete_conversion_batch(
-            id,
-            target,
-            total_entries,
-            completed,
-            failed,
-            failures,
-            false,
+        let should_preserve_original = result.preserve_original;
+        let preserve_publication_failed =
+            self.publish_preserved_or_captions(input, &output, should_preserve_original);
+        self.settle_original(input, should_preserve_original, preserve_publication_failed);
+        send_progress(
+            self.id,
+            format!("🎉 Successfully converted to {}", output.display()),
         );
-    });
+        push_completed_path(&mut self.completed, output);
+        EntryFlow::Continue
+    }
+
+    /// Keep the original, or publish the captions next to the converted
+    /// output. Returns whether that publication failed.
+    fn publish_preserved_or_captions(
+        &mut self,
+        input: &Path,
+        output: &Path,
+        should_preserve_original: bool,
+    ) -> bool {
+        let mut preserve_publication_failed = false;
+        if should_preserve_original {
+            match publish_staged_source_with_captions(
+                input,
+                &self.download_dir,
+                &mut self.stage,
+                self.effective.write_subtitles,
+            ) {
+                Ok(path) => {
+                    send_progress(
+                        self.id,
+                        format!(
+                            "ℹ️ Retained original to preserve artwork or unsupported or unverified captions: {}",
+                            path.display()
+                        ),
+                    );
+                    push_completed_path(&mut self.completed, path);
+                }
+                Err(error) => {
+                    preserve_publication_failed = true;
+                    self.note_publication_failure(input, error);
+                }
+            }
+        } else if self.effective.write_subtitles {
+            if let Err(error) =
+                publish_caption_sidecars(input, output, &self.download_dir, &mut self.stage)
+            {
+                let detail = format!("Could not publish requested captions: {error}");
+                let preserved = publish_staged_source_with_captions(
+                    input,
+                    &self.download_dir,
+                    &mut self.stage,
+                    true,
+                );
+                preserve_publication_failed = true;
+                let (failed_path, detail) = match preserved {
+                    Ok(path) => {
+                        push_completed_path(&mut self.completed, path.clone());
+                        (path, detail)
+                    }
+                    Err(preserve_error) => {
+                        let failed_path = preserve_error
+                            .media_path
+                            .clone()
+                            .unwrap_or_else(|| input.to_path_buf());
+                        if preserve_error.media_path.is_some() {
+                            push_completed_path(&mut self.completed, failed_path.clone());
+                        }
+                        (failed_path, format!("{detail}; {}", preserve_error.detail))
+                    }
+                };
+                self.note_failure(failed_path, &detail);
+            }
+        }
+        preserve_publication_failed
+    }
+
+    /// Delete or keep the original after a successful conversion.
+    fn settle_original(
+        &mut self,
+        input: &Path,
+        should_preserve_original: bool,
+        preserve_publication_failed: bool,
+    ) {
+        if !should_preserve_original
+            && !self.effective.keep_original_after_convert
+            && !preserve_publication_failed
+        {
+            match retire_staged_source(input, &self.download_dir, &mut self.stage) {
+                Ok(None) => send_progress(
+                    self.id,
+                    format!("🗑️ Deleted owned original: {}", input.display()),
+                ),
+                Ok(Some(path)) => {
+                    send_progress(
+                        self.id,
+                        format!("ℹ️ Preserved replaced original file: {}", path.display()),
+                    );
+                    push_completed_path(&mut self.completed, path);
+                }
+                Err(error) => {
+                    send_progress(
+                        self.id,
+                        format!("⚠️ Could not retire original safely: {}", error.detail),
+                    );
+                    self.note_publication_failure(input, error);
+                }
+            }
+        } else if !should_preserve_original
+            && self.effective.keep_original_after_convert
+            && !preserve_publication_failed
+        {
+            match publish_staged_source(input, &self.download_dir, &mut self.stage) {
+                Ok(path) => {
+                    send_progress(
+                        self.id,
+                        format!("ℹ️ Keeping original file: {}", path.display()),
+                    );
+                    push_completed_path(&mut self.completed, path);
+                }
+                Err(error) => self.note_publication_failure(input, error),
+            }
+        }
+    }
+
+    /// The conversion failed: publish the original with its captions and
+    /// record the entry as failed.
+    fn keep_failed_entry(&mut self, input: &Path, error: ConversionFailure) {
+        if matches!(&error, ConversionFailure::Spawn(spawn) if spawn.kind() == std::io::ErrorKind::NotFound)
+        {
+            self.missing_ffmpeg = true;
+        }
+        let detail = failure_message(&error);
+        let preserved = publish_staged_source_with_captions(
+            input,
+            &self.download_dir,
+            &mut self.stage,
+            self.effective.write_subtitles,
+        );
+        let failed_path = match preserved {
+            Ok(path) => {
+                send_progress(
+                    self.id,
+                    format!("❌ Conversion failed for {}: {detail}", path.display()),
+                );
+                push_completed_path(&mut self.completed, path.clone());
+                path
+            }
+            Err(preserve_error) => {
+                let failed_path = preserve_error
+                    .media_path
+                    .clone()
+                    .unwrap_or_else(|| input.to_path_buf());
+                if preserve_error.media_path.is_some() {
+                    push_completed_path(&mut self.completed, failed_path.clone());
+                }
+                let detail = format!("{detail}; {}", preserve_error.detail);
+                send_progress(
+                    self.id,
+                    format!(
+                        "❌ Conversion failed for {}: {detail}",
+                        failed_path.display()
+                    ),
+                );
+                self.note_failure(failed_path, &detail);
+                return;
+            }
+        };
+        self.note_failure(failed_path, &detail);
+    }
 }

@@ -1038,6 +1038,232 @@ fn check_setting<T: Serialize>(
     Some(policy(field.into_result()))
 }
 
+/// Collects the validated values and refusals of one settings patch, so each
+/// settings group below can record its outcomes without sharing a closure.
+struct PatchBuilder<'a> {
+    patch: SettingsPatch,
+    stored: &'a Map<String, Value>,
+}
+
+impl PatchBuilder<'_> {
+    fn record(&mut self, key: &str, outcome: Option<Result<Value, IpcError>>) {
+        match outcome {
+            None => {}
+            Some(Ok(value)) => {
+                self.patch.values.insert(key.to_string(), value);
+            }
+            Some(Err(error)) => self.patch.rejected.push(RejectedSetting {
+                key: key.to_string(),
+                message: error.message,
+            }),
+        }
+    }
+
+    fn check<T: Serialize>(
+        &mut self,
+        key: &str,
+        field: Option<FalliblePayload<T>>,
+        policy: impl FnOnce(Result<T, Value>) -> Result<Value, IpcError>,
+    ) {
+        let outcome = check_setting(key, field, self.stored, policy);
+        self.record(key, outcome);
+    }
+}
+
+fn validate_settings_version_field(
+    builder: &mut PatchBuilder<'_>,
+    field: Option<FalliblePayload<f64>>,
+) {
+    builder.check("settingsVersion", field, |field| match field {
+        Ok(version)
+            if version.fract() == 0.0
+                && version >= 1.0
+                && version <= f64::from(CURRENT_SETTINGS_VERSION) =>
+        {
+            Ok(Value::from(version as u32))
+        }
+        _ => Err(validation_error(format!(
+            "settingsVersion must be an integer between 1 and {CURRENT_SETTINGS_VERSION}."
+        ))),
+    });
+}
+
+fn validate_download_presets_field(
+    builder: &mut PatchBuilder<'_>,
+    field: Option<FalliblePayload<Vec<DownloadPreset>>>,
+) {
+    builder.check("downloadPresets", field, |field| {
+        let presets = match field {
+            Ok(list) => {
+                validate_preset_list(&serde_json::to_value(list).unwrap_or(Value::Array(vec![])))
+            }
+            Err(raw) => validate_preset_list(&raw),
+        }?;
+        Ok(serde_json::to_value(presets).unwrap_or(Value::Array(vec![])))
+    });
+}
+
+fn validate_flag_settings(builder: &mut PatchBuilder<'_>, input: &mut SettingsPatchInput) {
+    let flags: [(&str, Option<FalliblePayload<bool>>); 22] = [
+        ("showConsoleOutput", input.show_console_output.take()),
+        ("dockCollapsed", input.dock_collapsed.take()),
+        ("askDownloadLocation", input.ask_download_location.take()),
+        ("advancedOptions", input.advanced_options.take()),
+        ("audioOnly", input.audio_only.take()),
+        ("convertEnabled", input.convert_enabled.take()),
+        (
+            "keepOriginalAfterConvert",
+            input.keep_original_after_convert.take(),
+        ),
+        ("firstLaunch", input.first_launch.take()),
+        ("hookBrowser", input.hook_browser.take()),
+        ("animateBackground", input.animate_background.take()),
+        ("flatUi", input.flat_ui.take()),
+        ("notifications", input.notifications.take()),
+        ("showTaskbarProgress", input.show_taskbar_progress.take()),
+        (
+            "denoReminderDismissed",
+            input.deno_reminder_dismissed.take(),
+        ),
+        ("gpuAcceleration", input.gpu_acceleration.take()),
+        ("bestQuality", input.best_quality.take()),
+        ("hideSupportModal", input.hide_support_modal.take()),
+        (
+            "checkUpdatesOnStartup",
+            input.check_updates_on_startup.take(),
+        ),
+        ("writeSubtitles", input.write_subtitles.take()),
+        ("embedThumbnail", input.embed_thumbnail.take()),
+        ("embedMetadata", input.embed_metadata.take()),
+        ("sponsorblockRemove", input.sponsorblock_remove.take()),
+    ];
+    for (key, field) in flags {
+        builder.check(key, field, |field| boolean_setting(field, key));
+    }
+}
+
+fn validate_choice_settings(builder: &mut PatchBuilder<'_>, input: &mut SettingsPatchInput) {
+    let choices: [ChoiceSetting; 7] = [
+        (
+            "downloadMode",
+            input.download_mode.take(),
+            ALLOWED_DOWNLOAD_PROFILES,
+            "downloadMode must be compatible, best-video, audio, or custom.",
+        ),
+        (
+            "dockTab",
+            input.dock_tab.take(),
+            ALLOWED_DOCK_TABS,
+            "dockTab must be queue, activity, or console.",
+        ),
+        (
+            "theme",
+            input.theme.take(),
+            ALLOWED_THEMES,
+            "theme must be one of: system, light, dark, purple.",
+        ),
+        (
+            "gpuType",
+            input.gpu_type.take(),
+            ALLOWED_GPU_TYPES,
+            "gpuType must be one of: auto, nvidia, amd, intel.",
+        ),
+        (
+            "audioFormat",
+            input.audio_format.take(),
+            ALLOWED_AUDIO_FORMATS,
+            "audioFormat must be one of: mp3, flac, ogg, wav, m4a, opus.",
+        ),
+        (
+            "convertFormat",
+            input.convert_format.take(),
+            ALLOWED_CONVERT_FORMATS,
+            "convertFormat must be one of: mp4, mov, mp3, m4a.",
+        ),
+        (
+            "updateChannel",
+            input.update_channel.take(),
+            ALLOWED_UPDATE_CHANNELS,
+            "updateChannel must be auto, stable, or beta.",
+        ),
+    ];
+    for (key, field, list, message) in choices {
+        builder.check(key, field, |field| enum_choice(field, list, message));
+    }
+}
+
+fn validate_subtitle_langs_field(
+    builder: &mut PatchBuilder<'_>,
+    field: Option<FalliblePayload<String>>,
+) {
+    builder.check("subtitleLangs", field, |field| match field {
+        Ok(langs) if langs.len() <= 256 && is_subtitle_langs(&langs) => Ok(Value::String(langs)),
+        _ => Err(validation_error(
+            "subtitleLangs must be a comma-separated list of language codes (e.g. en,es).",
+        )),
+    });
+}
+
+fn validate_browser_choice_field(
+    builder: &mut PatchBuilder<'_>,
+    field: Option<FalliblePayload<String>>,
+) {
+    builder.check("browserChoice", field, |field| {
+        let choice = field.map_err(|_| validation_error("browserChoice must be a string."))?;
+        let normalized = choice.trim().to_lowercase();
+        if !allowed(ALLOWED_BROWSERS, &normalized) {
+            return Err(validation_error("browserChoice is not an allowed browser."));
+        }
+        Ok(Value::String(normalized))
+    });
+}
+
+fn validate_ffmpeg_path_field(
+    builder: &mut PatchBuilder<'_>,
+    field: Option<FalliblePayload<String>>,
+) {
+    builder.check("ffmpegPath", field, |field| {
+        let path = field.map_err(|_| validation_error("ffmpegPath must be a string."))?;
+        if path.len() > 1024 {
+            return Err(validation_error(
+                "ffmpegPath exceeds maximum length of 1024.",
+            ));
+        }
+        let trimmed = path.trim();
+        Ok(Value::String(
+            validate_ffmpeg_path_value((!trimmed.is_empty()).then_some(trimmed))?
+                .unwrap_or_default(),
+        ))
+    });
+}
+
+fn validate_upstream_proxy_field(
+    builder: &mut PatchBuilder<'_>,
+    field: Option<FalliblePayload<String>>,
+) {
+    builder.check("upstreamProxy", field, |field| {
+        let proxy = field.map_err(|_| validation_error("upstreamProxy must be a string."))?;
+        // Not trimmed: a value with surrounding whitespace is refused.
+        crate::network_security::parse_upstream_proxy(&proxy).map_err(validation_error)?;
+        Ok(Value::String(proxy))
+    });
+}
+
+fn validate_download_folder_field(
+    builder: &mut PatchBuilder<'_>,
+    field: Option<FalliblePayload<String>>,
+) {
+    builder.check("downloadFolder", field, |field| {
+        let folder = field.map_err(|_| validation_error("downloadFolder must be a string."))?;
+        if folder.len() > 4096 {
+            return Err(validation_error(
+                "downloadFolder exceeds maximum length of 4096.",
+            ));
+        }
+        Ok(Value::String(validate_download_path(&folder)?))
+    });
+}
+
 /// Validate a partial settings update. Unknown keys are ignored. A known key
 /// with an invalid value is refused on its own, so one bad field never blocks
 /// saving the others (or the close flush). `stored` is the current settings
@@ -1046,209 +1272,28 @@ pub fn validate_settings_patch(
     payload: FalliblePayload<JsonObject<SettingsPatchInput>>,
     stored: &Map<String, Value>,
 ) -> Result<SettingsPatch, IpcError> {
-    let input = payload
+    let mut input = payload
         .into_typed(VALIDATION_ERROR, "Settings payload must be an object.")?
         .0;
-    let mut patch = SettingsPatch {
-        values: Map::new(),
-        rejected: Vec::new(),
-    };
-    let mut record = |key: &str, outcome: Option<Result<Value, IpcError>>| match outcome {
-        None => {}
-        Some(Ok(value)) => {
-            patch.values.insert(key.to_string(), value);
-        }
-        Some(Err(error)) => patch.rejected.push(RejectedSetting {
-            key: key.to_string(),
-            message: error.message,
-        }),
+    let mut builder = PatchBuilder {
+        patch: SettingsPatch {
+            values: Map::new(),
+            rejected: Vec::new(),
+        },
+        stored,
     };
 
-    record(
-        "settingsVersion",
-        check_setting(
-            "settingsVersion",
-            input.settings_version,
-            stored,
-            |field| match field {
-                Ok(version)
-                    if version.fract() == 0.0
-                        && version >= 1.0
-                        && version <= f64::from(CURRENT_SETTINGS_VERSION) =>
-                {
-                    Ok(Value::from(version as u32))
-                }
-                _ => Err(validation_error(format!(
-                    "settingsVersion must be an integer between 1 and {CURRENT_SETTINGS_VERSION}."
-                ))),
-            },
-        ),
-    );
-    record(
-        "downloadPresets",
-        check_setting("downloadPresets", input.download_presets, stored, |field| {
-            let presets = match field {
-                Ok(list) => validate_preset_list(
-                    &serde_json::to_value(list).unwrap_or(Value::Array(vec![])),
-                ),
-                Err(raw) => validate_preset_list(&raw),
-            }?;
-            Ok(serde_json::to_value(presets).unwrap_or(Value::Array(vec![])))
-        }),
-    );
+    validate_settings_version_field(&mut builder, input.settings_version.take());
+    validate_download_presets_field(&mut builder, input.download_presets.take());
+    validate_flag_settings(&mut builder, &mut input);
+    validate_choice_settings(&mut builder, &mut input);
+    validate_subtitle_langs_field(&mut builder, input.subtitle_langs.take());
+    validate_browser_choice_field(&mut builder, input.browser_choice.take());
+    validate_ffmpeg_path_field(&mut builder, input.ffmpeg_path.take());
+    validate_upstream_proxy_field(&mut builder, input.upstream_proxy.take());
+    validate_download_folder_field(&mut builder, input.download_folder.take());
 
-    let flags: [(&str, Option<FalliblePayload<bool>>); 22] = [
-        ("showConsoleOutput", input.show_console_output),
-        ("dockCollapsed", input.dock_collapsed),
-        ("askDownloadLocation", input.ask_download_location),
-        ("advancedOptions", input.advanced_options),
-        ("audioOnly", input.audio_only),
-        ("convertEnabled", input.convert_enabled),
-        (
-            "keepOriginalAfterConvert",
-            input.keep_original_after_convert,
-        ),
-        ("firstLaunch", input.first_launch),
-        ("hookBrowser", input.hook_browser),
-        ("animateBackground", input.animate_background),
-        ("flatUi", input.flat_ui),
-        ("notifications", input.notifications),
-        ("showTaskbarProgress", input.show_taskbar_progress),
-        ("denoReminderDismissed", input.deno_reminder_dismissed),
-        ("gpuAcceleration", input.gpu_acceleration),
-        ("bestQuality", input.best_quality),
-        ("hideSupportModal", input.hide_support_modal),
-        ("checkUpdatesOnStartup", input.check_updates_on_startup),
-        ("writeSubtitles", input.write_subtitles),
-        ("embedThumbnail", input.embed_thumbnail),
-        ("embedMetadata", input.embed_metadata),
-        ("sponsorblockRemove", input.sponsorblock_remove),
-    ];
-    for (key, field) in flags {
-        record(
-            key,
-            check_setting(key, field, stored, |field| boolean_setting(field, key)),
-        );
-    }
-
-    let choices: [ChoiceSetting; 7] = [
-        (
-            "downloadMode",
-            input.download_mode,
-            ALLOWED_DOWNLOAD_PROFILES,
-            "downloadMode must be compatible, best-video, audio, or custom.",
-        ),
-        (
-            "dockTab",
-            input.dock_tab,
-            ALLOWED_DOCK_TABS,
-            "dockTab must be queue, activity, or console.",
-        ),
-        (
-            "theme",
-            input.theme,
-            ALLOWED_THEMES,
-            "theme must be one of: system, light, dark, purple.",
-        ),
-        (
-            "gpuType",
-            input.gpu_type,
-            ALLOWED_GPU_TYPES,
-            "gpuType must be one of: auto, nvidia, amd, intel.",
-        ),
-        (
-            "audioFormat",
-            input.audio_format,
-            ALLOWED_AUDIO_FORMATS,
-            "audioFormat must be one of: mp3, flac, ogg, wav, m4a, opus.",
-        ),
-        (
-            "convertFormat",
-            input.convert_format,
-            ALLOWED_CONVERT_FORMATS,
-            "convertFormat must be one of: mp4, mov, mp3, m4a.",
-        ),
-        (
-            "updateChannel",
-            input.update_channel,
-            ALLOWED_UPDATE_CHANNELS,
-            "updateChannel must be auto, stable, or beta.",
-        ),
-    ];
-    for (key, field, list, message) in choices {
-        record(
-            key,
-            check_setting(key, field, stored, |field| {
-                enum_choice(field, list, message)
-            }),
-        );
-    }
-
-    record(
-        "subtitleLangs",
-        check_setting(
-            "subtitleLangs",
-            input.subtitle_langs,
-            stored,
-            |field| match field {
-                Ok(langs) if langs.len() <= 256 && is_subtitle_langs(&langs) => {
-                    Ok(Value::String(langs))
-                }
-                _ => Err(validation_error(
-                    "subtitleLangs must be a comma-separated list of language codes (e.g. en,es).",
-                )),
-            },
-        ),
-    );
-    record(
-        "browserChoice",
-        check_setting("browserChoice", input.browser_choice, stored, |field| {
-            let choice = field.map_err(|_| validation_error("browserChoice must be a string."))?;
-            let normalized = choice.trim().to_lowercase();
-            if !allowed(ALLOWED_BROWSERS, &normalized) {
-                return Err(validation_error("browserChoice is not an allowed browser."));
-            }
-            Ok(Value::String(normalized))
-        }),
-    );
-    record(
-        "ffmpegPath",
-        check_setting("ffmpegPath", input.ffmpeg_path, stored, |field| {
-            let path = field.map_err(|_| validation_error("ffmpegPath must be a string."))?;
-            if path.len() > 1024 {
-                return Err(validation_error(
-                    "ffmpegPath exceeds maximum length of 1024.",
-                ));
-            }
-            let trimmed = path.trim();
-            Ok(Value::String(
-                validate_ffmpeg_path_value((!trimmed.is_empty()).then_some(trimmed))?
-                    .unwrap_or_default(),
-            ))
-        }),
-    );
-    record(
-        "upstreamProxy",
-        check_setting("upstreamProxy", input.upstream_proxy, stored, |field| {
-            let proxy = field.map_err(|_| validation_error("upstreamProxy must be a string."))?;
-            // Not trimmed: a value with surrounding whitespace is refused.
-            crate::network_security::parse_upstream_proxy(&proxy).map_err(validation_error)?;
-            Ok(Value::String(proxy))
-        }),
-    );
-    record(
-        "downloadFolder",
-        check_setting("downloadFolder", input.download_folder, stored, |field| {
-            let folder = field.map_err(|_| validation_error("downloadFolder must be a string."))?;
-            if folder.len() > 4096 {
-                return Err(validation_error(
-                    "downloadFolder exceeds maximum length of 4096.",
-                ));
-            }
-            Ok(Value::String(validate_download_path(&folder)?))
-        }),
-    );
-
+    let mut patch = builder.patch;
     // Matches the key order of the old map-based walk.
     patch.rejected.sort_by(|a, b| a.key.cmp(&b.key));
     Ok(patch)

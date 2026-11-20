@@ -118,25 +118,10 @@ function restoreActivityFocus(listEl: HTMLElement, key: ActivityFocusKey | null)
   target?.focus({ preventScroll: true });
 }
 
-// Owns the download activity list. Call once, from the engine's startup.
-export function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPanel {
-  const {
-    showToast,
-    renderStatusText,
-    formatRelativeTime,
-    revealFileLocation,
-    icon,
-    markUnseen,
-    onReplay,
-  } = deps;
-
-  let activityEntries: RosiDownloadActivity[] = [];
-  let activityFilter: ActivityFilter = 'all';
-  let activityLoaded = false;
-
-  // One polite region, never cleared, so each new entry is read once. Progress
-  // ticks never write to it. It sits beside the panel, which is hidden while
-  // another dock tab is selected.
+// One polite region, never cleared, so each new entry is read once. Progress
+// ticks never write to it. It sits beside the panel, which is hidden while
+// another dock tab is selected.
+function createActivityAnnouncer(): HTMLElement {
   const announcer = document.createElement('p');
   announcer.id = LIVE_REGION_ID;
   announcer.className = 'sr-only';
@@ -144,223 +129,292 @@ export function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPane
   announcer.setAttribute('aria-live', 'polite');
   announcer.setAttribute('aria-atomic', 'true');
   document.getElementById('download-history')?.before(announcer);
+  return announcer;
+}
 
-  function announceNewEntries(newIds: Set<string>) {
-    const newRows = toActivityRows().filter((row) => newIds.has(row.id));
-    const [only] = newRows;
-    if (!only) return;
-    announcer.textContent =
-      newRows.length === 1
-        ? `${activityStatusLabel(only)}: ${only.title}.`
-        : `${newRows.length} new downloads recorded.`;
-  }
+function announceNewEntries(announcer: HTMLElement, rows: ActivityRow[], newIds: Set<string>) {
+  const newRows = rows.filter((row) => newIds.has(row.id));
+  const [only] = newRows;
+  if (!only) return;
+  announcer.textContent =
+    newRows.length === 1
+      ? `${activityStatusLabel(only)}: ${only.title}.`
+      : `${newRows.length} new downloads recorded.`;
+}
 
-  function toActivityRows(): ActivityRow[] {
-    if (activityEntries.length > 0) {
-      return activityEntries.map((entry) => {
-        // A failed entry's retained original is listed as an output and as
-        // a failure; count it once, as failed.
-        const failedPaths = entry.failedPaths ?? [];
-        const candidatePaths = [
-          ...new Set([
-            ...(entry.outputPaths ?? []),
-            ...(entry.outputPath ? [entry.outputPath] : []),
-          ]),
-        ];
-        const successfulPaths = candidatePaths.filter(
-          (outputPath) => !failedPaths.includes(outputPath)
-        );
-        const successfulOutputs = successfulPaths.length;
-        const failedOutputs = failedPaths.length;
-        const host = hostFromUrl(entry.url);
-        const title = activityTitle(entry);
-        const parts = [
-          // The title already shows the host when it is the only identifier.
-          host !== title ? host : '',
-          describeActivityProfile(entry),
-          formatBytes(entry.sizeBytes),
-          failedOutputs > 0
-            ? uiMessages().activity.partialCount(
-                successfulOutputs,
-                successfulOutputs + failedOutputs
-              )
-            : successfulOutputs > 1
-              ? uiMessages().activity.filesSaved(successfulOutputs)
-              : '',
-          formatRelativeTime(entry.completedAt),
-        ].filter(Boolean);
-        return {
-          id: entry.id,
-          outcome: entry.outcome,
-          partial: entry.outcome === 'failed' && successfulOutputs > 0 && failedOutputs > 0,
-          title,
-          subtitle: parts.join(' • '),
-          timestamp: entry.completedAt,
-          url: entry.url,
-          outputPath:
-            entry.outputPath && successfulPaths.includes(entry.outputPath)
-              ? entry.outputPath
-              : (successfulPaths[0] ?? null),
-          outputPaths: entry.outputPaths,
-          error: entry.error,
-          request: entry.request,
-        };
-      });
-    }
-
-    return loadLegacyHistory().map((entry, index) => ({
-      id: `legacy-${index}`,
-      outcome: entry.status,
-      partial: false,
-      title: entry.filename || 'Unknown file',
-      subtitle: formatRelativeTime(entry.timestamp),
-      timestamp: entry.timestamp,
-      url: null,
-      outputPath: entry.path ?? undefined,
-    }));
-  }
-  function createActivityActionButton(
-    iconName: string,
-    label: string,
-    ariaLabel: string,
-    actionKey: 'replay' | 'copy' | 'reveal',
-    action: () => void
-  ) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'history-open-btn btn btn--ghost btn--xs btn--icon btn--accent-hover';
-    button.dataset.activityAction = actionKey;
-    button.setAttribute('aria-label', ariaLabel);
-    button.title = label;
-    const svg = icon(iconName, 16) ?? null;
-    if (svg) button.appendChild(svg);
-    else button.textContent = label;
-    button.addEventListener('focus', () => button.classList.add('is-focused'));
-    button.addEventListener('blur', () => button.classList.remove('is-focused'));
-    button.addEventListener('click', (event) => {
-      event.stopPropagation();
-      action();
+function toActivityRows(
+  activityEntries: RosiDownloadActivity[],
+  formatRelativeTime: RosiActivityPanelDeps['formatRelativeTime']
+): ActivityRow[] {
+  if (activityEntries.length > 0) {
+    return activityEntries.map((entry) => {
+      // A failed entry's retained original is listed as an output and as
+      // a failure; count it once, as failed.
+      const failedPaths = entry.failedPaths ?? [];
+      const candidatePaths = [
+        ...new Set([...(entry.outputPaths ?? []), ...(entry.outputPath ? [entry.outputPath] : [])]),
+      ];
+      const successfulPaths = candidatePaths.filter(
+        (outputPath) => !failedPaths.includes(outputPath)
+      );
+      const successfulOutputs = successfulPaths.length;
+      const failedOutputs = failedPaths.length;
+      const host = hostFromUrl(entry.url);
+      const title = activityTitle(entry);
+      const parts = [
+        // The title already shows the host when it is the only identifier.
+        host !== title ? host : '',
+        describeActivityProfile(entry),
+        formatBytes(entry.sizeBytes),
+        failedOutputs > 0
+          ? uiMessages().activity.partialCount(successfulOutputs, successfulOutputs + failedOutputs)
+          : successfulOutputs > 1
+            ? uiMessages().activity.filesSaved(successfulOutputs)
+            : '',
+        formatRelativeTime(entry.completedAt),
+      ].filter(Boolean);
+      return {
+        id: entry.id,
+        outcome: entry.outcome,
+        partial: entry.outcome === 'failed' && successfulOutputs > 0 && failedOutputs > 0,
+        title,
+        subtitle: parts.join(' • '),
+        timestamp: entry.completedAt,
+        url: entry.url,
+        outputPath:
+          entry.outputPath && successfulPaths.includes(entry.outputPath)
+            ? entry.outputPath
+            : (successfulPaths[0] ?? null),
+        outputPaths: entry.outputPaths,
+        error: entry.error,
+        request: entry.request,
+      };
     });
-    return button;
   }
 
-  function renderActivity() {
-    const historySection = document.getElementById('download-history');
-    const listEl = document.getElementById('history-list');
-    const countEl = document.getElementById('history-count');
-    if (!listEl || !historySection) return;
+  return loadLegacyHistory().map((entry, index) => ({
+    id: `legacy-${index}`,
+    outcome: entry.status,
+    partial: false,
+    title: entry.filename || 'Unknown file',
+    subtitle: formatRelativeTime(entry.timestamp),
+    timestamp: entry.timestamp,
+    url: null,
+    outputPath: entry.path ?? undefined,
+  }));
+}
 
-    const rows = toActivityRows();
-    const visibleRows =
-      activityFilter === 'all' ? rows : rows.filter((row) => row.outcome === activityFilter);
-    if (countEl) countEl.textContent = String(rows.length);
+function filterActivityRows(rows: ActivityRow[], filter: ActivityFilter): ActivityRow[] {
+  return filter === 'all' ? rows : rows.filter((row) => row.outcome === filter);
+}
 
-    // Read before the rows are replaced: removing the focused node moves focus
-    // to BODY, and the same action is focused again after the rebuild.
-    const focusKey = activityFocusKey(listEl);
+function createActivityActionButton(
+  icon: RosiActivityPanelDeps['icon'],
+  iconName: string,
+  label: string,
+  ariaLabel: string,
+  actionKey: 'replay' | 'copy' | 'reveal',
+  action: () => void
+) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'history-open-btn btn btn--ghost btn--xs btn--icon btn--accent-hover';
+  button.dataset.activityAction = actionKey;
+  button.setAttribute('aria-label', ariaLabel);
+  button.title = label;
+  const svg = icon(iconName, 16) ?? null;
+  if (svg) button.appendChild(svg);
+  else button.textContent = label;
+  button.addEventListener('focus', () => button.classList.add('is-focused'));
+  button.addEventListener('blur', () => button.classList.remove('is-focused'));
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    action();
+  });
+  return button;
+}
 
-    // The panel now stays mounted so the empty state remains discoverable.
-    historySection.classList.add('visible');
-    listEl.replaceChildren();
-
-    if (visibleRows.length === 0) {
-      const empty = document.createElement('p');
-      empty.className = 'history-empty';
-      empty.textContent =
-        rows.length === 0
-          ? 'No downloads yet. Finished, failed, and cancelled downloads will appear here.'
-          : 'No downloads match this filter.';
-      listEl.appendChild(empty);
-      return;
+// Replay, copy source, and open folder buttons for one row, in that order.
+function appendActivityRowActions(
+  actions: HTMLElement,
+  row: ActivityRow,
+  activityEntries: RosiDownloadActivity[],
+  deps: RosiActivityPanelDeps
+) {
+  const { showToast, revealFileLocation, icon, onReplay } = deps;
+  if (row.request) {
+    const entry = activityEntries.find((candidate) => candidate.id === row.id);
+    if (entry) {
+      actions.appendChild(
+        createActivityActionButton(
+          icon,
+          'rotate-ccw',
+          'Download again',
+          `Download ${row.title} again`,
+          'replay',
+          () => {
+            onReplay(entry);
+          }
+        )
+      );
     }
-
-    const fragment = document.createDocumentFragment();
-    visibleRows.forEach((row) => {
-      const item = document.createElement('div');
-      item.className = 'history-item';
-      item.dataset.activityId = row.id;
-      item.setAttribute('role', 'listitem');
-
-      const statusLabel = activityStatusLabel(row);
-
-      const info = document.createElement('div');
-      info.className = 'history-item-info';
-      const filenameEl = document.createElement('span');
-      filenameEl.className = 'history-filename';
-      filenameEl.title = row.url || row.title;
-      filenameEl.textContent = row.title;
-      const timeEl = document.createElement('span');
-      timeEl.className = 'history-time';
-      timeEl.textContent = row.subtitle || formatRelativeTime(row.timestamp);
-      info.append(filenameEl, timeEl);
-      if (row.error) {
-        const errorEl = document.createElement('span');
-        errorEl.className = 'history-error';
-        renderStatusText(errorEl, row.error);
-        info.appendChild(errorEl);
-      }
-
-      const actions = document.createElement('div');
-      actions.className = 'history-item-actions';
-      const statusEl = document.createElement('span');
-      statusEl.className = `history-status ${row.outcome}${row.partial ? ' partial' : ''}`;
-      statusEl.textContent = statusLabel;
-      actions.appendChild(statusEl);
-
-      if (row.request) {
-        const entry = activityEntries.find((candidate) => candidate.id === row.id);
-        if (entry) {
-          actions.appendChild(
-            createActivityActionButton(
-              'rotate-ccw',
-              'Download again',
-              `Download ${row.title} again`,
-              'replay',
-              () => {
-                onReplay(entry);
-              }
-            )
+  }
+  if (row.url) {
+    const sourceUrl = row.url;
+    actions.appendChild(
+      createActivityActionButton(
+        icon,
+        'link',
+        'Copy source',
+        `Copy source link for ${row.title}`,
+        'copy',
+        () => {
+          void copyText(sourceUrl).then((copied) =>
+            copied
+              ? showToast('Source link copied.', { type: 'info' })
+              : showToast('Could not copy the source link.', { type: 'warning' })
           );
         }
-      }
-      if (row.url) {
-        const sourceUrl = row.url;
-        actions.appendChild(
-          createActivityActionButton(
-            'link',
-            'Copy source',
-            `Copy source link for ${row.title}`,
-            'copy',
-            () => {
-              void copyText(sourceUrl).then((copied) =>
-                copied
-                  ? showToast('Source link copied.', { type: 'info' })
-                  : showToast('Could not copy the source link.', { type: 'warning' })
-              );
-            }
-          )
-        );
-      }
-      if (row.outputPath && (row.outcome === 'success' || row.outputPaths?.length)) {
-        const filePath = row.outputPath;
-        actions.appendChild(
-          createActivityActionButton(
-            'folder-open',
-            'Open folder',
-            `Open file location for ${row.title}`,
-            'reveal',
-            () => {
-              void revealFileLocation(filePath);
-            }
-          )
-        );
-      }
+      )
+    );
+  }
+  if (row.outputPath && (row.outcome === 'success' || row.outputPaths?.length)) {
+    const filePath = row.outputPath;
+    actions.appendChild(
+      createActivityActionButton(
+        icon,
+        'folder-open',
+        'Open folder',
+        `Open file location for ${row.title}`,
+        'reveal',
+        () => {
+          void revealFileLocation(filePath);
+        }
+      )
+    );
+  }
+}
 
-      item.append(info, actions);
-      fragment.appendChild(item);
+function createActivityRowElement(
+  row: ActivityRow,
+  activityEntries: RosiDownloadActivity[],
+  deps: RosiActivityPanelDeps
+) {
+  const { renderStatusText, formatRelativeTime } = deps;
+  const item = document.createElement('div');
+  item.className = 'history-item';
+  item.dataset.activityId = row.id;
+  item.setAttribute('role', 'listitem');
+
+  const statusLabel = activityStatusLabel(row);
+
+  const info = document.createElement('div');
+  info.className = 'history-item-info';
+  const filenameEl = document.createElement('span');
+  filenameEl.className = 'history-filename';
+  filenameEl.title = row.url || row.title;
+  filenameEl.textContent = row.title;
+  const timeEl = document.createElement('span');
+  timeEl.className = 'history-time';
+  timeEl.textContent = row.subtitle || formatRelativeTime(row.timestamp);
+  info.append(filenameEl, timeEl);
+  if (row.error) {
+    const errorEl = document.createElement('span');
+    errorEl.className = 'history-error';
+    renderStatusText(errorEl, row.error);
+    info.appendChild(errorEl);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'history-item-actions';
+  const statusEl = document.createElement('span');
+  statusEl.className = `history-status ${row.outcome}${row.partial ? ' partial' : ''}`;
+  statusEl.textContent = statusLabel;
+  actions.appendChild(statusEl);
+
+  appendActivityRowActions(actions, row, activityEntries, deps);
+
+  item.append(info, actions);
+  return item;
+}
+
+function renderActivityList(
+  activityEntries: RosiDownloadActivity[],
+  activityFilter: ActivityFilter,
+  deps: RosiActivityPanelDeps
+) {
+  const historySection = document.getElementById('download-history');
+  const listEl = document.getElementById('history-list');
+  const countEl = document.getElementById('history-count');
+  if (!listEl || !historySection) return;
+
+  const rows = toActivityRows(activityEntries, deps.formatRelativeTime);
+  const visibleRows = filterActivityRows(rows, activityFilter);
+  if (countEl) countEl.textContent = String(rows.length);
+
+  // Read before the rows are replaced: removing the focused node moves focus
+  // to BODY, and the same action is focused again after the rebuild.
+  const focusKey = activityFocusKey(listEl);
+
+  // The panel now stays mounted so the empty state remains discoverable.
+  historySection.classList.add('visible');
+  listEl.replaceChildren();
+
+  if (visibleRows.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'history-empty';
+    empty.textContent =
+      rows.length === 0
+        ? 'No downloads yet. Finished, failed, and cancelled downloads will appear here.'
+        : 'No downloads match this filter.';
+    listEl.appendChild(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  visibleRows.forEach((row) => {
+    fragment.appendChild(createActivityRowElement(row, activityEntries, deps));
+  });
+  listEl.appendChild(fragment);
+  restoreActivityFocus(listEl, focusKey);
+}
+
+function syncActivityFilterButtons(filter: ActivityFilter) {
+  document.querySelectorAll<HTMLButtonElement>('.activity-filter').forEach((button) => {
+    const isSelected = button.dataset.activityFilter === filter;
+    button.classList.toggle('selected', isSelected);
+    button.setAttribute('aria-pressed', String(isSelected));
+  });
+}
+
+function bindActivityFilterButtons(setActivityFilter: (filter: ActivityFilter) => void) {
+  document.querySelectorAll<HTMLButtonElement>('.activity-filter').forEach((button) => {
+    button.addEventListener('click', () => {
+      const filter = button.dataset.activityFilter;
+      if (
+        filter === 'all' ||
+        filter === 'success' ||
+        filter === 'failed' ||
+        filter === 'cancelled'
+      ) {
+        setActivityFilter(filter);
+      }
     });
-    listEl.appendChild(fragment);
-    restoreActivityFocus(listEl, focusKey);
+  });
+}
+
+// Owns the download activity list. Call once, from the engine's startup.
+export function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPanel {
+  const { showToast, formatRelativeTime, markUnseen } = deps;
+
+  let activityEntries: RosiDownloadActivity[] = [];
+  let activityFilter: ActivityFilter = 'all';
+  let activityLoaded = false;
+
+  const announcer = createActivityAnnouncer();
+
+  function renderActivity() {
+    renderActivityList(activityEntries, activityFilter, deps);
   }
 
   function setActivityEntries(entries: RosiDownloadActivity[]) {
@@ -375,7 +429,7 @@ export function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPane
       markUnseen('activity');
     }
     if (activityLoaded) {
-      announceNewEntries(newIds);
+      announceNewEntries(announcer, toActivityRows(activityEntries, formatRelativeTime), newIds);
     }
     activityLoaded = true;
     renderActivity();
@@ -383,11 +437,7 @@ export function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPane
 
   function setActivityFilter(filter: ActivityFilter) {
     activityFilter = filter;
-    document.querySelectorAll<HTMLButtonElement>('.activity-filter').forEach((button) => {
-      const isSelected = button.dataset.activityFilter === filter;
-      button.classList.toggle('selected', isSelected);
-      button.setAttribute('aria-pressed', String(isSelected));
-    });
+    syncActivityFilterButtons(filter);
     renderActivity();
   }
 
@@ -412,19 +462,7 @@ export function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPane
   }
   renderActivity();
 
-  document.querySelectorAll<HTMLButtonElement>('.activity-filter').forEach((button) => {
-    button.addEventListener('click', () => {
-      const filter = button.dataset.activityFilter;
-      if (
-        filter === 'all' ||
-        filter === 'success' ||
-        filter === 'failed' ||
-        filter === 'cancelled'
-      ) {
-        setActivityFilter(filter);
-      }
-    });
-  });
+  bindActivityFilterButtons(setActivityFilter);
 
   return { setEntries: setActivityEntries, clear: clearActivity };
 }

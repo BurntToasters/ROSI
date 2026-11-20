@@ -40,41 +40,22 @@ export interface WizardOutcome {
   denoReviewed: boolean;
 }
 
-export function launchSetupWizard(
+/** A wizard step reads its own controls into the settings when the wizard finishes. */
+interface WizardStep {
+  gather(): void;
+}
+
+const wizardCheckbox = (id: string) => document.getElementById(id) as HTMLInputElement | null;
+
+const findStepIndex = (steps: NodeListOf<HTMLElement>, name: string) =>
+  Array.from(steps).findIndex((step) => step.dataset.wizardStep === name);
+
+/** Theme step: live preview, like the look and feel cards. */
+function setupThemeStep(
+  overlayEl: HTMLElement,
   settings: RosiSettings,
-  applyThemeFn: (preference: string) => void,
-  persistSettingsFn: (silent?: boolean, immediate?: boolean) => Promise<boolean>,
-  onComplete: (outcome: WizardOutcome) => void,
-  isFlatpak = false
-) {
-  let currentStep = 0;
-
-  const overlay = document.getElementById('setup-wizard');
-  const progressBar = document.getElementById('wizard-progress-bar') as HTMLElement | null;
-  const backBtn = document.getElementById('wizard-back') as HTMLButtonElement | null;
-  const nextBtn = document.getElementById('wizard-next');
-  const steps = overlay
-    ? overlay.querySelectorAll<HTMLElement>('.wizard-step')
-    : ([] as unknown as NodeListOf<HTMLElement>);
-
-  if (!overlay || !progressBar || !backBtn || !nextBtn || steps.length === 0) {
-    settings.firstLaunch = false;
-    void persistSettingsFn(false, true).then((saved) => {
-      if (saved) onComplete({ skipped: true, denoReviewed: false });
-    });
-    return;
-  }
-  const TOTAL_STEPS = steps.length;
-
-  const overlayEl = overlay;
-  const progressBarEl = progressBar;
-  const wizardProgress = overlayEl.querySelector<HTMLElement>('.wizard-progress');
-  wizardProgress?.setAttribute('aria-valuemax', String(TOTAL_STEPS));
-  const skipBtn = document.getElementById('wizard-skip') as HTMLButtonElement | null;
-  const stepAnnounce = document.getElementById('wizard-step-announce');
-  const backBtnEl = backBtn;
-  const nextBtnEl = nextBtn;
-
+  applyThemeFn: (preference: string) => void
+): WizardStep {
   // Live theme preview
   const themeRadios = overlayEl.querySelectorAll<HTMLInputElement>('input[name="wizard-theme"]');
   themeRadios.forEach((radio) => {
@@ -83,11 +64,31 @@ export function launchSetupWizard(
     });
   });
 
-  // Destination step: the folder is optional when asking every time.
+  // Set initial selected theme radio to match current settings
+  const initialTheme = settings.theme || 'system';
+  const matchingRadio = overlayEl.querySelector<HTMLInputElement>(
+    `input[name="wizard-theme"][value="${initialTheme}"]`
+  );
+  if (matchingRadio) matchingRadio.checked = true;
+
+  return {
+    gather() {
+      const selectedTheme = overlayEl.querySelector<HTMLInputElement>(
+        'input[name="wizard-theme"]:checked'
+      );
+      if (selectedTheme) {
+        settings.theme = selectedTheme.value as RosiSettings['theme'];
+        applyThemeFn(settings.theme);
+      }
+    },
+  };
+}
+
+/** Destination step: the folder is optional when asking every time. Also owns the default profile. */
+function setupDestinationStep(overlayEl: HTMLElement, settings: RosiSettings): WizardStep {
   let wizardChosenFolder = settings.downloadFolder?.trim() || '';
   const wizardFolderSummary = document.getElementById('wizard-folder-summary');
   const wizardFolderError = document.getElementById('wizard-folder-error');
-  const wizardError = document.getElementById('wizard-error');
   const wizardChooseFolderBtn = document.getElementById(
     'wizard-choose-folder'
   ) as HTMLButtonElement | null;
@@ -158,9 +159,30 @@ export function launchSetupWizard(
   if (initialProfileRadio) initialProfileRadio.checked = true;
   syncWizardFolderSummary();
 
-  const wizardCheckbox = (id: string) => document.getElementById(id) as HTMLInputElement | null;
+  return {
+    gather() {
+      // Destination
+      const askLocation = document.getElementById('wizard-ask-location') as HTMLInputElement | null;
+      if (askLocation) settings.askDownloadLocation = askLocation.checked;
+      if (wizardChosenFolder) settings.downloadFolder = wizardChosenFolder;
 
-  // Look and feel: preview live, like the theme cards.
+      // Default profile
+      const selectedProfile = overlayEl.querySelector<HTMLInputElement>(
+        'input[name="wizard-profile"]:checked'
+      );
+      const profile = selectedProfile?.value;
+      const mode = profile === 'best-video' || profile === 'audio' ? profile : 'compatible';
+      settings.downloadMode = mode;
+      settings.bestQuality = mode === 'best-video';
+      settings.audioOnly = mode === 'audio';
+      settings.advancedOptions = false;
+      if (mode === 'audio') settings.convertEnabled = false;
+    },
+  };
+}
+
+/** Look and feel step: preview live, like the theme cards. */
+function setupLookAndFeelStep(settings: RosiSettings): WizardStep {
   const flatUiInput = wizardCheckbox('wizard-flat-ui');
   const animateBgInput = wizardCheckbox('wizard-animate-bg');
   if (flatUiInput) {
@@ -174,7 +196,32 @@ export function launchSetupWizard(
     );
   }
 
-  // Download extras.
+  return {
+    gather() {
+      if (flatUiInput) settings.flatUi = flatUiInput.checked;
+      if (animateBgInput) settings.animateBackground = animateBgInput.checked;
+    },
+  };
+}
+
+/** Preferences step: notifications and update checks have no setup, only a read. */
+function setupPreferencesStep(settings: RosiSettings): WizardStep {
+  return {
+    gather() {
+      // Download prefs
+      const notifications = document.getElementById(
+        'wizard-notifications'
+      ) as HTMLInputElement | null;
+      const autoUpdates = document.getElementById('wizard-auto-updates') as HTMLInputElement | null;
+
+      if (notifications) settings.notifications = notifications.checked;
+      if (autoUpdates) settings.checkUpdatesOnStartup = autoUpdates.checked;
+    },
+  };
+}
+
+/** Download extras step: the subtitle languages can block leaving the step. */
+function setupExtrasStep(settings: RosiSettings): WizardStep & { validate(): boolean } {
   const extraInputs: [
     HTMLInputElement | null,
     'embedMetadata' | 'embedThumbnail' | 'sponsorblockRemove' | 'writeSubtitles',
@@ -205,20 +252,29 @@ export function launchSetupWizard(
   subtitleLangsInput?.addEventListener('input', () => setSubtitleLangsError(''));
   syncSubtitleRow();
 
-  /** Block leaving the extras step with languages the backend would reject. */
-  function subtitleLangsValid() {
-    if (!subtitlesInput?.checked || !subtitleLangsInput) return true;
-    if (isValidSubtitleLangs(subtitleLangsInput.value.trim())) return true;
-    setSubtitleLangsError('Enter language codes such as en,es, or use all.');
-    subtitleLangsInput.focus();
-    return false;
-  }
+  return {
+    /** Block leaving the extras step with languages the backend would reject. */
+    validate() {
+      if (!subtitlesInput?.checked || !subtitleLangsInput) return true;
+      if (isValidSubtitleLangs(subtitleLangsInput.value.trim())) return true;
+      setSubtitleLangsError('Enter language codes such as en,es, or use all.');
+      subtitleLangsInput.focus();
+      return false;
+    },
+    gather() {
+      // Download extras
+      extraInputs.forEach(([input, key]) => {
+        if (input) settings[key] = input.checked;
+      });
+      const langs = subtitleLangsInput?.value.trim() ?? '';
+      if (settings.writeSubtitles && isValidSubtitleLangs(langs)) settings.subtitleLangs = langs;
+    },
+  };
+}
 
-  // YouTube helper: check for Deno the first time the step is shown.
-  const stepIndex = (name: string) =>
-    Array.from(steps).findIndex((step) => step.dataset.wizardStep === name);
-  const extrasStepIndex = stepIndex('extras');
-  const denoStepIndex = stepIndex('deno');
+/** YouTube helper step: check for Deno the first time the step is shown. */
+function setupDenoStep(steps: NodeListOf<HTMLElement>, isFlatpak: boolean) {
+  const stepIndex = findStepIndex(steps, 'deno');
   const denoStatus = document.getElementById('wizard-deno-status');
   const denoDescription = document.getElementById('wizard-deno-description');
   const denoAction = document.getElementById('wizard-deno-action') as HTMLButtonElement | null;
@@ -318,6 +374,61 @@ export function launchSetupWizard(
     }
   }
 
+  return {
+    stepIndex,
+    /** Called each time the Deno step becomes the current step. */
+    onShown() {
+      denoReviewed = true;
+      void checkDenoForWizard();
+    },
+    wasReviewed: () => denoReviewed,
+  };
+}
+
+export function launchSetupWizard(
+  settings: RosiSettings,
+  applyThemeFn: (preference: string) => void,
+  persistSettingsFn: (silent?: boolean, immediate?: boolean) => Promise<boolean>,
+  onComplete: (outcome: WizardOutcome) => void,
+  isFlatpak = false
+) {
+  let currentStep = 0;
+
+  const overlay = document.getElementById('setup-wizard');
+  const progressBar = document.getElementById('wizard-progress-bar') as HTMLElement | null;
+  const backBtn = document.getElementById('wizard-back') as HTMLButtonElement | null;
+  const nextBtn = document.getElementById('wizard-next');
+  const steps = overlay
+    ? overlay.querySelectorAll<HTMLElement>('.wizard-step')
+    : ([] as unknown as NodeListOf<HTMLElement>);
+
+  if (!overlay || !progressBar || !backBtn || !nextBtn || steps.length === 0) {
+    settings.firstLaunch = false;
+    void persistSettingsFn(false, true).then((saved) => {
+      if (saved) onComplete({ skipped: true, denoReviewed: false });
+    });
+    return;
+  }
+  const TOTAL_STEPS = steps.length;
+
+  const overlayEl = overlay;
+  const progressBarEl = progressBar;
+  const wizardProgress = overlayEl.querySelector<HTMLElement>('.wizard-progress');
+  wizardProgress?.setAttribute('aria-valuemax', String(TOTAL_STEPS));
+  const skipBtn = document.getElementById('wizard-skip') as HTMLButtonElement | null;
+  const stepAnnounce = document.getElementById('wizard-step-announce');
+  const backBtnEl = backBtn;
+  const nextBtnEl = nextBtn;
+  const wizardError = document.getElementById('wizard-error');
+
+  const themeStep = setupThemeStep(overlayEl, settings, applyThemeFn);
+  const destinationStep = setupDestinationStep(overlayEl, settings);
+  const lookAndFeelStep = setupLookAndFeelStep(settings);
+  const extrasStep = setupExtrasStep(settings);
+  const preferencesStep = setupPreferencesStep(settings);
+  const extrasStepIndex = findStepIndex(steps, 'extras');
+  const denoStep = setupDenoStep(steps, isFlatpak);
+
   function updateUI() {
     // Steps
     steps.forEach((step, i) => {
@@ -343,10 +454,7 @@ export function launchSetupWizard(
     }
 
     if (skipBtn) skipBtn.hidden = currentStep === TOTAL_STEPS - 1;
-    if (currentStep === denoStepIndex) {
-      denoReviewed = true;
-      void checkDenoForWizard();
-    }
+    if (currentStep === denoStep.stepIndex) denoStep.onShown();
 
     // Next button text
     if (currentStep === 0) {
@@ -359,51 +467,11 @@ export function launchSetupWizard(
   }
 
   function gatherSettings() {
-    // Theme
-    const selectedTheme = overlayEl.querySelector<HTMLInputElement>(
-      'input[name="wizard-theme"]:checked'
-    );
-    if (selectedTheme) {
-      settings.theme = selectedTheme.value as RosiSettings['theme'];
-      applyThemeFn(settings.theme);
-    }
-
-    // Destination
-    const askLocation = document.getElementById('wizard-ask-location') as HTMLInputElement | null;
-    if (askLocation) settings.askDownloadLocation = askLocation.checked;
-    if (wizardChosenFolder) settings.downloadFolder = wizardChosenFolder;
-
-    // Default profile
-    const selectedProfile = overlayEl.querySelector<HTMLInputElement>(
-      'input[name="wizard-profile"]:checked'
-    );
-    const profile = selectedProfile?.value;
-    const mode = profile === 'best-video' || profile === 'audio' ? profile : 'compatible';
-    settings.downloadMode = mode;
-    settings.bestQuality = mode === 'best-video';
-    settings.audioOnly = mode === 'audio';
-    settings.advancedOptions = false;
-    if (mode === 'audio') settings.convertEnabled = false;
-
-    // Download prefs
-    const notifications = document.getElementById(
-      'wizard-notifications'
-    ) as HTMLInputElement | null;
-    const autoUpdates = document.getElementById('wizard-auto-updates') as HTMLInputElement | null;
-
-    if (notifications) settings.notifications = notifications.checked;
-    if (autoUpdates) settings.checkUpdatesOnStartup = autoUpdates.checked;
-
-    // Look and feel
-    if (flatUiInput) settings.flatUi = flatUiInput.checked;
-    if (animateBgInput) settings.animateBackground = animateBgInput.checked;
-
-    // Download extras
-    extraInputs.forEach(([input, key]) => {
-      if (input) settings[key] = input.checked;
-    });
-    const langs = subtitleLangsInput?.value.trim() ?? '';
-    if (settings.writeSubtitles && isValidSubtitleLangs(langs)) settings.subtitleLangs = langs;
+    themeStep.gather();
+    destinationStep.gather();
+    preferencesStep.gather();
+    lookAndFeelStep.gather();
+    extrasStep.gather();
   }
 
   /** Skip: put every wizard-managed setting back to its default. */
@@ -456,7 +524,7 @@ export function launchSetupWizard(
   nextBtn.addEventListener('click', () => {
     // A skip or finish in progress owns the settings; Next waits for it.
     if (wizardSkipping || wizardSaving) return;
-    if (currentStep === extrasStepIndex && !subtitleLangsValid()) return;
+    if (currentStep === extrasStepIndex && !extrasStep.validate()) return;
     if (currentStep < TOTAL_STEPS - 1) {
       currentStep++;
       updateUI();
@@ -472,13 +540,6 @@ export function launchSetupWizard(
       updateUI();
     }
   });
-
-  // Set initial selected theme radio to match current settings
-  const initialTheme = settings.theme || 'system';
-  const matchingRadio = overlayEl.querySelector<HTMLInputElement>(
-    `input[name="wizard-theme"][value="${initialTheme}"]`
-  );
-  if (matchingRadio) matchingRadio.checked = true;
 
   let wizardPreviousFocus: Element | null = null;
   let wizardTrapHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -549,7 +610,7 @@ export function launchSetupWizard(
     setMainContentInert(false);
     focusTopOverlayOr(wizardPreviousFocus);
     wizardPreviousFocus = null;
-    onComplete({ skipped, denoReviewed: !skipped && denoReviewed });
+    onComplete({ skipped, denoReviewed: !skipped && denoStep.wasReviewed() });
   }
 
   wizardPreviousFocus = document.activeElement;

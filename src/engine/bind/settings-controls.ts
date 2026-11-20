@@ -173,50 +173,24 @@ export function notifyChannelIfChanged(
   return true;
 }
 
-/** Settings toggles, selects, and inputs that save on change. */
-export function bindSettingsControls() {
-  bindEffectiveOptionsSummary();
+/** Download section: profile, destination, conversion, and GPU controls. */
+function bindDownloadSectionControls() {
   const {
-    animateBackgroundToggle,
     askDownloadLocationToggle,
-    browserChoiceContainer,
-    browserChoiceSelect,
     changeDownloadFolderBtn,
-    checkUpdatesOnStartupToggle,
-    consoleToggle,
     convertFormatContainer,
     convertFormatSelect,
     convertToggle,
-    embedMetadataToggle,
-    embedThumbnailToggle,
     ffmpegPathInput,
-    flatUiToggle,
     gpuAccelerationLabel,
     gpuAccelerationToggle,
     gpuTypeContainer,
     gpuTypeSelect,
-    hookBrowserToggle,
     keepOriginalLabel,
     keepOriginalToggle,
-    notificationsToggle,
     profileAudioFormatSelect,
     profileButtons,
-    sponsorblockHelp,
-    sponsorblockToggle,
-    subtitleLangsContainer,
-    subtitleLangsInput,
-    taskbarProgressToggle,
-    themeSelect,
-    upstreamProxyInput,
-    writeSubtitlesToggle,
   } = refs;
-  if (consoleToggle)
-    consoleToggle.addEventListener('change', (e) => {
-      settingsStore.settings.showConsoleOutput = (e.target as HTMLInputElement).checked;
-      void persistSettings();
-      updateConsoleVisibility(settingsStore.settings.showConsoleOutput);
-    });
-
   profileButtons.forEach(([mode, button]) => {
     button?.addEventListener('click', () => {
       applyDownloadProfile(mode);
@@ -269,25 +243,6 @@ export function bindSettingsControls() {
         e.preventDefault();
       }
     });
-  if (hookBrowserToggle)
-    hookBrowserToggle.addEventListener('change', (e) => {
-      settingsStore.settings.hookBrowser = (e.target as HTMLInputElement).checked;
-      if (browserChoiceContainer) {
-        if ((e.target as HTMLInputElement).checked) {
-          browserChoiceContainer.classList.add('visible');
-        } else {
-          browserChoiceContainer.classList.remove('visible');
-        }
-      }
-      void persistSettings();
-    });
-  if (browserChoiceSelect)
-    browserChoiceSelect.addEventListener('change', (e) => {
-      settingsStore.settings.browserChoice = (
-        e.target as HTMLInputElement | HTMLSelectElement
-      ).value;
-      void persistSettings();
-    });
   if (convertToggle)
     convertToggle.addEventListener('change', (e) => {
       settingsStore.settings.convertEnabled = (e.target as HTMLInputElement).checked;
@@ -330,15 +285,6 @@ export function bindSettingsControls() {
       void persistSettings();
     });
   }
-  if (upstreamProxyInput) {
-    upstreamProxyInput.addEventListener('input', (e) => {
-      settingsStore.settings.upstreamProxy = (e.target as HTMLInputElement).value;
-    });
-    upstreamProxyInput.addEventListener('change', (e) => {
-      settingsStore.settings.upstreamProxy = (e.target as HTMLInputElement).value;
-      void persistSettings();
-    });
-  }
   // GPU acceleration toggle
   if (gpuAccelerationToggle) {
     gpuAccelerationToggle.addEventListener('change', (e) => {
@@ -360,45 +306,19 @@ export function bindSettingsControls() {
       void persistSettings();
     });
   }
-  // Animate Background toggle
-  if (animateBackgroundToggle) {
-    animateBackgroundToggle.addEventListener('change', (e) => {
-      settingsStore.settings.animateBackground = (e.target as HTMLInputElement).checked;
-      updateBackgroundAnimation((e.target as HTMLInputElement).checked);
-      void persistSettings();
-    });
-  }
-  if (themeSelect) {
-    themeSelect.addEventListener('change', (e) => {
-      settingsStore.settings.theme = (e.target as HTMLSelectElement).value as RosiSettings['theme'];
-      applyTheme(settingsStore.settings.theme);
-      void persistSettings();
-    });
-  }
-  if (flatUiToggle) {
-    flatUiToggle.addEventListener('change', (e) => {
-      const checked = (e.target as HTMLInputElement).checked;
-      settingsStore.settings.flatUi = checked;
-      applyFlatUi(checked);
-      void persistSettings();
-    });
-  }
+}
 
-  // Notifications toggle
-  if (notificationsToggle) {
-    notificationsToggle.addEventListener('change', (e) => {
-      settingsStore.settings.notifications = (e.target as HTMLInputElement).checked;
-      void persistSettings();
-    });
-  }
-
-  if (taskbarProgressToggle) {
-    taskbarProgressToggle.addEventListener('change', (e) => {
-      settingsStore.settings.showTaskbarProgress = (e.target as HTMLInputElement).checked;
-      void persistSettings();
-    });
-  }
-
+/** Enhancements section: metadata, thumbnail, SponsorBlock, and subtitles. */
+function bindEnhancementsSectionControls() {
+  const {
+    embedMetadataToggle,
+    embedThumbnailToggle,
+    sponsorblockHelp,
+    sponsorblockToggle,
+    subtitleLangsContainer,
+    subtitleLangsInput,
+    writeSubtitlesToggle,
+  } = refs;
   if (embedMetadataToggle) {
     embedMetadataToggle.addEventListener('change', (e) => {
       settingsStore.settings.embedMetadata = (e.target as HTMLInputElement).checked;
@@ -466,6 +386,100 @@ export function bindSettingsControls() {
       }
     });
   }
+}
+
+/** Browser section: cookie browser hook and choice. */
+function bindBrowserSectionControls() {
+  const { browserChoiceContainer, browserChoiceSelect, hookBrowserToggle } = refs;
+  if (hookBrowserToggle)
+    hookBrowserToggle.addEventListener('change', (e) => {
+      settingsStore.settings.hookBrowser = (e.target as HTMLInputElement).checked;
+      if (browserChoiceContainer) {
+        if ((e.target as HTMLInputElement).checked) {
+          browserChoiceContainer.classList.add('visible');
+        } else {
+          browserChoiceContainer.classList.remove('visible');
+        }
+      }
+      void persistSettings();
+    });
+  if (browserChoiceSelect)
+    browserChoiceSelect.addEventListener('change', (e) => {
+      settingsStore.settings.browserChoice = (
+        e.target as HTMLInputElement | HTMLSelectElement
+      ).value;
+      void persistSettings();
+    });
+}
+
+/** Interface section: console, appearance, notifications, and taskbar progress. */
+function bindInterfaceSectionControls() {
+  const {
+    animateBackgroundToggle,
+    consoleToggle,
+    flatUiToggle,
+    notificationsToggle,
+    taskbarProgressToggle,
+    themeSelect,
+  } = refs;
+  if (consoleToggle)
+    consoleToggle.addEventListener('change', (e) => {
+      settingsStore.settings.showConsoleOutput = (e.target as HTMLInputElement).checked;
+      void persistSettings();
+      updateConsoleVisibility(settingsStore.settings.showConsoleOutput);
+    });
+  // Animate Background toggle
+  if (animateBackgroundToggle) {
+    animateBackgroundToggle.addEventListener('change', (e) => {
+      settingsStore.settings.animateBackground = (e.target as HTMLInputElement).checked;
+      updateBackgroundAnimation((e.target as HTMLInputElement).checked);
+      void persistSettings();
+    });
+  }
+  if (themeSelect) {
+    themeSelect.addEventListener('change', (e) => {
+      settingsStore.settings.theme = (e.target as HTMLSelectElement).value as RosiSettings['theme'];
+      applyTheme(settingsStore.settings.theme);
+      void persistSettings();
+    });
+  }
+  if (flatUiToggle) {
+    flatUiToggle.addEventListener('change', (e) => {
+      const checked = (e.target as HTMLInputElement).checked;
+      settingsStore.settings.flatUi = checked;
+      applyFlatUi(checked);
+      void persistSettings();
+    });
+  }
+
+  // Notifications toggle
+  if (notificationsToggle) {
+    notificationsToggle.addEventListener('change', (e) => {
+      settingsStore.settings.notifications = (e.target as HTMLInputElement).checked;
+      void persistSettings();
+    });
+  }
+
+  if (taskbarProgressToggle) {
+    taskbarProgressToggle.addEventListener('change', (e) => {
+      settingsStore.settings.showTaskbarProgress = (e.target as HTMLInputElement).checked;
+      void persistSettings();
+    });
+  }
+}
+
+/** Application section: proxy and update check on startup. */
+function bindApplicationSectionControls() {
+  const { checkUpdatesOnStartupToggle, upstreamProxyInput } = refs;
+  if (upstreamProxyInput) {
+    upstreamProxyInput.addEventListener('input', (e) => {
+      settingsStore.settings.upstreamProxy = (e.target as HTMLInputElement).value;
+    });
+    upstreamProxyInput.addEventListener('change', (e) => {
+      settingsStore.settings.upstreamProxy = (e.target as HTMLInputElement).value;
+      void persistSettings();
+    });
+  }
 
   // Check updates on startup
   if (checkUpdatesOnStartupToggle) {
@@ -474,6 +488,16 @@ export function bindSettingsControls() {
       void persistSettings();
     });
   }
+}
+
+/** Settings toggles, selects, and inputs that save on change. */
+export function bindSettingsControls() {
+  bindEffectiveOptionsSummary();
+  bindDownloadSectionControls();
+  bindEnhancementsSectionControls();
+  bindBrowserSectionControls();
+  bindInterfaceSectionControls();
+  bindApplicationSectionControls();
 }
 
 /** Update channel, reset, export, import, and statistics. */
