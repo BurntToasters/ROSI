@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
 import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import { processesMatching } from "../../helpers/host.js";
+import { activityFor, waitFor } from "../../helpers/ui.js";
 import { REPO_ROOT } from "../../helpers/profile.js";
 
 // Failure modes are numbered in primary-action.failure-modes.md. Each check
@@ -105,50 +107,6 @@ async function scenario(name, failureModes, body) {
 }
 
 const settle = (ms = 600) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function waitFor(
-  predicate,
-  message,
-  timeout = 10_000,
-  argument = undefined,
-) {
-  await browser.waitUntil(async () => browser.execute(predicate, argument), {
-    timeout,
-    interval: 100,
-    timeoutMsg: message,
-  });
-}
-
-// Lists processes whose command line contains the needle, so the test can tell
-// whether yt-dlp is still running for a download.
-function processesMatching(needle) {
-  const listing =
-    process.platform === "win32"
-      ? spawnSync(
-          "powershell.exe",
-          [
-            "-NoProfile",
-            "-Command",
-            "Get-CimInstance Win32_Process | ForEach-Object { $_.CommandLine }",
-          ],
-          { encoding: "utf8" },
-        ).stdout
-      : spawnSync("ps", ["-Ao", "command="], { encoding: "utf8" }).stdout;
-  return (listing ?? "")
-    .split(/\r?\n/)
-    .filter(
-      (line) =>
-        line.includes(needle) &&
-        !line.includes("ps -Ao") &&
-        !line.includes("Get-CimInstance"),
-    );
-}
-
-async function activityFor(url) {
-  return (await api("getDownloadActivity")).data.filter(
-    (entry) => entry.url === url,
-  );
-}
 
 async function waitForActivity(predicate, message, timeout = 120_000) {
   let match = null;

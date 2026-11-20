@@ -1,11 +1,27 @@
 import fs from "node:fs";
 import path from "node:path";
-import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { browser, $ } from "@wdio/globals";
 import { snapshotDir } from "../helpers/legacy-v4.js";
 import { readListFile } from "../helpers/persisted.js";
+import {
+  createRecorder,
+  processesMatching,
+  sha256File,
+  waitForNoProcess,
+} from "../helpers/host.js";
+import {
+  api,
+  clickById,
+  clickModalButton,
+  reloadRenderer,
+  restoreBridge,
+  setControl,
+  stubBridges,
+  stubCalls,
+  waitForModal,
+} from "../helpers/ui.js";
 
 const env = process.env;
 const DOWNLOADS = env.ROSI_E2E_DOWNLOADS;
@@ -19,7 +35,7 @@ const FFPROBE = env.ROSI_E2E_FFPROBE;
 // Windows code page cannot represent it.
 const UNICODE_FIXTURE = "日本語-Привет-café.mp4";
 
-const results = [];
+const { record, entries: results } = createRecorder({ status: "passed" });
 
 // OS clipboard access for the Activity copy check. Platforms without an entry
 // have no OS read-back here, so that check relies on the toast and the page.
@@ -47,85 +63,6 @@ const OS_CLIPBOARD_TOOLS = {
       ),
   },
 };
-
-function record(name, details = {}) {
-  results.push({ name, status: "passed", ...details });
-}
-
-function sha256File(filePath) {
-  return crypto
-    .createHash("sha256")
-    .update(fs.readFileSync(filePath))
-    .digest("hex");
-}
-
-/** Call a `window.__ROSI_E2E__.api` method in the app and return its resolved value. */
-async function api(method, ...args) {
-  // The WebDriver bridge fails on script results containing non-ASCII text,
-  // so the page returns ASCII-escaped JSON and Node parses it.
-  const encoded = await browser.executeAsync(
-    (name, params, done) => {
-      const ascii = (value) =>
-        JSON.stringify(value).replace(
-          /[\u0080-\uffff]/g,
-          (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
-        );
-      Promise.resolve()
-        .then(() => window.__ROSI_E2E__.api[name](...params))
-        .then(
-          (value) => done(ascii({ ok: true, value: value ?? null })),
-          (error) =>
-            done(
-              ascii({
-                ok: false,
-                error: error instanceof Error ? error.message : String(error),
-              }),
-            ),
-        );
-    },
-    method,
-    args,
-  );
-  const outcome = JSON.parse(encoded);
-  if (!outcome.ok)
-    throw new Error(
-      `window.__ROSI_E2E__.api.${method} failed: ${outcome.error}`,
-    );
-  return outcome.value;
-}
-
-/** Command lines of live processes that mention `needle` (never this test). */
-function processesMatching(needle) {
-  const listing =
-    process.platform === "win32"
-      ? spawnSync(
-          "powershell.exe",
-          [
-            "-NoProfile",
-            "-Command",
-            "Get-CimInstance Win32_Process | ForEach-Object { $_.CommandLine }",
-          ],
-          { encoding: "utf8" },
-        ).stdout
-      : spawnSync("ps", ["-Ao", "command="], { encoding: "utf8" }).stdout;
-  return (listing ?? "")
-    .split(/\r?\n/)
-    .filter(
-      (line) =>
-        line.includes(needle) &&
-        !line.includes("ps -Ao") &&
-        !line.includes("Get-CimInstance"),
-    );
-}
-
-async function waitForNoProcess(needle, timeoutMsg) {
-  await browser.waitUntil(async () => processesMatching(needle).length === 0, {
-    // Unix sends SIGTERM, then SIGKILL after 5 s.
-    timeout: 15_000,
-    interval: 250,
-    timeoutMsg: `${timeoutMsg}: ${processesMatching(needle).join(" | ")}`,
-  });
-}
 
 async function waitForActivity(predicate, timeoutMsg, timeout = 120_000) {
   let match = null;
@@ -208,11 +145,11 @@ async function waitForRenderedPreferences({ theme, flatUi }) {
 
 async function setRenderedPreferences({ theme, flatUi }) {
   if (flatUi !== undefined) {
-    await setControlValue("flatUiToggle", flatUi);
+    await setControl("flatUiToggle", flatUi);
     await waitForSavedSetting("flatUi", flatUi, "Flat UI was not saved");
   }
   if (theme !== undefined) {
-    await setControlValue("themeSelect", theme);
+    await setControl("themeSelect", theme);
     await waitForSavedSetting("theme", theme, `${theme} theme was not saved`);
   }
   await waitForRenderedPreferences({ theme, flatUi });
@@ -259,12 +196,6 @@ function settle(ms = 600) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function clickById(id) {
-  await browser.execute((target) => {
-    document.getElementById(target)?.click();
-  }, id);
-}
-
 /** Dispatch a keydown the way a real key press reaches the renderer. */
 async function pressKey(targetSelector, init) {
   await browser.execute(
@@ -281,19 +212,6 @@ async function pressKey(targetSelector, init) {
     },
     targetSelector,
     init,
-  );
-}
-
-async function setControlValue(id, value) {
-  await browser.execute(
-    (target, next) => {
-      const control = document.getElementById(target);
-      if (control.type === "checkbox") control.checked = next;
-      else control.value = next;
-      control.dispatchEvent(new Event("change", { bubbles: true }));
-    },
-    id,
-    value,
   );
 }
 
@@ -319,25 +237,6 @@ function dockState() {
         .classList.contains("collapsed"),
     };
   });
-}
-
-/** Reload the webview and wait for the renderer to come back. */
-async function reloadRenderer() {
-  // Defer the reload: WebView2 tears down the script context before the
-  // embedded WebDriver can answer a synchronous execute that navigates.
-  await browser.execute(() => {
-    window.__ROSI_E2E__.ready = false;
-    window.setTimeout(() => window.location.reload(), 50);
-  });
-  await browser.waitUntil(
-    async () =>
-      browser.execute(
-        () =>
-          Boolean(window.__ROSI_E2E__?.ready) &&
-          Boolean(window.__ROSI_E2E__?.api),
-      ),
-    { timeout: 60_000, timeoutMsg: "renderer did not come back after reload" },
-  );
 }
 
 /** Resize the window through Tauri and wait for layout to settle. */
@@ -639,89 +538,6 @@ async function restoreWizardSettings(original) {
   const saved = await api("saveSettings", { ...patch, firstLaunch: false });
   assert.equal(saved.ok, true, saved.error?.message);
   await reloadRenderer();
-}
-
-/**
- * Replace window.__ROSI_E2E__.api methods with recorders for bridge calls that would
- * leave the app (browser, Finder, OS dialogs, notifications). Each stub
- * records its arguments and resolves to the given value.
- */
-async function stubApi(stubs) {
-  await browser.execute((map) => {
-    window.__rosiStubs ??= { original: {}, calls: [] };
-    for (const [name, value] of Object.entries(map)) {
-      if (!(name in window.__rosiStubs.original)) {
-        window.__rosiStubs.original[name] = window.__ROSI_E2E__.api[name];
-      }
-      window.__ROSI_E2E__.api[name] = (...args) => {
-        window.__rosiStubs.calls.push({
-          name,
-          args: JSON.parse(JSON.stringify(args)),
-        });
-        return Promise.resolve(value);
-      };
-    }
-  }, stubs);
-}
-
-/** Calls recorded by stubApi so far. */
-function stubCalls(name) {
-  return browser.execute(
-    (target) =>
-      (window.__rosiStubs?.calls ?? [])
-        .filter((call) => !target || call.name === target)
-        .map((call) => call.args),
-    name ?? null,
-  );
-}
-
-/** Put the real bridge methods back and return every recorded call. */
-function restoreApi() {
-  return browser.execute(() => {
-    const stubs = window.__rosiStubs;
-    if (!stubs) return [];
-    Object.assign(window.__ROSI_E2E__.api, stubs.original);
-    window.__rosiStubs = undefined;
-    return stubs.calls;
-  });
-}
-
-/** The app's in-page modal: whether it is open, its title, and buttons. */
-function modalState() {
-  return browser.execute(() => {
-    const modal = document.getElementById("app-modal");
-    return {
-      open: modal.classList.contains("active"),
-      title: document.getElementById("modal-title").textContent,
-      message: document.getElementById("modal-message").textContent,
-      buttons: [...document.querySelectorAll("#modal-buttons button")].map(
-        (button) => button.textContent.trim(),
-      ),
-    };
-  });
-}
-
-async function waitForModal(open, timeoutMsg) {
-  let state = null;
-  await browser.waitUntil(
-    async () => {
-      state = await modalState();
-      return state.open === open;
-    },
-    { timeout: 10_000, timeoutMsg },
-  );
-  return state;
-}
-
-async function clickModalButton(label) {
-  const clicked = await browser.execute((text) => {
-    const button = [...document.querySelectorAll("#modal-buttons button")].find(
-      (candidate) => candidate.textContent.trim() === text,
-    );
-    button?.click();
-    return Boolean(button);
-  }, label);
-  assert.ok(clicked, `modal has no "${label}" button`);
 }
 
 /** Type a URL, press Download, and wait for its new activity entry. */
@@ -1244,13 +1060,13 @@ describe("ROSI main window", () => {
       ["light", "light"],
       ["dark", "dark"],
     ]) {
-      await setControlValue("themeSelect", theme);
+      await setControl("themeSelect", theme);
       await waitForSavedSetting("theme", theme, `${theme} theme was not saved`);
       await waitForWindowTheme(expected, `${theme} theme left the title bar`);
       seen[theme] = expected;
     }
     // System resolves to the page's rendered theme, never to null.
-    await setControlValue("themeSelect", "system");
+    await setControl("themeSelect", "system");
     await waitForSavedSetting("theme", "system", "system theme was not saved");
     const rendered = await browser.execute(
       () => document.documentElement.dataset.theme,
@@ -1258,7 +1074,7 @@ describe("ROSI main window", () => {
     const systemExpected = rendered === "light" ? "light" : "dark";
     await waitForWindowTheme(systemExpected, "system theme left the title bar");
     seen.system = systemExpected;
-    await setControlValue("themeSelect", original);
+    await setControl("themeSelect", original);
     await waitForSavedSetting("theme", original, "theme was not restored");
     record("window-theme", { seen });
   });
@@ -1329,12 +1145,12 @@ describe("ROSI main window", () => {
     assert.match(floating.sidebarMask, /linear-gradient/);
     await setSidebarOpen(false);
 
-    await setControlValue("flatUiToggle", true);
+    await setControl("flatUiToggle", true);
     await waitForSavedSetting("flatUi", true, "Flat UI was not saved");
     await setSidebarOpen(true);
     const flat = await surfaceStyles();
     await setSidebarOpen(false);
-    await setControlValue("flatUiToggle", false);
+    await setControl("flatUiToggle", false);
     await waitForSavedSetting("flatUi", false, "Flat UI off was not saved");
 
     assert.equal(flat.sidebarAlpha, 1, "Flat UI sidebar is see-through");
@@ -3531,7 +3347,7 @@ describe("ROSI main window", () => {
 
     await resizeWindow(1200, 900);
     await typeUrl("");
-    await setControlValue("themeSelect", "dark");
+    await setControl("themeSelect", "dark");
     await waitForSavedSetting("theme", "dark", "dark theme was not saved");
     await selectDock("activity");
     await shoot("default-dark");
@@ -3559,36 +3375,36 @@ describe("ROSI main window", () => {
     await shoot("settings-open");
     await clickById("closeSidebar");
 
-    await setControlValue("flatUiToggle", true);
+    await setControl("flatUiToggle", true);
     await waitForSavedSetting("flatUi", true, "Flat UI was not saved");
     await shoot("flat-ui");
-    await setControlValue("flatUiToggle", false);
+    await setControl("flatUiToggle", false);
     await waitForSavedSetting("flatUi", false, "Flat UI off was not saved");
 
-    await setControlValue("themeSelect", "light");
+    await setControl("themeSelect", "light");
     await waitForSavedSetting("theme", "light", "light theme was not saved");
     await shoot("theme-light");
-    await setControlValue("themeSelect", "purple");
+    await setControl("themeSelect", "purple");
     await waitForSavedSetting("theme", "purple", "purple theme was not saved");
     await shoot("theme-purple");
     await setSidebarOpen(true);
     await shoot("settings-floating-purple");
     await setSidebarOpen(false);
-    await setControlValue("flatUiToggle", true);
+    await setControl("flatUiToggle", true);
     await waitForSavedSetting("flatUi", true, "Flat UI was not saved");
     await setSidebarOpen(true);
     await shoot("settings-flat-purple");
     await setSidebarOpen(false);
-    await setControlValue("flatUiToggle", false);
+    await setControl("flatUiToggle", false);
     await waitForSavedSetting("flatUi", false, "Flat UI off was not saved");
-    await setControlValue("themeSelect", "dark");
+    await setControl("themeSelect", "dark");
     await waitForSavedSetting("theme", "dark", "dark theme was not restored");
 
     await resizeWindow(900, 560);
     await shoot("compact-900x560");
     await resizeWindow(1200, 900);
     await selectDock("queue");
-    await setControlValue("themeSelect", "system");
+    await setControl("themeSelect", "system");
     await waitForSavedSetting(
       "theme",
       "system",
@@ -3683,12 +3499,9 @@ describe("ROSI main window", () => {
 
     // Per-section reset puts that section's keys back to the defaults only.
     const defaults = (await api("getDefaultSettings")).data;
-    await setControlValue("embedMetadataToggle", !defaults.embedMetadata);
-    await setControlValue("sponsorblockToggle", !defaults.sponsorblockRemove);
-    await setControlValue(
-      "taskbarProgressToggle",
-      !defaults.showTaskbarProgress,
-    );
+    await setControl("embedMetadataToggle", !defaults.embedMetadata);
+    await setControl("sponsorblockToggle", !defaults.sponsorblockRemove);
+    await setControl("taskbarProgressToggle", !defaults.showTaskbarProgress);
     await waitForSavedSetting(
       "sponsorblockRemove",
       !defaults.sponsorblockRemove,
@@ -3704,18 +3517,26 @@ describe("ROSI main window", () => {
       );
     // Reset asks first: Cancel must leave the changed values alone.
     await resetEnhancements();
-    await waitForModal(true, "section reset did not ask for confirmation");
+    await waitForModal(true, {
+      timeoutMsg: "section reset did not ask for confirmation",
+    });
     await clickModalButton("Cancel");
-    await waitForModal(false, "Cancel did not close the reset prompt");
+    await waitForModal(false, {
+      timeoutMsg: "Cancel did not close the reset prompt",
+    });
     assert.equal(
       settingsOnDisk().embedMetadata,
       !defaults.embedMetadata,
       "Cancel changed the metadata setting",
     );
     await resetEnhancements();
-    await waitForModal(true, "section reset did not reopen the prompt");
+    await waitForModal(true, {
+      timeoutMsg: "section reset did not reopen the prompt",
+    });
     await clickModalButton("Reset section");
-    await waitForModal(false, "confirmed reset did not close the prompt");
+    await waitForModal(false, {
+      timeoutMsg: "confirmed reset did not close the prompt",
+    });
     await waitForSavedSetting(
       "embedMetadata",
       defaults.embedMetadata,
@@ -3731,10 +3552,7 @@ describe("ROSI main window", () => {
       !defaults.showTaskbarProgress,
       "Enhancements reset touched the Interface section",
     );
-    await setControlValue(
-      "taskbarProgressToggle",
-      original.showTaskbarProgress,
-    );
+    await setControl("taskbarProgressToggle", original.showTaskbarProgress);
     await waitForSavedSetting(
       "showTaskbarProgress",
       original.showTaskbarProgress,
@@ -3765,7 +3583,7 @@ describe("ROSI main window", () => {
     ];
     for (const [id, key, shows] of toggles) {
       for (const value of [!original[key], original[key]]) {
-        await setControlValue(id, value);
+        await setControl(id, value);
         await waitForSavedSetting(
           key,
           value,
@@ -3784,7 +3602,7 @@ describe("ROSI main window", () => {
     }
 
     // Side effects the toggles drive outside Settings.
-    await setControlValue("animateBackgroundToggle", true);
+    await setControl("animateBackgroundToggle", true);
     await waitForSavedSetting(
       "animateBackground",
       true,
@@ -3796,16 +3614,13 @@ describe("ROSI main window", () => {
       ),
       "animated background did not start",
     );
-    await setControlValue(
-      "animateBackgroundToggle",
-      original.animateBackground,
-    );
+    await setControl("animateBackgroundToggle", original.animateBackground);
     await waitForSavedSetting(
       "animateBackground",
       original.animateBackground,
       "animated background was not restored",
     );
-    await setControlValue("consoleToggle", false);
+    await setControl("consoleToggle", false);
     await waitForSavedSetting(
       "showConsoleOutput",
       false,
@@ -3817,7 +3632,7 @@ describe("ROSI main window", () => {
       ),
       "hiding the console left its dock tab",
     );
-    await setControlValue("consoleToggle", true);
+    await setControl("consoleToggle", true);
     await waitForSavedSetting(
       "showConsoleOutput",
       true,
@@ -3832,9 +3647,9 @@ describe("ROSI main window", () => {
       ["profileAudioFormatSelect", "audioFormat", "flac"],
     ];
     for (const [id, key, value] of selects) {
-      await setControlValue(id, value);
+      await setControl(id, value);
       await waitForSavedSetting(key, value, `${id} did not save ${value}`);
-      await setControlValue(id, original[key]);
+      await setControl(id, original[key]);
       await waitForSavedSetting(key, original[key], `${id} was not restored`);
       checked.push(id);
     }
@@ -3849,13 +3664,13 @@ describe("ROSI main window", () => {
       ),
       "update channel did not reveal",
     );
-    await setControlValue("updateChannelSelect", "beta");
+    await setControl("updateChannelSelect", "beta");
     await waitForSavedSetting(
       "updateChannel",
       "beta",
       "update channel was not saved",
     );
-    await setControlValue("updateChannelSelect", original.updateChannel);
+    await setControl("updateChannelSelect", original.updateChannel);
     await waitForSavedSetting(
       "updateChannel",
       original.updateChannel,
@@ -3893,19 +3708,25 @@ describe("ROSI main window", () => {
   it("asks before Reset All, then resets and restarts", async () => {
     // The real reset restarts the app, which would end the WebDriver session;
     // the bridge call is recorded instead.
-    await stubApi({ resetSettings: { ok: true } });
+    await stubBridges({ resetSettings: { ok: true } });
     await clickById("resetSettings");
-    let modal = await waitForModal(true, "Reset All asked nothing");
+    let modal = await waitForModal(true, {
+      timeoutMsg: "Reset All asked nothing",
+    });
     assert.equal(modal.buttons.length, 2);
     await clickModalButton("Cancel");
-    await waitForModal(false, "Cancel did not close the reset prompt");
+    await waitForModal(false, {
+      timeoutMsg: "Cancel did not close the reset prompt",
+    });
     assert.deepEqual(
       await stubCalls("resetSettings"),
       [],
       "Cancel still reset",
     );
     await clickById("resetSettings");
-    modal = await waitForModal(true, "Reset All asked nothing the second time");
+    modal = await waitForModal(true, {
+      timeoutMsg: "Reset All asked nothing the second time",
+    });
     const confirmedAt = Date.now();
     await clickModalButton(modal.buttons.find((label) => /reset/i.test(label)));
     // The confirm runs after the modal's hide timer and the settings flush
@@ -3916,13 +3737,13 @@ describe("ROSI main window", () => {
     );
     const resetMs = Date.now() - confirmedAt;
     const calls = await stubCalls("resetSettings");
-    await restoreApi();
+    await restoreBridge();
     assert.equal(calls.length, 1, "confirming did not reset");
     record("settings-reset-all", { prompt: modal.title, resetMs });
   });
 
   it("opens every help and support link at the right address", async () => {
-    await stubApi({ openExternal: null });
+    await stubBridges({ openExternal: null });
     const links = {
       helpLink: "https://help.rosie.run/rosi/en-us/faq",
       supportLink: "https://rosie.run/support",
@@ -3934,7 +3755,7 @@ describe("ROSI main window", () => {
     };
     for (const id of Object.keys(links)) await clickById(id);
     await settle(200);
-    const opened = (await restoreApi()).map((call) => call.args[0]);
+    const opened = (await restoreBridge()).map((call) => call.args[0]);
     assert.deepEqual(opened, Object.values(links));
     record("external-links", { links: opened.length });
   });
@@ -3980,10 +3801,12 @@ describe("ROSI main window", () => {
     );
     await clickById("close-licenses");
     await emit("check-for-updates");
-    const modal = await waitForModal(true, "check-for-updates showed nothing");
+    const modal = await waitForModal(true, {
+      timeoutMsg: "check-for-updates showed nothing",
+    });
     assert.equal(modal.title, "Development Mode");
     await clickModalButton("OK");
-    await waitForModal(false, "update result did not close");
+    await waitForModal(false, { timeoutMsg: "update result did not close" });
     record("menu-actions", {
       actions: [
         "open-settings",
@@ -3996,25 +3819,29 @@ describe("ROSI main window", () => {
 
   it("checks for updates from Settings", async () => {
     await clickById("checkUpdateBtn");
-    const modal = await waitForModal(true, "Check for Updates showed nothing");
+    const modal = await waitForModal(true, {
+      timeoutMsg: "Check for Updates showed nothing",
+    });
     // Unpackaged builds never reach the network; they say so instead.
     assert.equal(modal.title, "Development Mode");
     await clickModalButton("OK");
-    await waitForModal(false, "update result did not close");
+    await waitForModal(false, { timeoutMsg: "update result did not close" });
     record("update-check", { result: modal.title });
   });
 
   it("shows the keyboard shortcuts and statistics, and resets statistics", async () => {
     await clickById("shortcutsBtn");
-    let modal = await waitForModal(true, "shortcuts did not open");
+    let modal = await waitForModal(true, {
+      timeoutMsg: "shortcuts did not open",
+    });
     assert.equal(modal.title, "Keyboard Shortcuts");
     assert.match(modal.message, /Alt\+1 \/ Alt\+2 \/ Alt\+3/);
     await clickModalButton("OK");
-    await waitForModal(false, "shortcuts did not close");
+    await waitForModal(false, { timeoutMsg: "shortcuts did not close" });
 
     const stats = await api("getStats");
     await clickById("viewStatsBtn");
-    modal = await waitForModal(true, "statistics did not open");
+    modal = await waitForModal(true, { timeoutMsg: "statistics did not open" });
     assert.equal(modal.title, "Download Statistics");
     assert.match(
       modal.message,
@@ -4025,7 +3852,9 @@ describe("ROSI main window", () => {
       new RegExp(`Successful: ${stats.successfulDownloads}\\b`),
     );
     await clickModalButton("Reset Stats");
-    await waitForModal(false, "Reset Stats did not close the dialog");
+    await waitForModal(false, {
+      timeoutMsg: "Reset Stats did not close the dialog",
+    });
     let reset = null;
     await browser.waitUntil(
       async () => {
@@ -4110,7 +3939,7 @@ describe("ROSI main window", () => {
     assert.match(await presetStatus(), /Enter a name/);
 
     await selectProfile("audio");
-    await setControlValue("profileAudioFormatSelect", "flac");
+    await setControl("profileAudioFormatSelect", "flac");
     await waitForSavedSetting(
       "audioFormat",
       "flac",
@@ -4158,7 +3987,7 @@ describe("ROSI main window", () => {
     );
     assert.match(await presetStatus(), /Deleted E2E Audio/);
     await pressKey("#presetNameInput", { key: "Escape" });
-    await setControlValue("profileAudioFormatSelect", original.audioFormat);
+    await setControl("profileAudioFormatSelect", original.audioFormat);
     await waitForSavedSetting(
       "audioFormat",
       original.audioFormat,
@@ -4189,8 +4018,8 @@ describe("ROSI main window", () => {
       },
       { timeout: 60_000, timeoutMsg: "formats never loaded" },
     );
-    await setControlValue("videoFormat", formats.video[0]);
-    await setControlValue("audioFormat", formats.audio[0]);
+    await setControl("videoFormat", formats.video[0]);
+    await setControl("audioFormat", formats.audio[0]);
     const clickedAt = Date.now();
     await clickById("downloadBtn");
     const entry = await waitForActivity(
@@ -4305,7 +4134,7 @@ describe("ROSI main window", () => {
       ["writeSubtitlesToggle", "writeSubtitles"],
     ];
     for (const [id, key] of extras) {
-      await setControlValue(id, true);
+      await setControl(id, true);
       await waitForSavedSetting(key, true, `${id} was not saved`);
     }
     await browser.execute(() => {
@@ -4336,7 +4165,7 @@ describe("ROSI main window", () => {
     assert.equal(embedded.thumbnail, true, "no cover art was embedded");
     assert.equal(embedded.subtitles, true, "no subtitle track was embedded");
     for (const [id, key] of extras) {
-      await setControlValue(id, original[key]);
+      await setControl(id, original[key]);
       await waitForSavedSetting(key, original[key], `${id} was not restored`);
     }
     await browser.execute((value) => {
@@ -4451,7 +4280,7 @@ describe("ROSI main window", () => {
       "Start stayed enabled while an item downloads",
     );
     await clickById("cancelQueueBtn");
-    const stop = await waitForModal(true, "Stop asked nothing");
+    const stop = await waitForModal(true, { timeoutMsg: "Stop asked nothing" });
     assert.equal(stop.title, "Cancel queue");
     await clickModalButton("Cancel queue");
     await browser.waitUntil(
@@ -4493,7 +4322,7 @@ describe("ROSI main window", () => {
     // Clear asks first, then empties the queue. The Cancel modal and the busy
     // lock can linger briefly after the backend reports the cancel, and a click
     // on a disabled button does nothing, so wait for both to clear.
-    await waitForModal(false, "Cancel modal did not close");
+    await waitForModal(false, { timeoutMsg: "Cancel modal did not close" });
     await browser.waitUntil(
       () =>
         browser.execute(() => {
@@ -4506,7 +4335,9 @@ describe("ROSI main window", () => {
       },
     );
     await clickById("clearQueueBtn");
-    const clear = await waitForModal(true, "Clear asked nothing");
+    const clear = await waitForModal(true, {
+      timeoutMsg: "Clear asked nothing",
+    });
     assert.equal(clear.title, "Clear Queue");
     await clickModalButton("Clear");
     await browser.waitUntil(async () => (await api("getQueue")).length === 0, {
@@ -4517,16 +4348,16 @@ describe("ROSI main window", () => {
   });
 
   it("sends one notification when a queue run drains and none after a user cancel", async () => {
-    await restoreApi();
+    await restoreBridge();
     await api("clearQueue");
     const original = settingsOnDisk().notifications;
-    await setControlValue("notificationsToggle", true);
+    await setControl("notificationsToggle", true);
     await waitForSavedSetting(
       "notifications",
       true,
       "notifications were not saved",
     );
-    await stubApi({ showNotification: { ok: true } });
+    await stubBridges({ showNotification: { ok: true } });
     let drainCalls = [];
     let cancelCalls = [];
     try {
@@ -4576,7 +4407,7 @@ describe("ROSI main window", () => {
         { timeout: 10_000, timeoutMsg: "Cancel queue stayed disabled" },
       );
       await clickById("cancelQueueBtn");
-      await waitForModal(true, "Cancel modal did not open");
+      await waitForModal(true, { timeoutMsg: "Cancel modal did not open" });
       await clickModalButton("Cancel queue");
       await browser.waitUntil(
         async () =>
@@ -4593,8 +4424,8 @@ describe("ROSI main window", () => {
       );
       await api("clearQueue");
     } finally {
-      await restoreApi();
-      await setControlValue("notificationsToggle", original);
+      await restoreBridge();
+      await setControl("notificationsToggle", original);
       await waitForSavedSetting(
         "notifications",
         original,
@@ -4834,7 +4665,7 @@ describe("ROSI main window", () => {
     fs.mkdirSync(picked, { recursive: true });
     fs.mkdirSync(asked, { recursive: true });
     // The OS folder dialog is replaced by a recorder that returns a folder.
-    await stubApi({ selectDownloadLocation: picked });
+    await stubBridges({ selectDownloadLocation: picked });
     await clickById("changeDownloadFolderBtn");
     await waitForSavedSetting(
       "downloadFolder",
@@ -4848,8 +4679,8 @@ describe("ROSI main window", () => {
       picked,
     );
 
-    await stubApi({ selectDownloadLocation: asked });
-    await setControlValue("askDownloadLocationToggle", true);
+    await stubBridges({ selectDownloadLocation: asked });
+    await setControl("askDownloadLocationToggle", true);
     await waitForSavedSetting(
       "askDownloadLocation",
       true,
@@ -4872,7 +4703,7 @@ describe("ROSI main window", () => {
     );
 
     // A cancelled picker cancels the download.
-    await stubApi({ selectDownloadLocation: null });
+    await stubBridges({ selectDownloadLocation: null });
     await typeUrl(`${MEDIA}/clip-one.mp4?ask=cancel`);
     await clickById("downloadBtn");
     await settle();
@@ -4885,8 +4716,8 @@ describe("ROSI main window", () => {
     assert.equal(cancelled.busy, false, "a cancelled picker still downloaded");
     assert.match(cancelled.console, /No save location selected/);
 
-    await restoreApi();
-    await setControlValue("askDownloadLocationToggle", false);
+    await restoreBridge();
+    await setControl("askDownloadLocationToggle", false);
     await waitForSavedSetting(
       "askDownloadLocation",
       false,
@@ -4906,13 +4737,13 @@ describe("ROSI main window", () => {
 
   it("notifies when a download finishes", async () => {
     const original = settingsOnDisk().notifications;
-    await setControlValue("notificationsToggle", true);
+    await setControl("notificationsToggle", true);
     await waitForSavedSetting(
       "notifications",
       true,
       "notifications were not saved",
     );
-    await stubApi({ showNotification: { ok: true } });
+    await stubBridges({ showNotification: { ok: true } });
     const entry = await downloadThroughUi(
       `${MEDIA}/clip-one.mp4?notify=1`,
       "notified download never finished",
@@ -4926,9 +4757,9 @@ describe("ROSI main window", () => {
       },
       { timeout: 5_000, timeoutMsg: "no notification was shown" },
     );
-    await restoreApi();
+    await restoreBridge();
     assert.equal(calls[0][0].title, "Download Complete!");
-    await setControlValue("notificationsToggle", original);
+    await setControl("notificationsToggle", original);
     await waitForSavedSetting(
       "notifications",
       original,
@@ -4941,7 +4772,7 @@ describe("ROSI main window", () => {
   it("starts a new download right after one finishes", async () => {
     // For a few seconds after a download the button offers "Open File
     // Location". Typing a new link must turn it back into Download.
-    await stubApi({ openFileLocation: { ok: true } });
+    await stubBridges({ openFileLocation: { ok: true } });
     await downloadThroughUi(
       `${MEDIA}/clip-one.mp4?again=1`,
       "first download never finished",
@@ -4955,7 +4786,7 @@ describe("ROSI main window", () => {
     await clickById("downloadBtn");
     await settle(500);
     const opened = await stubCalls("openFileLocation");
-    await restoreApi();
+    await restoreBridge();
     assert.equal(
       button,
       "Download",

@@ -1,10 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-import crypto from "node:crypto";
-import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { browser } from "@wdio/globals";
 import { api, waitForAppReady } from "../helpers/app-bridge.js";
+import { processesMatching, sha256File } from "../helpers/host.js";
 import { snapshotDir } from "../helpers/legacy-v4.js";
 
 const env = process.env;
@@ -43,36 +42,6 @@ async function assertRosi4Settings() {
 
 function idsIn(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8")).map((item) => item.id);
-}
-
-function sha256File(filePath) {
-  return crypto
-    .createHash("sha256")
-    .update(fs.readFileSync(filePath))
-    .digest("hex");
-}
-
-function processesMatching(needle) {
-  const listing =
-    process.platform === "win32"
-      ? spawnSync(
-          "powershell.exe",
-          [
-            "-NoProfile",
-            "-Command",
-            "Get-CimInstance Win32_Process | ForEach-Object { $_.CommandLine }",
-          ],
-          { encoding: "utf8" },
-        ).stdout
-      : spawnSync("ps", ["-Ao", "command="], { encoding: "utf8" }).stdout;
-  return (listing ?? "")
-    .split(/\r?\n/)
-    .filter(
-      (line) =>
-        line.includes(needle) &&
-        !line.includes("ps -Ao") &&
-        !line.includes("Get-CimInstance"),
-    );
 }
 
 async function wizardActive() {

@@ -1,46 +1,16 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { browser } from "@wdio/globals";
 import { api, waitForAppReady } from "../../helpers/app-bridge.js";
+import { waitForNoProcess } from "../../helpers/host.js";
+import { activityFor } from "../../helpers/ui.js";
 
 const env = process.env;
 const MEDIA = env.ROSI_E2E_MEDIA_URL;
 const DOWNLOADS = env.ROSI_E2E_DOWNLOADS;
 const DATA_DIR = env.ROSI_E2E_DATA_DIR;
 const TERMINAL = ["completed", "failed", "cancelled"];
-
-function processesMatching(needle) {
-  const listing =
-    process.platform === "win32"
-      ? spawnSync(
-          "powershell.exe",
-          [
-            "-NoProfile",
-            "-Command",
-            "Get-CimInstance Win32_Process | ForEach-Object { $_.CommandLine }",
-          ],
-          { encoding: "utf8" },
-        ).stdout
-      : spawnSync("ps", ["-Ao", "command="], { encoding: "utf8" }).stdout;
-  return (listing || "")
-    .split("\n")
-    .filter((line) => line.includes(needle) && !line.includes("powershell"));
-}
-
-async function waitForNoProcess(needle, timeoutMsg) {
-  await browser.waitUntil(async () => processesMatching(needle).length === 0, {
-    timeout: 15_000,
-    interval: 250,
-    timeoutMsg: `${timeoutMsg}: ${processesMatching(needle).join(" | ")}`,
-  });
-}
-
-async function activityFor(url) {
-  const activity = (await api("getDownloadActivity")).data;
-  return activity.filter((entry) => entry.url === url);
-}
 
 async function waitForItemStatus(url, status, timeoutMsg, timeout = 60_000) {
   await browser.waitUntil(
