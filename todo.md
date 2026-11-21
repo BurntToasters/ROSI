@@ -18,6 +18,10 @@
 - [ ] POSIX-only specs whose fixed sleeps were replaced with state waits: `e2e/download-process.spec.js`, `e2e/platform-probes/probes.spec.js`, `e2e/deep-probes/probes.spec.js`. The deep-probes queue-owner race now waits for an empty queue, not for the backend slot release.
 - [ ] Windows CI installs FFmpeg 9.0.2 from Chocolatey (`ci.yml`). Confirm that version exists there and that the E2E fixtures resolve the Chocolatey shim to the real binary.
 
+- [ ] POSIX watchdog now terminates every still-registered group on a clean exit too (`process_watchdog.rs`); confirm a normal quit during a Deno install stops it.
+- [ ] macOS: a second Cmd+Q and a Dock reopen during shutdown are ignored (`window.rs`, `main.rs`).
+- [ ] Flatpak manifest: rustup-init is still unpinned; pin it to a release tag with a checksum.
+
 ## Manual checks
 
 - [ ] Near-opaque panels (settings, dialogs, toasts, wizard) in a real window on WebKitGTK.

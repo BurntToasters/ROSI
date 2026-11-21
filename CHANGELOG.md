@@ -26,6 +26,12 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 - **Queue:** Quitting during a playlist that had already saved some entries no longer runs the whole playlist again on the next launch, which made duplicates such as `name (1).mp4`.
 - **Settings:** On Windows, a download folder on an offline network share or mapped drive no longer stalls ROSI while settings load. Admin shares of the same machine (`\\localhost\C$\Windows`) are refused like the system folders they point to.
 - **Activity:** After going back to an older ROSI, closing the window is no longer refused because the Activity file was written by the newer version.
+- **Activity:** Times such as "5 min ago" now refresh while the Activity panel is open, and a failed Activity load at startup is shown instead of only logged.
+- **Downloads:** Saving to a folder with `%` in its name works; the path is no longer read as a yt-dlp output template.
+- **Queue:** Cancelling the queue while it waits for a manual download to finish now takes effect at once.
+- **Statistics:** A damaged statistics file is no longer replaced with zero totals.
+- **Processes:** On macOS and Linux, helpers still running when ROSI quits normally (such as a Deno install) are now stopped. On macOS, a second Quit or a Dock click during shutdown is ignored.
+- **Accessibility:** In Windows High Contrast the indeterminate progress bar is visible again. Screen readers no longer hear every progress tick, the Activity dock's unseen marker has a text label, and focus no longer falls to the page after closing a dialog or removing a queue row.
 - **Downloads:** Replaying a download from Activity follows the "Ask where to save" setting, saves pending settings first, and no longer starts if another download began while the folder dialog was open.
 - **Downloads:** Long Windows paths and paths written with forward slashes are handled correctly.
 - **Processes:** On macOS and Linux, yt-dlp and FFmpeg now stop when ROSI is killed or crashes, including the FFmpeg that yt-dlp starts itself on Linux.
