@@ -45,6 +45,20 @@ async function settles(check, timeout, message) {
   }
 }
 
+// A start admitted before the cancel can still spawn yt-dlp after the first
+// empty listing, and nothing marks the last possible spawn. So "none left"
+// means the listing stays empty this long. Returns every process seen in it.
+const ABSENCE_HOLD_MS = 2_000;
+async function processesDuringHold(list) {
+  const seen = new Map();
+  const end = Date.now() + ABSENCE_HOLD_MS;
+  do {
+    for (const entry of list()) seen.set(entry.pid, entry);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  } while (Date.now() < end);
+  return [...seen.values()];
+}
+
 /** Wait until a marked process exists, so a later "none left" check means something. */
 function waitForMarkedProcess(marker, message) {
   return browser.waitUntil(() => processMatches(marker).length > 0, {
@@ -826,7 +840,7 @@ describe("ROSI downloader and process repairs", () => {
         TERMINATION_GRACE_MS,
         "helpers survived both cancels",
       );
-      const after = processMatches(marker);
+      const after = await processesDuringHold(() => processMatches(marker));
       const queue = await api("getQueue");
       record("manual-queue-start-ownership", {
         addToQueue: queued,
@@ -872,7 +886,9 @@ describe("ROSI downloader and process repairs", () => {
         TERMINATION_GRACE_MS,
         "helpers survived the fan-out cancel",
       );
-      const fanoutAfter = processMatches(fanoutMarker);
+      const fanoutAfter = await processesDuringHold(() =>
+        processMatches(fanoutMarker),
+      );
       record("concurrent-manual-start-cancellation", {
         starts: JSON.parse(concurrent),
         processesBefore: fanoutBefore,

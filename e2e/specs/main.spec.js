@@ -22,6 +22,7 @@ import {
   stubCalls,
   waitFor,
   waitForModal,
+  waitForQueueRunnerExit,
 } from "../helpers/ui.js";
 
 const env = process.env;
@@ -1919,6 +1920,8 @@ describe("ROSI main window", () => {
       "queue=cancel",
       "queue yt-dlp survived cancellation",
     );
+    // A duplicate from the runner's own result is recorded before it exits.
+    await waitForQueueRunnerExit("the cancelled queue runner never exited");
     const activity = (await api("getDownloadActivity")).data;
     const slowEntries = activity.filter((item) => item.url === slow);
     const nextEntries = activity.filter((item) => item.url === next);

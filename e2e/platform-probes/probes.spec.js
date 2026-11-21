@@ -63,6 +63,19 @@ async function settles(check, timeout, message) {
     return false;
   }
 }
+// A start admitted before the cancel can still spawn yt-dlp after the first
+// empty listing, and nothing marks the last possible spawn. So "none left"
+// means the listing stays empty this long. Returns every process seen in it.
+const ABSENCE_HOLD_MS = 2_000;
+async function processesDuringHold(list) {
+  const seen = new Map();
+  const end = Date.now() + ABSENCE_HOLD_MS;
+  do {
+    for (const entry of list()) seen.set(entry.pid, entry);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  } while (Date.now() < end);
+  return [...seen.values()];
+}
 /** Wait until the renderer has no settings save queued or in flight. */
 function waitForSettingsSavesIdle(message) {
   return waitFor(
@@ -381,7 +394,7 @@ function processes(marker) {
         TERMINATION_GRACE_MS,
         "yt-dlp processes survived the cancel",
       );
-      const after = processes(marker);
+      const after = await processesDuringHold(() => processes(marker));
       record("concurrent-start-cancel", {
         starts: JSON.parse(outcomes),
         processesBefore: before,
@@ -425,7 +438,17 @@ function processes(marker) {
         TERMINATION_GRACE_MS,
         "yt-dlp preview processes survived the cancel",
       );
-      const after = processes(marker);
+      // Every preview request settles once cancelled; a request still pending
+      // could spawn after the hold.
+      await browser.waitUntil(
+        () => browser.execute(() => window.auditPreviewResults.length === 10),
+        {
+          timeout: TERMINATION_GRACE_MS,
+          interval: 100,
+          timeoutMsg: "not every preview request settled after the cancel",
+        },
+      );
+      const after = await processesDuringHold(() => processes(marker));
       record("concurrent-preview-cancel", {
         processesBefore: before,
         processesAfter: after,
@@ -474,7 +497,7 @@ function processes(marker) {
             return (
               alive.status !== 0 ||
               !alive.stdout.includes(helper) ||
-              /^s*d+s+Z/.test(alive.stdout)
+              /^\s*\d+\s+Z/.test(alive.stdout)
             );
           },
           TERMINATION_GRACE_MS,

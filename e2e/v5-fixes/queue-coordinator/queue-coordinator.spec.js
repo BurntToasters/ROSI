@@ -3,7 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
 import { processesMatching, waitForNoProcess } from "../../helpers/host.js";
-import { activityFor, api, waitForAppReady } from "../../helpers/ui.js";
+import {
+  activityFor,
+  api,
+  waitForAppReady,
+  waitForQueueRunnerExit,
+} from "../../helpers/ui.js";
 
 const env = process.env;
 const MEDIA = env.ROSI_E2E_MEDIA_URL;
@@ -38,7 +43,12 @@ async function waitForProcess(needle, message, timeout = 30_000) {
   });
 }
 
-/** Wait until the activity log holds at least `count` entries for the URL. */
+/**
+ * Wait until the activity log holds at least `count` entries for the URL, then
+ * until the queue runner has exited, so a late duplicate record from the
+ * runner's own result would already be in the log. Callers have no pending
+ * items left.
+ */
 async function waitForActivityCount(url, count, message, timeout = 15_000) {
   await browser.waitUntil(
     async () => (await activityFor(url)).length >= count,
@@ -48,6 +58,7 @@ async function waitForActivityCount(url, count, message, timeout = 15_000) {
       timeoutMsg: message,
     },
   );
+  await waitForQueueRunnerExit(`${message} (runner exit)`);
 }
 
 describe("queue and session coordinator behaviour", () => {
@@ -355,7 +366,7 @@ describe("queue and session coordinator behaviour", () => {
 
     await browser.execute(() => {
       window.__rosiActivityUpdates = [];
-      window.__rosiQueueTicks = 0;
+      window.__rosiQueueCleared = false;
       window.__rosiActivityUnsubscribe =
         window.__ROSI_E2E__.api.onDownloadActivityUpdate((snapshot) => {
           window.__rosiActivityUpdates.push(
@@ -365,8 +376,15 @@ describe("queue and session coordinator behaviour", () => {
           );
         });
       window.__rosiQueueTickUnsubscribe = window.__ROSI_E2E__.api.onQueueUpdate(
-        () => {
-          window.__rosiQueueTicks += 1;
+        (snapshot) => {
+          // Only clearFinishedQueue removes the cancelled batch items.
+          if (
+            !snapshot.items.some((item) =>
+              item.url.includes("coord=cancelbatch"),
+            )
+          ) {
+            window.__rosiQueueCleared = true;
+          }
         },
       );
     });
@@ -384,12 +402,14 @@ describe("queue and session coordinator behaviour", () => {
         (await api("getQueue")).map((item) => item.status),
         ["cancelled", "cancelled", "cancelled", "cancelled", "cancelled"],
       );
-      // A second activity event would have been emitted before this queue
-      // snapshot. Events keep their order, so once the renderer has it, the
-      // activity updates are complete.
+      // A second activity event would have been emitted before the queue
+      // snapshot clearFinishedQueue publishes. Events keep their order, so once
+      // the renderer has that snapshot (the first without the batch), the
+      // activity updates are complete. The cancel's own snapshots still list
+      // the batch, so they do not end the wait.
       assert.equal((await api("clearFinishedQueue")).ok, true);
       await browser.waitUntil(
-        () => browser.execute(() => window.__rosiQueueTicks >= 1),
+        () => browser.execute(() => window.__rosiQueueCleared === true),
         {
           timeout: 10_000,
           interval: 100,
@@ -417,7 +437,7 @@ describe("queue and session coordinator behaviour", () => {
         delete window.__rosiActivityUnsubscribe;
         delete window.__rosiQueueTickUnsubscribe;
         delete window.__rosiActivityUpdates;
-        delete window.__rosiQueueTicks;
+        delete window.__rosiQueueCleared;
       });
     }
 

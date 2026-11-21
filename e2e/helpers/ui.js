@@ -281,3 +281,37 @@ export async function activityFor(url) {
   }
   return envelope.data.filter((entry) => entry.url === url);
 }
+
+// RUNNER_EXIT_WAIT in src-tauri/src/coordinator.rs: with nothing pending,
+// startQueue waits up to this long for an exiting runner, then answers "No
+// pending items". The runner reports every terminal result before it exits.
+const RUNNER_EXIT_WAIT_MS = 2_000;
+const RUNNER_EXITED_ANSWER_MS = 1_500;
+
+/**
+ * Waits until the queue runner has exited, so every result it sent (and the
+ * activity it records) is applied. Call it only when no item is pending:
+ * startQueue would otherwise start a run. An answer well inside the exit wait
+ * means the runner had exited; a slower one may be the wait timing out, so it
+ * asks again.
+ */
+export async function waitForQueueRunnerExit(message, timeout = 15_000) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    const started = Date.now();
+    const answer = await api("startQueue");
+    const elapsed = Date.now() - started;
+    if (answer?.ok === true) {
+      throw new Error(`${message}: startQueue started a run`);
+    }
+    if (!/No pending items/.test(answer?.error?.message ?? "")) {
+      throw new Error(`${message}: ${JSON.stringify(answer)?.slice(0, 300)}`);
+    }
+    if (elapsed < RUNNER_EXITED_ANSWER_MS) return;
+    if (Date.now() > deadline) {
+      throw new Error(
+        `${message}: startQueue still waited ${elapsed} ms of ${RUNNER_EXIT_WAIT_MS} ms`,
+      );
+    }
+  }
+}
