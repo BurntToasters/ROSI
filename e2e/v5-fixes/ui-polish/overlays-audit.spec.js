@@ -338,6 +338,13 @@ function overlaysProbe(op, arg) {
       ].filter((element) => element.offsetParent !== null);
       const controlCount = controls.length;
       header.click();
+      // Hide the footer version link too. Otherwise it is the last stop and
+      // Tab from it wraps the same way with or without the fix.
+      const link = document.getElementById("versionLink");
+      if (link) {
+        state.linkDisplay = link.style.display;
+        link.style.display = "none";
+      }
       state.sectionWasCollapsed = wasCollapsed;
       state.sectionHeader = header;
       return {
@@ -348,7 +355,12 @@ function overlaysProbe(op, arg) {
       };
     }
     case "restoreSection": {
-      const header = state.sectionHeader;
+      if (state?.linkDisplay !== undefined) {
+        const link = document.getElementById("versionLink");
+        if (link) link.style.display = state.linkDisplay;
+        delete state.linkDisplay;
+      }
+      const header = state?.sectionHeader;
       const section = header?.closest(".settings-section");
       if (section) {
         const collapsed = section.classList.contains("collapsed");
@@ -356,41 +368,49 @@ function overlaysProbe(op, arg) {
       }
       return { restored: true };
     }
-    case "sidebarTabWrap": {
+    case "markSidebarStops": {
+      // The stops a user can reach, found without the shared helper: a control
+      // in an inert subtree, a disabled one, an aria-hidden one, or one with no
+      // layout box is not a stop. Each stop gets data-oa-stop=<index>.
       const sidebar = document.getElementById("sidebar");
-      const list = overlays.getFocusableElements(sidebar);
-      const first = list[0];
-      const last = list.at(-1);
-      const oldList = oldSidebarFocusables();
-      const oldLast = oldList.at(-1);
-      const result = {
-        count: list.length,
-        firstId: idOf(first),
-        lastId: idOf(last),
-        lastInert: last ? isInert(last) : null,
-        oldLastId: idOf(oldLast),
-        oldLastInert: oldLast ? isInert(oldLast) : null,
-        inertInList: list.filter(isInert).length,
-        oldInertInList: oldList.filter(isInert).length,
+      for (const marked of sidebar.querySelectorAll("[data-oa-stop]")) {
+        delete marked.dataset.oaStop;
+      }
+      const stops = [
+        ...sidebar.querySelectorAll(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        ),
+      ].filter(
+        (element) =>
+          !isInert(element) &&
+          !element.hasAttribute("disabled") &&
+          element.getAttribute("aria-hidden") !== "true" &&
+          element.tabIndex !== -1 &&
+          element.offsetParent !== null,
+      );
+      stops.forEach((element, index) => {
+        element.dataset.oaStop = String(index);
+      });
+      return {
+        count: stops.length,
+        ids: stops.map(idOf),
+        // What the pre-fix trap would have listed: inert controls among them.
+        oldInertInList: oldSidebarFocusables().filter(isInert).length,
       };
-      if (!first || !last) return { ...result, error: "no focusable stops" };
-      // Tab on the last stop.
-      last.focus();
-      result.focusedLast = document.activeElement === last;
-      const tab = keyEvent("Tab");
-      last.dispatchEvent(tab);
-      result.tabPrevented = tab.defaultPrevented;
-      result.afterTabId = idOf(document.activeElement);
-      result.afterTabIsFirst = document.activeElement === first;
-      // Shift+Tab on the first stop.
-      first.focus();
-      result.focusedFirst = document.activeElement === first;
-      const back = keyEvent("Tab", { shiftKey: true });
-      first.dispatchEvent(back);
-      result.backPrevented = back.defaultPrevented;
-      result.afterBackId = idOf(document.activeElement);
-      result.afterBackIsLast = document.activeElement === last;
-      return result;
+    }
+    case "focusStop": {
+      const element = document.querySelector(`[data-oa-stop="${arg}"]`);
+      if (!element) throw new Error(`no sidebar stop ${arg}`);
+      element.focus();
+      return { focused: document.activeElement === element };
+    }
+    case "activeStop": {
+      const active = document.activeElement;
+      return {
+        inSidebar: document.getElementById("sidebar").contains(active),
+        stop: active?.dataset?.oaStop ?? null,
+        id: idOf(active),
+      };
     }
     case "licensesTrapOrder": {
       return overlays
@@ -833,7 +853,7 @@ describe("ROSI overlays audit: displacement, focus traps, async actions, license
       );
       assert.match(
         ui,
-        /import \{ getFocusableElements \} from '\.\.\/engine\/overlays'/,
+        /import \{[^}]*\bgetFocusableElements\b[^}]*\} from '\.\.\/engine\/overlays'/,
       );
       const queries = overlays.match(
         /querySelectorAll<HTMLElement>\(FOCUSABLE_SELECTOR\)/g,
@@ -862,38 +882,49 @@ describe("ROSI overlays audit: displacement, focus traps, async actions, license
       );
       assert.equal(section.bodyInert, true, "the collapsed body is not inert");
       assert.ok(section.controlCount > 0, "the section has no controls");
-      const wrap = await probe("sidebarTabWrap");
-      assert.equal(wrap.error, undefined, wrap.error);
-      assert.equal(wrap.lastInert, false, `last stop ${wrap.lastId} is inert`);
-      assert.equal(
-        wrap.inertInList,
-        0,
-        `${wrap.inertInList} inert controls are in the trap list`,
+      // The collapsed section must leave an inert control that the pre-fix
+      // filter would have listed; otherwise this row cannot tell the fix apart.
+      const stops = await probe("markSidebarStops");
+      assert.ok(stops.count >= 2, `only ${stops.count} sidebar stops`);
+      assert.ok(
+        stops.oldInertInList > 0,
+        "no inert control in the old list, so the collapsed section did not reproduce the bug",
       );
-      assert.equal(wrap.focusedLast, true, "could not focus the last stop");
+      const lastStop = stops.count - 1;
+      // Real key presses, so the browser's own Tab and Shift+Tab handling is
+      // what decides where focus lands.
+      assert.equal((await probe("focusStop", lastStop)).focused, true);
+      await browser.keys("Tab");
+      const afterTab = await probe("activeStop");
       assert.equal(
-        wrap.tabPrevented,
+        afterTab.inSidebar,
         true,
-        "Tab on the last stop did not wrap",
+        `Tab left the sidebar at ${afterTab.id}`,
       );
       assert.equal(
-        wrap.afterTabIsFirst,
-        true,
-        `focus went to ${wrap.afterTabId}`,
+        afterTab.stop,
+        "0",
+        `Tab from the last stop went to stop ${afterTab.stop} (${afterTab.id})`,
       );
-      assert.equal(wrap.focusedFirst, true, "could not focus the first stop");
-      assert.equal(wrap.backPrevented, true, "Shift+Tab did not wrap");
+      assert.equal((await probe("focusStop", 0)).focused, true);
+      await browser.keys(["Shift", "Tab", ""]);
+      const afterBack = await probe("activeStop");
       assert.equal(
-        wrap.afterBackIsLast,
+        afterBack.inSidebar,
         true,
-        `focus went to ${wrap.afterBackId}`,
+        `Shift+Tab left the sidebar at ${afterBack.id}`,
+      );
+      assert.equal(
+        afterBack.stop,
+        String(lastStop),
+        `Shift+Tab from the first stop went to stop ${afterBack.stop} (${afterBack.id})`,
       );
       return {
-        stops: wrap.count,
-        lastId: wrap.lastId,
-        oldLastId: wrap.oldLastId,
-        oldInertInList: wrap.oldInertInList,
-        firstId: wrap.firstId,
+        stops: stops.count,
+        lastStopId: stops.ids.at(-1),
+        oldInertInList: stops.oldInertInList,
+        afterTabId: afterTab.id,
+        afterBackId: afterBack.id,
       };
     });
   });
@@ -1007,8 +1038,10 @@ describe("ROSI overlays audit: displacement, focus traps, async actions, license
     });
   });
 
-  it("F12-20 hide, show, hide leaves one cleanup and a closed view", async () => {
-    await scenario("licenses-hide-show-hide-cleans-once", async () => {
+  // Guard only: this checks the end state (closed, unlocked). It does not count
+  // timers, so it passes even if a second cleanup timer were left pending.
+  it("F12-20 hide, show, hide ends closed and unlocked (guard, not a timer count)", async () => {
+    await scenario("licenses-hide-show-hide-ends-closed", async () => {
       await openLicenses();
       await probe("licensesHideShowHide");
       await waitForClock(450);

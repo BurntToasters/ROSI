@@ -16,6 +16,10 @@ Enter through WebDriver, and records a hashed `report.json` under
    the same Cancel control, and the one activity entry must be `cancelled`.
    Completion is not proven by this check. `slow.mp4` is 32 MB served at 16 KB
    per 250 ms (about 8.5 minutes), so a completion wait would not fit the gate.
+   The process check matches the query marker `primary-action=enter` in process
+   command lines, not `slow.mp4`, so another run of the same fixture elsewhere
+   on the machine cannot satisfy or block it. This relies on yt-dlp's command
+   line containing the URL verbatim.
 2. **Enter opens the folder after a download.** In the result state
    ("Open File Location") Enter must do nothing. Check
    `primary-action-enter-keeps-download`: during the result window, Enter
@@ -101,7 +105,7 @@ Enter through WebDriver, and records a hashed `report.json` under
       fallback logic (textarea content, success mapping, removal, focus). It
       does not prove the OS clipboard. The real fallback is proven only in
       foreground runs.
-    The report records `clipboardRoute` and `pageFocused`.
+      The report records `clipboardRoute` and `pageFocused`.
 19. **Fallback failure is reported as success.** If both copy routes fail, the
     toast must say the copy failed. Check `primary-action-copy-source`: with
     both routes refused, the toast reads "Could not copy the source link." This
@@ -116,7 +120,7 @@ Enter through WebDriver, and records a hashed `report.json` under
     must receive the URL, so a product that skips `writeText` fails here. The
     recorder hides a failure that only happens with the real clipboard, such as
     a wrong encoding in the OS write. Only foreground runs (`clipboardRoute:
-    "real"`) prove the real clipboard.
+"real"`) prove the real clipboard.
 
 ## Check design
 

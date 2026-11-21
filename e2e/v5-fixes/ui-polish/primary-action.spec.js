@@ -408,7 +408,10 @@ describe("ROSI primary action: Enter, queue refusal, result state, copy source",
       "primary-action-enter-keeps-download",
       [1, 2, 22],
       async () => {
-        const url = `${MEDIA}/slow.mp4?primary-action=enter`;
+        // Matched in process command lines. The per-scenario query marker keeps
+        // this scenario's yt-dlp apart from any other slow.mp4 run on the machine.
+        const enterMarker = "primary-action=enter";
+        const url = `${MEDIA}/slow.mp4?${enterMarker}`;
         await startUiDownload(url);
         await waitFor(
           () =>
@@ -419,7 +422,7 @@ describe("ROSI primary action: Enter, queue refusal, result state, copy source",
           15_000,
         );
         await browser.waitUntil(
-          async () => processesMatching("slow.mp4").length > 0,
+          async () => processesMatching(enterMarker).length > 0,
           {
             timeout: 30_000,
             interval: 250,
@@ -460,7 +463,7 @@ describe("ROSI primary action: Enter, queue refusal, result state, copy source",
         );
         // The run must stay alive after Enter. Activity is written only when a run
         // ends, so the yt-dlp process and the loading state are the signals here.
-        const stillRunning = processesMatching("slow.mp4").length > 0;
+        const stillRunning = processesMatching(enterMarker).length > 0;
         const stillLoading = (await readDownloadButton()).loading === true;
         const cancelledLater = (await activityFor(url)).some(
           (entry) => entry.outcome === "cancelled",
@@ -488,7 +491,7 @@ describe("ROSI primary action: Enter, queue refusal, result state, copy source",
           `Cancel control ended the run as ${stopped.outcome}`,
         );
         await browser.waitUntil(
-          async () => processesMatching("slow.mp4").length === 0,
+          async () => processesMatching(enterMarker).length === 0,
           {
             timeout: 30_000,
             interval: 250,

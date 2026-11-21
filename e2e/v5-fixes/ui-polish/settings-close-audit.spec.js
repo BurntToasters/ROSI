@@ -229,8 +229,21 @@ async function uninstallStubs() {
   assert.deepEqual(left, [], "a stub key survived the uninstall");
 }
 
+// Row 17: reads the registry before a case installs its stubs. Uninstalling
+// alone cannot show this, because it only checks what it just deleted.
+async function registryKeys() {
+  return browser.execute(() =>
+    Object.keys(window.__ROSI_E2E_IPC_STUBS__ ?? {}),
+  );
+}
+
 async function withStubs(body) {
   try {
+    assert.deepEqual(
+      await registryKeys(),
+      [],
+      "the stub registry was not empty at the start of the case",
+    );
     await installStubs();
     return await body();
   } finally {
@@ -470,6 +483,12 @@ describe("ROSI settings drain, close save error, and wizard skip", () => {
     report.result =
       report.failed === 0 && report.checks.length > 0 ? "passed" : "failed";
     writeReport();
+    // Row 17 for the last case: nothing is left behind once the suite ends.
+    assert.deepEqual(
+      await registryKeys(),
+      [],
+      "the stub registry was not empty after the last case",
+    );
   });
 
   it("reports a failed drain from the save that failed, not an earlier code", async () =>

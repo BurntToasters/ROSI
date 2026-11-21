@@ -3,6 +3,32 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+/**
+ * Options must be an object literal or omitted. A number, boolean, array or
+ * class instance passed by mistake would otherwise be ignored by destructuring.
+ */
+function assertOptionsObject(helper, options) {
+  if (options === undefined) return {};
+  const proto = options === null ? undefined : Object.getPrototypeOf(options);
+  const plain =
+    options !== null &&
+    typeof options === "object" &&
+    !Array.isArray(options) &&
+    (proto === Object.prototype || proto === null);
+  if (!plain) {
+    const kind =
+      options === null
+        ? "null"
+        : Array.isArray(options)
+          ? "array"
+          : typeof options;
+    throw new TypeError(
+      `${helper} takes an options object or nothing, got ${kind}`,
+    );
+  }
+  return options;
+}
+
 const LISTER_TIMEOUT_MS = 30_000;
 // Command lines of the lister itself; never reported as a match.
 const LISTER_MARKERS = ["ps -Ao", "Get-CimInstance"];
@@ -71,11 +97,11 @@ export function processesMatching(needle) {
 }
 
 /** Wait until no process mentions `needle`; throws with the survivors on timeout. */
-export async function waitForNoProcess(
-  needle,
-  message,
-  { timeout = 15_000, interval = 250 } = {},
-) {
+export async function waitForNoProcess(needle, message, options) {
+  const { timeout = 15_000, interval = 250 } = assertOptionsObject(
+    "waitForNoProcess",
+    options,
+  );
   if (!message) throw new TypeError("waitForNoProcess needs a message");
   const deadline = Date.now() + timeout;
   let found = processesMatching(needle);
@@ -106,7 +132,11 @@ export function sha256File(filePath) {
  * (with `status` first when given) and rewrites `filePath` when set. Records
  * with `invariantPassed: false` are also listed in `failures`.
  */
-export function createRecorder({ filePath = null, status = null } = {}) {
+export function createRecorder(options) {
+  const { filePath = null, status = null } = assertOptionsObject(
+    "createRecorder",
+    options,
+  );
   const entries = [];
   const failures = [];
   function record(name, details = {}) {

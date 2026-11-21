@@ -229,6 +229,39 @@ function inspectStylesheets() {
   return { forced, prefers, leaks, mediaTexts };
 }
 
+// Runs in the page. Reports whether this engine can express the two things the
+// forced-colors rows read: the forced-color-adjust property, and a parsable
+// (forced-colors: active) media query. WebView2 (Chromium) has both; other
+// engines may have neither, so those rows are not-proven there rather than failed.
+function forcedColorsSupport() {
+  let adjustProperty = false;
+  try {
+    adjustProperty = CSS.supports("forced-color-adjust: none") === true;
+  } catch {
+    adjustProperty = false;
+  }
+  let activeQuery = false;
+  try {
+    activeQuery =
+      window.matchMedia("(forced-colors: active)").media !== "not all";
+  } catch {
+    activeQuery = false;
+  }
+  return { adjustProperty, activeQuery };
+}
+
+// The not-proven reason for a row that reads forced-colors CSSOM text, or null
+// when this engine supports what the row reads.
+function forcedUnsupportedReason(support, needs) {
+  if (needs.includes("adjust") && !support.adjustProperty) {
+    return "forced-color-adjust is not supported by this engine (CSS.supports is false)";
+  }
+  if (needs.includes("query") && !support.activeQuery) {
+    return "(forced-colors: active) is not a parsable media query in this engine";
+  }
+  return null;
+}
+
 // Merges the declarations of every rule that lists `selector`.
 function propsFor(rules, selector) {
   const merged = {};
@@ -426,6 +459,7 @@ function writeGateScreenshotRecord(shots) {
 describe("ROSI high contrast, forced colors and reduced transparency", () => {
   let sheets = null;
   let media = null;
+  let forcedSupport = null;
 
   before(async () => {
     fs.mkdirSync(screenshotDir, { recursive: true });
@@ -476,8 +510,12 @@ describe("ROSI high contrast, forced colors and reduced transparency", () => {
   it("ships forced-colors rules that keep state visible", async () => {
     sheets = await browser.execute(inspectStylesheets);
     if (sheets.error) throw new Error(sheets.error);
+    forcedSupport = await browser.execute(forcedColorsSupport);
 
     await scenario("forced-colors-state-rules", [1, 2, 3, 4], async () => {
+      const unsupported = forcedUnsupportedReason(forcedSupport, ["query"]);
+      if (unsupported)
+        return { notProven: true, reason: unsupported, forcedSupport };
       assert.ok(
         sheets.mediaTexts.some((text) => /forced-colors:\s*active/i.test(text)),
         "no @media (forced-colors: active) rule is shipped",
@@ -502,6 +540,12 @@ describe("ROSI high contrast, forced colors and reduced transparency", () => {
     });
 
     await scenario("forced-colors-adjust-scope", [5], async () => {
+      const unsupported = forcedUnsupportedReason(forcedSupport, [
+        "query",
+        "adjust",
+      ]);
+      if (unsupported)
+        return { notProven: true, reason: unsupported, forcedSupport };
       const adjusted = sheets.forced
         .filter((rule) => rule.props["forced-color-adjust"] !== undefined)
         .flatMap((rule) =>
@@ -530,6 +574,9 @@ describe("ROSI high contrast, forced colors and reduced transparency", () => {
     });
 
     await scenario("forced-colors-system-colours-only", [6], async () => {
+      const unsupported = forcedUnsupportedReason(forcedSupport, ["query"]);
+      if (unsupported)
+        return { notProven: true, reason: unsupported, forcedSupport };
       const offenders = [];
       for (const rule of sheets.forced) {
         for (const [name, value] of Object.entries(rule.props)) {
@@ -561,6 +608,12 @@ describe("ROSI high contrast, forced colors and reduced transparency", () => {
     });
 
     await scenario("forced-colors-confined-to-media", [7], async () => {
+      const unsupported = forcedUnsupportedReason(forcedSupport, [
+        "query",
+        "adjust",
+      ]);
+      if (unsupported)
+        return { notProven: true, reason: unsupported, forcedSupport };
       assert.deepEqual(
         sheets.leaks,
         [],
@@ -693,11 +746,15 @@ describe("ROSI high contrast, forced colors and reduced transparency", () => {
     });
 
     await scenario("media-queries-consistent", [14], async () => {
-      assert.notEqual(
-        media.forcedActive,
-        media.forcedNone,
-        "forced-colors active and none are not complements",
-      );
+      // Only checked where forced-colors queries parse; elsewhere both can be
+      // false, which says nothing about the preference queries below.
+      if (forcedSupport.activeQuery) {
+        assert.notEqual(
+          media.forcedActive,
+          media.forcedNone,
+          "forced-colors active and none are not complements",
+        );
+      }
       const held = Object.values(media.contrast).filter(Boolean).length;
       assert.equal(held, 1, `prefers-contrast holds ${held} values, not 1`);
       return { media };
@@ -748,6 +805,9 @@ describe("ROSI high contrast, forced colors and reduced transparency", () => {
     });
 
     await scenario("forced-colors-live-state", [13], async () => {
+      const unsupported = forcedUnsupportedReason(forcedSupport, ["query"]);
+      if (unsupported)
+        return { notProven: true, reason: unsupported, forcedSupport };
       if (!media.forcedActive) {
         return {
           notProven: true,

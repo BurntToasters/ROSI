@@ -658,10 +658,17 @@ describe("ROSI renderer actions audit: toasts, replay, presets, links, formats",
         await showActivityRow(entry);
 
         // Ask every time off: no dialog, settings saved before the request.
-        await setAskEachTime(false);
+        // Start from Ask on (saved), then turn it off without waiting for the
+        // save, so the replay runs while that change is still pending.
+        await setAskEachTime(true);
         await stubApi("selectDownloadLocation", "value", folder);
         await spyApi("saveSettings");
         await stubApi("downloadVideo", "value", REFUSED);
+        await browser.execute(() => {
+          const control = document.getElementById("askDownloadLocationToggle");
+          control.checked = false;
+          control.dispatchEvent(new Event("change", { bubbles: true }));
+        });
         await clickReplay(entry);
         await browser.waitUntil(
           async () => (await probeCalls("downloadVideo")).length === 1,
@@ -677,9 +684,22 @@ describe("ROSI renderer actions audit: toasts, replay, presets, links, formats",
           "the replay asked for a folder with Ask every time off",
         );
         const order = await probeOrder();
+        const saves = await probeCalls("saveSettings");
+        const pendingSave = saves.findIndex(
+          ([patch]) => patch?.askDownloadLocation === false,
+        );
+        assert.notEqual(
+          pendingSave,
+          -1,
+          "the pending Ask change was never saved",
+        );
+        // The pending save is the Nth saveSettings in the order list, N = its index in calls.
+        const saveSlots = order.flatMap((name, slot) =>
+          name === "saveSettings" ? [slot] : [],
+        );
+        const pendingAt = saveSlots[pendingSave] ?? -1;
         assert.ok(
-          order.indexOf("saveSettings") !== -1 &&
-            order.indexOf("saveSettings") < order.indexOf("downloadVideo"),
+          pendingAt !== -1 && pendingAt < order.indexOf("downloadVideo"),
           `settings were not saved before the request: ${order.join(",")}`,
         );
         await waitForIdleButton("the refused replay left the button loading");
@@ -710,7 +730,9 @@ describe("ROSI renderer actions audit: toasts, replay, presets, links, formats",
         );
         await waitForIdleButton("the refused replay left the button loading");
 
-        // A cancelled dialog starts nothing. The frame wait lets the replay finish.
+        // A cancelled dialog starts nothing. The cancelled run is followed by a
+        // second replay that does reach the dialog; the only downloadVideo call
+        // recorded must be that second one, so the cancelled run sent nothing.
         await stubApi("selectDownloadLocation", "value", null);
         await stubApi("downloadVideo", "value", REFUSED);
         await clickReplay(entry);
@@ -722,19 +744,42 @@ describe("ROSI renderer actions audit: toasts, replay, presets, links, formats",
             timeoutMsg: "the cancelled replay never opened the dialog",
           },
         );
-        await browser.executeAsync((done) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => done(true))),
-        );
-        assert.equal(
-          (await probeCalls("downloadVideo")).length,
-          0,
-          "a cancelled dialog still sent a request",
-        );
+        await waitForIdleButton("the cancelled replay left the button loading");
         assert.equal(
           await downloadLoading(),
           false,
           "a cancelled dialog left the button loading",
         );
+        await stubApi("selectDownloadLocation", "value", folder);
+        await clickReplay(entry);
+        await browser.waitUntil(
+          async () => (await probeCalls("selectDownloadLocation")).length === 1,
+          {
+            timeout: 10_000,
+            interval: 50,
+            timeoutMsg: "the second replay never opened the dialog",
+          },
+        );
+        await browser.waitUntil(
+          async () => (await probeCalls("downloadVideo")).length >= 1,
+          {
+            timeout: 15_000,
+            interval: 100,
+            timeoutMsg: "the second replay never sent its request",
+          },
+        );
+        const requests = await probeCalls("downloadVideo");
+        assert.equal(
+          requests.length,
+          1,
+          `expected exactly one request after the cancelled dialog, got ${requests.length}`,
+        );
+        assert.equal(
+          requests[0][0].outputPath,
+          folder,
+          "the one request is not the second replay",
+        );
+        await waitForIdleButton("the second replay left the button loading");
         return { orderBeforeRequest: order.slice(0, 2), askedFolder: folder };
       },
     );
@@ -747,12 +792,37 @@ describe("ROSI renderer actions audit: toasts, replay, presets, links, formats",
       await reloadRenderer();
       await installProbe();
       await showActivityRow(entry);
-      const backend = (await api("getDownloadActivity")).data;
-      const shown = await browser.execute(
-        () => document.querySelectorAll(".history-item").length,
+      const backendIds = (await api("getDownloadActivity")).data
+        .map((item) => item.id)
+        .sort();
+      assert.ok(
+        backendIds.length >= 1,
+        "the backend has no activity to compare",
       );
-      assert.ok(shown >= 1, "the activity list is empty after the reload");
-      return { backendEntries: backend.length, shownRows: shown };
+      const shownIds = () =>
+        browser.execute(() =>
+          [...document.querySelectorAll(".history-item")]
+            .map((row) => row.dataset.activityId)
+            .sort(),
+        );
+      // The startup read can land a moment after the row appears, so wait for
+      // the list to match the backend before comparing.
+      await browser.waitUntil(
+        async () =>
+          JSON.stringify(await shownIds()) === JSON.stringify(backendIds),
+        {
+          timeout: 10_000,
+          interval: 100,
+          timeoutMsg: "the activity rows never matched getDownloadActivity",
+        },
+      );
+      const shown = await shownIds();
+      assert.deepEqual(
+        shown,
+        backendIds,
+        "activity rows differ from the backend",
+      );
+      return { backendEntries: backendIds.length, shownRows: shown.length };
     });
   });
 

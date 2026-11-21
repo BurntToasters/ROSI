@@ -61,13 +61,25 @@ the files that defined a local copy when the helpers were created.
   implementation. A failed bridge call throws with the method name, so it does
   not return `undefined` silently.
 
+### options objects (ui.js and host.js helpers)
+
+- Destructuring a defaulted `{ ... } = {}` silently ignores a number, boolean,
+  array or class instance passed in its place, so a wrong timeout or flag has
+  no effect. Each helper that takes options rejects anything except an omitted
+  argument or a plain object with a `TypeError`.
+- `waitForBackendSetting` compares with `isDeepStrictEqual`. JSON strings are
+  not used, because key order would make equal objects differ.
+
 ### waitFor (about 14 copies)
 
 - Copies have no required message, so a timeout reports only "waitUntil
   condition timed out". The helper throws a `TypeError` when the message is
   missing or empty.
-- A predicate that throws inside the page (missing element) fails the wait on
-  the first poll. That is kept: it is a loud failure, not a silent one.
+- A predicate that throws inside the page (missing element) does not fail on
+  the first poll. wdio 9 treats the throw as "not yet" and polls again until
+  the timeout, then fails with the timeout message, so the wait is slower and
+  the thrown reason is not in the message. That is kept: it still fails loudly,
+  not silently.
 - The timeout is always finite (default 10 s). A zero, negative, or non-finite
   timeout is rejected, since it could mean an unbounded wait.
 

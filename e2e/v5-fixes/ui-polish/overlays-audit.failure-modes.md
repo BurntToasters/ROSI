@@ -54,12 +54,17 @@ sleeps.
     is `inert` and `aria-hidden` but its controls keep a layout box, so the old
     filter chose an inert control as the last stop. Check: open the sidebar,
     collapse the last settings section (real header click), confirm its body is
-    inert and has controls, focus the helper's last stop, dispatch Tab on the
-    sidebar; the event is default-prevented and focus lands on the first stop.
-    The section is expanded again and the sidebar closed afterwards.
+    inert and has controls, and hide the footer `versionLink` so it is not the
+    last stop. The probe finds the reachable stops itself (not via
+    the shared helper) and requires that the old filter would have listed an
+    inert stop. Focus the last reachable stop and press Tab with a real key
+    (`browser.keys`); focus must land in the sidebar on the first stop. The
+    section is expanded again and the sidebar closed afterwards.
 12. **Shift+Tab on the first stop stops wrapping.** Check: same sidebar state,
-    Shift+Tab on the first stop lands on the helper's last stop, which is not
-    inside an inert subtree.
+    focus the first reachable stop, press Shift+Tab with a real key; focus must
+    land in the sidebar on the last reachable stop, which is not inside an inert
+    subtree. Reverting the sidebar fix leaves focus outside the sidebar, which
+    fails this row.
 13. **The overlay traps change behavior.** The licenses and modal traps use the
     same helper. Check: the dialogs spec rows C7-23 to C7-25 still pass (they run
     in the same gate); this spec asserts the licenses trap order still lists the
@@ -68,12 +73,11 @@ sleeps.
 **Native run note (row 11).** The first spec version asserted that the old
 filter's last stop was inert. In the real window the last stop is the footer
 `versionLink`, which sits after the last settings section, so the old filter did
-not pick an inert control and that precondition failed. The old defect is not
-reproduced in the real window. The precondition is dropped. The row now asserts
-that no inert control is in the trap list while the last section is collapsed
-(the old filter listed them; the count is recorded as `oldInertInList`), and
-that Tab on the last stop wraps to the first and Shift+Tab on the first wraps to
-the last.
+not pick an inert control and that precondition failed. The row now hides the
+footer link, so the collapsed section's last control is the last stop the old
+filter would choose, and the row checks focus through real key presses (see
+row 11). The precondition that the old filter lists an inert control is kept as
+an assertion; if it fails, the row reports that the scenario did not reproduce.
 
 ## Async modal actions (F11, modal part)
 
@@ -103,12 +107,17 @@ failed', ...)` for both the sync and the async path (source check).
 19. **The timer never runs after a normal close.** Check: after a plain close, the
     overflow and class are cleared once the timer has run (condition wait), and a
     later reopen locks scrolling again.
-20. **Hide twice starts two timers.** Check: hide, show, hide in one task, then
-    wait; the lock is cleared once and the overlay is closed.
+20. **Hide twice starts two timers (guard, cannot discriminate).** Check: hide,
+    show, hide in one task, then wait; the overlay is closed and the lock is
+    cleared. This asserts only the end state. It does not count timers, so a
+    second pending cleanup timer would still pass. Counting would need a timer
+    hook that separates the licenses cleanup from unrelated page timers.
 
 ## What WebDriver cannot prove (stated, not checked)
 
-- Native Tab traversal. Rows 11 and 12 dispatch a synthetic Tab keydown and
-  assert the handler's decision and `document.activeElement`.
+- Native Tab traversal is exercised with real key presses (`browser.keys`), but
+  only as far as WebView2 delivers keys to the focused page. If the window lacks
+  focus, rows 11 and 12 fail rather than pass.
+- Row 20 does not count cleanup timers (see row 20).
 - That the logged rejection text reaches the Rust log file (row 17 is static).
 - Screen-reader announcements.

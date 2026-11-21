@@ -1,8 +1,35 @@
+import { isDeepStrictEqual } from "node:util";
 import { browser } from "@wdio/globals";
 import { api, clickById, waitForAppReady } from "./app-bridge.js";
 
 // One implementation each: the bridge call, the strict click and the ready wait.
 export { api, clickById, waitForAppReady };
+
+/**
+ * Options must be an object literal or omitted. A number, boolean, array or
+ * class instance passed by mistake would otherwise be ignored by destructuring.
+ */
+function assertOptionsObject(helper, options) {
+  if (options === undefined) return {};
+  const proto = options === null ? undefined : Object.getPrototypeOf(options);
+  const plain =
+    options !== null &&
+    typeof options === "object" &&
+    !Array.isArray(options) &&
+    (proto === Object.prototype || proto === null);
+  if (!plain) {
+    const kind =
+      options === null
+        ? "null"
+        : Array.isArray(options)
+          ? "array"
+          : typeof options;
+    throw new TypeError(
+      `${helper} takes an options object or nothing, got ${kind}`,
+    );
+  }
+  return options;
+}
 
 /**
  * Poll `predicate` in the page until it returns truthy. The message is
@@ -46,7 +73,8 @@ export async function reloadRenderer() {
  * need a boolean. A missing control, an undefined value, or a select that
  * refuses the value throws.
  */
-export async function setControl(id, value, { input = false } = {}) {
+export async function setControl(id, value, options) {
+  const { input = false } = assertOptionsObject("setControl", options);
   if (value === undefined || value === null) {
     throw new TypeError(`setControl(${id}) needs a value, got ${value}`);
   }
@@ -77,18 +105,16 @@ export async function setControl(id, value, { input = false } = {}) {
   );
 }
 
-/** Wait until the backend setting `key` equals `value` (JSON equality for objects). */
-export async function waitForBackendSetting(
-  key,
-  value,
-  message,
-  { timeout = 10_000, interval = 150 } = {},
-) {
+/** Wait until the backend setting `key` deep-strictly equals `value` (key order does not matter). */
+export async function waitForBackendSetting(key, value, message, options) {
+  const { timeout = 10_000, interval = 150 } = assertOptionsObject(
+    "waitForBackendSetting",
+    options,
+  );
   if (typeof message !== "string" || message === "") {
     throw new TypeError("waitForBackendSetting needs a non-empty message");
   }
-  const same = (left, right) =>
-    left === right || JSON.stringify(left) === JSON.stringify(right);
+  const same = (left, right) => isDeepStrictEqual(left, right);
   let last;
   try {
     await browser.waitUntil(
@@ -129,10 +155,12 @@ export function modalState() {
  * `match: "includes"`). Returns the modal state. A timeout reports the modal
  * as it stood.
  */
-export async function waitForModal(
-  target,
-  { timeout = 10_000, timeoutMsg = null, match = "exact" } = {},
-) {
+export async function waitForModal(target, options) {
+  const {
+    timeout = 10_000,
+    timeoutMsg = null,
+    match = "exact",
+  } = assertOptionsObject("waitForModal", options);
   const byTitle = typeof target === "string";
   if (!byTitle && typeof target !== "boolean") {
     throw new TypeError("waitForModal needs a boolean or a title string");
@@ -228,11 +256,11 @@ export function stubBridges(map) {
  * Stub one bridge method. `hold` (or `holdMatch`, matched against a string
  * first argument) parks the call until `releaseHeldStubs` or `restoreBridge`.
  */
-export function stubBridge(
-  name,
-  value,
-  { hold = false, holdMatch = null } = {},
-) {
+export function stubBridge(name, value, options) {
+  const { hold = false, holdMatch = null } = assertOptionsObject(
+    "stubBridge",
+    options,
+  );
   return installStubs([{ name, value: value ?? null, hold, holdMatch }]);
 }
 

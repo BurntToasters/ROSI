@@ -18,6 +18,12 @@ What the checks can and cannot show:
   the right selectors. It does not prove the painted pixels.
 - A row that needs a live media query to match records `not-proven`
   (`invariantPassed: null`), never `passed`.
+- Engine support is checked, not assumed. Rows that read `forced-color-adjust`
+  or `(forced-colors: active)` CSSOM text first run `CSS.supports('forced-color-adjust:
+none')` and a `matchMedia('(forced-colors: active)')` parse. Where either is
+  missing, the row records `not-proven` with the reason (rows 1 to 7 and 13).
+  Row 14 checks the forced-colors pair only where the query parses. On WebView2
+  both checks pass, so the rows run as before.
 
 ## Forced colors: state stays visible
 

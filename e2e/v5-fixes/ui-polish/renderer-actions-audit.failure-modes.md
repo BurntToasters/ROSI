@@ -39,12 +39,16 @@ polls a state that the code under test sets.
    dialog is called once and its folder is the request's `outputPath`.
 6. **Replay sends a request before pending settings reach disk.** Rust reads
    settings from disk when a download starts. The replay now flushes first.
-   Check `renderer-actions-replay-ask-setting`: the `saveSettings` call that
-   carries a pending change is recorded before the replayed `downloadVideo`
-   call.
+   Check `renderer-actions-replay-ask-setting`: Ask every time is set on and
+   saved, then turned off by a change event that is not awaited. The replay
+   starts while that change is pending. The `saveSettings` call that carries
+   `askDownloadLocation: false` must be recorded before the replayed
+   `downloadVideo` call. If no such save is recorded, the row fails.
 7. **A cancelled dialog starts the download anyway.** Check
-   `renderer-actions-replay-ask-setting`: a dialog that returns null sends no
-   request and leaves the button idle.
+   `renderer-actions-replay-ask-setting`: a dialog that returns null leaves the
+   button idle, and then a second replay (dialog returns a folder) is the only
+   `downloadVideo` call recorded. Exactly one request, with the second replay's
+   folder as `outputPath`, proves the cancelled run sent none.
 
 ## Startup activity fetch (F5)
 
@@ -53,9 +57,9 @@ polls a state that the code under test sets.
    stubbed bridge cannot arrange before startup runs. Not covered by E2E for the
    race itself; proven by code review of the `activityUpdatesSeen` guard in
    `engine/bind/activity.ts` and its increment in `engine/bind/backend-events.ts`.
-   Check `renderer-actions-activity-startup`: after a renderer reload the
-   activity list shows the same entries as `getDownloadActivity`, so the guard
-   does not drop the normal startup read.
+   Check `renderer-actions-activity-startup`: after a renderer reload the sorted
+   activity row ids equal the sorted ids from `getDownloadActivity`, so the guard
+   does not drop the normal startup read. A non-empty list alone is not enough.
 
 ## Preset save and delete (F10)
 

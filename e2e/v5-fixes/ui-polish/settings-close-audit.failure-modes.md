@@ -72,9 +72,10 @@ registry (`window.__ROSI_E2E_IPC_STUBS__`, read by `call()` in
 
 17. **A stub outlives its case.** Every case removes only its own registry keys
     and the page-side state, and restores the stored settings through the real
-    API, then reloads the renderer. Check: after the last case the registry has
-    no `save_settings`, `notify_settings_flushed`, `log_error` or
-    `get_default_settings` key.
+    API, then reloads the renderer. Check: before each case installs its stubs,
+    the stub registry is read and must be empty (no keys at all). The suite's
+    `after` hook makes the same read once the last case has finished. Deleting
+    the keys and reading them back cannot fail, so that read is not the check.
 
 ## Coverage
 
