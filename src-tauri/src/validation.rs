@@ -250,6 +250,13 @@ fn is_allowed_download_base(resolved: &Path) -> bool {
                     .any(|base| is_path_within(&real, base));
         }
     }
+    // An admin share of this machine (\\localhost\C$\...) is a local path.
+    #[cfg(windows)]
+    if let Some(local) = local_admin_share_path(resolved) {
+        if is_within_windows_system_dirs(&local) && !is_within_real_home(&local) {
+            return false;
+        }
+    }
     // Resolve short names, junctions and trailing dots through the nearest
     // existing ancestor, then compare with the real system folders.
     #[cfg(windows)]
@@ -262,13 +269,74 @@ fn is_allowed_download_base(resolved: &Path) -> bool {
 }
 
 /// Canonical path of the deepest existing ancestor, without the verbatim prefix.
+/// Network locations are not probed: a share cannot hold this machine's system
+/// folders, and probing an offline one blocks settings loads for a long time.
 #[cfg(windows)]
 fn real_path_of_existing_ancestor(path: &Path) -> Option<PathBuf> {
+    if is_network_location(path) {
+        return None;
+    }
     let mut existing = path;
     while !existing.exists() {
         existing = existing.parent()?;
     }
     existing.canonicalize().ok().map(strip_verbatim_prefix)
+}
+
+/// UNC paths, and drive letters mapped to a network share. Device paths
+/// (`\\?\C:\`, `\\.\C:\`) are local.
+#[cfg(windows)]
+fn is_network_location(path: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDriveTypeW;
+    // DRIVE_REMOTE from Win32_System_WindowsProgramming, which ROSI does not enable.
+    const DRIVE_REMOTE: u32 = 4;
+    let text = path.to_string_lossy().replace('/', r"\");
+    let local = text
+        .strip_prefix(r"\\?\")
+        .or_else(|| text.strip_prefix(r"\\.\"))
+        .unwrap_or(&text);
+    if local.starts_with(r"\\")
+        || local
+            .get(..4)
+            .is_some_and(|head| head.eq_ignore_ascii_case(r"UNC\"))
+    {
+        return true;
+    }
+    let bytes = local.as_bytes();
+    if bytes.len() < 2 || bytes[1] != b':' || !bytes[0].is_ascii_alphabetic() {
+        return false;
+    }
+    let root: Vec<u16> = std::ffi::OsStr::new(&format!(r"{}:\", bytes[0] as char))
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: `root` is a NUL-terminated UTF-16 string that outlives the call.
+    unsafe { GetDriveTypeW(root.as_ptr()) == DRIVE_REMOTE }
+}
+
+/// `\\localhost\C$\rest` (or 127.0.0.1, ::1, or this computer's name) as
+/// `C:\rest`. Other UNC paths return None.
+#[cfg(windows)]
+fn local_admin_share_path(path: &Path) -> Option<PathBuf> {
+    let text = path.to_string_lossy().replace('/', r"\");
+    let unc = text
+        .strip_prefix(r"\\?\UNC\")
+        .or_else(|| text.strip_prefix(r"\\"))?;
+    let mut parts = unc.splitn(3, '\\');
+    let host = parts.next()?;
+    let share = parts.next()?;
+    let rest = parts.next().unwrap_or("");
+    let computer = std::env::var("COMPUTERNAME").unwrap_or_default();
+    let is_local_host = ["localhost", "127.0.0.1", "::1", "[::1]", "."]
+        .iter()
+        .any(|name| host.eq_ignore_ascii_case(name))
+        || (!computer.is_empty() && host.eq_ignore_ascii_case(&computer));
+    let drive = share.strip_suffix('$')?;
+    if !is_local_host || drive.len() != 1 || !drive.as_bytes()[0].is_ascii_alphabetic() {
+        return None;
+    }
+    Some(PathBuf::from(format!(r"{drive}:\{rest}")))
 }
 
 #[cfg(windows)]

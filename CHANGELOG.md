@@ -22,6 +22,10 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 
 - **Downloads:** On Windows, finishing a download retries briefly when another program (such as an antivirus scanner) holds the file, instead of failing and leaving the file in staging.
 - **Downloads:** Cancelling a fragmented or multi-format download now cleans up its staging files.
+- **Downloads:** Cancelling a download that was writing a thumbnail or subtitles to embed now cleans up those files too, instead of keeping the staging folder and reporting an error.
+- **Queue:** Quitting during a playlist that had already saved some entries no longer runs the whole playlist again on the next launch, which made duplicates such as `name (1).mp4`.
+- **Settings:** On Windows, a download folder on an offline network share or mapped drive no longer stalls ROSI while settings load. Admin shares of the same machine (`\\localhost\C$\Windows`) are refused like the system folders they point to.
+- **Activity:** After going back to an older ROSI, closing the window is no longer refused because the Activity file was written by the newer version.
 - **Downloads:** Replaying a download from Activity follows the "Ask where to save" setting, saves pending settings first, and no longer starts if another download began while the folder dialog was open.
 - **Downloads:** Long Windows paths and paths written with forward slashes are handled correctly.
 - **Processes:** On macOS and Linux, yt-dlp and FFmpeg now stop when ROSI is killed or crashes, including the FFmpeg that yt-dlp starts itself on Linux.

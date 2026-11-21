@@ -354,16 +354,32 @@ pub fn record_batch(completions: &[DownloadCompletion]) {
 /// Saves activity that a failed write left only in memory. Shutdown calls this
 /// once more so a transient failure does not lose the newest records. The lock
 /// is held for one write, as the queue flush holds its own. Does nothing when
-/// nothing is pending.
+/// nothing is pending. A file written by a newer ROSI is kept, and close goes
+/// ahead, as the queue flush does: this session's records are not saved.
 pub fn flush_pending() -> Result<(), String> {
     let mut entries = state().lock().unwrap_or_else(|p| p.into_inner());
     if !PENDING.load(Ordering::SeqCst) {
         return Ok(());
     }
-    let persisted = persist(&entries)?;
-    *entries = persisted;
-    PENDING.store(false, Ordering::SeqCst);
-    Ok(())
+    match persist(&entries) {
+        Ok(persisted) => {
+            *entries = persisted;
+            PENDING.store(false, Ordering::SeqCst);
+            Ok(())
+        }
+        Err(_)
+            if crate::fs_util::is_newer_schema_file(
+                &activity_path(),
+                ACTIVITY_READ_LIMIT_BYTES as u64,
+            ) =>
+        {
+            crate::logging::warn(
+                "Kept the download activity written by a newer ROSI version; this session's activity was not saved.",
+            );
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Folders that recorded downloads wrote to or targeted, for the startup

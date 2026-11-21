@@ -1380,6 +1380,22 @@ fn completion_meta_for_paths(
     }
 }
 
+/// Thumbnail and subtitle files yt-dlp writes beside the media so it can embed
+/// them (`--embed-thumbnail`, `--embed-subs`). A cancelled session that left no
+/// media leaves these with nothing to embed into.
+fn is_embed_sidecar(name: &str) -> bool {
+    const EXTENSIONS: &[&str] = &[
+        "jpg", "jpeg", "png", "webp", "vtt", "srt", "ass", "ssa", "ttml", "srv1", "srv2", "srv3",
+        "json3", "lrc",
+    ];
+    name.rsplit_once('.').is_some_and(|(stem, extension)| {
+        !stem.is_empty()
+            && EXTENSIONS
+                .iter()
+                .any(|known| extension.eq_ignore_ascii_case(known))
+    })
+}
+
 fn recover_staged_downloads(exit: &mut YtdlpExit) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<String>) {
     let staged = match downloaded_file_paths(exit) {
         Ok(paths) => paths,
@@ -1396,7 +1412,9 @@ fn recover_staged_downloads(exit: &mut YtdlpExit) -> (Vec<PathBuf>, Vec<PathBuf>
                         || (discard_cancelled_parts
                             && path.file_name().is_some_and(|name| {
                                 let name = name.to_string_lossy();
-                                is_ytdlp_intermediate(&name) || format_stream_stem(&name).is_some()
+                                is_ytdlp_intermediate(&name)
+                                    || format_stream_stem(&name).is_some()
+                                    || is_embed_sidecar(&name)
                             })
                             && std::fs::symlink_metadata(&path)
                                 .is_ok_and(|metadata| metadata.file_type().is_file()))

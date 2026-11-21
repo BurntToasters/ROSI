@@ -653,7 +653,9 @@ impl Coordinator {
     }
 
     /// A stop is acknowledged once its cancel has settled and the runner has
-    /// exited. The interrupted item then goes back to pending.
+    /// exited. The interrupted item then goes back to pending, unless its
+    /// cancelled session already published files (a partly finished playlist):
+    /// running it again would download those entries a second time.
     fn finish_stop_if_ready(&mut self, queue: &mut QueueState) {
         if self.stop.waiters.is_empty() || self.stop.cancels_outstanding > 0 {
             return;
@@ -666,7 +668,11 @@ impl Coordinator {
             queue
                 .items
                 .iter_mut()
-                .find(|item| item.id == id && item.status == QueueStatus::Cancelled)
+                .find(|item| {
+                    item.id == id
+                        && item.status == QueueStatus::Cancelled
+                        && item.output_path.is_none()
+                })
                 .map(|item| {
                     queue::clear_attempt(item);
                     item.status = QueueStatus::Pending;
