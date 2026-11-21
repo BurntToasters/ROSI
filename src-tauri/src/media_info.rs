@@ -17,8 +17,13 @@ static VIDEO_INFO: TrackedSlot = TrackedSlot::new();
 // Messages sent to the renderer for each lookup. Cancellation and timeouts are
 // carried by FetchError variants, never recognized from message text.
 const FORMAT_FETCH_CANCELLED: &str = "Format fetch cancelled.";
-const FORMAT_FETCH_TIMED_OUT: &str =
-    "Format fetch timed out after 60 seconds. The server may be slow or unresponsive.";
+/// Built from `FORMAT_FETCH_TIMEOUT` so the stated duration cannot drift.
+fn format_fetch_timed_out() -> String {
+    format!(
+        "Format fetch timed out after {}. The server may be slow or unresponsive.",
+        duration_phrase(FORMAT_FETCH_TIMEOUT)
+    )
+}
 const VIDEO_INFO_CANCELLED: &str = "Video info request cancelled.";
 const VIDEO_INFO_TIMED_OUT: &str =
     "Video info request timed out. The server may be slow or unresponsive.";
@@ -27,7 +32,7 @@ const VIDEO_INFO_TIMED_OUT: &str =
 #[derive(Debug)]
 enum FetchError {
     Cancelled(&'static str),
-    TimedOut(&'static str),
+    TimedOut(String),
     Other(String),
 }
 
@@ -509,11 +514,11 @@ fn ytdlp_command(args: Vec<String>) -> std::process::Command {
 fn tracked_error(
     error: TrackedError,
     cancelled: &'static str,
-    timed_out: &'static str,
+    timed_out: impl Into<String>,
 ) -> FetchError {
     match error {
         TrackedError::Cancelled => FetchError::Cancelled(cancelled),
-        TrackedError::TimedOut => FetchError::TimedOut(timed_out),
+        TrackedError::TimedOut => FetchError::TimedOut(timed_out.into()),
         TrackedError::Spawn(error) => FetchError::Other(format!("Failed to start yt-dlp: {error}")),
     }
 }
@@ -522,7 +527,7 @@ fn tracked_error(
 fn ipc_error<T: serde::Serialize>(error: FetchError) -> IpcResult<T> {
     let (code, message) = match error {
         FetchError::Cancelled(message) => (NOT_AVAILABLE, message.to_string()),
-        FetchError::TimedOut(message) => (INTERNAL_ERROR, message.to_string()),
+        FetchError::TimedOut(message) => (INTERNAL_ERROR, message),
         FetchError::Other(message) => (INTERNAL_ERROR, message),
     };
     ipc::err(code, message)
@@ -615,7 +620,7 @@ fn fetch_formats(
         Err(error) => Err(tracked_error(
             error,
             FORMAT_FETCH_CANCELLED,
-            FORMAT_FETCH_TIMED_OUT,
+            format_fetch_timed_out(),
         )),
     }
 }
@@ -868,7 +873,7 @@ mod tests {
 
     #[test]
     fn timeouts_map_to_internal_error_with_their_message() {
-        let value = ipc_json(FetchError::TimedOut(VIDEO_INFO_TIMED_OUT));
+        let value = ipc_json(FetchError::TimedOut(VIDEO_INFO_TIMED_OUT.to_string()));
         assert_eq!(value["error"]["code"], "INTERNAL_ERROR");
         assert_eq!(
             value["error"]["message"],
@@ -898,10 +903,10 @@ mod tests {
         let timed_out = tracked_error(
             TrackedError::TimedOut,
             FORMAT_FETCH_CANCELLED,
-            FORMAT_FETCH_TIMED_OUT,
+            format_fetch_timed_out(),
         );
         match timed_out {
-            FetchError::TimedOut(message) => assert_eq!(message, FORMAT_FETCH_TIMED_OUT),
+            FetchError::TimedOut(message) => assert_eq!(message, format_fetch_timed_out()),
             _ => panic!("timeout must map to TimedOut"),
         }
     }
@@ -911,7 +916,7 @@ mod tests {
         let spawn = tracked_error(
             TrackedError::Spawn("permission denied".into()),
             FORMAT_FETCH_CANCELLED,
-            FORMAT_FETCH_TIMED_OUT,
+            format_fetch_timed_out(),
         );
         let FetchError::Other(message) = spawn else {
             panic!("spawn failure must be an Other error");

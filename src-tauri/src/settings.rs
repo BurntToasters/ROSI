@@ -586,8 +586,17 @@ fn show_save_error(message: &str) {
     );
 }
 
-#[tauri::command(async)]
-pub fn get_settings() -> Settings {
+#[tauri::command]
+pub async fn get_settings() -> Settings {
+    tauri::async_runtime::spawn_blocking(get_settings_blocking)
+        .await
+        .unwrap_or_else(|error| {
+            crate::logging::error(&format!("Settings read worker failed: {error}"));
+            default_settings()
+        })
+}
+
+fn get_settings_blocking() -> Settings {
     static REPORTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     let path = settings_path();
     let problem = match crate::fs_util::read_bounded(&path, MAX_SETTINGS_FILE_BYTES) {
@@ -696,10 +705,14 @@ fn save_settings_blocking(
     }
 }
 
-#[tauri::command(async)]
-pub fn reset_settings(app: tauri::AppHandle) -> Result<(), String> {
-    let defaults = default_settings();
-    crate::window::restart_with(&app, || save_all(&defaults))
+#[tauri::command]
+pub async fn reset_settings(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let defaults = default_settings();
+        crate::window::restart_with(&app, || save_all(&defaults))
+    })
+    .await
+    .unwrap_or_else(|error| Err(format!("Reset settings worker failed: {error}")))
 }
 
 #[derive(serde::Serialize)]

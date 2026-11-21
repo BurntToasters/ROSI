@@ -165,10 +165,15 @@ fn load() -> Vec<DownloadCompletion> {
     crate::fs_util::read_json(&activity_path(), ACTIVITY_READ_LIMIT_BYTES as u64)
         .and_then(crate::fs_util::list_items)
         .map(|list| {
-            list.iter()
-                .filter_map(normalize_record)
-                .take(MAX_DOWNLOAD_ACTIVITY)
-                .collect()
+            let records: Vec<DownloadCompletion> =
+                list.iter().filter_map(normalize_record).collect();
+            let dropped = list.len() - records.len();
+            if dropped > 0 {
+                crate::logging::warn(&format!(
+                    "Dropped {dropped} download activity record(s) that failed validation on load."
+                ));
+            }
+            records.into_iter().take(MAX_DOWNLOAD_ACTIVITY).collect()
         })
         .unwrap_or_default()
 }

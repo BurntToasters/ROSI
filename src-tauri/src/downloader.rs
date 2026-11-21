@@ -487,6 +487,11 @@ fn complete_session(id: u64, status_message: &str, outcome: Outcome, meta: Compl
         ),
         other => crate::stats::record(other, None, None),
     }
+    if completion.owner == Owner::Manual {
+        // Written on the caller, after the owner returned the completion, so
+        // shutdown's activity flush covers it. Disk work stays off the owner.
+        crate::activity::record(&completion);
+    }
     crate::coordinator::terminal(id, completion);
 }
 
@@ -1521,7 +1526,7 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
         ExitOutcome::Cancelled => finish_cancelled_exit(exit, cancel_notify),
         ExitOutcome::PipesOpen => finish_pipes_open_exit(exit),
         ExitOutcome::Failed => finish_failed_exit(exit),
-        ExitOutcome::Downloaded => finish_downloaded_exit(exit, cancel_notify),
+        ExitOutcome::Downloaded => finish_downloaded_exit(exit),
     }
 }
 
@@ -1638,7 +1643,7 @@ fn finish_failed_exit(mut exit: YtdlpExit) {
     );
 }
 
-fn finish_downloaded_exit(mut exit: YtdlpExit, cancel_notify: bool) {
+fn finish_downloaded_exit(mut exit: YtdlpExit) {
     let id = exit.id;
     let staged_downloads = match downloaded_file_paths(&exit) {
         Ok(paths) => paths,
@@ -1664,17 +1669,13 @@ fn finish_downloaded_exit(mut exit: YtdlpExit, cancel_notify: bool) {
         }
     };
     if exit.effective.convert_enabled {
-        hand_off_to_conversion(exit, staged_downloads, cancel_notify);
+        hand_off_to_conversion(exit, staged_downloads);
     } else {
         publish_without_conversion(exit, staged_downloads);
     }
 }
 
-fn hand_off_to_conversion(
-    mut exit: YtdlpExit,
-    staged_downloads: Vec<PathBuf>,
-    cancel_notify: bool,
-) {
+fn hand_off_to_conversion(mut exit: YtdlpExit, staged_downloads: Vec<PathBuf>) {
     let id = exit.id;
     remove_path_file(&exit);
     send_progress(
@@ -1685,16 +1686,19 @@ fn hand_off_to_conversion(
             if staged_downloads.len() == 1 { "" } else { "s" }
         ),
     );
-    let handed_off = with_session(id, |session| {
+    // Read the cancel notice in the same owner task as the hand-off decision,
+    // so a cancel that landed after the exit was seen is honored.
+    let (handed_off, cancel_notify) = with_session(id, |session| {
+        let cancel_notify = session.cancel_notify;
         if session.cancelled {
-            false
+            (false, cancel_notify)
         } else {
             session.ytdlp_exit_pending = false;
             session.conversion_pending = true;
-            true
+            (true, cancel_notify)
         }
     })
-    .unwrap_or(false);
+    .unwrap_or((false, false));
     if !handed_off {
         // The path file was deleted above, so install the paths already read.
         let (paths, failed, errors) = install_downloaded_file_paths(
@@ -1845,12 +1849,11 @@ fn download_video_blocking(options: FalliblePayload<DownloadRequestInput>) -> Ip
     if !can_start(Owner::Manual) || crate::queue::is_running() {
         return ipc::err(NOT_AVAILABLE, "A queue download is already in progress.");
     }
-    let (completion, recorded) = std::sync::mpsc::channel::<DownloadCompletion>();
-    std::thread::spawn(move || {
-        if let Ok(completion) = recorded.recv() {
-            crate::activity::record(&completion);
-        }
-    });
+    // Manual completions are recorded by `complete_session` on the caller that
+    // finishes the session, so no detached writer can outlive shutdown. The
+    // coordinator's sink for this session is therefore unused: its receiver is
+    // dropped here and the coordinator ignores the failed send.
+    let (completion, _unused_sink) = std::sync::mpsc::channel::<DownloadCompletion>();
     match start_download(resolved, Owner::Manual, None, completion) {
         Ok(session_id) => ipc::ok(Started {
             started: true,

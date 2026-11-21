@@ -54,6 +54,13 @@ pub enum Command {
         session_id: Option<u64>,
         reply: Sender<()>,
     },
+    /// Replies once the session is finalized, or once the queue is cancelled or
+    /// stopped, whichever comes first. A runner waiting for a manual download
+    /// uses it so a queue cancel is not held up by that download.
+    AwaitSessionOrCancel {
+        session_id: u64,
+        reply: Sender<()>,
+    },
     Queue(QueueCommand),
 }
 
@@ -92,10 +99,12 @@ pub enum QueueCommand {
     /// Marks the queue cancelled. Replies whether an item is active, so the
     /// caller cancels its session before recording the pending items.
     CancelBegin {
-        reply: Sender<bool>,
+        reply: Sender<Option<String>>,
     },
     CancelApply {
         completions: Vec<(String, DownloadCompletion)>,
+        /// The item that was active when the cancel began.
+        active: Option<String>,
         reply: Sender<()>,
     },
     /// Marks a running queue cancelled. Replies whether it was running, so the
@@ -156,12 +165,20 @@ struct StopState {
     cancels_outstanding: usize,
 }
 
+/// A pending await. `wake_on_cancel` awaits also reply when the queue is
+/// cancelled or stopped.
+struct Await {
+    pending: HashSet<u64>,
+    reply: Sender<()>,
+    wake_on_cancel: bool,
+}
+
 #[derive(Default)]
 struct Coordinator {
     sinks: HashMap<u64, Sender<DownloadCompletion>>,
     /// Sessions each pending await still waits on, with the reply to send once
     /// that set is empty.
-    awaits: Vec<(HashSet<u64>, Sender<()>)>,
+    awaits: Vec<Await>,
     starts: Vec<(Sender<IpcResult<Started>>, Instant)>,
     stop: StopState,
 }
@@ -247,6 +264,12 @@ pub fn terminal(session_id: u64, completion: DownloadCompletion) {
 /// nothing to wait for. Never call this from the coordinator thread.
 pub fn await_finalized(session_id: Option<u64>) {
     let _ = request(|reply| Command::AwaitFinalized { session_id, reply });
+}
+
+/// Block until the session is finalized or the queue is cancelled or stopped.
+/// Never call this from the coordinator thread.
+pub fn await_session_or_cancel(session_id: u64) {
+    let _ = request(|reply| Command::AwaitSessionOrCancel { session_id, reply });
 }
 
 /// Copy of the queue items in queue order. Empty when the coordinator is not
@@ -479,10 +502,18 @@ impl Coordinator {
                     Some(_) => HashSet::new(),
                     None => self.sinks.keys().copied().collect(),
                 };
-                if pending.is_empty() {
+                self.push_await(pending, reply, false);
+            }
+            Command::AwaitSessionOrCancel { session_id, reply } => {
+                let pending: HashSet<u64> = if self.sinks.contains_key(&session_id) {
+                    HashSet::from([session_id])
+                } else {
+                    HashSet::new()
+                };
+                if queue.cancelled {
                     let _ = reply.send(());
                 } else {
-                    self.awaits.push((pending, reply));
+                    self.push_await(pending, reply, true);
                 }
             }
             Command::Queue(command) => self.handle_queue(command, queue),
@@ -493,12 +524,37 @@ impl Coordinator {
     /// awaits that now have nothing left to wait for.
     fn release_awaits(&mut self, session_id: u64) {
         let mut waiting = Vec::new();
-        for (mut pending, reply) in std::mem::take(&mut self.awaits) {
-            pending.remove(&session_id);
-            if pending.is_empty() {
-                let _ = reply.send(());
+        for mut entry in std::mem::take(&mut self.awaits) {
+            entry.pending.remove(&session_id);
+            if entry.pending.is_empty() {
+                let _ = entry.reply.send(());
             } else {
-                waiting.push((pending, reply));
+                waiting.push(entry);
+            }
+        }
+        self.awaits = waiting;
+    }
+
+    fn push_await(&mut self, pending: HashSet<u64>, reply: Sender<()>, wake_on_cancel: bool) {
+        if pending.is_empty() {
+            let _ = reply.send(());
+        } else {
+            self.awaits.push(Await {
+                pending,
+                reply,
+                wake_on_cancel,
+            });
+        }
+    }
+
+    /// Release the awaits that stop waiting on a queue cancel or stop.
+    fn wake_cancel_waiters(&mut self) {
+        let mut waiting = Vec::new();
+        for entry in std::mem::take(&mut self.awaits) {
+            if entry.wake_on_cancel {
+                let _ = entry.reply.send(());
+            } else {
+                waiting.push(entry);
             }
         }
         self.awaits = waiting;
@@ -542,10 +598,14 @@ impl Coordinator {
             QueueCommand::CancelBegin { reply } => {
                 queue.cancelled = true;
                 queue.running = false;
-                let active = queue.active_item_id.is_some();
-                let _ = reply.send(active);
+                self.wake_cancel_waiters();
+                let _ = reply.send(queue.active_item_id.clone());
             }
-            QueueCommand::CancelApply { completions, reply } => {
+            QueueCommand::CancelApply {
+                completions,
+                active,
+                reply,
+            } => {
                 for (id, completion) in &completions {
                     if let Some(item) = queue
                         .items
@@ -555,7 +615,11 @@ impl Coordinator {
                         queue::apply_completion(item, completion);
                     }
                 }
-                queue.active_item_id = None;
+                // Only the item this cancel was taken for. A Start that
+                // interleaved may have made another item active.
+                if queue.active_item_id == active {
+                    queue.active_item_id = None;
+                }
                 commit(queue);
                 let _ = reply.send(());
             }
@@ -565,6 +629,7 @@ impl Coordinator {
                     queue.cancelled = true;
                     queue.running = false;
                     queue.active_item_id = None;
+                    self.wake_cancel_waiters();
                 }
                 let _ = reply.send(running);
             }
@@ -636,6 +701,7 @@ impl Coordinator {
         queue.cancelled = true;
         queue.running = false;
         queue.stopping = true;
+        self.wake_cancel_waiters();
         let interrupted = queue.active_item_id.take();
         if interrupted.is_some() {
             self.stop.interrupted = interrupted;

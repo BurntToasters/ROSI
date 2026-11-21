@@ -286,14 +286,21 @@ fn read_queue(path: &std::path::Path) -> Option<Vec<QueueItem>> {
     let mut used_ids = HashSet::new();
     let mut nonterminal = HashSet::new();
     let mut items = Vec::new();
+    let mut dropped = 0usize;
     for raw in list.iter().take(MAX_QUEUE_SIZE) {
         let Some(item) = normalize_item(raw, &mut used_ids) else {
+            dropped += 1;
             continue;
         };
         if item.status == QueueStatus::Pending && !nonterminal.insert(item.url.clone()) {
             continue;
         }
         items.push(item);
+    }
+    if dropped > 0 {
+        crate::logging::warn(&format!(
+            "Dropped {dropped} queue item(s) that failed validation on load."
+        ));
     }
     Some(items)
 }
@@ -680,7 +687,8 @@ pub(crate) fn run_queue() {
                 // A manual download that was accepted just before the queue
                 // started still holds the slot. Wait for its finalization ack
                 // instead of failing this and every later item.
-                coordinator::await_finalized(Some(blocking));
+                // A queue cancel or stop ends this wait without the download.
+                coordinator::await_session_or_cancel(blocking);
                 continue;
             }
             match downloader::start_download(
@@ -1394,9 +1402,13 @@ pub struct RemovedCount {
 
 #[tauri::command]
 pub async fn get_queue() -> Vec<QueueItem> {
-    tauri::async_runtime::spawn_blocking(coordinator::items)
-        .await
-        .unwrap_or_default()
+    match tauri::async_runtime::spawn_blocking(coordinator::items).await {
+        Ok(items) => items,
+        Err(error) => {
+            crate::logging::error(&format!("Failed to read the download queue: {error}"));
+            Vec::new()
+        }
+    }
 }
 
 #[tauri::command]
@@ -1427,7 +1439,7 @@ fn cancel_queue_blocking() -> IpcResult<()> {
             "Queue coordinator is not running.",
         );
     };
-    if active {
+    if active.is_some() {
         // Completes the running session synchronously; its result reaches the
         // runner, which records the item's single cancelled outcome.
         downloader::cancel_owned_session(Owner::Queue, true);
@@ -1457,7 +1469,11 @@ fn cancel_queue_blocking() -> IpcResult<()> {
         .map(|(_, completion)| completion.clone())
         .collect();
     if coordinator::request(|reply| {
-        Command::Queue(QueueCommand::CancelApply { completions, reply })
+        Command::Queue(QueueCommand::CancelApply {
+            completions,
+            active,
+            reply,
+        })
     })
     .is_none()
     {

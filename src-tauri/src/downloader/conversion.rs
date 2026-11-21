@@ -279,7 +279,10 @@ fn execute_ffmpeg(
             {
                 send_progress(
                     id,
-                    "❌ Conversion stopped: FFmpeg made no progress for 10 minutes.",
+                    format!(
+                        "❌ Conversion stopped: FFmpeg made no progress for {}.",
+                        duration_phrase(FFMPEG_STALL_TIMEOUT)
+                    ),
                 );
             }
             crate::process_util::terminate_tree(&child);
@@ -555,7 +558,10 @@ fn convert_one(
 fn failure_message(failure: &ConversionFailure) -> String {
     match failure {
         ConversionFailure::Cancelled => "Conversion cancelled.".into(),
-        ConversionFailure::TimedOut => "FFmpeg made no progress for 10 minutes.".into(),
+        ConversionFailure::TimedOut => format!(
+            "FFmpeg made no progress for {}.",
+            duration_phrase(FFMPEG_STALL_TIMEOUT)
+        ),
         ConversionFailure::Spawn(error) if error.kind() == std::io::ErrorKind::NotFound => {
             "FFmpeg was not found at the configured path.".into()
         }

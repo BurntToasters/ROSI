@@ -277,10 +277,17 @@ pub fn resolve_queue_request(
     resolve_value(settings, &value, Some(url)).map(|resolved| resolved.request)
 }
 
-#[tauri::command(async)]
-pub fn resolve_download_options(
+#[tauri::command]
+pub async fn resolve_download_options(
     options: FalliblePayload<DownloadRequestInput>,
 ) -> IpcResult<DownloadRequestOptions> {
+    crate::queue::run_blocking(move || resolve_download_options_blocking(options)).await
+}
+
+fn resolve_download_options_blocking(
+    options: FalliblePayload<DownloadRequestInput>,
+) -> IpcResult<DownloadRequestOptions> {
+    // Reads the settings file, so it runs off the async runtime.
     let settings = crate::settings::load();
     match resolve_value(&settings, &options.into_value(), None) {
         Ok(resolved) => ipc::ok(resolved.request),
@@ -288,8 +295,14 @@ pub fn resolve_download_options(
     }
 }
 
-#[tauri::command(async)]
-pub fn resolve_preset_options(
+#[tauri::command]
+pub async fn resolve_preset_options(
+    options: FalliblePayload<PresetOptionsInput>,
+) -> IpcResult<DownloadRequestOptions> {
+    crate::queue::run_blocking(move || resolve_preset_options_blocking(options)).await
+}
+
+fn resolve_preset_options_blocking(
     options: FalliblePayload<PresetOptionsInput>,
 ) -> IpcResult<DownloadRequestOptions> {
     let input = match options.into_typed(

@@ -471,7 +471,9 @@ pub fn build_ytdlp_args(input: YtdlpArgsInput<'_>) -> (Vec<String>, Vec<String>)
     let mut status = Vec::new();
 
     if let Some(path) = path_output_file {
-        let path = path.to_string_lossy().into_owned();
+        // yt-dlp treats this file argument as an output template, so a literal
+        // `%` (for example in a folder named `100%`) must be escaped.
+        let path = path.to_string_lossy().replace('%', "%%");
         insert_before_url(
             &mut args,
             &["--print-to-file", "after_move:filepath", &path],
