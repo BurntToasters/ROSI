@@ -33,6 +33,7 @@ export interface QualityGateProof extends ReleaseIdentity {
     | { status: "skipped" };
   gateStartedAt: number;
   completedAt: number;
+  localCargoConfigSha256?: string | null;
 }
 
 export const DEFAULT_MAX_AGE_MS: number;
@@ -60,6 +61,11 @@ export function validateQualityGate(
   expected: ReleaseIdentity,
   options?: { now?: number; maxAgeMs?: number },
 ): QualityGateProof;
+export function verifyQualityGateEvidence(
+  qualityGate: QualityGateProof,
+  root: string,
+  identity?: ReleaseIdentity,
+): void;
 export function verifyQualityGate(
   root?: string,
   options?: { now?: number; maxAgeMs?: number },

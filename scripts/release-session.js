@@ -147,8 +147,9 @@ function validateQualityGate(
       );
     }
   } else if (qualityGate.scope === "build-vm-partial") {
-    // Build VMs skip the GUI E2E suite. Hosted CI is not required before a
-    // release; the full suite still runs wherever the proof scope is "full".
+    // Build VMs skip the GUI E2E suite, so no E2E report binds the local Cargo
+    // config here. The proof records its hash instead, and
+    // verifyQualityGateEvidence compares it with the config on disk.
     if (qualityGate.e2e?.status !== "skipped") {
       throw new Error(
         "Skipped-E2E build-VM proof must record the skipped E2E suite.",
@@ -197,7 +198,7 @@ export function localCargoConfigProblem(report, root) {
     return `The local Cargo config cannot be read: ${error instanceof Error ? error.message : String(error)}`;
   }
   if ((report.localCargoConfigSha256 ?? null) !== current) {
-    return "Full E2E evidence was built with a different local Cargo config than this checkout has; rerun the E2E gate.";
+    return "Release evidence was built with a different local Cargo config than this checkout has; rerun the quality gate.";
   }
   return null;
 }
@@ -406,7 +407,20 @@ function recordSuccessfulQualityGate(
   const completedAt = Date.now();
   let evidence;
   if (skipE2e) {
-    evidence = { scope: "build-vm-partial", e2e: { status: "skipped" } };
+    let cargoConfigSha256;
+    try {
+      cargoConfigSha256 = localCargoConfigSha256(root);
+    } catch (error) {
+      return {
+        recorded: false,
+        dirtyFiles: `The local Cargo config cannot be read: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    evidence = {
+      scope: "build-vm-partial",
+      e2e: { status: "skipped" },
+      localCargoConfigSha256: cargoConfigSha256,
+    };
   } else {
     const { reportPath, binaryPath } = expectedE2eEvidencePaths(root, identity);
     try {
@@ -478,6 +492,20 @@ function assertReleaseTreeClean(root = defaultRoot) {
   }
 }
 
+/**
+ * Checks the scope-specific evidence behind an already validated quality-gate
+ * proof: the full E2E report and binary, or for a build-VM proof the local
+ * Cargo config hash recorded at gate time.
+ */
+export function verifyQualityGateEvidence(qualityGate, root, identity) {
+  if (qualityGate.scope === "full") {
+    verifyFullE2eEvidence(qualityGate, root, identity);
+    return;
+  }
+  const cargoConfigProblem = localCargoConfigProblem(qualityGate, root);
+  if (cargoConfigProblem) throw new Error(cargoConfigProblem);
+}
+
 function verifyQualityGate(root = defaultRoot, options) {
   const proofPath = path.join(root, QUALITY_GATE_RELATIVE_PATH);
   let proof;
@@ -490,9 +518,7 @@ function verifyQualityGate(root = defaultRoot, options) {
   }
   const identity = currentReleaseIdentity(root);
   const validated = validateQualityGate(proof, identity, options);
-  if (validated.scope === "full") {
-    verifyFullE2eEvidence(validated, root, identity);
-  }
+  verifyQualityGateEvidence(validated, root, identity);
   return validated;
 }
 

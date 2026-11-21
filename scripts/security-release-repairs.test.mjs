@@ -9,7 +9,9 @@ import {
   validateQualityGate,
   validateReleaseSession,
   verifyFullE2eEvidence,
+  verifyQualityGateEvidence,
 } from "./release-session.js";
+import { localCargoConfigSha256 } from "./e2e/common.js";
 import { REVIEWED_SOURCE_OMISSIONS } from "./generate-cargo-licenses.js";
 import {
   EXPECTED_SCENARIOS,
@@ -28,6 +30,7 @@ import {
 import {
   assertBuildCommitRecords,
   assertDraftReleaseShape,
+  assertGpgValidSignature,
   requiredDraftAssetNames,
   requiredDraftBuildCommitNames,
   requiredDraftChecksumNames,
@@ -439,6 +442,48 @@ test("full E2E proof checks the canonical suite, successful outcomes, and exact 
         verifyFullE2eEvidence(altered.proof, altered.root, altered.identity),
       );
     }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a skipped-E2E build-VM proof is bound to the local Cargo config it was gated with", () => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "rosi-build-vm-cargo-config-"),
+  );
+  try {
+    const configDirectory = path.join(directory, "src-tauri", ".cargo");
+    const configFile = path.join(configDirectory, "config.toml");
+    const noConfigProof = buildVmGate({ localCargoConfigSha256: null });
+    // No local config: a proof recording none verifies.
+    assert.doesNotThrow(() =>
+      verifyQualityGateEvidence(noConfigProof, directory),
+    );
+    // A config appears after the gate: the recorded null no longer matches.
+    fs.mkdirSync(configDirectory, { recursive: true });
+    fs.writeFileSync(configFile, "[build]\nrustflags = []\n");
+    assert.throws(
+      () => verifyQualityGateEvidence(noConfigProof, directory),
+      /different local Cargo config/,
+    );
+    // A proof gated with the same config verifies.
+    const withConfigProof = buildVmGate({
+      localCargoConfigSha256: localCargoConfigSha256(directory),
+    });
+    assert.doesNotThrow(() =>
+      verifyQualityGateEvidence(withConfigProof, directory),
+    );
+    // A config edited after the gate no longer matches the recorded hash.
+    fs.writeFileSync(configFile, '[build]\nrustflags = ["-Dwarnings"]\n');
+    assert.throws(
+      () => verifyQualityGateEvidence(withConfigProof, directory),
+      /different local Cargo config/,
+    );
+    // A proof from before this check recorded no hash, so it fails here.
+    assert.throws(
+      () => verifyQualityGateEvidence(buildVmGate(), directory),
+      /different local Cargo config/,
+    );
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -961,6 +1006,28 @@ test("T14: signing keeps plain paths for other platforms and gpg builds", () => 
   signFile("/tmp/r/ROSI.dmg", { spawn, gpg: "gpg", platform: "linux" });
   assert.equal(calls[0].command, "gpg");
   assert.ok(calls[0].args.includes("/tmp/r/ROSI.dmg.asc"));
+});
+
+test("GPG status with an expired, revoked, or bad signature is never accepted", () => {
+  const fingerprint = "A".repeat(40);
+  const validLine = `[GNUPG:] VALIDSIG ${"B".repeat(40)} 2026-01-01 1 0 4 0 1 10 00 ${fingerprint}`;
+  assert.doesNotThrow(() =>
+    assertGpgValidSignature({
+      statusOutput: `[GNUPG:] GOODSIG 1 x\n${validLine}\n`,
+      expectedFingerprint: fingerprint,
+    }),
+  );
+  for (const keyword of ["EXPKEYSIG", "REVKEYSIG", "EXPSIG", "BADSIG"]) {
+    assert.throws(
+      () =>
+        assertGpgValidSignature({
+          statusOutput: `${validLine}\n[GNUPG:] ${keyword} 1 x\n`,
+          expectedFingerprint: fingerprint,
+        }),
+      new RegExp(keyword),
+      keyword,
+    );
+  }
 });
 
 test("T14: draft verification uses the resolved gpg and converts paths", () => {

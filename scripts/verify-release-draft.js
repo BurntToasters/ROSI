@@ -348,6 +348,11 @@ export function resolveExpectedGpgSigner({
   return [...matches][0];
 }
 
+// gpg status lines that make a detached signature unacceptable even when a
+// VALIDSIG line is also present: expired or revoked key, expired signature,
+// or a bad signature.
+const GPG_REJECTED_STATUSES = ["EXPKEYSIG", "REVKEYSIG", "EXPSIG", "BADSIG"];
+
 export function assertGpgValidSignature({ statusOutput, expectedFingerprint }) {
   const expected = String(expectedFingerprint || "").toUpperCase();
   if (!/^(?:[0-9A-F]{40}|[0-9A-F]{64})$/u.test(expected)) {
@@ -355,9 +360,18 @@ export function assertGpgValidSignature({ statusOutput, expectedFingerprint }) {
       "Expected trusted GPG signer fingerprint is missing or invalid.",
     );
   }
-  const signatures = String(statusOutput || "")
-    .split(/\r?\n/u)
-    .filter((line) => line.startsWith("[GNUPG:] VALIDSIG "));
+  const statusLines = String(statusOutput || "").split(/\r?\n/u);
+  for (const line of statusLines) {
+    const keyword = line.match(/^\[GNUPG:\] (\S+)/u)?.[1];
+    if (GPG_REJECTED_STATUSES.includes(keyword)) {
+      throw new Error(
+        `GPG reported ${keyword} for the detached signature; it is not accepted.`,
+      );
+    }
+  }
+  const signatures = statusLines.filter((line) =>
+    line.startsWith("[GNUPG:] VALIDSIG "),
+  );
   if (signatures.length !== 1) {
     throw new Error(
       "GPG did not report exactly one cryptographically valid detached signature.",

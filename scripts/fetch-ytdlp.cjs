@@ -216,6 +216,40 @@ function parseSums(text) {
   return sums;
 }
 
+// gpg status lines that reject a detached signature even when VALIDSIG is also
+// printed: expired or revoked key, expired signature, or a bad signature.
+const GPG_REJECTED_STATUSES = ["EXPKEYSIG", "REVKEYSIG", "EXPSIG", "BADSIG"];
+
+/**
+ * Reads `gpg --status-fd` output and returns the primary fingerprint of the
+ * signer. Rejects any rejecting status line, and requires a VALIDSIG line
+ * whose primary key is the pinned fingerprint.
+ * @param {string} statusText
+ * @param {string} pinnedFingerprint
+ * @returns {string}
+ */
+function gpgSignerFromStatus(statusText, pinnedFingerprint) {
+  const lines = String(statusText).split(/\r?\n/);
+  for (const line of lines) {
+    const keyword = line.match(/^\[GNUPG:\] (\S+)/)?.[1];
+    if (GPG_REJECTED_STATUSES.includes(keyword)) {
+      fail(`SHA2-256SUMS signature rejected by gpg (${keyword}).`);
+    }
+  }
+  const validLine = lines.find((line) => line.startsWith("[GNUPG:] VALIDSIG "));
+  if (!validLine) {
+    fail("SHA2-256SUMS signature verification failed");
+  }
+  // Last field of VALIDSIG is the primary key fingerprint.
+  const primary = validLine.trim().split(" ").pop().toUpperCase();
+  if (primary !== pinnedFingerprint.toUpperCase()) {
+    fail(
+      `SHA2-256SUMS signed by ${primary}, not the pinned yt-dlp key ${pinnedFingerprint}`,
+    );
+  }
+  return primary;
+}
+
 /**
  * Verifies the detached signature over SHA2-256SUMS with a throwaway keyring
  * and requires the signing primary key to equal the pinned fingerprint.
@@ -264,21 +298,10 @@ function verifySumsSignature({
     if (verified.error) {
       fail(`gpg failed to run: ${verified.error.message}`);
     }
-    const lines = String(verified.stdout).split("\n");
-    const validLine = lines.find((line) =>
-      line.startsWith("[GNUPG:] VALIDSIG "),
-    );
-    if (verified.status !== 0 || !validLine) {
+    if (verified.status !== 0) {
       fail("SHA2-256SUMS signature verification failed");
     }
-    // Last field of VALIDSIG is the primary key fingerprint.
-    const primary = validLine.trim().split(" ").pop().toUpperCase();
-    if (primary !== pinnedFingerprint.toUpperCase()) {
-      fail(
-        `SHA2-256SUMS signed by ${primary}, not the pinned yt-dlp key ${pinnedFingerprint}`,
-      );
-    }
-    return primary;
+    return gpgSignerFromStatus(verified.stdout, pinnedFingerprint);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
@@ -705,6 +728,7 @@ module.exports = {
   parseArgs,
   gpgFlavor,
   gpgPath,
+  gpgSignerFromStatus,
   parseSums,
   resolveGpg,
   sha256File,

@@ -1,9 +1,18 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { usesWindowsCmdShell } from "./npm-safe-update.mjs";
 import { isDirectExecutionOf } from "./direct-execution.mjs";
+import { expectedReleaseBranch } from "./release-preflight.js";
+
+const require = createRequire(import.meta.url);
+const {
+  assertReleaseBranchProtection,
+} = require("./release-branch-protection.cjs");
+const { githubApi } = require("./github-cli.cjs");
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -53,8 +62,30 @@ function runNpm(script, extraArgs = [], envOverrides = {}) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-export function main(argv = process.argv.slice(2), runner = runNpm) {
+/**
+ * The release branch for the version in package.json must carry the strict
+ * ci-gate protection before anything is built or uploaded. Beta is exempt
+ * inside assertReleaseBranchProtection. Stable releases read main.
+ */
+export function assertReleaseRunProtection({
+  api = githubApi,
+  version = JSON.parse(fs.readFileSync(resolve(root, "package.json"), "utf8"))
+    .version,
+  env = process.env,
+} = {}) {
+  return assertReleaseBranchProtection(
+    expectedReleaseBranch(String(version ?? "")),
+    { api, env },
+  );
+}
+
+export function main(
+  argv = process.argv.slice(2),
+  runner = runNpm,
+  { assertProtection = assertReleaseRunProtection } = {},
+) {
   const { skipCheck, continueScript } = parseReleaseArgs(argv);
+  assertProtection();
   runner("prerelease:prepare");
   runner("workspace:bootstrap");
   runner("test:all", ["--", "--require-clean-proof", "--skip-e2e"]);

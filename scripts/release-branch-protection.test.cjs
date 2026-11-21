@@ -190,7 +190,11 @@ test("quality-gate timeout exceeds the E2E bound inside test-all", () => {
     /^  quality-gate:\r?\n[\s\S]*?(?=^  [a-z][a-z-]+:\r?$)/m,
   )?.[0];
   assert.ok(qualityJob);
-  assert.match(qualityJob, /^    timeout-minutes: 105\r?$/m);
+  // The E2E bound inside test-all is 90 minutes; the job needs at least 15
+  // minutes of headroom above it to write its failure log.
+  const timeout = qualityJob.match(/^    timeout-minutes: (\d+)\r?$/m);
+  assert.ok(timeout, "quality-gate has no timeout-minutes");
+  assert.ok(Number(timeout[1]) >= 90 + 15, `timeout ${timeout[1]} too small`);
 });
 
 test("CI avoids duplicate PR branch runs and duplicate Ubuntu checks", () => {

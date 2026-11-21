@@ -6,7 +6,46 @@ import { createRequire } from "node:module";
 import test from "node:test";
 
 const require = createRequire(import.meta.url);
-const { gpgFlavor, gpgPath } = require("./fetch-ytdlp.cjs");
+const {
+  gpgFlavor,
+  gpgPath,
+  gpgSignerFromStatus,
+  PINNED_FINGERPRINT,
+} = require("./fetch-ytdlp.cjs");
+
+test("G1: a detached signature is accepted only as a clean VALIDSIG from the pinned key", () => {
+  const validLine = `[GNUPG:] VALIDSIG ${"B".repeat(40)} 2026-01-01 1 0 4 0 1 10 00 ${PINNED_FINGERPRINT}`;
+  assert.equal(
+    gpgSignerFromStatus(
+      `[GNUPG:] GOODSIG 1 x\n${validLine}\n`,
+      PINNED_FINGERPRINT,
+    ),
+    PINNED_FINGERPRINT,
+  );
+  for (const keyword of ["EXPKEYSIG", "REVKEYSIG", "EXPSIG", "BADSIG"]) {
+    assert.throws(
+      () =>
+        gpgSignerFromStatus(
+          `${validLine}\n[GNUPG:] ${keyword} 1 x\n`,
+          PINNED_FINGERPRINT,
+        ),
+      new RegExp(keyword),
+      keyword,
+    );
+  }
+  assert.throws(
+    () =>
+      gpgSignerFromStatus(
+        `[GNUPG:] VALIDSIG ${"B".repeat(40)} 2026-01-01 1 0 4 0 1 10 00 ${"C".repeat(40)}\n`,
+        PINNED_FINGERPRINT,
+      ),
+    /not the pinned/,
+  );
+  assert.throws(
+    () => gpgSignerFromStatus("[GNUPG:] GOODSIG 1 x\n", PINNED_FINGERPRINT),
+    /verification failed/,
+  );
+});
 
 const MSYS_HOME = "Home: /home/runneradmin/.gnupg\n";
 const NATIVE_HOME = "Home: C:/Users/runneradmin/AppData/Roaming/gnupg\n";
