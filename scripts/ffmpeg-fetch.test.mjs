@@ -375,35 +375,56 @@ test("F10: an unreadable manifest or malformed entry fails closed", () => {
   assert.deepEqual(listing(dest), []);
 });
 
-test("F12: files without a manifest entry install and are reported", () => {
+test("F12: a file without a manifest entry is refused unless the update flow allows it", () => {
   const { stage, dest } = makeInstall({
     label: "none",
     staged: { ffmpeg: "a", ffprobe: "b" },
   });
-  const noManifest = getFfmpeg.verifyAndInstall({
-    stageDir: stage,
-    destDir: dest,
-    platform: "linux",
-    arch: "arm64",
-    manifest: null,
-  });
-  assert.deepEqual(noManifest.verified, []);
-  assert.deepEqual(noManifest.unverified.sort(), ["ffmpeg", "ffprobe"]);
-  assert.deepEqual(listing(dest), ["ffmpeg", "ffprobe"]);
+  assert.throws(
+    () =>
+      getFfmpeg.verifyAndInstall({
+        stageDir: stage,
+        destDir: dest,
+        platform: "linux",
+        arch: "arm64",
+        manifest: null,
+      }),
+    /no checksum entry/,
+  );
+  assert.deepEqual(listing(dest), []);
 
   const second = makeInstall({
     label: "partial",
     staged: { ffmpeg: "a", ffprobe: "b" },
   });
+  assert.throws(
+    () =>
+      getFfmpeg.verifyAndInstall({
+        stageDir: second.stage,
+        destDir: second.dest,
+        platform: "linux",
+        arch: "arm64",
+        manifest: manifestFor("linux", "arm64", { ffmpeg: sha("a") }),
+      }),
+    /ffprobe: no checksum entry/,
+  );
+  assert.deepEqual(listing(second.dest), []);
+
+  const allowed = makeInstall({
+    label: "allowed",
+    staged: { ffmpeg: "a", ffprobe: "b" },
+  });
   const partial = getFfmpeg.verifyAndInstall({
-    stageDir: second.stage,
-    destDir: second.dest,
+    stageDir: allowed.stage,
+    destDir: allowed.dest,
     platform: "linux",
     arch: "arm64",
     manifest: manifestFor("linux", "arm64", { ffmpeg: sha("a") }),
+    allowUnlisted: true,
   });
   assert.deepEqual(partial.verified, ["ffmpeg"]);
   assert.deepEqual(partial.unverified, ["ffprobe"]);
+  assert.deepEqual(listing(allowed.dest), ["ffmpeg", "ffprobe"]);
 });
 
 test("F13: the legacy single-binary entry still verifies ffmpeg", () => {
@@ -435,6 +456,7 @@ test("F13: the legacy single-binary entry still verifies ffmpeg", () => {
     platform: "linux",
     arch: "x64",
     manifest: legacy,
+    allowUnlisted: true,
   });
   assert.deepEqual(result.verified, ["ffmpeg"]);
 });
@@ -508,5 +530,96 @@ test("F17: a known version survives regeneration without a probe", () => {
   assert.deepEqual(
     build({ binaries, version: "7.1", previous: { version: "6.0" } }).version,
     "7.1",
+  );
+});
+
+// F18: a target with no checksum entry (or one per binary) is a failure, not a
+// warning, so a manifest cannot silently drop a platform.
+test("F18: missing checksum entries are reported for every binary", () => {
+  const manifest = {
+    "win:x64": { binaries: { ffmpeg: { path: "p", sha256: "a" } } },
+  };
+  const targets = [
+    { platform: "win", arch: "x64" },
+    { platform: "mac", arch: "arm64" },
+  ];
+  assert.deepEqual(checkFfmpeg.missingEntryProblems(manifest, targets), [
+    "win:x64 -> no checksum entry for ffprobe",
+    "mac:arm64 -> no checksum entry in manifest",
+  ]);
+  assert.deepEqual(
+    checkFfmpeg.missingEntryProblems(
+      {
+        "win:x64": {
+          binaries: {
+            ffmpeg: { path: "p", sha256: "a" },
+            ffprobe: { path: "q", sha256: "b" },
+          },
+        },
+      },
+      [{ platform: "win", arch: "x64" }],
+    ),
+    [],
+  );
+});
+
+// F19: the manifest records the FFmpeg version once, and a regeneration that
+// cannot probe any binary keeps the version already recorded.
+test("F19: the manifest keeps one FFmpeg version and never treats it as a target", () => {
+  const entries = { "win:x64": { binaries: {} } };
+  assert.deepEqual(
+    Object.keys(
+      checkFfmpeg.assembleManifest({
+        previous: { version: "9.0.1", "win:x64": {} },
+        detectedVersion: "9.0.2",
+        entries,
+      }),
+    ),
+    ["version", "win:x64"],
+  );
+  assert.equal(
+    checkFfmpeg.assembleManifest({
+      previous: { version: "9.0.1" },
+      detectedVersion: null,
+      entries,
+    }).version,
+    "9.0.1",
+  );
+  assert.equal(
+    "version" in
+      checkFfmpeg.assembleManifest({
+        previous: null,
+        detectedVersion: null,
+        entries,
+      }),
+    false,
+  );
+});
+
+// F20: the bundled manifest records the FFmpeg version and covers every target.
+test("F20: the bundled checksums.json records 9.0.2 and covers all six targets", () => {
+  const manifest = JSON.parse(
+    fs.readFileSync(
+      path.join(
+        import.meta.dirname,
+        "..",
+        "resources",
+        "ffmpeg",
+        "checksums.json",
+      ),
+      "utf8",
+    ),
+  );
+  assert.equal(manifest.version, "9.0.2");
+  assert.deepEqual(
+    checkFfmpeg.missingEntryProblems(manifest, [
+      { platform: "win", arch: "x64" },
+      { platform: "win", arch: "arm64" },
+      { platform: "mac", arch: "x64" },
+      { platform: "mac", arch: "arm64" },
+      { platform: "linux", arch: "x64" },
+      { platform: "linux", arch: "arm64" },
+    ]),
+    [],
   );
 });

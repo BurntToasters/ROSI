@@ -32,6 +32,8 @@ import {
 import * as stability from "./e2e/stability.js";
 import { reportForRun } from "./e2e/stability.js";
 import { writeEvidence } from "./test-e2e.js";
+import * as testE2eModule from "./test-e2e.js";
+import * as buildModule from "./e2e/build.js";
 
 const sha256 = (value) =>
   crypto.createHash("sha256").update(value).digest("hex");
@@ -702,4 +704,30 @@ test("setup-wizard screenshots are hashed with the other UI shots", () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// The E2E binary is hashed after the build and again at the end. A binary that
+// changed in between no longer matches the evidence, so the gate must fail.
+test("binaryChangeProblems fails when the E2E binary is replaced during the run", () => {
+  const { binaryChangeProblems } = testE2eModule;
+  assert.equal(typeof binaryChangeProblems, "function");
+  const hash = "c".repeat(64);
+  assert.deepEqual(binaryChangeProblems(hash, hash), []);
+  assert.match(
+    binaryChangeProblems(hash, "d".repeat(64)).join(),
+    /E2E binary changed during the run/,
+  );
+  assert.notDeepEqual(binaryChangeProblems(null, hash), []);
+  assert.notDeepEqual(binaryChangeProblems(hash, null), []);
+});
+
+// The E2E cargo build must use the committed lockfile, like the release builds.
+test("the E2E tauri build passes --locked through to cargo", () => {
+  const { e2eTauriBuildArgs } = buildModule;
+  assert.equal(typeof e2eTauriBuildArgs, "function");
+  const args = e2eTauriBuildArgs("/repo/src-tauri/tauri.e2e.conf.json");
+  const separator = args.indexOf("--");
+  assert.notEqual(separator, -1);
+  assert.ok(args.slice(separator + 1).includes("--locked"));
+  assert.ok(args.slice(separator + 1).includes("--features"));
 });

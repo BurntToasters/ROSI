@@ -42,6 +42,22 @@ function restoreGeneratedSchemas(snapshots) {
   }
 }
 
+/** Arguments for the E2E tauri build; cargo gets --locked after the separator. */
+export function e2eTauriBuildArgs(configPath) {
+  return [
+    "tauri",
+    "build",
+    "--debug",
+    "--no-bundle",
+    "--config",
+    configPath,
+    "--",
+    "--locked",
+    "--features",
+    "e2e",
+  ];
+}
+
 export function buildE2eBinary() {
   // Development stubs are acceptable: E2E uses a debug build and supplies a
   // real FFmpeg through the custom-path setting when one is available.
@@ -51,17 +67,12 @@ export function buildE2eBinary() {
   run(npmCommand(), ["run", "licenses"]);
   const schemaSnapshots = snapshotGeneratedSchemas();
   try {
-    run(npxCommand(), [
-      "tauri",
-      "build",
-      "--debug",
-      "--no-bundle",
-      "--config",
-      path.join(REPO_ROOT, "src-tauri", "tauri.e2e.conf.json"),
-      "--",
-      "--features",
-      "e2e",
-    ]);
+    run(
+      npxCommand(),
+      e2eTauriBuildArgs(
+        path.join(REPO_ROOT, "src-tauri", "tauri.e2e.conf.json"),
+      ),
+    );
   } finally {
     // Tauri writes feature-dependent ACL schemas into this tracked directory.
     // An E2E build must not dirty a clean release checkout with test-only ACLs.

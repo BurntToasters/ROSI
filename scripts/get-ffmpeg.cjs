@@ -424,7 +424,14 @@ function listStagedFiles(dir, prefix = "") {
  * @param {VerifyOptions} options
  * @returns {{ verified: string[], unverified: string[] }}
  */
-function verifyAndInstall({ stageDir, destDir, platform, arch, manifest }) {
+function verifyAndInstall({
+  stageDir,
+  destDir,
+  platform,
+  arch,
+  manifest,
+  allowUnlisted = false,
+}) {
   const ext = platform === "win" ? ".exe" : "";
   const key = `${platform}:${arch}`;
   const entry = manifest?.[key];
@@ -444,6 +451,13 @@ function verifyAndInstall({ stageDir, destDir, platform, arch, manifest }) {
         : null);
     const present = files.includes(fileName);
     if (!expected) {
+      // Only the update flow may install an unlisted binary; it regenerates the
+      // manifest from what it installed and then verifies it.
+      if (!allowUnlisted) {
+        throw new Error(
+          `${key} ${binary}: no checksum entry in checksums.json. Run the update flow (npm run get:ffmpeg:update) to add one.`,
+        );
+      }
       if (present) unverified.push(binary);
       continue;
     }
@@ -534,7 +548,13 @@ async function main() {
   // are left alone and still verified later by prepare-sidecars.
   const rawArgs = process.argv.slice(2);
   const missingOnly = rawArgs.includes("--missing-only");
-  let targets = parseArgs(rawArgs.filter((arg) => arg !== "--missing-only"));
+  // Set only by update-ffmpeg, which drops the old manifest before downloading.
+  const allowUnlisted = rawArgs.includes("--allow-unlisted");
+  let targets = parseArgs(
+    rawArgs.filter(
+      (arg) => arg !== "--missing-only" && arg !== "--allow-unlisted",
+    ),
+  );
   if (missingOnly) {
     targets = targets.filter((target) => !targetIsPresent(target));
     if (targets.length === 0) {
@@ -628,6 +648,7 @@ async function main() {
             platform,
             arch,
             manifest,
+            allowUnlisted,
           });
           for (const binary of result.unverified) {
             console.warn(

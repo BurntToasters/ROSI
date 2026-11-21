@@ -11,6 +11,7 @@ import {
 } from "./e2e/runner-report.js";
 import { pruneRunnerArtifacts } from "./e2e/prune-artifacts.js";
 import {
+  downloadProcessObservationProblems,
   runDownloadProcessRepairs,
   runRound2NativeRepairs,
   round2NativeReportProblems,
@@ -517,6 +518,47 @@ test("runDownloadProcessRepairs passes the timeout and reports a timeout", (t) =
     assert.equal(outcome.status, "failed");
     assert.match(outcome.reason, /timed out after 900000 ms/);
   });
+});
+
+// The process-repair and audit3 specs record every case with invariantPassed.
+// A report with no observations, or any case that did not pass, must fail.
+test("downloadProcessObservationProblems requires a non-empty list of passing observations", () => {
+  assert.match(
+    downloadProcessObservationProblems({}).join("; "),
+    /no observations/,
+  );
+  assert.match(
+    downloadProcessObservationProblems({ observations: [] }).join("; "),
+    /no observations/,
+  );
+  assert.match(
+    downloadProcessObservationProblems({ observations: "nope" }).join("; "),
+    /no observations/,
+  );
+  assert.deepEqual(
+    downloadProcessObservationProblems({
+      observations: [
+        { name: "a", invariantPassed: true },
+        { name: "b", invariantPassed: true },
+      ],
+    }),
+    [],
+  );
+  const failing = downloadProcessObservationProblems({
+    observations: [
+      { name: "a", invariantPassed: true },
+      { name: "b", invariantPassed: false },
+    ],
+  });
+  assert.deepEqual(failing, ["b did not pass its invariant"]);
+  const unset = downloadProcessObservationProblems({
+    observations: [{ name: "c" }],
+  });
+  assert.deepEqual(unset, ["c did not pass its invariant"]);
+  const skipped = downloadProcessObservationProblems({
+    observations: [{ name: "d", skipped: true, invariantPassed: null }],
+  });
+  assert.deepEqual(skipped, ["d did not pass its invariant"]);
 });
 
 test("probeReportProblems accepts a valid probe report and rejects each defect", () => {

@@ -109,7 +109,11 @@ function main() {
 
   try {
     fs.rmSync(checksumsPath, { force: true });
-    run("Download all targets", ["scripts/get-ffmpeg.cjs", "--all"]);
+    run("Download all targets", [
+      "scripts/get-ffmpeg.cjs",
+      "--all",
+      "--allow-unlisted",
+    ]);
     run("Generate checksums", [
       "scripts/check-ffmpeg.cjs",
       "--all",

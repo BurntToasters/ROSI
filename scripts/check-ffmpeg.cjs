@@ -217,8 +217,50 @@ function buildChecksumEntry({ binaries, version, previous }) {
   return known ? { version: known, binaries } : { binaries };
 }
 
+/**
+ * Target keys with no entry, or no entry for one of their binaries. Uses the
+ * same legacy single-binary fallback as validateTargets.
+ * @returns {string[]}
+ */
+function missingEntryProblems(manifest, targets) {
+  const problems = [];
+  for (const target of targets) {
+    const key = `${target.platform}:${target.arch}`;
+    const required = REQUIRED_BINARIES[target.platform][target.arch];
+    const entry = manifest?.[key];
+    if (!entry) {
+      problems.push(`${key} -> no checksum entry in manifest`);
+      continue;
+    }
+    for (const binaryName of Object.keys(required)) {
+      const binaryEntry =
+        entry.binaries?.[binaryName] ??
+        (binaryName === "ffmpeg" && entry.path && entry.sha256
+          ? { path: entry.path, sha256: entry.sha256 }
+          : null);
+      if (!binaryEntry) {
+        problems.push(`${key} -> no checksum entry for ${binaryName}`);
+      }
+    }
+  }
+  return problems;
+}
+
+/**
+ * The manifest to write: one top-level FFmpeg version (a detected one wins,
+ * otherwise the recorded one is kept), then the target entries.
+ */
+function assembleManifest({ previous, detectedVersion, entries }) {
+  const { version: recordedVersion, ...rest } = previous ?? {};
+  const version = detectedVersion || recordedVersion;
+  const out = version ? { version } : {};
+  return Object.assign(out, rest, entries);
+}
+
 function generateChecksumManifest(targets) {
-  const manifest = loadChecksums() || {};
+  const previous = loadChecksums();
+  const entries = {};
+  let detectedVersion = null;
   for (const target of targets) {
     const required = REQUIRED_BINARIES[target.platform][target.arch];
     const key = `${target.platform}:${target.arch}`;
@@ -238,15 +280,18 @@ function generateChecksumManifest(targets) {
       };
     }
 
-    manifest[key] = buildChecksumEntry({
+    const probed = probeFfmpegVersion(
+      path.join(projectRoot, required.ffmpeg),
+      runVersionProbe,
+    );
+    detectedVersion = detectedVersion || probed;
+    entries[key] = buildChecksumEntry({
       binaries,
-      version: probeFfmpegVersion(
-        path.join(projectRoot, required.ffmpeg),
-        runVersionProbe,
-      ),
-      previous: manifest[key],
+      version: probed,
+      previous: previous?.[key],
     });
   }
+  const manifest = assembleManifest({ previous, detectedVersion, entries });
   fs.writeFileSync(
     checksumsPath,
     JSON.stringify(manifest, null, 2) + "\n",
@@ -255,10 +300,29 @@ function generateChecksumManifest(targets) {
   console.log(`Checksums written to resources/ffmpeg/checksums.json`);
 }
 
-function validateTargets(targets, requireChecksums = false) {
+function validateTargets(
+  targets,
+  requireChecksums = false,
+  generating = false,
+) {
   const missing = [];
   const checksumErrors = [];
   const manifest = loadChecksums();
+
+  // A missing entry is a failure, not a warning. Generation is the one place
+  // that creates entries, so it is exempt.
+  const absentEntries =
+    manifest && !generating ? missingEntryProblems(manifest, targets) : [];
+  if (absentEntries.length > 0) {
+    console.error("\nFFmpeg/ffprobe checksum verification failed.");
+    for (const item of absentEntries) {
+      console.error(`- ${item}`);
+    }
+    console.error(
+      "\nRegenerate with: node scripts/check-ffmpeg.cjs --all --generate-checksums",
+    );
+    process.exit(1);
+  }
 
   if (requireChecksums && !manifest) {
     console.error("\nFFmpeg/ffprobe checksum verification failed.");
@@ -375,7 +439,7 @@ function main() {
     requireChecksums,
   } = parseArgs(process.argv.slice(2));
   if (shouldGenerate) {
-    validateTargets(targets, requireChecksums);
+    validateTargets(targets, requireChecksums, true);
     generateChecksumManifest(targets);
   } else {
     validateTargets(targets, requireChecksums);
@@ -388,6 +452,11 @@ function main() {
   );
 }
 
-module.exports = { buildChecksumEntry, ffmpegVersionFromOutput };
+module.exports = {
+  assembleManifest,
+  buildChecksumEntry,
+  ffmpegVersionFromOutput,
+  missingEntryProblems,
+};
 
 if (require.main === module) main();

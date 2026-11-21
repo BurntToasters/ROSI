@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -65,7 +65,7 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     # Above the 90 minute E2E bound in test-all so it can write its failure log.
-    timeout-minutes: 105
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

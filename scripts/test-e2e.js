@@ -91,6 +91,18 @@ export {
 } from "./e2e/manifest.js";
 export { e2eBackgroundValue, reportSelfHashMatches } from "./e2e/common.js";
 export { buildE2eBinary, mayReuseE2eBinary } from "./e2e/build.js";
+
+/**
+ * The binary is hashed right after the build and again at the end. A binary
+ * replaced in between no longer matches the evidence, so the gate fails.
+ */
+export function binaryChangeProblems(atBuild, atEnd) {
+  if (!atBuild || !atEnd) return ["E2E binary hash is unreadable"];
+  if (atBuild !== atEnd) {
+    return [`E2E binary changed during the run (${atBuild} -> ${atEnd})`];
+  }
+  return [];
+}
 export { round2NativeReportProblems } from "./e2e/runners/native.js";
 export { discoverV5Fixes, findRunnerReport } from "./e2e/runners/v5-fixes.js";
 export { parseRepeat, summarizeStability } from "./e2e/stability.js";
@@ -298,6 +310,7 @@ async function runE2e(timing, options = {}) {
     if (!reuse) buildE2eBinary();
     return { reusedBinary: reuse };
   });
+  const binarySha256AtBuild = sha256(fs.readFileSync(e2eBinaryPath()));
 
   let ffmpeg;
   let ffprobe;
@@ -671,6 +684,12 @@ async function runE2e(timing, options = {}) {
     const detail = `source changed during the run (${sourceChanges.join(", ")}); the binary no longer matches the checkout`;
     failure = failure ? `${failure}; ${detail}` : detail;
   }
+  const binarySha256 = sha256(fs.readFileSync(e2eBinaryPath()));
+  const binaryChanges = binaryChangeProblems(binarySha256AtBuild, binarySha256);
+  if (binaryChanges.length > 0) {
+    const detail = binaryChanges.join("; ");
+    failure = failure ? `${failure}; ${detail}` : detail;
+  }
   await timedStage(timing, "cleanup:profiles", () => {
     for (const pass of wdioPasses) {
       cleanupProfile(pass.profile.profileDir);
@@ -710,7 +729,8 @@ async function runE2e(timing, options = {}) {
       platform: process.platform,
       arch: process.arch,
       node: process.version,
-      binarySha256: sha256(fs.readFileSync(e2eBinaryPath())),
+      binarySha256,
+      binarySha256AtBuild,
       startedAt,
       ...(runPlan.requiredTools
         ? { requiredTools: runPlan.requiredTools }

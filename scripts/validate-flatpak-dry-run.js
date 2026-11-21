@@ -63,11 +63,20 @@ if (fs.existsSync(manifest)) {
   if (!yaml.includes("npm ci") || !yaml.includes("--share=network")) {
     fail("sideload build must fetch integrity-locked dependencies explicitly");
   }
-  if (
-    !yaml.includes("npm@12 --") ||
-    !yaml.includes("--before=") ||
-    !yaml.includes("3 days ago")
-  ) {
+  // npm must be pinned to the exact version CI installs (NPM_VERSION in ci.yml),
+  // so a major-only or unpinned npm@12 fails here.
+  const ciNpm = fs
+    .readFileSync(path.join(root, ".github", "workflows", "ci.yml"), "utf8")
+    .match(/^\s*NPM_VERSION:\s*"?(\d+\.\d+\.\d+)"?\s*$/m)?.[1];
+  const pinnedNpm = yaml.match(
+    /npm install --global npm@(\d+\.\d+\.\d+) /,
+  )?.[1];
+  if (!ciNpm || pinnedNpm !== ciNpm) {
+    fail(
+      `flatpak npm must be pinned to the exact CI version ${ciNpm ?? "(unknown)"}`,
+    );
+  }
+  if (!yaml.includes("--before=") || !yaml.includes("3 days ago")) {
     fail(
       "node24 SDK npm 11 must be upgraded to newest npm 12 with a 3-day --before age gate before npm ci",
     );

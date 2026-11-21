@@ -387,6 +387,27 @@ export function runRound2NativeRepairs(
  * Runs one spec through the isolated process-repair wrapper. The wrapper
  * writes repair-report.json; the gate verifies its identity and result.
  */
+/**
+ * The process-repair and audit3 specs record every case with an invariant.
+ * An absent or empty list proves nothing, and any case that did not pass
+ * (including a skipped one, which reports null) fails the scenario.
+ */
+export function downloadProcessObservationProblems(report) {
+  const observations = report?.observations;
+  if (!Array.isArray(observations) || observations.length === 0) {
+    return ["repair report has no observations"];
+  }
+  return observations
+    .filter((observation) => observation?.invariantPassed !== true)
+    .map((observation) => {
+      const name =
+        typeof observation?.name === "string" && observation.name
+          ? observation.name
+          : "unnamed observation";
+      return `${name} did not pass its invariant`;
+    });
+}
+
 export function runDownloadProcessRepairs(
   {
     ffmpeg,
@@ -495,6 +516,16 @@ export function runDownloadProcessRepairs(
     ) {
       problems.push("process-repair FFmpeg hash differs");
     }
+    // The audit3 spec writes its own file; the wrapper only collects the
+    // default one, so the runner reads the file that the selected spec wrote.
+    const observationsFile = /targeted/.test(spec)
+      ? "audit3-observations.json"
+      : "observations.json";
+    const observationsPath = path.join(repairArtifactDir, observationsFile);
+    const observations = fs.existsSync(observationsPath)
+      ? JSON.parse(fs.readFileSync(observationsPath, "utf8"))
+      : [];
+    problems.push(...downloadProcessObservationProblems({ observations }));
     if (runnerFailure) problems.push(runnerFailure);
     if (problems.length > 0) {
       return { ...scenario, reason: problems.join("; "), runnerFailure };
@@ -506,7 +537,7 @@ export function runDownloadProcessRepairs(
       binarySha256,
       startedAt: report.startedAt,
       finishedAt: report.finishedAt,
-      observations: report.observations?.length ?? 0,
+      observations: observations.length,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

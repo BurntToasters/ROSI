@@ -51,11 +51,14 @@ modules:
         set -eu
         PINNED="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"[[:space:]]*$/\1/p' rust-toolchain.toml)"
         test -n "$PINNED"
+        # TODO(pin): rustup-init is still fetched from the moving sh.rustup.rs
+        # URL. The repo names no rustup release to pin it to, so no version is
+        # guessed here; pin a release tag and its checksum before shipping.
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$PINNED" --profile minimal
         test "$(rustc --version | cut -d' ' -f2)" = "$PINNED"
       # The node24 SDK ships npm 11, older than the npm 12 that engines requires.
-      # npm@12 plus --before 3 days ago takes the newest 12.x that is old enough.
-      - npm install --global npm@12 --ignore-scripts --engine-strict=false --before="$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%SZ)" --prefix /run/build/rosi/npm-global
+      # npm is pinned to the exact version CI uses (NPM_VERSION in ci.yml).
+      - npm install --global npm@12.2.1 --ignore-scripts --engine-strict=false --before="$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%SZ)" --prefix /run/build/rosi/npm-global
       - npm ci --engine-strict=false
       - npm run sync-version
       - |
