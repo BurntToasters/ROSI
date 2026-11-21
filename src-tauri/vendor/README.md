@@ -13,7 +13,7 @@ fixes:
   `quoted form of` before `do shell script`.
 - macOS must not `rm -rf` the live `.app` before the replacement is in place.
   The live bundle is renamed to a same-volume sibling backup
-  (`.zinnia-update-backup`), the new bundle is moved in, then the backup is
+  (`.{app_name}.rosi-update-backup-{hash}`, hash of the extract path), the new bundle is moved in, then the backup is
   deleted. Failure restores the backup. Staging lives next to the `.app`, not
   under `/tmp`, so a dropped `TempDir` cannot erase the installed app. `EXDEV`
   copies onto the app's volume before the swap.

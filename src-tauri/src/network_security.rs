@@ -532,11 +532,15 @@ fn build_forwarded_request(
     if content_lengths.len() > 1 || transfer_encodings.len() > 1 {
         return None;
     }
-    let content_length = content_lengths
-        .first()
-        .map(|value| value.parse::<u64>())
-        .transpose()
-        .ok()?;
+    let content_length = match content_lengths.first() {
+        None => None,
+        Some(value) => {
+            if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+                return None;
+            }
+            Some(value.parse::<u64>().ok()?)
+        }
+    };
     if content_length.is_some_and(|length| length > MAX_HTTP_REQUEST_BODY_BYTES) {
         return None;
     }
@@ -560,6 +564,14 @@ fn build_forwarded_request(
                 .filter(|token| !token.is_empty())
                 .map(str::to_ascii_lowercase),
         );
+    }
+    // Framing headers are never dropped on a Connection token. A request that
+    // asks for that is refused rather than forwarded with a changed body.
+    if connection_tokens
+        .iter()
+        .any(|token| token == "content-length" || token == "transfer-encoding")
+    {
+        return None;
     }
     let expect_continue = headers.iter().any(|(name, value)| {
         name.eq_ignore_ascii_case("expect") && value.eq_ignore_ascii_case("100-continue")

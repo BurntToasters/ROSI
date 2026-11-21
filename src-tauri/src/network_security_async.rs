@@ -37,6 +37,25 @@ const CLIENT_DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
 const CLIENT_DRAIN_MAX_BYTES: usize = 64 * 1024;
 const MAX_DRAINING_REJECTS: usize = 32;
 const MAX_CHUNK_METADATA_LINE_BYTES: usize = 8192;
+/// Budget for a client to finish sending its request head, before the
+/// proxy-authorization check. Kept short so a local process cannot hold a
+/// connection slot for long without authenticating.
+const PRE_AUTH_HEADER_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Why a destination was not vetted. Only `Refused` is a policy decision.
+#[derive(Clone, Copy)]
+enum DestinationError {
+    Refused,
+    ResolveFailed,
+    Cancelled,
+}
+
+/// Why a direct connect to a vetted destination failed.
+#[derive(Clone, Copy)]
+enum ConnectError {
+    TimedOut,
+    Failed,
+}
 
 fn io_timeout_error() -> io::Error {
     io::Error::new(io::ErrorKind::TimedOut, "proxy I/O timed out")
@@ -486,11 +505,11 @@ fn spawn_client(
 }
 
 async fn handle_client(mut client: TcpStream, expected_auth: Arc<str>, shared: Arc<ProxyShared>) {
-    let (header, buffered) = match time::timeout(IO_TIMEOUT, read_request_header(&mut client)).await
-    {
-        Ok(Ok(result)) => result,
-        _ => return,
-    };
+    let (header, buffered) =
+        match time::timeout(PRE_AUTH_HEADER_TIMEOUT, read_request_header(&mut client)).await {
+            Ok(Ok(result)) => result,
+            _ => return,
+        };
     let Ok(header_text) = std::str::from_utf8(&header) else {
         reject_client(&mut client, 400, "Bad Request").await;
         return;
@@ -514,16 +533,18 @@ async fn handle_client(mut client: TcpStream, expected_auth: Arc<str>, shared: A
             reject_client(&mut client, 400, "Bad CONNECT Target").await;
             return;
         };
-        let Some(addresses) = vet_destination(&host, port, is_literal_loopback, &shared).await
-        else {
-            reject_client(&mut client, 403, "Destination Blocked").await;
-            return;
+        let addresses = match vet_destination(&host, port, is_literal_loopback, &shared).await {
+            Ok(addresses) => addresses,
+            Err(error) => {
+                reject_destination(&mut client, error).await;
+                return;
+            }
         };
         let (mut upstream, tunnel_leftover) = match shared.upstream.as_ref() {
             None => match connect_addresses(addresses).await {
-                Some(stream) => (stream, Vec::new()),
-                None => {
-                    reject_client(&mut client, 403, "Destination Blocked").await;
+                Ok(stream) => (stream, Vec::new()),
+                Err(error) => {
+                    reject_connect_failure(&mut client, error).await;
                     return;
                 }
             },
@@ -587,16 +608,19 @@ async fn handle_client(mut client: TcpStream, expected_auth: Arc<str>, shared: A
         return;
     };
     let literal_loopback = super::host_is_loopback(&url_host);
-    let Some(addresses) = vet_destination(&host, port, literal_loopback, &shared).await else {
-        reject_client(&mut client, 403, "Destination Blocked").await;
-        return;
+    let addresses = match vet_destination(&host, port, literal_loopback, &shared).await {
+        Ok(addresses) => addresses,
+        Err(error) => {
+            reject_destination(&mut client, error).await;
+            return;
+        }
     };
     let absolute_form = shared.upstream.is_some();
     let mut upstream = match shared.upstream.as_ref() {
         None => match connect_addresses(addresses).await {
-            Some(stream) => stream,
-            None => {
-                reject_client(&mut client, 403, "Destination Blocked").await;
+            Ok(stream) => stream,
+            Err(error) => {
+                reject_connect_failure(&mut client, error).await;
                 return;
             }
         },
@@ -681,6 +705,23 @@ async fn reject_client(stream: &mut TcpStream, code: u16, reason: &str) {
     drain_rejected_client(stream).await;
 }
 
+/// Policy refusals are 403. Resolution failures are 502. A cancelled proxy
+/// answers nothing, since the client is being torn down.
+async fn reject_destination(stream: &mut TcpStream, error: DestinationError) {
+    match error {
+        DestinationError::Refused => reject_client(stream, 403, "Destination Blocked").await,
+        DestinationError::ResolveFailed => reject_client(stream, 502, "Bad Gateway").await,
+        DestinationError::Cancelled => {}
+    }
+}
+
+async fn reject_connect_failure(stream: &mut TcpStream, error: ConnectError) {
+    match error {
+        ConnectError::TimedOut => reject_client(stream, 504, "Gateway Timeout").await,
+        ConnectError::Failed => reject_client(stream, 502, "Bad Gateway").await,
+    }
+}
+
 async fn write_rejection(stream: &mut TcpStream, code: u16, reason: &str) {
     let body = format!("{code} {reason}\n");
     let response = format!(
@@ -737,10 +778,12 @@ async fn vet_destination(
     port: u16,
     allow_literal_loopback: bool,
     shared: &ProxyShared,
-) -> Option<Vec<SocketAddr>> {
+) -> Result<Vec<SocketAddr>, DestinationError> {
     let addresses = time::timeout(DNS_RESOLUTION_TIMEOUT, resolve_destination(host, port))
         .await
-        .ok()??;
+        .ok()
+        .flatten()
+        .ok_or(DestinationError::ResolveFailed)?;
     let allowed = !addresses.is_empty()
         && addresses.iter().all(|address| {
             is_public_ip(address.ip())
@@ -749,10 +792,16 @@ async fn vet_destination(
         });
     #[cfg(feature = "e2e")]
     super::e2e::record_proxy_decision("connection", host, &addresses, allowed);
-    if !allowed || shared.is_cancelled() {
-        return None;
+    if shared.is_cancelled() {
+        return Err(DestinationError::Cancelled);
     }
-    Some(addresses)
+    if addresses.is_empty() {
+        return Err(DestinationError::ResolveFailed);
+    }
+    if !allowed {
+        return Err(DestinationError::Refused);
+    }
+    Ok(addresses)
 }
 
 async fn resolve_destination(host: &str, port: u16) -> Option<Vec<SocketAddr>> {
@@ -775,20 +824,26 @@ async fn resolve_destination(host: &str, port: u16) -> Option<Vec<SocketAddr>> {
     answer.ok().flatten()
 }
 
-async fn connect_addresses(addresses: Vec<SocketAddr>) -> Option<TcpStream> {
+async fn connect_addresses(addresses: Vec<SocketAddr>) -> Result<TcpStream, ConnectError> {
     let deadline = Instant::now() + CONNECT_TOTAL_TIMEOUT;
+    let mut timed_out = false;
     for address in super::interleave_address_families(addresses) {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
+            timed_out = true;
             break;
         }
-        if let Ok(Ok(stream)) =
-            time::timeout(remaining.min(CONNECT_TIMEOUT), TcpStream::connect(address)).await
-        {
-            return Some(stream);
+        match time::timeout(remaining.min(CONNECT_TIMEOUT), TcpStream::connect(address)).await {
+            Ok(Ok(stream)) => return Ok(stream),
+            Ok(Err(_)) => {}
+            Err(_) => timed_out = true,
         }
     }
-    None
+    Err(if timed_out {
+        ConnectError::TimedOut
+    } else {
+        ConnectError::Failed
+    })
 }
 
 /// Connects to the user's upstream proxy without applying public-IP policy to
@@ -800,7 +855,7 @@ async fn connect_to_upstream_proxy(proxy: &UpstreamProxy) -> Option<TcpStream> {
     )
     .await
     .ok()??;
-    connect_addresses(addresses).await
+    connect_addresses(addresses).await.ok()
 }
 
 async fn connect_via_upstream(
@@ -959,6 +1014,7 @@ async fn copy_chunked_body(
         position: 0,
     };
     let mut total = 0u64;
+    let mut trailer_bytes = 0usize;
     loop {
         let line = reader.read_crlf_line().await?;
         let line_without_crlf = line
@@ -984,6 +1040,13 @@ async fn copy_chunked_body(
         if size == 0 {
             loop {
                 let trailer = reader.read_crlf_line().await?;
+                trailer_bytes += trailer.len();
+                if trailer_bytes > MAX_PROXY_HEADER_BYTES {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "chunk trailers exceed the header limit",
+                    ));
+                }
                 time::timeout(IO_TIMEOUT, upstream.write_all(&trailer))
                     .await
                     .map_err(|_| io_timeout_error())??;
