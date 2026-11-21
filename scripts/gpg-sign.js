@@ -1433,9 +1433,14 @@ async function uploadAssetWithReplace(
       (asset) => asset?.name === fileName && typeof asset.id === "number",
     );
     if (!existing) throw err;
-    if (!release.draft && !allowPublishedReplace) {
+    // A published release is live: deleting before the upload would leave the
+    // name missing, or gone for good if the upload fails. uploadAllAssets swaps
+    // known clashes in transactionally; a clash that appears later stops here.
+    if (!release.draft) {
       throw new Error(
-        `Refusing to replace existing asset "${fileName}" on published release ${TAG}. Set ALLOW_ASSET_REPLACE=true to override.`,
+        allowPublishedReplace
+          ? `Asset "${fileName}" appeared on published release ${TAG} during the upload. Run the upload again to replace it safely.`
+          : `Refusing to replace existing asset "${fileName}" on published release ${TAG}. Set ALLOW_ASSET_REPLACE=true to override.`,
       );
     }
 
@@ -1458,8 +1463,10 @@ function findAssetConflicts(existingAssets, files) {
 }
 
 /**
- * Finds every name clash first, refuses a published release up front when
- * replacement is not allowed, then uploads with the flag passed through.
+ * Finds every name clash first and refuses a published release up front when
+ * replacement is not allowed. On a published release the clashing files are
+ * staged and renamed into place (replaceReleaseAssetsTransactionally); the
+ * rest upload normally. A draft replaces in place.
  */
 async function uploadAllAssets(
   release,
@@ -1468,6 +1475,7 @@ async function uploadAllAssets(
     allowReplace = ALLOW_ASSET_REPLACE,
     listAssets = listReleaseAssets,
     upload = uploadAssetWithReplace,
+    replaceTransactionally = replaceReleaseAssetsTransactionally,
     log = console.log,
   } = {},
 ) {
@@ -1477,9 +1485,20 @@ async function uploadAllAssets(
       `Refusing to replace existing asset(s) on published release ${TAG}: ${conflicts.join(", ")}. Set ALLOW_ASSET_REPLACE=true to override.`,
     );
   }
+  const swapNames = new Set(release.draft ? [] : conflicts);
   for (const filePath of files) {
+    if (swapNames.has(path.basename(filePath))) continue;
     await upload(release, filePath, { allowPublishedReplace: allowReplace });
     log(`  ^ ${path.basename(filePath)}`);
+  }
+  const swapFiles = files.filter((filePath) =>
+    swapNames.has(path.basename(filePath)),
+  );
+  if (swapFiles.length > 0) {
+    await replaceTransactionally(release, swapFiles);
+    for (const filePath of swapFiles) {
+      log(`  ^ ${path.basename(filePath)} (replaced)`);
+    }
   }
 }
 

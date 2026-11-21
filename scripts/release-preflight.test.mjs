@@ -38,7 +38,14 @@ function ciApi(runs, calls = [], { events = {}, workflowRuns } = {}) {
       const id = Number(suite[1]);
       const found = workflowRuns
         ? workflowRuns(id)
-        : [{ check_suite_id: id, event: events[id] ?? "push" }];
+        : [
+            {
+              check_suite_id: id,
+              event: events[id] ?? "push",
+              path: ".github/workflows/ci.yml",
+              head_sha: SHA,
+            },
+          ];
       return { total_count: found.length, workflow_runs: found };
     }
     return { total_count: runs.length, check_runs: runs };
@@ -154,10 +161,83 @@ test("a green ci-gate from a push run passes even with a newer scheduled run", (
         checkRun({ id: 200, ...suite(7000) }),
       ],
       [],
-      { events: { 7000: "schedule", 7001: "pull_request" } },
+      { events: { 7000: "schedule", 7001: "push" } },
     ),
   });
   assert.equal(result.verified, true);
+});
+
+test("a newer green pull_request ci-gate cannot hide a failed push run", () => {
+  const suite = (id) => ({ check_suite: { id } });
+  assert.throws(
+    () =>
+      ciCheck({
+        api: ciApi(
+          [
+            checkRun({ id: 100, ...suite(7001), conclusion: "failure" }),
+            checkRun({ id: 200, ...suite(7002) }),
+          ],
+          [],
+          { events: { 7001: "push", 7002: "pull_request" } },
+        ),
+      }),
+    /ci-gate concluded failure/,
+  );
+  assert.throws(
+    () =>
+      ciCheck({
+        api: ciApi([checkRun({ id: 200, ...suite(7002) })], [], {
+          events: { 7002: "pull_request" },
+        }),
+      }),
+    (error) =>
+      error.message.includes("push or workflow_dispatch") &&
+      error.message.includes(OVERRIDE),
+  );
+});
+
+test("a manually dispatched ci-gate counts as release proof", () => {
+  const result = ciCheck({
+    api: ciApi([checkRun({ check_suite: { id: 7003 } })], [], {
+      events: { 7003: "workflow_dispatch" },
+    }),
+  });
+  assert.equal(result.verified, true);
+});
+
+test("a ci-gate from another workflow file or commit does not count", () => {
+  const cases = {
+    "another workflow file": (id) => [
+      {
+        check_suite_id: id,
+        event: "push",
+        path: ".github/workflows/other.yml",
+        head_sha: SHA,
+      },
+    ],
+    "workflow run for another commit": (id) => [
+      {
+        check_suite_id: id,
+        event: "push",
+        path: ".github/workflows/ci.yml",
+        head_sha: OTHER_SHA,
+      },
+    ],
+  };
+  for (const [label, workflowRuns] of Object.entries(cases)) {
+    assert.throws(
+      () => ciCheck({ api: ciApi([checkRun()], [], { workflowRuns }) }),
+      (error) =>
+        error.message.includes("ci-gate") && error.message.includes(OVERRIDE),
+      label,
+    );
+  }
+});
+
+test("check runs are listed with filter=all so older runs are visible", () => {
+  const calls = [];
+  ciCheck({ api: ciApi([checkRun()], calls) });
+  assert.match(calls[0].endpoint, /filter=all/);
 });
 
 test("an unresolvable ci-gate workflow event fails closed", () => {

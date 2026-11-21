@@ -65,9 +65,15 @@ function assertZstdRunnable() {
   }
 }
 
-// Returns the event of the workflow run behind a check run, or null when it
-// cannot be resolved. Callers treat null as a failure.
-function workflowRunEvent({ run, owner, repo, api }) {
+// Workflow events whose ci-gate proves the exact commit: a push to a release
+// branch, or a manual run. Pull request runs test a merge ref, and scheduled
+// runs skip the heavy jobs.
+const RELEASE_PROOF_EVENTS = new Set(["push", "workflow_dispatch"]);
+const CI_WORKFLOW_PATH = ".github/workflows/ci.yml";
+
+// Returns { event, path, headSha } of the workflow run behind a check run, or
+// null when it cannot be resolved. Callers treat null as a failure.
+function workflowRunOf({ run, owner, repo, api }) {
   const suiteId = Number(run.check_suite?.id);
   if (!Number.isSafeInteger(suiteId) || suiteId <= 0) return null;
   const response = api(
@@ -78,22 +84,28 @@ function workflowRunEvent({ run, owner, repo, api }) {
     Array.isArray(response?.workflow_runs) ? response.workflow_runs : []
   ).filter((entry) => Number(entry?.check_suite_id) === suiteId);
   if (workflowRuns.length !== 1) return null;
-  const event = workflowRuns[0].event;
-  return typeof event === "string" && event ? event : null;
+  const { event, path: workflowPath, head_sha: headSha } = workflowRuns[0];
+  if (typeof event !== "string" || !event) return null;
+  return {
+    event,
+    path: typeof workflowPath === "string" ? workflowPath : "",
+    headSha: typeof headSha === "string" ? headSha.toLowerCase() : "",
+  };
 }
 
 /**
- * Reads the hosted `ci-gate` check run for `sha` and returns a reason string
- * when it does not prove a green CI run, or null when it does. Only the newest
- * run from the GitHub Actions app counts, so a same-named check from another
- * app or an older failed run cannot stand in for a passing one. Runs from the
- * weekly scheduled workflow never count: they skip the heavy jobs. A run whose
- * workflow event cannot be resolved fails closed.
+ * Reads the hosted `ci-gate` check runs for `sha` and returns a reason string
+ * when they do not prove a green CI run, or null when they do. Only runs from
+ * the GitHub Actions app count, so a same-named check from another app cannot
+ * stand in. Of those, only runs of ci.yml for this exact commit started by a
+ * push or workflow_dispatch count, and the newest of them decides: a newer
+ * green pull request run cannot hide a failed push run. A run whose workflow
+ * cannot be resolved fails closed.
  */
 function hostedCiProblem({ sha, owner, repo, api }) {
   const endpoint =
     `/repos/${owner}/${repo}/commits/${sha}/check-runs` +
-    `?check_name=${CI_GATE_CHECK}&per_page=100`;
+    `?check_name=${CI_GATE_CHECK}&filter=all&per_page=100`;
   const response = api("GET", endpoint);
   const runs = (Array.isArray(response?.check_runs) ? response.check_runs : [])
     .filter(
@@ -108,17 +120,21 @@ function hostedCiProblem({ sha, owner, repo, api }) {
   }
   let run = null;
   for (const candidate of runs) {
-    const event = workflowRunEvent({ run: candidate, owner, repo, api });
-    if (!event) {
-      return `could not resolve the workflow event of ${CI_GATE_CHECK} run ${candidate.id}`;
+    const workflow = workflowRunOf({ run: candidate, owner, repo, api });
+    if (!workflow) {
+      return `could not resolve the workflow run of ${CI_GATE_CHECK} run ${candidate.id}`;
     }
-    if (event !== "schedule") {
+    if (
+      RELEASE_PROOF_EVENTS.has(workflow.event) &&
+      workflow.path === CI_WORKFLOW_PATH &&
+      workflow.headSha === sha.toLowerCase()
+    ) {
       run = candidate;
       break;
     }
   }
   if (!run) {
-    return `only scheduled ${CI_GATE_CHECK} runs exist for this commit, and they do not run the full gate`;
+    return `no ${CI_GATE_CHECK} run of ${CI_WORKFLOW_PATH} from a push or workflow_dispatch exists for this commit (pull request and scheduled runs do not count)`;
   }
   if (run.status !== "completed") {
     return `${CI_GATE_CHECK} is ${run.status || "not completed"}`;

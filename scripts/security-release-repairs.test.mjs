@@ -878,17 +878,27 @@ test("T7: a published release with a conflict is refused before any upload", asy
   assert.deepEqual(h.uploads, []);
 });
 
-test("T7: the replace flag reaches every upload on a published release", async () => {
+// A published release is live: a clashing asset is swapped in by the staged
+// upload-then-rename path, never deleted before its replacement is uploaded.
+test("T7: a published release replaces clashing assets transactionally", async () => {
   const h = uploadHarness({ existingNames: ["latest.json"], draft: false });
+  const swaps = [];
   await uploadAllAssets(h.release, RELEASE_FILES, {
     allowReplace: true,
     listAssets: h.listAssets,
     upload: h.upload,
+    replaceTransactionally: async (release, files) => {
+      swaps.push({
+        release: release.id,
+        files: files.map((f) => path.basename(f)),
+      });
+    },
   });
-  assert.equal(h.uploads.length, 3);
-  for (const upload of h.uploads) {
-    assert.equal(upload.options.allowPublishedReplace, true, upload.name);
-  }
+  assert.deepEqual(
+    h.uploads.map((upload) => upload.name),
+    ["a.exe", "a.exe.asc"],
+  );
+  assert.deepEqual(swaps, [{ release: 7, files: ["latest.json"] }]);
 });
 
 test("T7: a draft replaces without the flag and a clean publish needs none", async () => {
