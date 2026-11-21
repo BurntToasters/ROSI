@@ -115,26 +115,26 @@ describe('renderer wiring and accessibility contracts', () => {
     const engine = readEngineSources();
     const uiModule = readRendererFile('modules/ui.ts');
 
-    expect(indexHtml).toMatch(/id="licenses-overlay"[\s\S]*aria-hidden="true"/);
-    expect(indexHtml).toMatch(/id="licenses-frame"[\s\S]*title="ROSI licenses"/);
+    expect(indexHtml).toMatch(/id="licenses-overlay"[^>]*aria-hidden="true"/);
+    expect(indexHtml).toMatch(/id="licenses-frame"[^>]*title="ROSI licenses"/);
     expect(engine).toMatch(/licensesOverlayEl\.addEventListener\('click'/);
     expect(engine).not.toMatch(/licensesOverlay\.addEventListener\('click'/);
 
-    expect(indexHtml).toMatch(/class="wizard-progress"[\s\S]*role="progressbar"/);
-    expect(indexHtml).toMatch(/id="wizard-step-announce"[\s\S]*aria-live="polite"/);
+    expect(indexHtml).toMatch(/class="wizard-progress"[^>]*role="progressbar"/);
+    expect(indexHtml).toMatch(/id="wizard-step-announce"[^>]*aria-live="polite"/);
     expect(engine).toMatch(/backBtnEl\.setAttribute\('hidden'/);
 
     expect(indexHtml).toMatch(
-      /id="subtitleLangsInput"[\s\S]*aria-describedby="subtitleLangsHint subtitleLangsError"/
+      /id="subtitleLangsInput"[^>]*aria-describedby="subtitleLangsHint subtitleLangsError"/
     );
-    expect(indexHtml).toMatch(/id="progress-status"[\s\S]*aria-live="polite"/);
+    expect(indexHtml).toMatch(/id="progress-status"[^>]*aria-live="polite"/);
     expect(indexHtml).toMatch(/id="progress-details" class="progress-details"><\/div>/);
-    expect(indexHtml).toMatch(/id="versionLink"[\s\S]*opens externally/);
+    expect(indexHtml).toMatch(/id="versionLink"[^>]*opens externally/);
     expect(engine).toMatch(/barWrapper\.setAttribute\('aria-valuenow', '0'\)/);
     expect(engine).toMatch(/aria-current', 'step'/);
     expect(engine).toMatch(/busy: true/);
     expect(engine).toMatch(
-      /primary: true,\s*\n\s*action: \(\) => \{\s*\n\s*void api\.openExternal\('https:\/\/rosie\.run\/support'\)/
+      /primary: true,\s*\n\s*action: \(\) => \{\s*\n\s*void openExternalLink\('https:\/\/rosie\.run\/support'/
     );
 
     expect(

@@ -18,6 +18,12 @@ interface QueueDeps {
   copyDiagnostics: (item: QueueItem) => Promise<unknown> | unknown;
   openFileLocation?: (filePath: string, queueItemId: string) => Promise<unknown> | unknown;
   focusQueueItemId?: string | null;
+  // The action to focus in the focused row (for example after a neighbour's Remove
+  // is the replacement focus). Null takes the row's first enabled control.
+  focusQueueAction?: string | null;
+  // Set when a removal left no row to focus; the panel control takes focus instead.
+  focusPanelRequested?: boolean;
+  focusPanelControl?: HTMLElement | null;
   // The inline error for a row, or null. The controller decides whether it still applies.
   rowErrorFor?: (item: QueueItem) => string | null;
 }
@@ -226,6 +232,9 @@ export function renderQueue(queue: QueueItem[], elements: QueueElements, deps: Q
     copyDiagnostics,
     openFileLocation,
     focusQueueItemId = null,
+    focusQueueAction = null,
+    focusPanelRequested = false,
+    focusPanelControl = null,
     rowErrorFor,
   } = deps;
 
@@ -252,6 +261,7 @@ export function renderQueue(queue: QueueItem[], elements: QueueElements, deps: Q
     emptyMessage.className = 'queue-empty-message';
     emptyMessage.textContent = 'No items in queue. Paste one or more links above to get started.';
     queueList.appendChild(emptyMessage);
+    if (focusPanelRequested) focusPanelControl?.focus();
     return;
   }
 
@@ -429,8 +439,16 @@ export function renderQueue(queue: QueueItem[], elements: QueueElements, deps: Q
     // be disabled (for example "Up" on the new first item), and focusing a
     // disabled button silently drops focus to the body.
     const focusRow = findQueueRow(queueList, focusQueueItemId);
-    const focusTarget =
-      focusRow?.querySelector<HTMLElement>('[data-queue-action]:not([disabled])') ?? null;
-    focusTarget?.focus();
+    const focusTarget = focusRow
+      ? Array.from(focusRow.querySelectorAll<HTMLElement>('[data-queue-action]')).find(
+          (control) =>
+            !control.hasAttribute('disabled') &&
+            (focusQueueAction === null || control.dataset.queueAction === focusQueueAction)
+        )
+      : undefined;
+    if (focusTarget) focusTarget.focus();
+    else if (focusPanelRequested) focusPanelControl?.focus();
+  } else if (focusPanelRequested) {
+    focusPanelControl?.focus();
   }
 }

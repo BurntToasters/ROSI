@@ -54,17 +54,32 @@ export function focusTopOverlayOr(target: Element | null) {
   }
 
   setMainContentInert(false);
-  if (!(target instanceof HTMLElement) || !target.isConnected || target.hasAttribute('disabled')) {
-    return;
-  }
-  if (target.closest('[aria-hidden="true"]')) {
-    const fallback = document.getElementById('url');
-    if (fallback instanceof HTMLElement && !fallback.closest('[aria-hidden="true"]')) {
-      fallback.focus();
-    }
+  if (
+    !(target instanceof HTMLElement) ||
+    !target.isConnected ||
+    target.hasAttribute('disabled') ||
+    target.closest('[aria-hidden="true"], [inert]') !== null
+  ) {
+    focusMainFallback();
     return;
   }
   target.focus();
+  // A focus() call on an element that is hidden or otherwise unfocusable does not
+  // throw; it leaves focus on BODY. Check, and fall back when that happened.
+  if (document.activeElement !== target) focusMainFallback();
+}
+
+// Where focus goes when the control that opened an overlay cannot take it back:
+// the main URL input, else the first focusable control in the main region.
+function focusMainFallback() {
+  const urlInput = document.getElementById('url');
+  if (urlInput instanceof HTMLElement && !urlInput.hasAttribute('disabled')) {
+    urlInput.focus();
+    if (document.activeElement === urlInput) return;
+  }
+  const mainContent =
+    document.getElementById('main-content') || document.querySelector('.main-content');
+  focusFirstElement(mainContent);
 }
 
 // Modal queue system

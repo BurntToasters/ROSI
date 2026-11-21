@@ -1,10 +1,9 @@
 // Startup bindings for the sidebar, help links, and licenses.
-import { api } from '../../api';
 import { hideLicenses, showKeyboardShortcuts, showLicenses } from '../overlays';
 import { refs } from '../refs';
 import { bindExternalLink } from '../settings-view';
 import { appliedTheme, syncLicensesTheme } from '../theme';
-import { closeSidebar, toggleSidebar } from '../ui-helpers';
+import { closeSidebar, openExternalLink, toggleSidebar } from '../ui-helpers';
 
 /** Sidebar, help links, and the licenses entry point. */
 export function bindAppShell() {
@@ -87,6 +86,6 @@ export function bindLicensesExternalLinks() {
       return;
     }
     if (!LICENSE_LINK_SCHEMES.has(protocol)) return;
-    void api.openExternal(target);
+    void openExternalLink(target, 'the license link');
   });
 }

@@ -1,6 +1,6 @@
 import { icon as lucideIcon, renderStatus } from './icons';
 import { setTabAvailable } from './dock';
-import { getFocusableElements } from '../engine/overlays';
+import { focusFirstElement, getFocusableElements } from '../engine/overlays';
 
 type ToastType = 'warning' | 'error' | 'success' | 'info';
 
@@ -289,12 +289,7 @@ function getTopActiveOverlayId() {
 let previousSidebarFocus: HTMLElement | null = null;
 
 function focusFirstSidebarElement(sidebar: HTMLElement): boolean {
-  const focusable = getFocusableElements(sidebar);
-  const first = focusable[0];
-  if (first) {
-    first.focus();
-    return true;
-  }
+  if (focusFirstElement(sidebar)) return true;
   const closeBtn = sidebar.querySelector<HTMLElement>('#closeSidebar');
   if (closeBtn) {
     closeBtn.focus();

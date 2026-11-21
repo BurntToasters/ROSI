@@ -177,12 +177,40 @@ function parseStatus(text: string): { icon: string | null; tone: StatusTone; tex
   return { icon: null, tone: null, text };
 }
 
+// The last status text a live region announced, keyed by element. Percentages
+// are bucketed to 10-point steps, so a tick inside a step is not announced.
+const lastAnnounced = new WeakMap<HTMLElement, string>();
+
+function announcementKey(text: string): string {
+  return text.replace(/(\d+(?:\.\d+)?)%/g, (_match, value: string) => {
+    return `${Math.floor(Number(value) / 10) * 10}%`;
+  });
+}
+
 /** Write a status line into target, showing its emoji as a Lucide icon. */
 function renderStatus(target: HTMLElement, text: string) {
   const status = parseStatus(text);
   const svg = status.icon ? icon(status.icon, 14, 'status-icon') : null;
   if (svg && status.tone) svg.classList.add(`status-icon--${status.tone}`);
-  target.replaceChildren(...(svg ? [svg] : []), document.createTextNode(status.text));
+  const write = () =>
+    target.replaceChildren(...(svg ? [svg] : []), document.createTextNode(status.text));
+
+  const live = target.getAttribute('aria-live');
+  if (!live || live === 'off') {
+    write();
+    return;
+  }
+  // Every tick rewrites the text. Only a meaningful change may be announced; the
+  // visible text is updated either way, with the region switched off meanwhile.
+  const key = announcementKey(text);
+  if (lastAnnounced.get(target) === key) {
+    target.setAttribute('aria-live', 'off');
+    write();
+    target.setAttribute('aria-live', live);
+    return;
+  }
+  lastAnnounced.set(target, key);
+  write();
 }
 
 initializeIcons();

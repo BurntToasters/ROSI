@@ -146,10 +146,12 @@
     background: Highlight;
   }
 
+  /* A gradient is a background-image, which forced colors drops, so the sweep
+     becomes a solid Highlight fill that pulses in opacity instead. */
   .progress-bar.indeterminate,
   .queue-item-progress-bar.indeterminate {
-    background: linear-gradient(90deg, transparent, Highlight, transparent);
-    background-size: 200% 100%;
+    background: Highlight;
+    animation: forced-indeterminate 1.5s ease-in-out infinite;
   }
 
   .phase-dot,
@@ -211,6 +213,16 @@
   .wizard-theme-preview {
     forced-color-adjust: none;
     border-color: CanvasText;
+  }
+}
+
+@keyframes forced-indeterminate {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
   }
 }
 

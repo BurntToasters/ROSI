@@ -42,7 +42,7 @@ import { fetchFormats } from './engine/formats';
 import { showModal } from './engine/overlays';
 import { formatRelativeTime, revealFileLocation } from './engine/progress';
 import { applyTheme } from './engine/theme';
-import { showToast } from './engine/ui-helpers';
+import { openExternalLink, showToast } from './engine/ui-helpers';
 import { cleanupUpdaterListeners, setupAutoUpdater } from './engine/updater-ui';
 import { launchSetupWizard } from './engine/wizard';
 import { api } from './api';
@@ -73,6 +73,7 @@ function setPrepareForCloseHandler(handler: PrepareForCloseHandler) {
  * that call fails too; its version mirrors CURRENT_SETTINGS_VERSION in
  * `src-tauri/src/constants.rs` because no backend answer exists at that point.
  */
+// Must track CURRENT_SETTINGS_VERSION in src-tauri/src/constants.rs.
 const MINIMAL_SETTINGS_VERSION = 7;
 
 async function settingsAfterLoadFailure(): Promise<{
@@ -155,7 +156,10 @@ async function applyAppVersion() {
       );
       versionLink.addEventListener('click', (event) => {
         event.preventDefault();
-        void api.openExternal(`https://github.com/BurntToasters/ROSI/releases/tag/v${version}`);
+        void openExternalLink(
+          `https://github.com/BurntToasters/ROSI/releases/tag/v${version}`,
+          'the release notes'
+        );
       });
       // Same rule as is_beta_version in src-tauri/src/updater.rs; the Rust side
       // owns the update policy, this only styles the version label.

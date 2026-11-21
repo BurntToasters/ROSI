@@ -18,16 +18,26 @@ export function noteActivityUpdate() {
 export function bindActivityControls() {
   const { activityPanel, clearConsoleBtn, clearHistoryBtn, outputEl } = refs;
   const updatesBeforeRead = activityUpdatesSeen;
+  // A failed startup read is non-blocking: the panel stays usable and the next
+  // activity event still fills it in.
+  const reportLoadFailure = () =>
+    showToast('Could not load download activity. It will update after the next download.', {
+      type: 'warning',
+    });
   api
     .getDownloadActivity()
     .then((result) => {
       if (!result || !result.ok) {
         logError('Could not load download activity', result?.error?.message);
+        reportLoadFailure();
         return;
       }
       if (activityUpdatesSeen === updatesBeforeRead) activityPanel?.setEntries(result.data);
     })
-    .catch((error: unknown) => logError('Could not load download activity', error));
+    .catch((error: unknown) => {
+      logError('Could not load download activity', error);
+      reportLoadFailure();
+    });
 
   if (clearHistoryBtn) {
     clearHistoryBtn.addEventListener('click', (e) => {

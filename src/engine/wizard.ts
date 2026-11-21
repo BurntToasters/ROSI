@@ -3,6 +3,7 @@ import { icon } from '../modules/icons';
 import { RosiSettings, isValidSubtitleLangs, logError, renderFolderSummary } from './core';
 import { DENO_INSTALL_DOCS, isLinuxPlatform } from './deno';
 import { UI_MESSAGES } from './messages';
+import { openExternalLink } from './ui-helpers';
 import {
   focusFirstElement,
   focusTopOverlayOr,
@@ -313,7 +314,7 @@ function setupDenoStep(steps: NodeListOf<HTMLElement>, isFlatpak: boolean) {
     setDenoStatus('missing', UI_MESSAGES.wizard.denoMissing);
     if (isLinuxPlatform()) {
       setDenoAction(UI_MESSAGES.wizard.installInstructions, () => {
-        void api.openExternal(DENO_INSTALL_DOCS);
+        void openExternalLink(DENO_INSTALL_DOCS, 'the Deno instructions');
       });
     } else {
       setDenoAction(UI_MESSAGES.wizard.installDeno, () => void installDenoFromWizard());
@@ -340,7 +341,7 @@ function setupDenoStep(steps: NodeListOf<HTMLElement>, isFlatpak: boolean) {
         (error instanceof Error ? error.message : 'Unknown error');
       setDenoStatus('error', UI_MESSAGES.wizard.denoInstallFailed(message));
       setDenoAction(UI_MESSAGES.wizard.installInstructions, () => {
-        void api.openExternal(DENO_INSTALL_DOCS);
+        void openExternalLink(DENO_INSTALL_DOCS, 'the Deno instructions');
       });
     }
   }
@@ -369,7 +370,7 @@ function setupDenoStep(steps: NodeListOf<HTMLElement>, isFlatpak: boolean) {
       logError('Wizard Deno check failed', error);
       setDenoStatus('error', UI_MESSAGES.wizard.denoCheckFailed);
       setDenoAction(UI_MESSAGES.wizard.installInstructions, () => {
-        void api.openExternal(DENO_INSTALL_DOCS);
+        void openExternalLink(DENO_INSTALL_DOCS, 'the Deno instructions');
       });
     }
   }
@@ -556,10 +557,19 @@ export function launchSetupWizard(
     if (skipBtn) skipBtn.disabled = busy;
   }
 
+  /** Puts the in-memory settings and their side effects back to a pre-Skip snapshot. */
+  function restoreSettingsSnapshot(snapshot: RosiSettings) {
+    Object.assign(settings, snapshot);
+    applyThemeFn(settings.theme || 'system');
+    applyFlatUi(!!settings.flatUi);
+    updateBackgroundAnimation(settings.animateBackground ?? true);
+  }
+
   async function skipWizard() {
     if (wizardSkipping || wizardSaving || wizardClosed) return;
     wizardSkipping = true;
     setWizardBusy(true);
+    const before = { ...settings } as RosiSettings;
     const defaultsLoaded = await applyWizardDefaults();
     if (!defaultsLoaded) {
       wizardSkipping = false;
@@ -570,7 +580,19 @@ export function launchSetupWizard(
       }
       return;
     }
-    await closeWizard(true);
+    try {
+      await closeWizard(true);
+    } catch (error) {
+      logError('Setup skip failed to save settings', error);
+      wizardSaving = false;
+      wizardSkipping = false;
+      setWizardBusy(false);
+      if (wizardError) {
+        wizardError.textContent = UI_MESSAGES.wizard.saveFailed;
+        wizardError.hidden = false;
+      }
+    }
+    if (!wizardClosed) restoreSettingsSnapshot(before);
   }
   skipBtn?.addEventListener('click', () => void skipWizard());
 

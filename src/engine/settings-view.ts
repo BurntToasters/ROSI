@@ -7,7 +7,7 @@ import { isModalActive, modalQueue, showModal } from './overlays';
 import { refs } from './refs';
 import { persistSettings, settingsStore } from './settings-store';
 import { applyFlatUi, applyTheme, updateBackgroundAnimation } from './theme';
-import { toggleAdvancedUI, updateConsoleVisibility } from './ui-helpers';
+import { openExternalLink, toggleAdvancedUI, updateConsoleVisibility } from './ui-helpers';
 import { api } from '../api';
 
 // update UI from settings
@@ -232,7 +232,7 @@ export function maybeShowSupportModal() {
         icon: 'heart',
         primary: true,
         action: () => {
-          void api.openExternal('https://rosie.run/support');
+          void openExternalLink('https://rosie.run/support', 'the support page');
           settingsStore.settings.hideSupportModal = true;
           void persistSettings();
         },
@@ -250,7 +250,9 @@ export function maybeShowSupportModal() {
 
 export const bindExternalLink = (element: HTMLElement | null, url: string) => {
   // Look the bridge up per click so it is never a stale reference.
-  bindExternalLinkTo(element, url, (target) => api.openExternal(target));
+  bindExternalLinkTo(element, url, (target) => {
+    void openExternalLink(target, 'the link');
+  });
 };
 
 export function applySettingsSearch(rawQuery: string) {

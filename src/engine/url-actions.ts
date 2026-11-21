@@ -118,6 +118,8 @@ export async function replayActivityDownload(entry: RosiDownloadActivity) {
     downloadState.downloadAbort?.();
     hideProgressBar();
   });
+  // The Cancel control must be clickable; a stale idle-state disabled class would hide it.
+  refs.downloadBtn?.classList.remove('is-disabled');
   applyActiveDownloadProgressPhases(settingsStore.settings, 'Starting download...');
   try {
     prepareManualDownloadStart(operation);

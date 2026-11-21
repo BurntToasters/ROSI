@@ -248,6 +248,9 @@ export function renderQueue(queue: RosiQueueItem[]) {
     { queueList: refs.queueList, queueSection: refs.queueSection, queueCount: refs.queueCount },
     {
       focusQueueItemId: queueController.focusQueueItemId,
+      focusQueueAction: queueController.focusQueueAction,
+      focusPanelRequested: queueController.focusPanelOnRender,
+      focusPanelControl: refs.queueUrlInput,
       retryQueueItem: async (id: string) => {
         queueController.focusQueueItemId = id;
         const endQueueAction = beginQueueAction();
@@ -337,24 +340,25 @@ export function renderQueue(queue: RosiQueueItem[]) {
       },
       rowErrorFor,
       removeFromQueue: async (id: string) => {
-        const removeIndex = queueController.currentQueue.findIndex((item) => item.id === id);
-        const nextFocusId =
+        // Focus moves to the Remove control of the next row, else the previous
+        // row, else the queue panel's URL input. Downloading rows have no Remove.
+        const queue = queueController.currentQueue;
+        const removeIndex = queue.findIndex((item) => item.id === id);
+        const hasRemove = (item: RosiQueueItem) => item.status !== 'downloading';
+        const neighbour =
           removeIndex >= 0
-            ? queueController.currentQueue
-                .slice(removeIndex + 1)
-                .find((item) => item.status === 'pending')?.id ||
-              queueController.currentQueue
-                .slice(0, removeIndex)
-                .reverse()
-                .find((item) => item.status === 'pending')?.id ||
-              null
+            ? (queue.slice(removeIndex + 1).find(hasRemove) ??
+              queue.slice(0, removeIndex).reverse().find(hasRemove) ??
+              null)
             : null;
-        queueController.focusQueueItemId = nextFocusId;
+        queueController.focusQueueItemId = neighbour?.id ?? null;
+        queueController.focusQueueAction = neighbour ? 'queue-item-remove' : null;
+        queueController.focusPanelOnRender = neighbour === null;
         const endQueueAction = beginQueueAction();
         try {
           const result = await api.removeFromQueue(id);
           if (!result || !result.ok) {
-            queueController.focusQueueItemId = null;
+            clearRemoveFocus();
             const message = result?.error?.message || 'Could not remove the queue item.';
             setQueueStatusMessage(message);
             showToast(message, { type: 'error' });
@@ -363,7 +367,7 @@ export function renderQueue(queue: RosiQueueItem[]) {
             setQueueStatusMessage('Removed item from the queue.');
           }
         } catch {
-          queueController.focusQueueItemId = null;
+          clearRemoveFocus();
           const message = 'Could not remove the queue item.';
           setQueueStatusMessage(message);
           showToast(message, { type: 'error' });
@@ -375,6 +379,15 @@ export function renderQueue(queue: RosiQueueItem[]) {
     }
   );
   queueController.focusQueueItemId = null;
+  queueController.focusQueueAction = null;
+  queueController.focusPanelOnRender = false;
+}
+
+/** Drops a pending focus move after a removal failed, so it cannot apply later. */
+function clearRemoveFocus() {
+  queueController.focusQueueItemId = null;
+  queueController.focusQueueAction = null;
+  queueController.focusPanelOnRender = false;
 }
 
 /**
@@ -459,6 +472,10 @@ export function beginQueueAction() {
 // Owned by the renderer controller; set during startup and updated while it runs.
 export const queueController: {
   focusQueueItemId: string | null;
+  // The action to focus in the focused row; null takes the first enabled control.
+  focusQueueAction: string | null;
+  // Set when a removal left no row to focus, so the queue panel control takes focus.
+  focusPanelOnRender: boolean;
   currentQueue: RosiQueueItem[];
   queueStatusTimer: ReturnType<typeof setTimeout> | null;
   queueActionLocks: number;
@@ -471,6 +488,8 @@ export const queueController: {
   };
 } = {
   focusQueueItemId: null,
+  focusQueueAction: null,
+  focusPanelOnRender: false,
   currentQueue: [],
   queueStatusTimer: null,
   queueActionLocks: 0,

@@ -29,6 +29,21 @@ function getTabButton(tab: DockTab) {
   return getDock()?.querySelector<HTMLButtonElement>(`[data-dock-tab="${tab}"]`) ?? null;
 }
 
+/** The unseen dot is colour only, so a visually hidden label carries the same news. */
+function setUnseen(button: HTMLElement, unseen: boolean) {
+  button.classList.toggle('has-unseen', unseen);
+  const existing = button.querySelector<HTMLElement>('.dock-unseen-label');
+  if (!unseen) {
+    existing?.remove();
+    return;
+  }
+  if (existing) return;
+  const label = document.createElement('span');
+  label.className = 'sr-only dock-unseen-label';
+  label.textContent = 'new activity';
+  button.appendChild(label);
+}
+
 function getPanel(button: HTMLElement | null) {
   const id = button?.getAttribute('aria-controls');
   return id ? document.getElementById(id) : null;
@@ -70,7 +85,7 @@ function render() {
     const selected = tab === state.tab;
     button.setAttribute('aria-selected', String(selected));
     button.tabIndex = selected ? 0 : -1;
-    if (selected) button.classList.remove('has-unseen');
+    if (selected) setUnseen(button, false);
     const panel = getPanel(button);
     if (panel) panel.hidden = !selected;
   });
@@ -111,7 +126,8 @@ export function setCollapsed(collapsed: boolean) {
 export function markUnseen(tab: string) {
   if (!isDockTab(tab)) return;
   if (tab === state.tab && !state.collapsed) return;
-  getTabButton(tab)?.classList.add('has-unseen');
+  const button = getTabButton(tab);
+  if (button) setUnseen(button, true);
 }
 
 export function setTabAvailable(tab: string, available: boolean) {

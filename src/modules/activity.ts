@@ -36,7 +36,8 @@ interface ActivityRow {
   outcome: 'success' | 'failed' | 'cancelled';
   partial?: boolean;
   title: string;
-  subtitle: string;
+  // The row's detail text without the relative time, which refreshes on its own.
+  details: string;
   timestamp: number;
   url: string | null;
   outputPath?: string | null;
@@ -142,10 +143,16 @@ function announceNewEntries(announcer: HTMLElement, rows: ActivityRow[], newIds:
       : `${newRows.length} new downloads recorded.`;
 }
 
-function toActivityRows(
-  activityEntries: RosiDownloadActivity[],
+/** Detail text followed by the relative time, the form every row's time line uses. */
+function activityTimeText(
+  details: string,
+  timestamp: number,
   formatRelativeTime: RosiActivityPanelDeps['formatRelativeTime']
-): ActivityRow[] {
+) {
+  return [details, formatRelativeTime(timestamp)].filter(Boolean).join(' • ');
+}
+
+function toActivityRows(activityEntries: RosiDownloadActivity[]): ActivityRow[] {
   if (activityEntries.length > 0) {
     return activityEntries.map((entry) => {
       // A failed entry's retained original is listed as an output and as
@@ -171,14 +178,13 @@ function toActivityRows(
           : successfulOutputs > 1
             ? uiMessages().activity.filesSaved(successfulOutputs)
             : '',
-        formatRelativeTime(entry.completedAt),
       ].filter(Boolean);
       return {
         id: entry.id,
         outcome: entry.outcome,
         partial: entry.outcome === 'failed' && successfulOutputs > 0 && failedOutputs > 0,
         title,
-        subtitle: parts.join(' • '),
+        details: parts.join(' • '),
         timestamp: entry.completedAt,
         url: entry.url,
         outputPath:
@@ -197,7 +203,7 @@ function toActivityRows(
     outcome: entry.status,
     partial: false,
     title: entry.filename || 'Unknown file',
-    subtitle: formatRelativeTime(entry.timestamp),
+    details: '',
     timestamp: entry.timestamp,
     url: null,
     outputPath: entry.path ?? undefined,
@@ -301,6 +307,8 @@ function createActivityRowElement(
   deps: RosiActivityPanelDeps
 ) {
   const { renderStatusText, formatRelativeTime } = deps;
+  const formatTime = (timestamp: number) =>
+    activityTimeText(row.details, timestamp, formatRelativeTime);
   const item = document.createElement('div');
   item.className = 'history-item';
   item.dataset.activityId = row.id;
@@ -316,7 +324,10 @@ function createActivityRowElement(
   filenameEl.textContent = row.title;
   const timeEl = document.createElement('span');
   timeEl.className = 'history-time';
-  timeEl.textContent = row.subtitle || formatRelativeTime(row.timestamp);
+  // The refresh timer rewrites this text from the stored details and timestamp.
+  timeEl.dataset.details = row.details;
+  timeEl.dataset.timestamp = String(row.timestamp);
+  timeEl.textContent = formatTime(row.timestamp);
   info.append(filenameEl, timeEl);
   if (row.error) {
     const errorEl = document.createElement('span');
@@ -348,7 +359,7 @@ function renderActivityList(
   const countEl = document.getElementById('history-count');
   if (!listEl || !historySection) return;
 
-  const rows = toActivityRows(activityEntries, deps.formatRelativeTime);
+  const rows = toActivityRows(activityEntries);
   const visibleRows = filterActivityRows(rows, activityFilter);
   if (countEl) countEl.textContent = String(rows.length);
 
@@ -403,6 +414,28 @@ function bindActivityFilterButtons(setActivityFilter: (filter: ActivityFilter) =
   });
 }
 
+// Relative times ("5 min ago") age while the panel is on screen.
+const RELATIVE_TIME_REFRESH_MS = 60_000;
+
+/** The panel is on screen when it is not hidden and the dock is not collapsed. */
+function isActivityPanelShowing(): boolean {
+  const panel = document.getElementById('download-history');
+  const dock = document.getElementById('dock');
+  return !!panel && !panel.hidden && !dock?.classList.contains('collapsed');
+}
+
+/** Rewrites only the time text of each rendered row; the list is not rebuilt. */
+function refreshRelativeTimes(formatRelativeTime: RosiActivityPanelDeps['formatRelativeTime']) {
+  const listEl = document.getElementById('history-list');
+  if (!listEl) return;
+  listEl.querySelectorAll<HTMLElement>('.history-time[data-timestamp]').forEach((timeEl) => {
+    const timestamp = Number(timeEl.dataset.timestamp);
+    if (!Number.isFinite(timestamp)) return;
+    const text = activityTimeText(timeEl.dataset.details ?? '', timestamp, formatRelativeTime);
+    if (timeEl.textContent !== text) timeEl.textContent = text;
+  });
+}
+
 // Owns the download activity list. Call once, from the engine's startup.
 export function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPanel {
   const { showToast, formatRelativeTime, markUnseen } = deps;
@@ -410,11 +443,37 @@ export function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPane
   let activityEntries: RosiDownloadActivity[] = [];
   let activityFilter: ActivityFilter = 'all';
   let activityLoaded = false;
+  let relativeTimeTimer: ReturnType<typeof setInterval> | null = null;
 
   const announcer = createActivityAnnouncer();
 
+  // Start the timer while the panel shows and clear it when the panel hides.
+  function syncRelativeTimeTimer() {
+    if (isActivityPanelShowing()) {
+      if (relativeTimeTimer !== null) return;
+      refreshRelativeTimes(formatRelativeTime);
+      relativeTimeTimer = setInterval(
+        () => refreshRelativeTimes(formatRelativeTime),
+        RELATIVE_TIME_REFRESH_MS
+      );
+    } else if (relativeTimeTimer !== null) {
+      clearInterval(relativeTimeTimer);
+      relativeTimeTimer = null;
+    }
+  }
+  // The dock toggles the panel's hidden state and the collapsed class on tab changes.
+  const dock = document.getElementById('dock');
+  if (dock && typeof MutationObserver !== 'undefined') {
+    new MutationObserver(syncRelativeTimeTimer).observe(dock, {
+      attributes: true,
+      attributeFilter: ['class', 'hidden'],
+      subtree: true,
+    });
+  }
+
   function renderActivity() {
     renderActivityList(activityEntries, activityFilter, deps);
+    syncRelativeTimeTimer();
   }
 
   function setActivityEntries(entries: RosiDownloadActivity[]) {
@@ -429,7 +488,7 @@ export function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPane
       markUnseen('activity');
     }
     if (activityLoaded) {
-      announceNewEntries(announcer, toActivityRows(activityEntries, formatRelativeTime), newIds);
+      announceNewEntries(announcer, toActivityRows(activityEntries), newIds);
     }
     activityLoaded = true;
     renderActivity();
