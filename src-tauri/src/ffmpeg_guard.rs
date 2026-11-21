@@ -325,8 +325,10 @@ fn shared_directory(
         if shared_directory_intact(&directory, &bytes, config) {
             return Ok(directory);
         }
+        // The old directory may still be in use by a running operation, so it
+        // is not deleted here. Dropping it from the registry leaves it for the
+        // startup sweep, and a fresh directory takes its place.
         registry.remove(&bytes);
-        let _ = fs::remove_dir_all(&directory);
     }
     for _ in 0..32 {
         let directory = root.join(format!("{LAUNCHER_PREFIX}{}", crate::fs_util::uuid_v4()));

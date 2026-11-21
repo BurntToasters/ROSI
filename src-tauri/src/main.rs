@@ -191,7 +191,7 @@ macro_rules! generate_app_handler {
     };
 }
 
-/// Work is stopped, so the watchdog has nothing left to clean.
+/// Work is stopped; the watchdog still stops any helper group it tracks.
 #[cfg(unix)]
 fn notify_watchdog_clean_exit() {
     if let Err(error) = process_watchdog::clean_exit() {
@@ -366,7 +366,8 @@ fn main() {
             ..
         } if app_handle
             .get_webview_window(app_state::MAIN_WINDOW)
-            .is_none() =>
+            .is_none()
+            && !window::APP_QUITTING.load(std::sync::atomic::Ordering::SeqCst) =>
         {
             if let Err(error) = window::show_main_window(app_handle) {
                 logging::warn(&format!("Failed to reopen main window: {error}"));

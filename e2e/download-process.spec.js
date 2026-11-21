@@ -2006,13 +2006,36 @@ describe("ROSI downloader and process repairs", () => {
           entry.command.includes("rosi-yt-dlp") &&
           entry.command.includes(marker),
       );
-      const watchdogs = table.filter((entry) =>
-        entry.command.includes("--rosi-process-watchdog"),
+      // Find the ROSI process under test: the ancestor of the held yt-dlp
+      // that runs the E2E binary. Other ROSI instances on this machine (and
+      // their watchdogs) are ignored.
+      const byPid = new Map(table.map((entry) => [entry.pid, entry]));
+      const rosiOwnerPid = (entry) => {
+        const seen = new Set();
+        let current = entry;
+        while (current && !seen.has(current.pid)) {
+          seen.add(current.pid);
+          if (
+            process.env.ROSI_E2E_BINARY &&
+            current.command.startsWith(process.env.ROSI_E2E_BINARY)
+          ) {
+            return current.pid;
+          }
+          current = byPid.get(current.ppid);
+        }
+        return null;
+      };
+      const owners = [...new Set(ytdlp.map(rosiOwnerPid))];
+      const rosi =
+        owners.length === 1 && owners[0] !== null ? byPid.get(owners[0]) : null;
+      // The watchdog that belongs to this ROSI is its direct child.
+      const watchdogs = table.filter(
+        (entry) =>
+          entry.command.includes("--rosi-process-watchdog") &&
+          rosi !== null &&
+          entry.ppid === rosi.pid,
       );
       const watchdog = watchdogs.length === 1 ? watchdogs[0] : null;
-      const rosi = watchdog
-        ? table.find((entry) => entry.pid === watchdog.ppid)
-        : null;
       rosiPid = rosi?.pid ?? null;
       const before = {
         heldFfmpeg: held,

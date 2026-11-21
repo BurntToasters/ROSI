@@ -3,9 +3,11 @@
 //! ROSI re-executes its own binary with `--rosi-process-watchdog` and keeps the
 //! write end of a pipe. The watchdog reads newline-separated messages from it:
 //! `+<pgid>` when ROSI starts a child process group, `-<pgid>` when that group
-//! is finished, and `q` on a clean exit. End of file without `q` means ROSI
-//! died: every registered group gets SIGTERM, then SIGKILL after the grace
-//! period. This covers macOS (no `PR_SET_PDEATHSIG`) and processes that yt-dlp
+//! is finished, and `q` on a clean exit. Either way, every group still
+//! registered gets SIGTERM, then SIGKILL after the grace period. A clean exit
+//! only means ROSI finished its own work; a group still registered then (for
+//! example a Deno install or version probe) is a leftover and must not outlive
+//! ROSI. This covers macOS (no `PR_SET_PDEATHSIG`) and processes that yt-dlp
 //! starts itself on Linux.
 //!
 //! Only `std` and `libc` are used, so the module stands alone.
@@ -80,7 +82,8 @@ pub fn unregister_group(pgid: u32) -> io::Result<()> {
     send(format!("-{pgid}\n").as_bytes())
 }
 
-/// Tells the watchdog ROSI is exiting normally, so it must not kill anything.
+/// Tells the watchdog ROSI is exiting normally. Groups still registered at that
+/// point are stopped, the same as after a crash.
 pub fn clean_exit() -> io::Result<()> {
     let result = send(b"q\n");
     FINISHED.store(true, Ordering::SeqCst);
@@ -134,11 +137,6 @@ pub fn dispatch_from_argv() -> Option<i32> {
     Some(run())
 }
 
-enum Ending {
-    Clean,
-    RosiDied,
-}
-
 fn run() -> i32 {
     // Leave ROSI's session and process group, so whatever reaches ROSI does
     // not reach the watchdog. This fails harmlessly if already a leader.
@@ -153,9 +151,8 @@ fn run() -> i32 {
     }
     close_inherited_descriptors();
     let mut groups = Vec::new();
-    if let Ending::RosiDied = watch(&mut groups) {
-        terminate_groups(&mut groups);
-    }
+    watch(&mut groups);
+    terminate_groups(&mut groups);
     0
 }
 
@@ -171,7 +168,8 @@ fn close_inherited_descriptors() {
     }
 }
 
-fn watch(groups: &mut Vec<i32>) -> Ending {
+/// Applies group messages until the clean-exit marker or the end of the pipe.
+fn watch(groups: &mut Vec<i32>) {
     // SAFETY: getpgrp has no preconditions.
     let own_group = unsafe { libc::getpgrp() };
     let mut input = io::stdin().lock();
@@ -180,12 +178,12 @@ fn watch(groups: &mut Vec<i32>) -> Ending {
     let mut overflow = false;
     loop {
         let read = match input.read(&mut buffer) {
-            Ok(0) => return Ending::RosiDied,
+            Ok(0) => return,
             Ok(read) => read,
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             // The pipe cannot be watched any more, which is the same as ROSI
             // being gone.
-            Err(_) => return Ending::RosiDied,
+            Err(_) => return,
         };
         for &byte in &buffer[..read] {
             if byte != b'\n' {
@@ -197,7 +195,7 @@ fn watch(groups: &mut Vec<i32>) -> Ending {
                 continue;
             }
             if !overflow && line == CLEAN_EXIT {
-                return Ending::Clean;
+                return;
             }
             if !overflow {
                 apply(&line, own_group, groups);

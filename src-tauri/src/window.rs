@@ -683,7 +683,11 @@ pub fn on_main_destroyed(app: &AppHandle) {
 /// Quit from the app menu: run the normal close flow first, then exit.
 #[cfg(target_os = "macos")]
 pub fn request_quit(app: &AppHandle) {
-    APP_QUITTING.store(true, Ordering::SeqCst);
+    // The single "shutting down" guard: a repeated quit request while a quit
+    // is already under way (or a restart) is ignored.
+    if APP_QUITTING.swap(true, Ordering::SeqCst) {
+        return;
+    }
     match app.get_webview_window(MAIN_WINDOW) {
         Some(window) => {
             if let Err(error) = window.close() {
