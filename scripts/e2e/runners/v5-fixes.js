@@ -190,13 +190,14 @@ export function findRunnerReport(
 }
 
 /**
- * Screenshot records a WebdriverIO v5-fixes pass wrote to its results file
- * (ROSI_E2E_RESULTS). Returns { shots, problem }; an unreadable file is a
- * problem, since its shots would otherwise drop out of the gate silently.
+ * Screenshot and skip records a WebdriverIO v5-fixes pass wrote to its results
+ * file (ROSI_E2E_RESULTS). Returns { shots, skipped, problem }; an unreadable
+ * file is a problem, since its records would otherwise drop out of the gate
+ * silently.
  */
-function v5PassShots(pass) {
+function v5PassRecords(pass) {
   if (!pass?.resultsPath || !fs.existsSync(pass.resultsPath)) {
-    return { shots: [], problem: null };
+    return { shots: [], skipped: [], problem: null };
   }
   let records;
   try {
@@ -204,7 +205,8 @@ function v5PassShots(pass) {
   } catch (error) {
     return {
       shots: [],
-      problem: `screenshot results unreadable: ${error instanceof Error ? error.message : String(error)}`,
+      skipped: [],
+      problem: `pass results unreadable: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
   const shots = Array.isArray(records)
@@ -212,7 +214,10 @@ function v5PassShots(pass) {
         .filter((record) => record?.name === V5_SCREENSHOT_RECORD)
         .flatMap((record) => (Array.isArray(record.shots) ? record.shots : []))
     : [];
-  return { shots, problem: null };
+  const skipped = Array.isArray(records)
+    ? reportedSkips({ checks: records })
+    : [];
+  return { shots, skipped, problem: null };
 }
 
 export function v5AreaScenario(
@@ -251,11 +256,20 @@ export function v5AreaScenario(
   ) {
     problems.push(pass?.reason ? `specs: ${pass.reason}` : "specs did not run");
   }
-  // Runner-owned areas report their own files; only WebdriverIO passes record shots.
-  const { shots, problem: shotProblem } = area.runner
-    ? { shots: [], problem: null }
-    : v5PassShots(pass);
-  if (shotProblem) problems.push(shotProblem);
+  // Runner-owned areas report their own files; only WebdriverIO passes write
+  // shots and skip records to the pass results file. A spec that does not
+  // apply on this platform records a skip, which needs a case allowance.
+  const passRecords = area.runner
+    ? { shots: [], skipped: [], problem: null }
+    : v5PassRecords(pass);
+  const shots = passRecords.shots;
+  if (passRecords.problem) problems.push(passRecords.problem);
+  if (!area.runner && passRecords.skipped.length > 0) {
+    skippedCases = passRecords.skipped;
+    problems.push(
+      ...caseSkipProblems(`v5-fixes/${area.area}`, skippedCases, platform),
+    );
+  }
   const scenario = {
     name: `v5-fixes/${area.area}`,
     status: problems.length > 0 ? "failed" : "passed",

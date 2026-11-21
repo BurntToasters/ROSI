@@ -845,6 +845,18 @@
   ],
   "allowedCaseSkips": [
     {
+      "scenario": "v5-fixes/media-dispatch",
+      "case": "launcher-reuse",
+      "platform": "darwin",
+      "reason": "The shared launcher directory exists only on Windows. Other platforms keep one script directory per operation."
+    },
+    {
+      "scenario": "v5-fixes/media-dispatch",
+      "case": "launcher-reuse",
+      "platform": "linux",
+      "reason": "The shared launcher directory exists only on Windows. Other platforms keep one script directory per operation."
+    },
+    {
       "scenario": "v5-fixes/downloader",
       "case": "install-fallback",
       "platform": "linux",

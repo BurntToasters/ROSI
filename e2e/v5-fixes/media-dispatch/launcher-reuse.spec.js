@@ -24,6 +24,24 @@ function record(name, details) {
   );
 }
 
+// The gate reads skip records from this pass's results file and fails the area
+// unless e2e/suites.json allows the skip on this platform.
+function recordGateSkip(name, reason) {
+  const resultsPath = process.env.ROSI_E2E_RESULTS;
+  if (!resultsPath) return;
+  let records = [];
+  if (fs.existsSync(resultsPath)) {
+    const parsed = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
+    if (Array.isArray(parsed)) records = parsed;
+  }
+  records.push({ name, skipped: true, reason });
+  fs.writeFileSync(
+    resultsPath,
+    `${JSON.stringify(records, null, 2)}
+`,
+  );
+}
+
 function launcherDirectories(root) {
   if (!fs.existsSync(root)) return [];
   return fs
@@ -46,7 +64,10 @@ describe("R2 media-tool launcher location and reuse", () => {
 
   it("shares one local launcher directory across fetches with equal settings", async () => {
     if (process.platform !== "win32") {
+      const reason =
+        "The shared launcher directory exists only on Windows. Other platforms keep one script directory per operation.";
       record("non-windows-not-applicable", { platform: process.platform });
+      recordGateSkip("launcher-reuse", reason);
       return;
     }
     assert.ok(BINARY && fs.existsSync(BINARY), "ROSI_E2E_BINARY is not set");

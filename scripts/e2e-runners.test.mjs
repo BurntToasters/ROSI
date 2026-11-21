@@ -20,6 +20,7 @@ import {
   V5_RUN_DIR_PATTERN,
   findRunnerReport,
   reportedSkips,
+  v5AreaScenario,
 } from "./e2e/runners/v5-fixes.js";
 import {
   ALLOWED_CASE_SKIPS,
@@ -889,4 +890,49 @@ test("scenarioOutcomeProblems allows a skipped scenario only on a platform with 
   const skipped = [{ name, status: "skipped" }];
   assert.deepEqual(scenarioOutcomeProblems(skipped, "win32", [name]), []);
   assert.equal(scenarioOutcomeProblems(skipped, "linux", [name]).length, 1);
+});
+
+// A spec-only v5 area that returns early on a platform must say so in its
+// results file, and the skip must have an allowance, or the area fails.
+test("v5AreaScenario reads skip records from a spec-only pass and needs an allowance", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rosi-v5-skip-"));
+  try {
+    const resultsPath = path.join(dir, "results.json");
+    const area = {
+      area: "media-dispatch",
+      specs: ["launcher-reuse.spec.js"],
+      skipFiles: [],
+      runner: null,
+    };
+    const pass = { status: "passed", resultsPath };
+    const writeRecords = (records) =>
+      fs.writeFileSync(resultsPath, JSON.stringify(records));
+
+    writeRecords([
+      { name: "launcher-reuse", skipped: true, reason: "Windows only" },
+    ]);
+    const allowed = v5AreaScenario(area, pass, null, Date.now(), "linux");
+    assert.equal(allowed.status, "passed", allowed.reason);
+    assert.deepEqual(allowed.skippedCases, [
+      { case: "launcher-reuse", reason: "Windows only" },
+    ]);
+
+    const unallowed = v5AreaScenario(area, pass, null, Date.now(), "win32");
+    assert.equal(unallowed.status, "failed");
+    assert.match(
+      unallowed.reason,
+      /launcher-reuse skipped without an allowance/,
+    );
+
+    writeRecords([{ name: "launcher-reuse", skipped: true }]);
+    const noReason = v5AreaScenario(area, pass, null, Date.now(), "linux");
+    assert.equal(noReason.status, "failed");
+
+    writeRecords([{ name: "launcher-reuse", status: "passed" }]);
+    const ran = v5AreaScenario(area, pass, null, Date.now(), "win32");
+    assert.equal(ran.status, "passed", ran.reason);
+    assert.equal(ran.skippedCases, undefined);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
