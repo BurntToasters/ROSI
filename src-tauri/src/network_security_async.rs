@@ -61,6 +61,35 @@ fn io_timeout_error() -> io::Error {
     io::Error::new(io::ErrorKind::TimedOut, "proxy I/O timed out")
 }
 
+/// Compares secrets without returning at the first differing byte. Only the
+/// length is compared directly.
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .fold(0u8, |diff, (a, b)| diff | (a ^ b))
+            == 0
+}
+
+/// Chunk trailers are forwarded upstream, so each one gets the checks a request
+/// header line gets: clean line endings, then a token name before the colon.
+fn is_valid_trailer_line(line: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(line) else {
+        return false;
+    };
+    if !super::has_clean_header_bytes(text) {
+        return false;
+    }
+    let Some(text) = text.strip_suffix("\r\n") else {
+        return false;
+    };
+    let Some((name, _)) = text.split_once(':') else {
+        return false;
+    };
+    !name.is_empty() && name.bytes().all(super::is_header_token_byte)
+}
+
 struct ProxyMetrics {
     active_connections: AtomicUsize,
     peak_active_connections: AtomicUsize,
@@ -523,7 +552,9 @@ async fn handle_client(mut client: TcpStream, expected_auth: Arc<str>, shared: A
         .filter(|(name, _)| name.eq_ignore_ascii_case("proxy-authorization"))
         .map(|(_, value)| value.trim())
         .collect();
-    if auth_values.len() != 1 || auth_values[0] != expected_auth.as_ref() {
+    if auth_values.len() != 1
+        || !constant_time_eq(auth_values[0].as_bytes(), expected_auth.as_bytes())
+    {
         reject_client(&mut client, 407, "Proxy Authentication Required").await;
         return;
     }
@@ -616,6 +647,13 @@ async fn handle_client(mut client: TcpStream, expected_auth: Arc<str>, shared: A
         }
     };
     let absolute_form = shared.upstream.is_some();
+    // Framing is validated before any upstream connection is opened.
+    let Some((forwarded, body_mode, expect_continue)) =
+        super::build_forwarded_request(&method, &version, &url, &headers, absolute_form)
+    else {
+        reject_client(&mut client, 400, "Unsupported HTTP Request").await;
+        return;
+    };
     let mut upstream = match shared.upstream.as_ref() {
         None => match connect_addresses(addresses).await {
             Ok(stream) => stream,
@@ -631,12 +669,6 @@ async fn handle_client(mut client: TcpStream, expected_auth: Arc<str>, shared: A
                 return;
             }
         },
-    };
-    let Some((forwarded, body_mode, expect_continue)) =
-        super::build_forwarded_request(&method, &version, &url, &headers, absolute_form)
-    else {
-        reject_client(&mut client, 400, "Unsupported HTTP Request").await;
-        return;
     };
     if !matches!(
         time::timeout(IO_TIMEOUT, upstream.write_all(&forwarded)).await,
@@ -663,6 +695,15 @@ async fn handle_client(mut client: TcpStream, expected_auth: Arc<str>, shared: A
         }
         HttpBodyMode::Chunked => copy_chunked_body(&mut client, &mut upstream, &buffered).await,
     };
+    if !shared.is_cancelled()
+        && copied
+            .as_ref()
+            .is_err_and(|error| error.kind() == io::ErrorKind::InvalidInput)
+    {
+        // Only a malformed chunk trailer is answered; other body errors close.
+        reject_client(&mut client, 400, "Bad Request").await;
+        return;
+    }
     if copied.is_err() || shared.is_cancelled() {
         return;
     }
@@ -692,9 +733,16 @@ async fn read_request_header(stream: &mut TcpStream) -> io::Result<(Vec<u8>, Vec
                 "proxy header too large",
             ));
         }
+        // A terminator can straddle the previous read by up to three bytes, so
+        // only the new bytes and that overlap are searched.
+        let previous_len = bytes.len();
         bytes.extend_from_slice(&chunk[..count]);
-        if let Some(index) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
-            let split = index + 4;
+        let search_start = previous_len.saturating_sub(3);
+        if let Some(offset) = bytes[search_start..]
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+        {
+            let split = search_start + offset + 4;
             return Ok((bytes[..split].to_vec(), bytes[split..].to_vec()));
         }
     }
@@ -1025,8 +1073,16 @@ async fn copy_chunked_body(
             .next()
             .unwrap_or_default();
         let size_text = std::str::from_utf8(size_text)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid chunk size"))?;
-        let size = u64::from_str_radix(size_text.trim(), 16)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid chunk size"))?
+            .trim_matches(|c: char| c == ' ' || c == '\t');
+        // Only hex digits form a size, so a sign or prefix is refused.
+        if size_text.is_empty() || !size_text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid chunk size",
+            ));
+        }
+        let size = u64::from_str_radix(size_text, 16)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid chunk size"))?;
         if size > MAX_HTTP_REQUEST_BODY_BYTES.saturating_sub(total) {
             return Err(io::Error::new(
@@ -1034,9 +1090,14 @@ async fn copy_chunked_body(
                 "HTTP request body exceeds the configured limit",
             ));
         }
-        time::timeout(IO_TIMEOUT, upstream.write_all(&line))
-            .await
-            .map_err(|_| io_timeout_error())??;
+        // The chunk extension (if any) is dropped, so the forwarded size line is canonical.
+        let canonical_size_line = format!("{size:x}\r\n");
+        time::timeout(
+            IO_TIMEOUT,
+            upstream.write_all(canonical_size_line.as_bytes()),
+        )
+        .await
+        .map_err(|_| io_timeout_error())??;
         if size == 0 {
             loop {
                 let trailer = reader.read_crlf_line().await?;
@@ -1045,6 +1106,12 @@ async fn copy_chunked_body(
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         "chunk trailers exceed the header limit",
+                    ));
+                }
+                if trailer != b"\r\n" && !is_valid_trailer_line(&trailer) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "invalid chunk trailer",
                     ));
                 }
                 time::timeout(IO_TIMEOUT, upstream.write_all(&trailer))

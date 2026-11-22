@@ -315,13 +315,17 @@ fn is_network_location(path: &Path) -> bool {
     unsafe { GetDriveTypeW(root.as_ptr()) == DRIVE_REMOTE }
 }
 
-/// `\\localhost\C$\rest` (or 127.0.0.1, ::1, or this computer's name) as
-/// `C:\rest`. Other UNC paths return None.
+/// `\\localhost\C$\rest` (or any 127.x.x.x address, ::1, or this computer's
+/// name) as `C:\rest`, and `\\localhost\ADMIN$\rest` as `%SystemRoot%\rest`.
+/// The `\\.\UNC\` and `\\?\UNC\` forms are accepted too. Other UNC paths
+/// return None.
 #[cfg(windows)]
 fn local_admin_share_path(path: &Path) -> Option<PathBuf> {
+    use windows_sys::Win32::UI::Shell::FOLDERID_Windows;
     let text = path.to_string_lossy().replace('/', r"\");
-    let unc = text
-        .strip_prefix(r"\\?\UNC\")
+    let unc = [r"\\?\UNC\", r"\\.\UNC\"]
+        .iter()
+        .find_map(|prefix| text.strip_prefix(*prefix))
         .or_else(|| text.strip_prefix(r"\\"))?;
     let mut parts = unc.splitn(3, '\\');
     let host = parts.next()?;
@@ -331,9 +335,18 @@ fn local_admin_share_path(path: &Path) -> Option<PathBuf> {
     let is_local_host = ["localhost", "127.0.0.1", "::1", "[::1]", "."]
         .iter()
         .any(|name| host.eq_ignore_ascii_case(name))
+        || host
+            .parse::<Ipv4Addr>()
+            .is_ok_and(|address| address.is_loopback())
         || (!computer.is_empty() && host.eq_ignore_ascii_case(&computer));
+    if !is_local_host {
+        return None;
+    }
+    if share.eq_ignore_ascii_case("ADMIN$") {
+        return Some(known_folder_path(&FOLDERID_Windows)?.join(rest));
+    }
     let drive = share.strip_suffix('$')?;
-    if !is_local_host || drive.len() != 1 || !drive.as_bytes()[0].is_ascii_alphabetic() {
+    if drive.len() != 1 || !drive.as_bytes()[0].is_ascii_alphabetic() {
         return None;
     }
     Some(PathBuf::from(format!(r"{drive}:\{rest}")))
@@ -576,6 +589,14 @@ pub fn validate_ffmpeg_path_value(value: Option<&str>) -> Result<Option<String>,
     if base != "ffmpeg" && base != "ffmpeg.exe" {
         return Err(validation_error(
             "ffmpegPath must point to ffmpeg or ffmpeg.exe.",
+        ));
+    }
+    // Checked before any filesystem call: probing a remote path would make
+    // this machine open an SMB connection and could run a remote executable.
+    #[cfg(windows)]
+    if is_network_location(&resolved) {
+        return Err(validation_error(
+            "ffmpegPath must not point to a network location.",
         ));
     }
     if !resolved.exists() {

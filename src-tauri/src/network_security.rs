@@ -532,6 +532,10 @@ fn build_forwarded_request(
     if content_lengths.len() > 1 || transfer_encodings.len() > 1 {
         return None;
     }
+    // HTTP/1.0 has no chunked coding, so a Transfer-Encoding there is refused.
+    if version == "HTTP/1.0" && !transfer_encodings.is_empty() {
+        return None;
+    }
     let content_length = match content_lengths.first() {
         None => None,
         Some(value) => {

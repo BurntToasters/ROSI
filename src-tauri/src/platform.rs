@@ -204,6 +204,18 @@ fn open_external_blocking(
     }
 }
 
+/// True when any component of `dir` names a macOS bundle (`.app`, `.bundle`,
+/// `.framework` or `.plugin`). Opening such a directory launches it.
+fn is_inside_app_bundle(dir: &std::path::Path) -> bool {
+    const BUNDLE_EXTENSIONS: [&str; 4] = [".app", ".bundle", ".framework", ".plugin"];
+    dir.components().any(|component| {
+        let name = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+        BUNDLE_EXTENSIONS
+            .iter()
+            .any(|extension| name.ends_with(extension))
+    })
+}
+
 #[tauri::command(async)]
 pub fn open_file_location(
     app: tauri::AppHandle,
@@ -235,6 +247,10 @@ pub fn open_file_location(
             }
         })
     } else if let Some(dir) = path.parent().filter(|dir| dir.is_dir()) {
+        // Opening a bundle directory on macOS launches it, so never fall back into one.
+        if cfg!(target_os = "macos") && is_inside_app_bundle(dir) {
+            return ipc::err(INVALID_PATH, "Path is inside an application bundle.");
+        }
         open_parent(dir)
     } else {
         return ipc::err(INVALID_PATH, "Path and containing directory do not exist.");

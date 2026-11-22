@@ -19,6 +19,9 @@ static CLOSE_GENERATION: AtomicU64 = AtomicU64::new(0);
 static CLOSE_TIMEOUT_DIALOG_VISIBLE: AtomicBool = AtomicBool::new(false);
 static CLOSE_STATE_LOCK: Mutex<()> = Mutex::new(());
 pub static APP_QUITTING: AtomicBool = AtomicBool::new(false);
+// Set only by an explicit quit request. APP_QUITTING is cleared whenever a
+// close is cancelled, so a forced close needs this to know the quit still applies.
+static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 // Background stops started when the macOS window closes. A reopened window
 // stays hidden until they finish, so a stop cannot cancel work started in it.
 static BACKGROUND_STOPS: AtomicUsize = AtomicUsize::new(0);
@@ -439,6 +442,8 @@ fn cancel_close() {
     let _state = CLOSE_STATE_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // Every caller abandons the close for good, so a quit it belonged to is over.
+    QUIT_REQUESTED.store(false, Ordering::SeqCst);
     cancel_close_locked();
 }
 
@@ -602,6 +607,7 @@ pub fn on_main_close_requested(app: &AppHandle, api: &tauri::CloseRequestApi) {
         if confirmed {
             begin_flush_and_close(handle);
         } else {
+            QUIT_REQUESTED.store(false, Ordering::SeqCst);
             APP_QUITTING.store(false, Ordering::SeqCst);
         }
     });
@@ -688,6 +694,7 @@ pub fn request_quit(app: &AppHandle) {
     if APP_QUITTING.swap(true, Ordering::SeqCst) {
         return;
     }
+    QUIT_REQUESTED.store(true, Ordering::SeqCst);
     match app.get_webview_window(MAIN_WINDOW) {
         Some(window) => {
             if let Err(error) = window.close() {
@@ -708,6 +715,7 @@ pub fn request_quit(app: &AppHandle) {
             std::thread::spawn(move || match shutdown() {
                 Ok(()) => handle.exit(0),
                 Err(error) => {
+                    QUIT_REQUESTED.store(false, Ordering::SeqCst);
                     APP_QUITTING.store(false, Ordering::SeqCst);
                     crate::notices::show(
                         "Could Not Quit ROSI",
@@ -748,6 +756,7 @@ fn offer_forced_close(
     dialog.show(move |close| {
         on_dismiss();
         if !close {
+            QUIT_REQUESTED.store(false, Ordering::SeqCst);
             APP_QUITTING.store(false, Ordering::SeqCst);
             return;
         }
@@ -774,6 +783,11 @@ fn force_close(app: AppHandle) {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         CLOSE_IN_PROGRESS.store(true, Ordering::SeqCst);
         CLOSE_GENERATION.fetch_add(1, Ordering::SeqCst);
+    }
+    if QUIT_REQUESTED.load(Ordering::SeqCst) {
+        // The window is about to be destroyed; keep the quit exit path armed
+        // so the macOS close handler exits instead of leaving the app in the Dock.
+        APP_QUITTING.store(true, Ordering::SeqCst);
     }
     let main_thread = app.clone();
     let _ = app.run_on_main_thread(move || {
