@@ -52,16 +52,18 @@ pub fn allowed(list: &[&str], value: &str) -> bool {
     list.contains(&value)
 }
 
-/// Whole-number text for a limit, such as "60 seconds" or "10 minutes". User
+/// Whole-number text for a limit, such as "1 minute" or "10 minutes". User
 /// messages build their durations from the constant with this, so they cannot
 /// drift from it.
 pub fn duration_phrase(duration: Duration) -> String {
     let seconds = duration.as_secs();
-    if seconds >= 60 && seconds.is_multiple_of(60) {
-        format!("{} minutes", seconds / 60)
+    let (count, unit) = if seconds >= 60 && seconds.is_multiple_of(60) {
+        (seconds / 60, "minute")
     } else {
-        format!("{seconds} seconds")
-    }
+        (seconds, "second")
+    };
+    let plural = if count == 1 { "" } else { "s" };
+    format!("{count} {unit}{plural}")
 }
 
 /// `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`

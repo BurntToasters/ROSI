@@ -90,7 +90,8 @@ pub enum QueueCommand {
         reply: Sender<IpcResult<Started>>,
     },
     /// Cancels the active session, then answers once the runner has exited and
-    /// the interrupted item is back to pending.
+    /// the interrupted item is back to pending, unless its session already
+    /// published files.
     Stop {
         reply: Sender<()>,
     },

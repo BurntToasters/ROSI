@@ -162,7 +162,8 @@ pub fn normalize_record(value: &Value) -> Option<DownloadCompletion> {
 }
 
 fn load() -> Vec<DownloadCompletion> {
-    crate::fs_util::read_json(&activity_path(), ACTIVITY_READ_LIMIT_BYTES as u64)
+    let path = activity_path();
+    crate::fs_util::read_json(&path, ACTIVITY_READ_LIMIT_BYTES as u64)
         .and_then(crate::fs_util::list_items)
         .map(|list| {
             let records: Vec<DownloadCompletion> =
@@ -172,6 +173,19 @@ fn load() -> Vec<DownloadCompletion> {
                 crate::logging::warn(&format!(
                     "Dropped {dropped} download activity record(s) that failed validation on load."
                 ));
+                // The next save rewrites this file without the dropped records,
+                // so keep the original bytes first.
+                match crate::fs_util::copy_to_recovery(&path, ACTIVITY_READ_LIMIT_BYTES as u64) {
+                    Ok(recovery) => crate::logging::warn(&format!(
+                        "Download activity file {} preserved at {} before it was rewritten.",
+                        path.display(),
+                        recovery.display()
+                    )),
+                    Err(error) => crate::logging::error(&format!(
+                        "Could not preserve the original download activity file {}: {error}",
+                        path.display()
+                    )),
+                }
             }
             records.into_iter().take(MAX_DOWNLOAD_ACTIVITY).collect()
         })

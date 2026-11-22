@@ -142,7 +142,7 @@ fn persist_queue_files(
     )
     .map_err(|error| format!("Queue file {} was not replaced: {error}", primary.display()))?;
     // The previous good generation is read before the primary is replaced.
-    let previous = previous_generation(primary, backup)?;
+    let previous = previous_generation(primary, backup);
     crate::fs_util::atomic_write(primary, &encoded).map_err(|error| {
         format!(
             "Could not atomically write queue file {}: {error}",
@@ -162,14 +162,19 @@ fn parses_as_list(raw: &str) -> bool {
 /// The newest good bytes on disk before this flush: the primary when it
 /// parses, else the existing backup when it parses. A blocked or unreadable
 /// backup is not a good generation.
-fn previous_generation(primary: &Path, backup: &Path) -> Result<Option<Vec<u8>>, String> {
-    let good_primary = crate::fs_util::read_bounded(primary, MAX_QUEUE_FILE_BYTES as u64)?
+fn previous_generation(primary: &Path, backup: &Path) -> Option<Vec<u8>> {
+    // The guard already refused unreadable or oversized files. Undecodable
+    // bytes in the primary are damaged and get replaced, so they are not a
+    // good generation here either.
+    let good_primary = crate::fs_util::read_bounded(primary, MAX_QUEUE_FILE_BYTES as u64)
+        .ok()
+        .flatten()
         .filter(|raw| parses_as_list(raw));
     let good_backup = crate::fs_util::read_bounded(backup, MAX_QUEUE_FILE_BYTES as u64)
         .ok()
         .flatten()
         .filter(|raw| parses_as_list(raw));
-    Ok(good_primary.or(good_backup).map(String::into_bytes))
+    good_primary.or(good_backup).map(String::into_bytes)
 }
 
 /// Every flush writes the backup, and a failed backup write fails the flush.
@@ -293,6 +298,7 @@ fn read_queue(path: &std::path::Path) -> Option<Vec<QueueItem>> {
             continue;
         };
         if item.status == QueueStatus::Pending && !nonterminal.insert(item.url.clone()) {
+            dropped += 1;
             continue;
         }
         items.push(item);
@@ -301,6 +307,19 @@ fn read_queue(path: &std::path::Path) -> Option<Vec<QueueItem>> {
         crate::logging::warn(&format!(
             "Dropped {dropped} queue item(s) that failed validation on load."
         ));
+        // The next save rewrites this file without the dropped records, so
+        // keep the original bytes first.
+        match crate::fs_util::copy_to_recovery(path, MAX_QUEUE_FILE_BYTES as u64) {
+            Ok(recovery) => crate::logging::warn(&format!(
+                "Queue file {} preserved at {} before it was rewritten.",
+                path.display(),
+                recovery.display()
+            )),
+            Err(error) => crate::logging::error(&format!(
+                "Could not preserve the original queue file {}: {error}",
+                path.display()
+            )),
+        }
     }
     Some(items)
 }
@@ -338,6 +357,20 @@ fn writer() -> &'static std::sync::mpsc::Sender<WriteRequest> {
     })
 }
 
+/// Logs a failed debounced save. A queue file owned by a newer ROSI version
+/// refuses every save the same way, so that case is logged once per launch.
+fn log_persist_failure(revision: u64, error: &str) {
+    static NEWER_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if crate::fs_util::is_newer_schema_file(&queue_path(), MAX_QUEUE_FILE_BYTES as u64)
+        && NEWER_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        return;
+    }
+    crate::logging::error(&format!(
+        "Failed to persist queue revision {revision}: {error}"
+    ));
+}
+
 fn writer_loop(receiver: std::sync::mpsc::Receiver<WriteRequest>) {
     let mut revisions = QueueWriteRevisions::default();
     while let Ok(first) = receiver.recv() {
@@ -372,9 +405,7 @@ fn writer_loop(receiver: std::sync::mpsc::Receiver<WriteRequest>) {
                 continue;
             };
             if let Err(error) = persistence().persist(&mut revisions, revision, snapshot) {
-                crate::logging::error(&format!(
-                    "Failed to persist queue revision {revision}: {error}"
-                ));
+                log_persist_failure(revision, &error);
             }
             continue;
         }
@@ -545,8 +576,8 @@ pub(crate) fn apply_completion_in_state(
     end_run_if_drained(queue)
 }
 
-/// Ends a live run once no item is left pending or downloading. Called under
-/// the same lock as the completion, so a retry after this point sees the run
+/// Ends a live run once no item is left pending or downloading. Called in the
+/// same coordinator turn as the completion, so a retry after this point sees the run
 /// as over and leaves its item pending. The runner thread exits on its own.
 /// Returns true when this call ended the run.
 pub(crate) fn end_run_if_drained(queue: &mut QueueState) -> bool {
@@ -707,7 +738,9 @@ pub(crate) fn run_queue() {
                     }
                     break true;
                 }
-                Err(conflict) => coordinator::await_finalized(Some(conflict.session_id)),
+                // The conflict names the session holding the slot. This runner
+                // has no session of its own yet, so the wait cannot be on itself.
+                Err(conflict) => coordinator::await_session_or_cancel(conflict.session_id),
             }
         };
         // Once started, the coordinator holds the only remaining sender, so
@@ -731,8 +764,17 @@ pub(crate) fn run_queue() {
             }
             continue;
         }
-        if let Ok(completion) = completions.recv() {
-            finish_item(&item.id, completion);
+        match completions.recv() {
+            Ok(completion) => finish_item(&item.id, completion),
+            Err(_) => finish_item(
+                &item.id,
+                synthetic_completion(
+                    &item,
+                    &request,
+                    Outcome::Failed,
+                    "Download ended without a result.",
+                ),
+            ),
         }
     }
 }
@@ -1242,6 +1284,12 @@ fn add_to_queue_blocking(
         FalliblePayload::Typed(urls) => urls.0,
         FalliblePayload::Invalid(_) => return ipc::err(VALIDATION_ERROR, "URLs must be an array."),
     };
+    if urls.len() > MAX_QUEUE_SIZE {
+        return ipc::err(
+            VALIDATION_ERROR,
+            format!("Queue limit reached (max {MAX_QUEUE_SIZE} items)."),
+        );
+    }
     let options = options
         .map(FalliblePayload::into_value)
         .unwrap_or(Value::Null);

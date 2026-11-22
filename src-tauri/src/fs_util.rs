@@ -233,8 +233,9 @@ pub fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), Str
     atomic_write(path, &serialized)
 }
 
-/// Read a UTF-8 file of at most `max_bytes`. Missing files return `Ok(None)`.
-pub fn read_bounded(path: &Path, max_bytes: u64) -> Result<Option<String>, String> {
+/// Read the raw bytes of a file of at most `max_bytes`. Missing files return
+/// `Ok(None)`.
+pub fn read_bounded_bytes(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>, String> {
     let metadata = match std::fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -250,11 +251,21 @@ pub fn read_bounded(path: &Path, max_bytes: u64) -> Result<Option<String>, Strin
             metadata.len()
         ));
     }
-    let mut contents = String::new();
+    let mut contents = Vec::new();
     std::fs::File::open(path)
-        .and_then(|file| file.take(max_bytes + 1).read_to_string(&mut contents))
+        .and_then(|file| file.take(max_bytes + 1).read_to_end(&mut contents))
         .map_err(|error| error.to_string())?;
     Ok(Some(contents))
+}
+
+/// Read a UTF-8 file of at most `max_bytes`. Missing files return `Ok(None)`.
+pub fn read_bounded(path: &Path, max_bytes: u64) -> Result<Option<String>, String> {
+    match read_bounded_bytes(path, max_bytes)? {
+        Some(bytes) => String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|error| format!("{} is not valid UTF-8: {error}", path.display())),
+        None => Ok(None),
+    }
 }
 
 pub fn read_json(path: &Path, max_bytes: u64) -> Option<serde_json::Value> {
@@ -290,33 +301,62 @@ fn recovery_copy_path(path: &Path) -> PathBuf {
     path.with_file_name(format!("{stem}.recovery-{}.json", uuid_v4()))
 }
 
+/// Copy the bytes of `path` to a new recovery file and return its path. The
+/// original file is left as it is.
+fn write_recovery_copy(path: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
+    let recovery = recovery_copy_path(path);
+    atomic_write(&recovery, bytes)?;
+    Ok(recovery)
+}
+
+/// Copy the file at `path` to a recovery file before a load discards records
+/// that the next save would erase. The original file is not changed.
+pub fn copy_to_recovery(path: &Path, max_bytes: u64) -> Result<PathBuf, String> {
+    let bytes = read_bounded_bytes(path, max_bytes)?
+        .ok_or_else(|| format!("{} disappeared", path.display()))?;
+    write_recovery_copy(path, &bytes)
+}
+
 /// Run before a save replaces the persisted JSON file at `path`. A missing
 /// file passes. An unreadable or oversized file refuses the write, and so does
-/// a file that `check_schema` rejects. Bytes that are damaged or have the
-/// wrong shape are copied to a recovery file first, so a save never discards
-/// them.
+/// a file that `check_schema` rejects. Bytes that are damaged (not UTF-8 or not
+/// JSON) or have the wrong shape are copied to a recovery file first, so a save
+/// never discards them.
 pub fn guard_before_replace(
     path: &Path,
     max_bytes: u64,
     has_expected_shape: fn(&Value) -> bool,
     check_schema: impl FnOnce(&Value) -> Result<(), String>,
 ) -> Result<(), String> {
-    let Some(raw) = read_bounded(path, max_bytes)? else {
+    let Some(bytes) = read_bounded_bytes(path, max_bytes)? else {
         return Ok(());
     };
-    match serde_json::from_str::<Value>(&raw) {
-        Ok(value) if has_expected_shape(&value) => check_schema(&value),
-        _ => {
-            let recovery = recovery_copy_path(path);
-            atomic_write(&recovery, raw.as_bytes())?;
-            crate::logging::warn(&format!(
-                "Damaged file {} preserved at {} before it was replaced.",
-                path.display(),
-                recovery.display()
-            ));
-            Ok(())
+    let parsed = std::str::from_utf8(&bytes)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok());
+    match parsed {
+        // A file that declares a schema version is checked before its shape,
+        // so a newer file is refused whatever it looks like.
+        Some(value) if value.get("schemaVersion").is_some() => {
+            check_schema(&value)?;
+            if has_expected_shape(&value) {
+                return Ok(());
+            }
+            preserve_damaged(path, &bytes)
         }
+        Some(value) if has_expected_shape(&value) => check_schema(&value),
+        _ => preserve_damaged(path, &bytes),
     }
+}
+
+fn preserve_damaged(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let recovery = write_recovery_copy(path, bytes)?;
+    crate::logging::warn(&format!(
+        "Damaged file {} preserved at {} before it was replaced.",
+        path.display(),
+        recovery.display()
+    ));
+    Ok(())
 }
 
 /// Refuse to touch a file that declares a `schemaVersion` this build does not
