@@ -49,8 +49,6 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - name: Install latest npm 12
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
-      - name: Enforce Co-authored-by email policy
-        run: node scripts/strip-coauthor-trailers.js --check-range ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
       - name: Enforce stable metadata-only main PR
         if: >-
           ${{

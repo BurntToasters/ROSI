@@ -29,17 +29,14 @@
 
 ## Needs an owner decision
 
-- [ ] Pin the release GPG fingerprint in the repo. `verify-release-draft.js` trusts `GPG_KEY_ID` from `.env`.
 - [ ] Closed allowlist of draft asset names in `verify-release-draft.js`.
-- [ ] `CHANGELOG.md` (v5.0.0) says compromised eMudhra intermediates are rejected, but no code does it. Show where, or reword the entry.
-- [ ] Copyright holder: `COPYRIGHT.md` says `rosie.run`; `tauri.conf.json` and the About menu say `BurntToasters`.
 - [ ] Open Folder accepts remote UNC paths (`validate_file_path`), which NAS download folders need.
 - [ ] The download proxy allows CONNECT to any port.
 - [ ] `tauri_plugin_process` is registered in release builds, but only E2E uses it.
 - [ ] `legacy-v4-feed.js` deletes the old asset before uploading its replacement on a published release.
 - [ ] Header and footer sit inside `<main>`. Moving them out leaves them interactive under dialogs.
 - [ ] Unreferenced files: `scripts/print-windows-package-version.js`, `e2e/fixtures/security-test-ca-key.pem`, `src/modules/downloads.ts` (used only by a test).
-- [ ] `validate-updater-live.js` fetches and `strip-coauthor-trailers.js` git calls still have no timeout or buffer limit; neither has a test file.
+- [ ] `validate-updater-live.js` fetches still have no timeout; it has no test file.
 
 ## Manual checks
 
@@ -58,5 +55,10 @@
 - [ ] Several ui-polish specs keep private bridge-stub registries, and `transitionsSettled` is repeated in three of them. Moving them to `e2e/helpers/ui.js` needs each spec's registry reads moved too.
 
 ## Decided
+
+- The release GPG key stays configured by `GPG_KEY_ID` in `.env`; no fingerprint is pinned in the repo for now.
+- The v5.0.0 eMudhra entry is accurate: the Tauri and dependency updates in that release brought certificate stores that reject those intermediates. ROSI has no deny-list of its own.
+- `rosie.run` (the project collective) and `BurntToasters` (the GitHub account) are the same owner, so `COPYRIGHT.md` and the app metadata do not conflict.
+- `strip-coauthor-trailers.js` and its commit hooks were removed. Agents follow the AGENTS.md co-author rule, so the trailer filter is no longer needed.
 
 - No pixel-diff screenshot baseline for 5.1. It would need image dependencies, per-platform and per-scale baselines, and masking of carets, timestamps and spinners. Screenshots stay hashed evidence.

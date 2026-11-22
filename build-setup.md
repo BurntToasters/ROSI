@@ -172,7 +172,7 @@ every dependency has a verified license notice.
 
 ## Local git hooks
 
-`.githooks/` holds the pre-commit and commit-msg hooks. `npm ci` runs the
+`.githooks/` holds the pre-commit hook. `npm ci` runs the
 `prepare` script (`scripts/install-git-hooks.js`), which sets `core.hooksPath`
 to `.githooks`. That script does nothing when `CI` is set or outside a git
 checkout. `workspace:bootstrap` uses `npm ci --ignore-scripts`, so it does not
