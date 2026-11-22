@@ -31,27 +31,30 @@ describe("long-term V5 observational audit", () => {
       observation.profileFiles = files;
       if (mode === "future-settings") {
         observation.invariantPassed =
-          (observation.save?.ok === false &&
+          originalBytes.length > 0 &&
+          fs.existsSync(settingsPath) &&
+          ((observation.save?.ok === false &&
             fs.readFileSync(settingsPath).equals(originalBytes)) ||
-          (observation.savedSettings.settingsVersion === 8 &&
-            observation.savedSettings.futureAuditField?.retained === true);
+            (observation.savedSettings.settingsVersion === 8 &&
+              observation.savedSettings.futureAuditField?.retained === true));
       } else if (mode === "corrupt-settings") {
-        observation.invariantPassed =
-          observation.save?.ok === false ||
-          files.some(
-            (name) =>
-              name !== "settings.json" &&
-              name.includes("settings") &&
-              fs
-                .statSync(path.join(path.dirname(settingsPath), name))
-                .isFile() &&
-              fs
-                .readFileSync(
-                  path.join(path.dirname(settingsPath), name),
-                  "utf8",
-                )
-                .includes("LONG_TERM_DAMAGED_SETTINGS"),
+        const dataDirectory = path.dirname(settingsPath);
+        // The damaged bytes must still be on disk, in settings.json or a
+        // sibling file, so a refused save alone does not pass.
+        const damagedFiles = files.filter((name) => {
+          const file = path.join(dataDirectory, name);
+          return (
+            fs.statSync(file).isFile() &&
+            fs.readFileSync(file, "utf8").includes("LONG_TERM_DAMAGED_SETTINGS")
           );
+        });
+        observation.damagedFiles = damagedFiles;
+        observation.invariantPassed =
+          damagedFiles.length > 0 &&
+          (observation.save?.ok === false ||
+            damagedFiles.some(
+              (name) => name !== "settings.json" && name.includes("settings"),
+            ));
       } else {
         observation.invariantPassed =
           observation.save?.ok === true &&
@@ -96,8 +99,10 @@ describe("long-term V5 observational audit", () => {
       observation.settingsCommitted = fs.existsSync(settingsPath);
       observation.invariantPassed =
         mode === "migration-failure"
-          ? observation.marker.outcome !== "imported" ||
-            observation.queue.some((item) => item.id === "legacy-audit-item")
+          ? typeof observation.marker.outcome === "string" &&
+            observation.marker.outcome.length > 0 &&
+            (observation.marker.outcome !== "imported" ||
+              observation.queue.some((item) => item.id === "legacy-audit-item"))
           : observation.queue.some((item) => item.id === "legacy-audit-item") &&
             JSON.parse(
               fs.readFileSync(
@@ -142,11 +147,16 @@ describe("long-term V5 observational audit", () => {
       observation.queueCount = await browser.executeAsync((done) => {
         window.__ROSI_E2E__.api.getQueue().then((queue) => done(queue.length));
       });
+      // Both paths wait for the primary file to hold the in-memory queue, so a
+      // refused batch still has its control item persisted before the check.
       await browser.waitUntil(
-        () =>
-          observation.add?.ok === false ||
-          (fs.existsSync(queuePath) &&
-            readListFile(queuePath).length === observation.queueCount),
+        () => {
+          try {
+            return readListFile(queuePath).length === observation.queueCount;
+          } catch {
+            return false;
+          }
+        },
         {
           timeout: 15000,
           interval: 100,
@@ -158,8 +168,10 @@ describe("long-term V5 observational audit", () => {
         : 0;
       observation.invariantPassed =
         observation.controlAdd?.ok === true &&
+        fs.existsSync(queuePath) &&
         ((observation.add?.ok === false && observation.queueCount === 1) ||
-          observation.primaryBytes <= 32 * 1024 * 1024);
+          (observation.primaryBytes > 0 &&
+            observation.primaryBytes <= 32 * 1024 * 1024));
     } else if (
       mode === "stats-reset-failure" ||
       mode === "stats-reset-control"

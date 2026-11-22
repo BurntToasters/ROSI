@@ -1738,6 +1738,10 @@ describe("ROSI main window", () => {
     assert.equal(formats.ok, true, formats.error?.message);
     assert.ok(Array.isArray(formats.data.formats));
     assert.ok(
+      formats.data.formats.length > 0,
+      "the format list is empty, so no format was checked",
+    );
+    assert.ok(
       formats.data.formats.every(
         (format) =>
           typeof format.formatId === "string" &&
@@ -1932,6 +1936,11 @@ describe("ROSI main window", () => {
     const leftovers = fs
       .readdirSync(DOWNLOADS)
       .filter((name) => name.startsWith("slow") && name.endsWith(".part"));
+    assert.deepEqual(
+      leftovers,
+      [],
+      "the cancelled download left a partial file behind",
+    );
     record("queue-cancel", {
       activityEntries: 2,
       partialFiles: leftovers.length,
@@ -2568,24 +2577,26 @@ describe("ROSI main window", () => {
     // The opacity transition can run slowly while the window sits behind
     // other apps, so poll until it finishes instead of sampling once.
     let focused;
-    await browser
-      .waitUntil(
-        async () => {
-          focused = await browser.execute(() => {
-            const button = document.querySelector(
-              "#history-list .history-item .history-item-actions button",
-            );
-            return {
-              opacity: Number(getComputedStyle(button).opacity),
-              active: document.activeElement === button,
-              windowFocused: document.hasFocus(),
-            };
-          });
-          return !focused.windowFocused || focused.opacity === 1;
-        },
-        { timeout: 5_000, interval: 100 },
-      )
-      .catch(() => {});
+    await browser.waitUntil(
+      async () => {
+        focused = await browser.execute(() => {
+          const button = document.querySelector(
+            "#history-list .history-item .history-item-actions button",
+          );
+          return {
+            opacity: Number(getComputedStyle(button).opacity),
+            active: document.activeElement === button,
+            windowFocused: document.hasFocus(),
+          };
+        });
+        return !focused.windowFocused || focused.opacity === 1;
+      },
+      {
+        timeout: 5_000,
+        interval: 100,
+        timeoutMsg: "focused action row never settled its opacity",
+      },
+    );
     assert.ok(rest.opacity < 1, `actions are loud at rest (${rest.opacity})`);
     // WebKit can report the button as active while the embedded window is not
     // focused; CSS :focus-within is unavailable in that harness state.
@@ -2994,7 +3005,12 @@ describe("ROSI main window", () => {
       },
       { timeout: 15_000, timeoutMsg: "Deno check never finished" },
     );
-    assert.ok(["installed", "missing", "error"].includes(deno.state));
+    // The backend check reports installed or missing. "error" is the wizard's
+    // catch for a rejected check, and check_deno_installed never rejects.
+    assert.ok(
+      ["installed", "missing"].includes(deno.state),
+      `Deno check ended in state ${deno.state}`,
+    );
     assert.ok(deno.icon, "Deno status has no icon");
     if (deno.state !== "installed") {
       assert.ok(deno.action, "missing Deno offers no next step");
@@ -4405,20 +4421,47 @@ describe("ROSI main window", () => {
         timeoutMsg: "progress bar stayed visible 5 s after the queue run ended",
       },
     );
-    // A pending link left after the stop lets Start run again.
-    if ((await api("getQueue")).some((item) => item.status === "pending")) {
-      await browser.waitUntil(
-        () =>
-          browser.execute(
-            () => !document.getElementById("startQueueBtn")?.disabled,
-          ),
-        {
-          timeout: 10_000,
-          timeoutMsg:
-            "Start stayed disabled after the run ended with a pending link",
-        },
+    // Cancel marks every unfinished link cancelled, so none may stay pending.
+    const afterStop = await api("getQueue");
+    assert.equal(
+      afterStop.some((item) => item.status === "pending"),
+      false,
+      `a pending link survived the cancel: ${JSON.stringify(afterStop)}`,
+    );
+    const unfinished = afterStop.filter((item) => item.status !== "completed");
+    assert.ok(
+      unfinished.length >= 2,
+      `the stop left ${unfinished.length} unfinished link(s), expected the running and pending links`,
+    );
+    for (const item of unfinished) {
+      assert.equal(
+        item.status,
+        "cancelled",
+        `${item.url} was not cancelled by the stop`,
       );
     }
+    // A fresh link queued after the stop lets Start run again.
+    const fresh = `${MEDIA}/clip-one.mp4?queue=ui-after-stop`;
+    await fillQueueInput(fresh);
+    await clickById("addToQueueBtn");
+    await browser.waitUntil(
+      async () => (await api("getQueue")).some((item) => item.url === fresh),
+      {
+        timeout: 10_000,
+        timeoutMsg: "fresh link was not queued after the stop",
+      },
+    );
+    await browser.waitUntil(
+      () =>
+        browser.execute(
+          () => !document.getElementById("startQueueBtn")?.disabled,
+        ),
+      {
+        timeout: 10_000,
+        timeoutMsg:
+          "Start stayed disabled after the stop with a fresh pending link",
+      },
+    );
 
     // Clear asks first, then empties the queue. The Cancel modal and the busy
     // lock can linger briefly after the backend reports the cancel, and a click

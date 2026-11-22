@@ -89,6 +89,10 @@ Ways the probe can mislead:
   winner; only a round where both requests were accepted can judge.
 - Items fail for an unrelated reason (unreachable URL). Guard: judge only on
   the exact owner-conflict error text.
+- No round judged (every round had one side refused). Guard: `invariantPassed`
+  is `judgeable && totalOwnerConflicts === 0`, so an unjudgeable run cannot
+  pass. Its `false` means not judged; read `judgeable` to tell it apart from a
+  reproduced owner conflict.
 
 Expected: a queue item never fails because of a session-owner conflict; the
 runner waits for the slot or refuses to start.

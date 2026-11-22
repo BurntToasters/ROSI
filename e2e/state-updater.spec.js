@@ -724,26 +724,41 @@ describe("state and updater repair E2E", () => {
     assert.equal(added.ok, true, JSON.stringify(added));
     const queued = await api("getQueue");
     assert.equal(queued.length, 3);
+    const queueFile = path.join(DATA_DIR, "download-queue.json");
+    const readQueueFile = () => {
+      try {
+        return readListFile(queueFile);
+      } catch {
+        return null;
+      }
+    };
+    // Wait for the three-item snapshot itself. An empty file left by an
+    // earlier clear must not stand in for it.
+    await browser.waitUntil(() => readQueueFile()?.length === 3, {
+      timeout: 10_000,
+      interval: 100,
+      timeoutMsg: "three-item queue snapshot was not persisted",
+    });
     await api("clearQueue");
 
-    const queueFile = path.join(DATA_DIR, "download-queue.json");
-    await browser.waitUntil(
-      () => {
-        try {
-          return readListFile(queueFile).length === 0;
-        } catch {
-          return false;
-        }
-      },
-      {
-        timeout: 10_000,
-        interval: 100,
-        timeoutMsg: "latest empty queue was not persisted",
-      },
+    await browser.waitUntil(() => readQueueFile()?.length === 0, {
+      timeout: 10_000,
+      interval: 100,
+      timeoutMsg: "latest empty queue was not persisted",
+    });
+    // Queue writes are debounced by 300 ms. Re-read after that window so the
+    // empty file is the last write, not a copy that a later write replaces.
+    await browser.pause(1_000);
+    const settled = readQueueFile();
+    assert.ok(settled, "queue file was unreadable after the debounce");
+    assert.equal(
+      settled.length,
+      0,
+      `persisted queue grew back to ${settled.length} item(s) after the clear`,
     );
     record("queue-latest-snapshot", {
       itemCountBeforeClear: queued.length,
-      persistedCount: readListFile(queueFile).length,
+      persistedCount: settled.length,
     });
   });
 

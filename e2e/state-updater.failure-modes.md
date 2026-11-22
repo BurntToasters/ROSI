@@ -69,6 +69,13 @@ replacement rules that cannot be exercised safely against an installed app.
    native timeout dialogs. One warning may remain visible until dismissed;
    stale timeout callbacks and later close attempts must not create duplicate
    warnings for the same unresolved save state.
+10. Rapid add then clear must persist the latest, empty queue. An empty
+    `download-queue.json` left by an earlier clear must not satisfy the wait.
+    The check first waits for the three-item snapshot on disk, then clears,
+    waits for the empty file, and re-reads once more after the 300 ms debounce
+    to confirm the file stays empty. Checked by
+    `persists an empty queue after rapid queue mutation` in
+    `state-updater.spec.js`.
 
 ## F13: macOS updater bundle safety
 

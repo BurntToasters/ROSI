@@ -50,3 +50,19 @@ These cases were recorded before extending the controlled renderer diagnostic or
 - A manual download can validate and capture formats for URL A, then wait for folder selection/settings persistence while the user switches the field to URL B. If final preset overrides are rebuilt after the wait, the request remains for A but carries B's format IDs.
 - Queue submission can capture URL list A, wait for a folder picker or settings save while the current URL/formats become B, then read B's selections for the already-submitted A list. Preserve the entry-time selection snapshot across the awaits; do not accept late/stale lookup replies as that snapshot.
 - If a format lookup for URL G is still pending when a saved custom preset is explicitly applied, the late lookup response can overwrite those preset IDs even though they belong to a deliberate user action. Applying a preset must invalidate any older in-flight lookup before it sets its own values.
+
+## Strengthened checks (assertions that must fail)
+
+- `overlay-focus-ownership`: after the Reset prompt opens, focus must be inside
+  `#app-modal` and the prompt must be active, not only free of JS errors. A
+  focus left in the sidebar or main content fails the check.
+- `app-modal-stacks-above-licenses`: the check reads the computed z-index of
+  the live `#app-modal` and `#licenses-overlay` after the real overlay
+  stylesheets are injected. A z-index that does not put the app modal above
+  licenses fails it. The check no longer matches the CSS source text.
+- `updater-prompt-retires-and-binds-candidate`: the superseded prompt's
+  "Download & Install" button must exist before its click is tested. A missing
+  button fails the run instead of skipping the stale-click assertion. Install
+  must bind to the current candidate and must not bind to the superseded
+  candidate 1; that comparison uses the observed install call, not two
+  constants.

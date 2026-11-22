@@ -514,22 +514,40 @@ describe("ROSI URL boundary and release proof repairs", () => {
     ]);
     const passed =
       formats.ok === false &&
+      formats.error?.code === "INVALID_URL" &&
+      formats.error?.message === "Invalid URL provided." &&
       queued.ok === true &&
       queued.data?.added === 0 &&
       queued.data?.skipped === 1 &&
-      external.ok === false;
+      external.ok === false &&
+      external.error?.code === "INVALID_URL" &&
+      external.error?.message === "Invalid external URL payload.";
     record("credential-bearing-urls", {
       formatsRejected: formats.ok === false,
+      formatsError: formats.error ?? null,
       queueAdded: queued.data?.added ?? null,
       queueSkipped: queued.data?.skipped ?? null,
       externalRejected: external.ok === false,
+      externalError: external.error ?? null,
       invariantPassed: passed,
     });
     assert.equal(formats.ok, false, JSON.stringify(formats));
+    assert.equal(formats.error?.code, "INVALID_URL", JSON.stringify(formats));
+    assert.equal(
+      formats.error?.message,
+      "Invalid URL provided.",
+      JSON.stringify(formats),
+    );
     assert.equal(queued.ok, true, JSON.stringify(queued));
     assert.equal(queued.data?.added, 0, JSON.stringify(queued));
     assert.equal(queued.data?.skipped, 1, JSON.stringify(queued));
     assert.equal(external.ok, false, JSON.stringify(external));
+    assert.equal(external.error?.code, "INVALID_URL", JSON.stringify(external));
+    assert.equal(
+      external.error?.message,
+      "Invalid external URL payload.",
+      JSON.stringify(external),
+    );
   });
 
   after(async () => {
@@ -904,6 +922,11 @@ describe("ROSI URL boundary and release proof repairs", () => {
 
   it("blocks DNS aliases to loopback across preview, formats, downloads, and external handoff", async () => {
     const target = aliasUrl("/video.mp4");
+    const tracePath = process.env.ROSI_E2E_PROXY_TRACE;
+    assert.ok(tracePath, "ROSI_E2E_PROXY_TRACE is required");
+    const traceLinesBefore = fs.existsSync(tracePath)
+      ? fs.readFileSync(tracePath, "utf8").split(/\r?\n/).filter(Boolean).length
+      : 0;
     const [preview, formats, external] = await Promise.all([
       api("getVideoInfo", target),
       api("getFormats", target),
@@ -929,23 +952,73 @@ describe("ROSI URL boundary and release proof repairs", () => {
         timeoutMsg: "private-alias download did not finish through the proxy",
       },
     );
+    // The fetch fails inside the proxy path, so its error text is not fixed.
+    // The code and a non-empty message are the contract; the proxy trace must
+    // show the denied connection that caused it.
+    const aliasDenials = (
+      fs.existsSync(tracePath)
+        ? fs.readFileSync(tracePath, "utf8").split(/\r?\n/).filter(Boolean)
+        : []
+    )
+      .slice(traceLinesBefore)
+      .map((line) => JSON.parse(line))
+      .filter(
+        (entry) =>
+          entry.stage === "connection" &&
+          entry.host === "private.test" &&
+          entry.allowed === false &&
+          (entry.addresses ?? []).includes("127.0.0.1"),
+      );
+    const fetchFailed = (response) =>
+      response.ok === false &&
+      response.error?.code === "INTERNAL_ERROR" &&
+      typeof response.error?.message === "string" &&
+      response.error.message.length > 0;
+    const externalRefused =
+      external.ok === false &&
+      external.error?.code === "INVALID_URL" &&
+      external.error?.message === "Invalid external URL payload.";
     record("private-dns-alias", {
-      previewRejected: preview.ok === false,
-      formatsRejected: formats.ok === false,
+      previewError: preview.error ?? null,
+      formatsError: formats.error ?? null,
+      externalError: external.error ?? null,
       downloadOutcome: activity.outcome,
-      externalRejected: external.ok === false,
+      proxyDenials: aliasDenials,
       privateHits: [...privateHits],
       invariantPassed:
-        preview.ok === false &&
-        formats.ok === false &&
+        fetchFailed(preview) &&
+        fetchFailed(formats) &&
         download.ok === true &&
         activity.outcome === "failed" &&
-        external.ok === false &&
+        externalRefused &&
+        aliasDenials.length > 0 &&
         privateHits.length === 0,
     });
-    for (const response of [preview, formats, external]) {
-      assert.equal(response.ok, false, JSON.stringify(response));
-    }
+    assert.equal(preview.ok, false, JSON.stringify(preview));
+    assert.equal(
+      preview.error?.code,
+      "INTERNAL_ERROR",
+      JSON.stringify(preview),
+    );
+    assert.ok(preview.error?.message, JSON.stringify(preview));
+    assert.equal(formats.ok, false, JSON.stringify(formats));
+    assert.equal(
+      formats.error?.code,
+      "INTERNAL_ERROR",
+      JSON.stringify(formats),
+    );
+    assert.ok(formats.error?.message, JSON.stringify(formats));
+    assert.equal(external.ok, false, JSON.stringify(external));
+    assert.equal(external.error?.code, "INVALID_URL", JSON.stringify(external));
+    assert.equal(
+      external.error?.message,
+      "Invalid external URL payload.",
+      JSON.stringify(external),
+    );
+    assert.ok(
+      aliasDenials.length > 0,
+      "the proxy recorded no denied connection for private.test to 127.0.0.1",
+    );
     assert.equal(download.ok, true, JSON.stringify(download));
     assert.equal(activity.outcome, "failed", JSON.stringify(activity));
     assert.deepEqual(

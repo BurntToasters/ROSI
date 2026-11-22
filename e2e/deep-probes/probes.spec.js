@@ -280,7 +280,8 @@ async function queueOwnerRace(observation) {
     0,
   );
   observation.judgeable = observation.roundsJudged > 0;
-  observation.invariantPassed = observation.totalOwnerConflicts === 0;
+  observation.invariantPassed =
+    observation.judgeable && observation.totalOwnerConflicts === 0;
 }
 
 async function stagingSweepLeak(observation) {

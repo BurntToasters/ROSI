@@ -11,6 +11,10 @@ Write verification before production repairs. Preserve unrelated behavior and re
 7. Cancellation: recovery errors and paths must survive completion, queue persistence and activity presentation. Ordinary cancellation must not invent a failure.
 8. Deno: success=false, missing/invalid success, timeout and rejected bridge calls must display failure in reminder and wizard. Cancellation stays cancellation; success=true stays success.
 9. Dependency: source-map-js must resolve outside the affected range; lock resolution, installed package, build and advisory report must agree.
+10. Shutdown drain (`shutdown drains a newly claimed queue item before final flush`): the updater install probe must run only after the queue item is
+    observed as `downloading`. A probe that runs before the claim proves
+    nothing about the drain. If the item never reaches `downloading` within
+    the bound, the scenario fails instead of passing.
 
 Native GUI E2E is preferred. Controlled renderer/native isolation is supplemental when native execution is unavailable; it does not certify signed installers or hosted CI.
 

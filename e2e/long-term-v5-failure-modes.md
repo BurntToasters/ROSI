@@ -26,3 +26,20 @@ For each case, retain source hashes, application binary hash, timestamps, before
 14. A pending V4 component retry must survive a temporarily corrupt legacy settings file after valid V5 settings already exist. Repairing the component destination must still resume without replacing V5 settings. Bookkeeping files in an otherwise empty failed-download stage must not be classified as recoverable media.
 
 15. Existing version-1 V4 import markers lack retryFiles and can already record an imported profile with a failed destination copy. Derive a bounded retry only for known components with OS errors, valid legacy source data, and no existing regular V5 destination. Never overwrite V5 changes or retry terminal malformed-source skips.
+
+## Positive checks added to the probe invariants
+
+These checks stop a case from passing when the probed behavior never happened.
+They are in `long-term-persistence.spec.js`.
+
+- `corrupt-settings` (item 3): the invariant also requires the damaged bytes
+  to be on disk, in `settings.json` or in a sibling file. A refused save alone
+  no longer passes, because it can leave nothing recoverable behind.
+- `future-settings` (item 11): the invariant requires the original settings
+  file to exist with non-empty bytes before either outcome counts.
+- `migration-failure` (item 2): the marker must record a non-empty string
+  `outcome`. A missing outcome no longer satisfies the `!== "imported"` branch.
+- `queue-budget` (items 4 and 8): before the check, the primary queue file must
+  hold exactly the in-memory queue count, so the control item is persisted. The
+  invariant then requires a non-empty primary file within the 32 MiB budget, or
+  a refused oversize batch that left exactly the control item.

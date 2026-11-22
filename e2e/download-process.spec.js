@@ -1856,6 +1856,8 @@ describe("ROSI downloader and process repairs", () => {
         invariantPassed:
           direct.outcome === "success" &&
           converted.outcome === "success" &&
+          (direct.outputPaths ?? []).length > 0 &&
+          (converted.outputPaths ?? []).length > 0 &&
           (direct.outputPaths ?? []).every((outputPath) =>
             fs.existsSync(outputPath),
           ) &&

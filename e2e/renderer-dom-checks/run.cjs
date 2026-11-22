@@ -41,7 +41,9 @@ function verify(name, condition, details) {
 
 verify(
   "overlay-focus-ownership",
-  renderer.afterOpen.errorCount === 0,
+  renderer.afterOpen.errorCount === 0 &&
+    renderer.afterOpen.modalActive === true &&
+    renderer.afterOpen.focusedInModal === true,
   renderer.afterOpen,
 );
 verify(
@@ -144,7 +146,7 @@ verify(
   "updater-prompt-retires-and-binds-candidate",
   updater.activePromptAfterSecondCheck.includes("7.0.0-beta.1") &&
     updater.readyPromptTitle === "Update Ready!" &&
-    updater.firstCandidateId !== updater.currentCandidateId &&
+    updater.installCalls[0] !== updater.firstCandidateId &&
     updater.oldPromptStillConnected === false &&
     updater.downloadCallsAfterStale.length === 0 &&
     updater.installCalls.length === 1 &&

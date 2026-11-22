@@ -245,6 +245,9 @@ const optionValues = (id) =>
     focus:
       w.document.activeElement.id ||
       w.document.activeElement.textContent.trim(),
+    focusedInModal: w.document
+      .getElementById("app-modal")
+      .contains(w.document.activeElement),
     errors: errors.slice(0, 3),
     errorCount: errors.length,
   };
@@ -581,11 +584,20 @@ const optionValues = (id) =>
     ),
   };
 
-  const overlayCss = fs.readFileSync(root + "/src/css/05-overlays.css", "utf8");
-  const appModalStackingRule =
-    overlayCss.match(/#app-modal\s*\{[^}]*\}/s)?.[0] ?? "";
+  // Inject the real base and overlay stylesheets, then read the computed
+  // stacking of the live elements. jsdom resolves var() and calc() here.
+  const liveStyle = w.document.createElement("style");
+  liveStyle.textContent = [
+    fs.readFileSync(root + "/src/css/01-base.css", "utf8"),
+    fs.readFileSync(root + "/src/css/05-overlays.css", "utf8"),
+  ].join("\n");
+  w.document.head.appendChild(liveStyle);
+  const stackingOf = (id) =>
+    Number(w.getComputedStyle(w.document.getElementById(id)).zIndex);
   const appModalAboveLicenses =
-    /z-index:\s*calc\(var\(--z-modal\)\s*\+\s*1\)/.test(appModalStackingRule);
+    Number.isFinite(stackingOf("app-modal")) &&
+    Number.isFinite(stackingOf("licenses-overlay")) &&
+    stackingOf("app-modal") > stackingOf("licenses-overlay");
 
   w.document.getElementById("downloadBtn").click();
   // The click starts nothing observable here; one turn lets its promise chain run.

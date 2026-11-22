@@ -152,10 +152,15 @@ const clickModalButton = (label) => {
     "the second candidate prompt did not replace the first",
   );
   const activePromptAfterSecondCheck = modalMessage();
-  const oldPromptStillConnected = oldPromptButton?.isConnected ?? false;
+  if (!oldPromptButton) {
+    throw new Error(
+      "the first candidate prompt had no Download & Install button to test",
+    );
+  }
+  const oldPromptStillConnected = oldPromptButton.isConnected;
 
   // The superseded prompt must not start a download for candidate 1.
-  oldPromptButton?.click();
+  oldPromptButton.click();
   // A stale click starts nothing, so there is no state to poll. One turn lets
   // any download call it would have made run.
   await turn();

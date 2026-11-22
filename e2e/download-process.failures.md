@@ -252,3 +252,8 @@ gaps. Each failure below must be impossible, and the first is proven natively:
     run on a worker thread. The close handshake, its timeout and the forced
     close dialog are unchanged, and a window reopened during the stop stays
     hidden until the stop finishes so it cannot cancel new work.
+
+**Publication outputs (audit3-download-and-conversion-publication).** A direct
+download and its conversion must each report at least one output path, and every
+reported path must exist. An empty `outputPaths` list no longer passes, because
+`every()` is vacuously true over it.

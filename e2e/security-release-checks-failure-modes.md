@@ -243,7 +243,7 @@ it to the same envelope and message the `Value` path returned. The rules:
 1. Wrong JSON type for a URL, path or ID field (number, array, object, `null`
    where a string is required): same code and message as before, for example
    `INVALID_URL "Invalid URL provided."`, `INVALID_PATH "File path must be a
-   non-empty string."`, `VALIDATION_ERROR "Queue item ID must be a string."`.
+non-empty string."`, `VALIDATION_ERROR "Queue item ID must be a string."`.
 2. Missing field: `get_formats`, `open_external`, `open_file_location`,
    `remove_from_queue` and `retry_queue_item` treat it as wrong type and return
    the same message. A missing `options` or `request` argument is still a Tauri
@@ -256,9 +256,9 @@ it to the same envelope and message the `Value` path returned. The rules:
    runs first. A `playlistMode` that is not `current`, `all` or `null` (including
    a wrong type) gets `VALIDATION_ERROR "Playlist preview mode must be current or all."`.
 6. `show_notification` with a non-object payload returns `"Notification payload
-   must be an object."`. With an object whose title, body or filePath has the
+must be an object."`. With an object whose title, body or filePath has the
    wrong type, it returns `"Notification title, body, and filePath must be
-   strings when provided."`. `JsonObject` keeps arrays out of the struct path.
+strings when provided."`. `JsonObject` keeps arrays out of the struct path.
 7. Validator skipped by a typed path: the typed value still goes through the
    policy checks. URLs go through `is_safe_http_url` or `validate_external_url`,
    paths through `validate_file_location`, queue IDs through
@@ -270,3 +270,21 @@ it to the same envelope and message the `Value` path returned. The rules:
    `validate_external_url` and `validate_file_location` keep their existing
    policy text. `validate_file_location` still accepts `&Value` for stored
    activity and queue data.
+
+## Assertions for the credential and DNS alias rows
+
+These rows must fail on the exact rejection, not only on `ok === false`.
+
+- Credential-bearing URL (F08 item 23): `getFormats` must return code
+  `INVALID_URL` with message `Invalid URL provided.`, and `openExternal` must
+  return `INVALID_URL` with `Invalid external URL payload.`. A success, or a
+  rejection with another code or message, fails the row. The queue still adds
+  nothing and skips one link.
+- DNS alias to loopback (F08 items 2, 4, and 9): `openExternal` must return
+  `INVALID_URL` with `Invalid external URL payload.`, because the handoff check
+  resolves the host. `getVideoInfo` and `getFormats` pass the literal-host check
+  and then fail inside the fetch, so they must return `INTERNAL_ERROR` with a
+  non-empty message. The proxy trace must record a denied `connection` decision
+  for `private.test` whose addresses include `127.0.0.1`, written after this
+  row started. A trace with no such entry fails the row, since the request then
+  never reached the enforcing proxy. No private listener hit is allowed.

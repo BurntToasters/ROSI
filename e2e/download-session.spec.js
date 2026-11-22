@@ -64,6 +64,17 @@ describe("audit four native repair acceptance", () => {
     const url = process.env.ROSI_AUDIT4_MEDIA + "/covered.mp4?queue-drain";
     assert.equal((await api("addToQueue", [url])).ok, true);
     assert.equal((await api("startQueue")).ok, true);
+    // The probe must race a claimed item, so wait until this item is downloading.
+    await browser.waitUntil(
+      async () =>
+        (await api("getQueue")).find((item) => item.url === url)?.status ===
+        "downloading",
+      {
+        timeout: 30_000,
+        interval: 50,
+        timeoutMsg: "queue item was never claimed before the shutdown probe",
+      },
+    );
     const shutdown = await browser.executeAsync((done) => {
       window.__TAURI__.core.invoke("e2e_updater_install_probe").then(
         () => done({ ok: true }),
