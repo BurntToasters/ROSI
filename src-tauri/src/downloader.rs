@@ -49,7 +49,7 @@ use session_owner::Installed;
 
 pub use session_owner::{can_start, is_busy};
 
-const CANCELLED_STATUS: &str = "⏹️ Cancelled.";
+pub(crate) const CANCELLED_STATUS: &str = "⏹️ Cancelled.";
 const CANCELLED_PROGRESS: &str = "⏹️ Download/Conversion cancelled by user.";
 const MAX_DIAGNOSTIC_LINE: usize = 32 * 1024;
 const PIPE_READER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);

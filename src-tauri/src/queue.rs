@@ -357,20 +357,6 @@ fn writer() -> &'static std::sync::mpsc::Sender<WriteRequest> {
     })
 }
 
-/// Logs a failed debounced save. A queue file owned by a newer ROSI version
-/// refuses every save the same way, so that case is logged once per launch.
-fn log_persist_failure(revision: u64, error: &str) {
-    static NEWER_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if crate::fs_util::is_newer_schema_file(&queue_path(), MAX_QUEUE_FILE_BYTES as u64)
-        && NEWER_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed)
-    {
-        return;
-    }
-    crate::logging::error(&format!(
-        "Failed to persist queue revision {revision}: {error}"
-    ));
-}
-
 fn writer_loop(receiver: std::sync::mpsc::Receiver<WriteRequest>) {
     let mut revisions = QueueWriteRevisions::default();
     while let Ok(first) = receiver.recv() {
@@ -405,7 +391,9 @@ fn writer_loop(receiver: std::sync::mpsc::Receiver<WriteRequest>) {
                 continue;
             };
             if let Err(error) = persistence().persist(&mut revisions, revision, snapshot) {
-                log_persist_failure(revision, &error);
+                crate::logging::error(&format!(
+                    "Failed to persist queue revision {revision}: {error}"
+                ));
             }
             continue;
         }
@@ -749,8 +737,12 @@ pub(crate) fn run_queue() {
         if !started {
             // Cancelled or cleared before the download started: the runner owns
             // this item, so it records exactly one outcome for it.
-            let completion =
-                synthetic_completion(&item, &request, Outcome::Cancelled, "⏹️ Cancelled.");
+            let completion = synthetic_completion(
+                &item,
+                &request,
+                Outcome::Cancelled,
+                downloader::CANCELLED_STATUS,
+            );
             let recorded = coordinator::request(|reply| {
                 Command::Queue(QueueCommand::ItemUnstarted {
                     item_id: item.id.clone(),
@@ -1508,7 +1500,12 @@ fn cancel_queue_blocking() -> IpcResult<()> {
             let request = resolve_request(item);
             (
                 item.id.clone(),
-                synthetic_completion(item, &request, Outcome::Cancelled, "⏹️ Cancelled."),
+                synthetic_completion(
+                    item,
+                    &request,
+                    Outcome::Cancelled,
+                    downloader::CANCELLED_STATUS,
+                ),
             )
         })
         .collect();
