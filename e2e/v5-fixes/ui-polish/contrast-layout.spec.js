@@ -966,12 +966,15 @@ describe("ROSI contrast, layout, and toast placement", () => {
         queueSnapshot.scrollHeight <= queueSnapshot.clientHeight,
         `queue textarea scrolls (${queueSnapshot.scrollHeight} > ${queueSnapshot.clientHeight})`,
       );
+      // offsetWidth and clientWidth are each rounded to whole pixels while
+      // borders can be fractional at a scaled display, so up to 1px is rounding.
+      // A real scrollbar gutter is several pixels wide.
       assert.ok(
-        queueSnapshot.verticalScrollbarPx <= 0.5,
+        queueSnapshot.verticalScrollbarPx < 1,
         `vertical scrollbar gutter ${queueSnapshot.verticalScrollbarPx}px`,
       );
       assert.ok(
-        queueSnapshot.horizontalScrollbarPx <= 0.5,
+        queueSnapshot.horizontalScrollbarPx < 1,
         `horizontal scrollbar gutter ${queueSnapshot.horizontalScrollbarPx}px`,
       );
       return {
