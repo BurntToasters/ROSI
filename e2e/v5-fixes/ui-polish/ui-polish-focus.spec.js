@@ -131,8 +131,11 @@ function installActivityProbe() {
       probe.unsubscribe?.();
     },
   };
+  // The panel clears the region before each new message so identical text is
+  // read again. An empty region announces nothing, so only text counts.
   probe.observer = new MutationObserver(() => {
-    probe.announcements.push(region.textContent.trim());
+    const text = region.textContent.trim();
+    if (text) probe.announcements.push(text);
   });
   probe.observer.observe(region, {
     childList: true,
