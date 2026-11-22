@@ -96,8 +96,35 @@ test("unprotected release branches fail closed", () => {
   };
   assert.throws(
     () => assertReleaseBranchProtection("main", { api, env: {} }),
-    /main is not protected/,
+    /main returned HTTP 404: either not protected/,
   );
+});
+
+test("a 404 names both causes: no protection, or a token without admin rights", () => {
+  const api = () => {
+    const error = new Error("HTTP 404");
+    error.statusCode = 404;
+    throw error;
+  };
+  assert.throws(
+    () => assertReleaseBranchProtection("main", { api, env: {} }),
+    (error) => {
+      assert.match(error.message, /either not protected/);
+      assert.match(error.message, /token lacks repository admin access/);
+      assert.match(error.message, /npm run repo:protect-release-branches/);
+      return true;
+    },
+  );
+});
+
+test("the stable runbook explains that a 404 from the protection check has two causes", () => {
+  const runbook = require("node:fs").readFileSync(
+    require("node:path").join(__dirname, "..", "docs", "RELEASE-STABLE.md"),
+    "utf8",
+  );
+  assert.match(runbook, /404/);
+  assert.match(runbook, /not protected/);
+  assert.match(runbook, /token[^.]*admin/);
 });
 
 test("configure protects main without changing mutable beta", () => {

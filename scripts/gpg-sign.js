@@ -1142,7 +1142,11 @@ async function downloadUrlToFile(url, destination) {
     Accept: "application/octet-stream",
     "User-Agent": "ROSI-Release",
   };
-  const response = await fetch(url, { headers, redirect: "follow" });
+  const response = await githubCli.fetchWithTimeout(
+    url,
+    { headers, redirect: "follow" },
+    { timeoutMs: 10 * 60 * 1000 },
+  );
   if (!response.ok) {
     throw new Error(`Download ${url} failed with HTTP ${response.status}.`);
   }

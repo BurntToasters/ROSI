@@ -46,18 +46,32 @@ function releaseAssetUploadArgs(uploadUrl, filePath) {
   ];
 }
 
-function runGitHub(args, { input } = {}) {
-  const result = spawnSync("gh", args, {
+// A stalled gh call inside the beta-sync lock would otherwise hold the lock
+// forever. API calls get two minutes; asset uploads get ten.
+const GITHUB_API_TIMEOUT_MS = 2 * 60 * 1000;
+const GITHUB_UPLOAD_TIMEOUT_MS = 10 * 60 * 1000;
+
+function runGitHub(
+  args,
+  { input, timeoutMs = GITHUB_API_TIMEOUT_MS, spawn = spawnSync } = {},
+) {
+  const result = spawn("gh", args, {
     encoding: "utf8",
     env: githubCliEnvironment(),
     input,
     stdio: ["pipe", "pipe", "pipe"],
     maxBuffer: 16 * 1024 * 1024,
+    timeout: timeoutMs,
   });
   if (result.error) {
     if (result.error.code === "ENOENT") {
       throw new Error(
         "GitHub CLI is required. Install gh and run `gh auth login` on this release VM. Token environment variables are intentionally ignored; gh must hold credentials in its keyring.",
+      );
+    }
+    if (result.error.code === "ETIMEDOUT") {
+      throw new Error(
+        `gh ${args.join(" ")} timed out after ${timeoutMs} ms and was stopped; check GitHub availability and re-run.`,
       );
     }
     throw result.error;
@@ -102,21 +116,50 @@ function githubApiRaw(method, endpoint) {
   return String(runGitHub(githubApiRawArgs(method, endpoint)).stdout || "");
 }
 
+// Bounds one HTTP request, headers and body alike, so a stalled download cannot
+// hold the release lock. A timeout is rethrown with the URL and the limit.
+function fetchWithTimeout(
+  url,
+  init = {},
+  { timeoutMs, fetchImpl = fetch } = {},
+) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("fetchWithTimeout requires a positive timeoutMs.");
+  }
+  return fetchImpl(url, {
+    ...init,
+    signal: AbortSignal.timeout(timeoutMs),
+  }).catch((error) => {
+    if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+      throw new Error(
+        `${url} did not respond within ${Math.round(timeoutMs / 1000)} s and was abandoned.`,
+      );
+    }
+    throw error;
+  });
+}
+
 function assertGitHubCliAuthenticated() {
   runGitHub(["auth", "status", "--hostname", "github.com"]);
 }
 
-function uploadReleaseAsset(uploadUrl, filePath) {
-  return githubJson(releaseAssetUploadArgs(uploadUrl, filePath));
+function uploadReleaseAsset(uploadUrl, filePath, { spawn } = {}) {
+  return githubJson(releaseAssetUploadArgs(uploadUrl, filePath), {
+    timeoutMs: GITHUB_UPLOAD_TIMEOUT_MS,
+    spawn,
+  });
 }
 
 module.exports = {
+  GITHUB_API_TIMEOUT_MS,
+  GITHUB_UPLOAD_TIMEOUT_MS,
   assertGitHubCliAuthenticated,
   githubApi,
   githubApiArgs,
   githubApiRaw,
   githubApiRawArgs,
   githubCliEnvironment,
+  fetchWithTimeout,
   githubStatusCode,
   releaseAssetUploadArgs,
   runGitHub,

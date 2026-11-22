@@ -36,6 +36,7 @@ const {
   githubApiRaw,
   assertGitHubCliAuthenticated,
   githubCliEnvironment,
+  fetchWithTimeout,
 } = require("./github-cli.cjs");
 const { isExplicitTruthy } = require("./release-policy.cjs");
 const { gpgFlavor, gpgPath, resolveGpg } = require("./fetch-ytdlp.cjs");
@@ -729,6 +730,28 @@ async function listDraftReleaseAssets(repoOwner, repoName, releaseId) {
   );
 }
 
+// The asset set that verification checked. publish-release.cjs re-lists the
+// draft right before it flips the release public and refuses any difference.
+export function buildDraftAssetSnapshot(releaseId, listedAssets) {
+  const assets = (listedAssets || [])
+    .map((asset) => {
+      if (typeof asset?.id !== "number") {
+        throw new Error(`Draft asset ${asset?.name || "(unknown)"} has no id.`);
+      }
+      if (typeof asset.name !== "string") {
+        throw new Error(`Draft asset ${asset.id} has no name.`);
+      }
+      return {
+        id: asset.id,
+        name: asset.name,
+        size: asset.size,
+        updated_at: asset.updated_at,
+      };
+    })
+    .sort((left, right) => left.id - right.id);
+  return { releaseId, assets };
+}
+
 function currentHeadCommit() {
   const commit = execSync("git rev-parse HEAD", {
     cwd: root,
@@ -761,15 +784,19 @@ async function downloadDraftAsset(
     throw new Error(`Draft asset ${asset?.name || "(unknown)"} has no id.`);
   }
   const url = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/assets/${asset.id}`;
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/octet-stream",
-      Authorization: `Bearer ${token}`,
-      "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "ROSI-Release",
+  const response = await fetchWithTimeout(
+    url,
+    {
+      headers: {
+        Accept: "application/octet-stream",
+        Authorization: `Bearer ${token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "ROSI-Release",
+      },
+      redirect: "follow",
     },
-    redirect: "follow",
-  });
+    { timeoutMs: 10 * 60 * 1000 },
+  );
   if (!response.ok) {
     throw new Error(
       `Download ${asset.name} failed with HTTP ${response.status}.`,
@@ -1067,6 +1094,7 @@ async function main() {
     repoName,
     release.id,
   );
+  const snapshot = buildDraftAssetSnapshot(release.id, listedAssets);
   const assets = listedAssets.map((asset) => asset?.name).filter(Boolean);
   assertDraftReleaseShape({
     release,
@@ -1146,6 +1174,7 @@ async function main() {
   console.log(
     `verify-draft: ok (${tag}, draft, HEAD ${headCommit.slice(0, 12)}, ${assets.length} assets, prerelease=${isPrereleaseVersion(version)}, ROSI 4 feed -> ${sourceTag})`,
   );
+  return snapshot;
 }
 
 function isDirectExecution() {
@@ -1155,9 +1184,28 @@ function isDirectExecution() {
   );
 }
 
+// publish-release.cjs passes --snapshot-file so the verified asset set crosses
+// the process boundary as JSON.
+function snapshotFileArgument(argv) {
+  const index = argv.indexOf("--snapshot-file");
+  if (index === -1) return null;
+  const file = argv[index + 1];
+  if (!file || file.startsWith("--")) {
+    throw new Error("--snapshot-file requires a file path.");
+  }
+  return file;
+}
+
 if (isDirectExecution()) {
-  main().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  });
+  main()
+    .then((snapshot) => {
+      const snapshotFile = snapshotFileArgument(process.argv.slice(2));
+      if (snapshotFile) {
+        fs.writeFileSync(snapshotFile, `${JSON.stringify(snapshot)}\n`);
+      }
+    })
+    .catch((error) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    });
 }

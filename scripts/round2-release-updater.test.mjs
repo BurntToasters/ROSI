@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { copyBundledNotices } from "./copy-bundled-licenses.js";
@@ -18,6 +19,7 @@ import { validateChangelogForVersion } from "./validate-changelog-version.js";
 import {
   assertGpgValidSignature,
   assertDraftReleaseShape,
+  buildDraftAssetSnapshot,
   requiredDraftBetaManifestNames,
   requiredDraftAssetNames,
   requiredDraftChecksumNames,
@@ -586,4 +588,126 @@ test("direct release publication runs shared preflight after draft verification 
   assert.match(source, /release-preflight\.js/u);
   assert.ok(verify >= 0 && verify < preflight);
   assert.ok(preflight >= 0 && preflight < patch);
+});
+
+test("draft asset downloads are time-bounded through the shared fetch helper", () => {
+  const source = fs.readFileSync(
+    path.join(root, "scripts", "verify-release-draft.js"),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /(?<![\w.])fetch\(/u);
+  assert.match(source, /fetchWithTimeout\(\s*url,/u);
+  assert.match(source, /timeoutMs: 10 \* 60 \* 1000/u);
+});
+
+test("draft verification snapshots each asset's id, name, size and updated_at", () => {
+  const snapshot = buildDraftAssetSnapshot(42, [
+    {
+      id: 9,
+      name: "b.txt",
+      size: 2,
+      updated_at: "2026-01-02T00:00:00Z",
+      browser_download_url: "https://example.test/b",
+      label: "",
+    },
+    {
+      id: 3,
+      name: "a.txt",
+      size: 1,
+      updated_at: "2026-01-01T00:00:00Z",
+      uploader: { login: "x" },
+    },
+  ]);
+  assert.deepEqual(snapshot, {
+    releaseId: 42,
+    assets: [
+      { id: 3, name: "a.txt", size: 1, updated_at: "2026-01-01T00:00:00Z" },
+      { id: 9, name: "b.txt", size: 2, updated_at: "2026-01-02T00:00:00Z" },
+    ],
+  });
+  assert.throws(
+    () =>
+      buildDraftAssetSnapshot(42, [
+        { name: "a.txt", size: 1, updated_at: "2026-01-01T00:00:00Z" },
+      ]),
+    /has no id/,
+  );
+});
+
+test("publication refuses a draft whose asset set changed after verification", () => {
+  const publish = createRequire(import.meta.url)("./publish-release.cjs");
+  const snapshot = buildDraftAssetSnapshot(42, [
+    { id: 3, name: "a.txt", size: 1, updated_at: "2026-01-01T00:00:00Z" },
+    { id: 9, name: "b.txt", size: 2, updated_at: "2026-01-02T00:00:00Z" },
+  ]);
+  const same = [
+    { id: 9, name: "b.txt", size: 2, updated_at: "2026-01-02T00:00:00Z", x: 1 },
+    { id: 3, name: "a.txt", size: 1, updated_at: "2026-01-01T00:00:00Z" },
+  ];
+  assert.doesNotThrow(() =>
+    publish.assertDraftAssetsUnchanged({
+      snapshot,
+      releaseId: 42,
+      currentAssets: same,
+    }),
+  );
+  const check = (currentAssets, releaseId = 42) =>
+    publish.assertDraftAssetsUnchanged({
+      snapshot,
+      releaseId,
+      currentAssets,
+    });
+  assert.throws(
+    () =>
+      check([
+        ...same,
+        { id: 11, name: "c.exe", size: 5, updated_at: "2026-01-03T00:00:00Z" },
+      ]),
+    /added: c\.exe/,
+  );
+  assert.throws(() => check([same[0]]), /removed: a\.txt/);
+  assert.throws(
+    () => check([same[0], { ...same[1], size: 99 }]),
+    /changed: a\.txt/,
+  );
+  assert.throws(
+    () => check([same[0], { ...same[1], updated_at: "2026-02-01T00:00:00Z" }]),
+    /changed: a\.txt/,
+  );
+  assert.throws(
+    () => check([same[0], { ...same[1], id: 77 }]),
+    /added: a\.txt|removed: a\.txt/,
+  );
+  assert.throws(() => check(same, 43), /release id 43/);
+});
+
+test("direct publication re-checks the draft asset set after preflight and before PATCH", () => {
+  const source = fs.readFileSync(
+    path.join(root, "scripts", "publish-release.cjs"),
+    "utf8",
+  );
+  const mainBody = source.slice(source.indexOf("async function main()"));
+  const preflight = mainBody.indexOf("runReleasePreflight();");
+  const recheck = mainBody.indexOf("assertDraftAssetsUnchanged(");
+  const patch = mainBody.indexOf('"PATCH"');
+  assert.ok(preflight >= 0 && preflight < recheck, "recheck follows preflight");
+  assert.ok(recheck < patch, "recheck precedes the PATCH");
+});
+
+test("stable metadata checks reject option-like refs and allow large git output", async () => {
+  const script = path.join(root, "scripts", "check-stable-metadata-pr.mjs");
+  const checker = await import("./check-stable-metadata-pr.mjs");
+  assert.ok(checker.GIT_MAX_BUFFER >= 64 * 1024 * 1024);
+  assert.throws(
+    () => checker.assertSafeGitRef("--output=/tmp/x"),
+    /must not start with "-"/,
+  );
+  assert.doesNotThrow(() => checker.assertSafeGitRef("origin/main"));
+  const result = spawnSync(
+    process.execPath,
+    [script, "--output=/tmp/x", "HEAD"],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /must not start with "-"/);
 });

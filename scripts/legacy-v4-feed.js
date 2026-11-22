@@ -22,6 +22,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import yaml from "js-yaml";
 
 const require = createRequire(import.meta.url);
+const { fetchWithTimeout } = require("./github-cli.cjs");
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_OWNER = process.env.GH_REPO_OWNER || "BurntToasters";
@@ -356,7 +357,11 @@ async function checkUrls(feed, releaseTag) {
     const parsed = yaml.load(text);
     for (const file of parsed.files) {
       const url = resolveLegacyDownloadUrl(releaseTag, file.url);
-      const response = await fetch(url, { method: "HEAD", redirect: "follow" });
+      const response = await fetchWithTimeout(
+        url,
+        { method: "HEAD", redirect: "follow" },
+        { timeoutMs: 60_000 },
+      );
       const length = Number(response.headers.get("content-length"));
       if (!response.ok || length !== file.size) {
         throw new Error(

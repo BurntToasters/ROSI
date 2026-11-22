@@ -90,7 +90,7 @@ function assertReleaseBranchProtection(
     if (error?.statusCode === 404) {
       const { owner, repo } = repositoryTarget(env);
       throw new Error(
-        `${owner}/${repo}:${branch} is not protected. Run npm run repo:protect-release-branches with repository admin access first.`,
+        `${owner}/${repo}:${branch} returned HTTP 404: either not protected, or the GitHub token lacks repository admin access to read its protection. Run npm run repo:protect-release-branches with repository admin access first.`,
       );
     }
     throw error;

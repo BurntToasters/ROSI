@@ -9,6 +9,19 @@ import {
 } from "./sync-version-helpers.js";
 import { validateChangelogForVersion } from "./validate-changelog-version.js";
 
+// `git show` of a large changelog or metainfo file can exceed the 1 MiB default.
+export const GIT_MAX_BUFFER = 64 * 1024 * 1024;
+
+// A ref that starts with "-" would be parsed by git as an option.
+export function assertSafeGitRef(ref) {
+  const value = String(ref || "");
+  if (!value) throw new Error("Git ref must not be empty.");
+  if (value.startsWith("-")) {
+    throw new Error(`Git ref ${value} must not start with "-".`);
+  }
+  return value;
+}
+
 const STABLE_METADATA_PATHS = new Set([
   "CHANGELOG.md",
   "package.json",
@@ -473,6 +486,7 @@ function git(args) {
     encoding: "utf8",
     windowsHide: true,
     timeout: 30_000,
+    maxBuffer: GIT_MAX_BUFFER,
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
@@ -490,12 +504,14 @@ function fileAt(ref, file) {
 }
 
 function main() {
-  const [baseRef, headRef] = process.argv.slice(2);
-  if (!baseRef || !headRef) {
+  const [baseArg, headArg] = process.argv.slice(2);
+  if (!baseArg || !headArg) {
     throw new Error(
       "Usage: node scripts/check-stable-metadata-pr.mjs <base-ref> <head-ref>",
     );
   }
+  const baseRef = assertSafeGitRef(baseArg);
+  const headRef = assertSafeGitRef(headArg);
   const changedStatus = git([
     "diff",
     "--name-status",

@@ -1149,3 +1149,13 @@ test("T9: an unresolvable shim throws", () => {
     /Chocolatey shim/,
   );
 });
+
+test("GPG release downloads are time-bounded through the shared fetch helper", () => {
+  const source = fs.readFileSync(
+    path.join(root, "scripts", "gpg-sign.js"),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /(?<![\w.])fetch\(/u);
+  assert.match(source, /githubCli\.fetchWithTimeout\(\s*url,/u);
+  assert.match(source, /timeoutMs: 10 \* 60 \* 1000/u);
+});

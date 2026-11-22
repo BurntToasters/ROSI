@@ -325,3 +325,13 @@ test("the draft gate requires every feed file (gate-missing)", () => {
     /latest-mac\.yml/,
   );
 });
+
+test("ROSI 4 feed URL checks go through a bounded fetch", () => {
+  const source = fs.readFileSync(
+    path.join(root, "scripts", "legacy-v4-feed.js"),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /(?<![\w.])fetch\(/u);
+  assert.match(source, /fetchWithTimeout\(\s*url,/u);
+  assert.match(source, /timeoutMs: 60_000/u);
+});

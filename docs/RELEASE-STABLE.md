@@ -30,7 +30,11 @@ unreadable `ci-gate` fails preflight. The only bypass is the beta-only
 `ROSI_RELEASE_ALLOW_UNVERIFIED_CI=1`, which prints an UNVERIFIED warning and
 continues. Stable releases refuse that variable.
 
-Confirm the repository Settings page shows the rule before continuing.
+If the protection check fails with HTTP 404, the response alone cannot tell two
+causes apart: either `main` is not protected, or the GitHub CLI token lacks
+repository administration access and cannot read the protection. Run the
+command above with an account that has administration access. Confirm the
+repository Settings page shows the rule before continuing.
 
 ## 2. Freeze and prove the stable candidate
 

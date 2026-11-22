@@ -2,6 +2,8 @@
 // Order is the whole point: verify:draft must pass before the flip is sent.
 // Usage: npm run release:publish   (after every platform VM has signed)
 
+const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { execFileSync, spawnSync } = require("child_process");
 
@@ -33,15 +35,101 @@ function currentReleaseCommit() {
 }
 
 function runVerifyDraft() {
-  const result = spawnSync(
-    process.execPath,
-    [path.join(__dirname, "verify-release-draft.js"), "--verify-artifacts"],
-    { stdio: "inherit", cwd: path.resolve(__dirname, "..") },
-  );
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "rosi-publish-"));
+  const snapshotFile = path.join(directory, "draft-assets.json");
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(__dirname, "verify-release-draft.js"),
+        "--verify-artifacts",
+        "--snapshot-file",
+        snapshotFile,
+      ],
+      { stdio: "inherit", cwd: path.resolve(__dirname, "..") },
+    );
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      throw new Error(
+        "release:verify:draft failed; fix the draft instead of publishing it.",
+      );
+    }
+    return JSON.parse(fs.readFileSync(snapshotFile, "utf8"));
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+function listDraftAssets(releaseId) {
+  const assets = [];
+  for (let page = 1; page <= 20; page += 1) {
+    const batch = githubApi(
+      "GET",
+      `/repos/${REPO_OWNER}/${REPO_NAME}/releases/${releaseId}/assets?per_page=100&page=${page}`,
+    );
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    assets.push(...batch);
+    if (batch.length < 100) break;
+  }
+  return assets;
+}
+
+function assetIdentity(asset) {
+  return {
+    id: asset.id,
+    name: asset.name,
+    size: asset.size,
+    updated_at: asset.updated_at,
+  };
+}
+
+// Compares the draft's current assets with the set verification checked. Any
+// added, removed, or changed asset means the verified bytes are not the bytes
+// being published, so the flip is refused.
+function assertDraftAssetsUnchanged({ snapshot, releaseId, currentAssets }) {
+  if (Number(snapshot?.releaseId) !== Number(releaseId)) {
     throw new Error(
-      "release:verify:draft failed; fix the draft instead of publishing it.",
+      `Draft release id ${releaseId} does not match the verified release id ${snapshot?.releaseId}; re-run npm run release:verify:draft.`,
+    );
+  }
+  const verified = new Map(
+    (snapshot?.assets || []).map((asset) => [asset.id, assetIdentity(asset)]),
+  );
+  const current = new Map();
+  for (const asset of currentAssets || []) {
+    if (typeof asset?.id !== "number") {
+      throw new Error("Draft asset listing returned an asset without an id.");
+    }
+    current.set(asset.id, assetIdentity(asset));
+  }
+  const added = [];
+  const removed = [];
+  const changed = [];
+  for (const [id, asset] of current) {
+    if (!verified.has(id)) added.push(asset.name);
+  }
+  for (const [id, asset] of verified) {
+    if (!current.has(id)) {
+      removed.push(asset.name);
+      continue;
+    }
+    const now = current.get(id);
+    if (
+      now.name !== asset.name ||
+      now.size !== asset.size ||
+      now.updated_at !== asset.updated_at
+    ) {
+      changed.push(asset.name);
+    }
+  }
+  const problems = [
+    added.length > 0 ? `added: ${added.join(", ")}` : "",
+    removed.length > 0 ? `removed: ${removed.join(", ")}` : "",
+    changed.length > 0 ? `changed: ${changed.join(", ")}` : "",
+  ].filter(Boolean);
+  if (problems.length > 0) {
+    throw new Error(
+      `Draft assets changed after verification (${problems.join("; ")}). Refusing to publish unverified bytes; re-run npm run release:verify:draft.`,
     );
   }
 }
@@ -64,7 +152,7 @@ async function main() {
   assertStableReleaseOverridesAllowed(process.env, VERSION);
   assertGitHubCliAuthenticated();
   const commit = currentReleaseCommit();
-  runVerifyDraft();
+  const verifiedSnapshot = runVerifyDraft();
 
   const initialTagCommit = assertReleaseTagMatchesHead({
     owner: REPO_OWNER,
@@ -140,6 +228,14 @@ async function main() {
     );
   }
 
+  // Re-list the draft's assets immediately before the flip. Any asset replaced
+  // or added after verification would otherwise ship unverified.
+  assertDraftAssetsUnchanged({
+    snapshot: verifiedSnapshot,
+    releaseId: draft.id,
+    currentAssets: listDraftAssets(draft.id),
+  });
+
   const published = githubApi(
     "PATCH",
     `/repos/${REPO_OWNER}/${REPO_NAME}/releases/${draft.id}`,
@@ -168,10 +264,14 @@ async function main() {
   );
 }
 
-main().catch((error) => {
-  console.error(
-    "✗ ERROR: Failed to publish release: " +
-      (error && error.message ? error.message : String(error)),
-  );
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(
+      "✗ ERROR: Failed to publish release: " +
+        (error && error.message ? error.message : String(error)),
+    );
+    process.exit(1);
+  });
+}
+
+module.exports = { assertDraftAssetsUnchanged };
