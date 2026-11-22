@@ -933,6 +933,18 @@
       "case": "licenses-hide-show-hide-ends-closed",
       "platform": "win32",
       "reason": "The guard checks only the end state; WebDriver cannot count cleanup timers."
+    },
+    {
+      "scenario": "v5-fixes/ui-polish",
+      "case": "keyboard-reset-tab-trap",
+      "platform": "win32",
+      "reason": "WebDriver Tab presses do not move focus in the WebView2 harness, so the reset prompt's Tab trap cannot be proven."
+    },
+    {
+      "scenario": "v5-fixes/ui-polish",
+      "case": "theme-viewport-keyboard-layout",
+      "platform": "win32",
+      "reason": "The WebView2 window does not reach the requested viewport sizes, so the per-size layout checks cannot run."
     }
   ],
   "profiles": {

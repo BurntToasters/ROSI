@@ -48,6 +48,8 @@
 
 ## Known gaps
 
+- [ ] ui-polish rows that now report "not proven" with a win32 allowance: `keyboard-reset-tab-trap` (WebDriver Tab does not move focus in WebView2) and `theme-viewport-keyboard-layout` (the window does not reach the requested sizes). Check them by hand, and add darwin and linux allowances if CI shows the same.
+
 - [ ] A few E2E sleeps remain because nothing observable marks their end. Each is a named constant with a reason:
   - `AUTO_PREVIEW_SETTLE_MS` in `full-audit-a.spec.js` and `full-audit-b.spec.js` needs the preview controller's pending or in-flight state in `src/e2e-hook.ts`.
   - `PAST_SYNTHETIC_DNS_MS` (`security-release-checks.spec.js`) and `DNS_DRAIN_WINDOW_MS` (`download-process.spec.js`) need a Rust counter of finished synthetic DNS lookups.
