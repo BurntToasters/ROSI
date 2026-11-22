@@ -50,6 +50,19 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 - **Formats:** A failed format fetch reports the end of yt-dlp's error output instead of all of its output. Download sizes show consistently across the queue, Activity and statistics.
 - **Tests:** Release preflight refuses the green `ci-gate` posted by the weekly scheduled CI run, and E2E proof fails if the source changes during the run.
 - **Tests:** E2E specs wait for the state they need instead of sleeping for a fixed time, and share one set of helpers.
+- **Downloads:** In a playlist, each entry after the first now shows its own download progress instead of reporting a merge, and the overall bar no longer jumps back during indeterminate steps.
+- **Downloads:** A converted file that was saved is no longer reported as failed when the folder sync afterwards fails. A cancel that lands as yt-dlp exits is reported as cancelled, not failed.
+- **Queue:** Cancelling the queue while it waits for another download to release its slot takes effect at once, and a queue item can no longer stay "downloading" forever if its result is lost.
+- **Persistence:** Queue, Activity and statistics files from a newer ROSI are never overwritten, even when their layout changed. Files that are not valid text, and records dropped while loading, are kept in a recovery copy before the file is rewritten.
+- **Settings:** The FFmpeg path can no longer point to a network share, and `\\localhost\ADMIN$` and other local admin-share forms are refused like the system folders they point to. The FFmpeg path and upstream proxy fields save when you leave them, not on every keystroke.
+- **Network:** The download proxy checks request framing before it connects, forwards only well-formed chunked bodies and trailers, and refuses `Transfer-Encoding` on HTTP/1.0.
+- **macOS:** After Quit, choosing "Close Without Saving" in the timeout dialog now quits ROSI instead of leaving it in the Dock. Show in Folder never opens an app bundle.
+- **Updates:** Checking for updates while an update is downloading says so at once instead of timing out after 30 seconds, and restarting during an update download asks first.
+- **Accessibility:** The settings sidebar is no longer announced as a second dialog under a prompt, and menu shortcuts cannot open it over a prompt or the setup wizard. New Activity entries are announced while the dock is collapsed. The keyboard shortcuts list includes Enter and Escape and names the Option key on macOS.
+- **Interface:** Every button, tab, heading and setting label now uses Title Case, and "Clear history" is now "Clear Activity".
+- **Interface:** In the light theme, toggles that are off, inactive progress steps, Activity row buttons and green status borders are easier to see. A valid URL keeps its focus ring, the console shows "No output yet." when empty, long URLs wrap in toasts, and the URL field's busy button says "Cancel Preview".
+- **Interface:** The console stays where you scrolled instead of jumping to the newest line, a failed download says so on the progress card, and sizes just under a unit show as the next unit (1 MB, not 1024 KB).
+- **Setup:** If saving setup fails, your earlier settings are kept instead of being saved later on close.
 
 ## Changes in `v5.1.0-beta.2:`
 

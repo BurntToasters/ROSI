@@ -21,6 +21,25 @@
 - [ ] POSIX watchdog now terminates every still-registered group on a clean exit too (`process_watchdog.rs`); confirm a normal quit during a Deno install stops it.
 - [ ] macOS: a second Cmd+Q and a Dock reopen during shutdown are ignored (`window.rs`, `main.rs`).
 - [ ] Flatpak manifest: rustup-init is still unpinned; pin it to a release tag with a checksum.
+- [ ] macOS: Quit, then "Close Without Saving" in the timeout dialog, exits ROSI (`QUIT_REQUESTED` in `window.rs`). `request_quit` is not type-checked on Windows.
+- [ ] macOS: Show in Folder for a missing file inside an app bundle is refused instead of launching the bundle (`platform.rs`).
+- [ ] POSIX: E2E runner timeouts kill the whole process group (`scripts/e2e/process-tree.js`), and the next pass waits for port 4445.
+- [ ] Downloads: playlist entries reset their phases from the playlist index in the progress template. Only single videos were exercised locally; run a real multi-entry playlist.
+- [ ] `ci.yml` job timeouts and the Dependabot cooldown and `open-pull-requests-limit: 0` were not run (no CI minutes).
+
+## Needs an owner decision
+
+- [ ] Pin the release GPG fingerprint in the repo. `verify-release-draft.js` trusts `GPG_KEY_ID` from `.env`.
+- [ ] Closed allowlist of draft asset names in `verify-release-draft.js`.
+- [ ] `CHANGELOG.md` (v5.0.0) says compromised eMudhra intermediates are rejected, but no code does it. Show where, or reword the entry.
+- [ ] Copyright holder: `COPYRIGHT.md` says `rosie.run`; `tauri.conf.json` and the About menu say `BurntToasters`.
+- [ ] Open Folder accepts remote UNC paths (`validate_file_path`), which NAS download folders need.
+- [ ] The download proxy allows CONNECT to any port.
+- [ ] `tauri_plugin_process` is registered in release builds, but only E2E uses it.
+- [ ] `legacy-v4-feed.js` deletes the old asset before uploading its replacement on a published release.
+- [ ] Header and footer sit inside `<main>`. Moving them out leaves them interactive under dialogs.
+- [ ] Unreferenced files: `scripts/print-windows-package-version.js`, `e2e/fixtures/security-test-ca-key.pem`, `src/modules/downloads.ts` (used only by a test).
+- [ ] `validate-updater-live.js` fetches and `strip-coauthor-trailers.js` git calls still have no timeout or buffer limit; neither has a test file.
 
 ## Manual checks
 
