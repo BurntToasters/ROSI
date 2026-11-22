@@ -5,6 +5,11 @@ regress and the E2E check in `contrast-layout.spec.js` that must catch it. Check
 drive the real renderer through the E2E bridge and read computed styles and
 bounding rectangles from the live page.
 
+A row that cannot run on this platform is recorded `not-proven` in the spec's
+report and also written to the pass results file as a skipped case with its
+reason. The gate then fails the area unless `e2e/suites.json` allows that case
+for the platform. A `not-proven` row never counts as a pass.
+
 ## Status and accent text contrast (C10)
 
 1. **A text token is still the fill color.** A status or accent text element
@@ -45,8 +50,12 @@ bounding rectangles from the live page.
    overflow-y of `auto` or `scroll`, and the buttons are still visible after the
    scroll position is set to the bottom.
 9. **The window cannot be resized on this platform.** The 900x560 case cannot run.
-   Check: the report records `resized: false` and the check's `invariantPassed`
-   is `null` (not proven). It must never be recorded as passed.
+   Check: the window-size read-back shows that the window did not reach 900x560
+   (outer or inner size within 4 px). The check then records `not-proven`
+   (`invariantPassed: null`) and the pass results file gets a skipped case named
+   `window-resized-900x560-modal`. Layout rows 6 to 8 and 10 are not judged in
+   that case; each one is also written as a skipped case under its own name. It
+   must never be recorded as passed.
 10. **A short message is clipped.** A one-line message must render without a
     scroll container overflow (`scrollHeight <= clientHeight`), and the box still
     shows its heading. Check: the same modal with a short message keeps its
@@ -58,8 +67,8 @@ bounding rectangles from the live page.
     overridden: `textarea.field` in controls.css sets 0.45rem, which outranks the
     queue rule, so the one-row line (about 16.7px) needs 31px against a 28px
     client box. Check: with the textarea empty and not focused, `scrollHeight <=
-    clientHeight` and no scrollbar gutter (border-adjusted `offsetWidth -
-    clientWidth` and `offsetHeight - clientHeight` are 0).
+clientHeight` and no scrollbar gutter (border-adjusted `offsetWidth -
+clientWidth` and `offsetHeight - clientHeight` are 0).
 12. **The resize grip is still shown.** Check: the computed `resize` of the queue
     textarea is `none`.
 13. **Overflow is hidden for real content.** Typed content taller than the box
@@ -95,7 +104,10 @@ bounding rectangles from the live page.
 20. **The polite and assertive toasts stack on each other.** Shown together, the
     two toast rectangles must not overlap.
 21. **The window cannot be resized on this platform.** The 900x560 toast case
-    records `resized: false` and `invariantPassed: null`, never a pass.
+    records `resized: false` and `invariantPassed: null`, and the pass results
+    file gets a skipped case named `window-resized-900x560-toast`. Rows 18 to 20
+    are not judged in that case; each one is also written as a skipped case under
+    its own name. It must never be recorded as passed.
 
 ## Computed contrast (WCAG 2.x relative luminance)
 
@@ -107,29 +119,29 @@ Each token passes on both stops.
 
 Before (fill tokens used as text):
 
-| Theme | Token | Background | Ratio |
-| --- | --- | --- | --- |
-| light | `--success` #22c55e | #eef3f8 | 2.04 (about 2.1, as briefed) |
-| light | `--warning` #f59e0b | #eef3f8 | 1.92 |
-| light | `--danger` #ef4444 | #eef3f8 | 3.37 |
-| purple | `--accent-light` #7c3aed | #18122a / #1e163a | 3.18 / 2.99 |
+| Theme  | Token                    | Background        | Ratio                        |
+| ------ | ------------------------ | ----------------- | ---------------------------- |
+| light  | `--success` #22c55e      | #eef3f8           | 2.04 (about 2.1, as briefed) |
+| light  | `--warning` #f59e0b      | #eef3f8           | 1.92                         |
+| light  | `--danger` #ef4444       | #eef3f8           | 3.37                         |
+| purple | `--accent-light` #7c3aed | #18122a / #1e163a | 3.18 / 2.99                  |
 
 After (text tokens, per theme):
 
-| Theme | Token (value) | Background | Ratio (mid / end) |
-| --- | --- | --- | --- |
-| dark | `--success-text` #22c55e | #0d0f14 / #10131a | 8.41 / 8.16 |
-| dark | `--warning-text` #f59e0b | #0d0f14 / #10131a | 8.93 / 8.65 |
-| dark | `--danger-text` #fa8888 | #0d0f14 / #10131a | 8.16 / 7.91 |
-| dark | `--accent-text` #67e8f9 | #0d0f14 / #10131a | 13.22 / 12.82 |
-| purple | `--success-text` #22c55e | #18122a / #1e163a | 7.95 / 7.49 |
-| purple | `--warning-text` #f59e0b | #18122a / #1e163a | 8.44 / 7.94 |
-| purple | `--danger-text` #fa8888 | #18122a / #1e163a | 7.72 / 7.26 |
-| purple | `--accent-text` #a78bfa | #18122a / #1e163a | 6.66 / 6.27 |
-| light | `--success-text` #166534 | #eef3f8 / #e7edf5 | 6.39 / 6.05 |
-| light | `--warning-text` #9a5a0a | #eef3f8 / #e7edf5 | 4.90 / 4.64 |
-| light | `--danger-text` #b91c1c | #eef3f8 / #e7edf5 | 5.80 / 5.49 |
-| light | `--accent-text` #1d4ed8 | #eef3f8 / #e7edf5 | 6.00 / 5.69 |
+| Theme  | Token (value)            | Background        | Ratio (mid / end) |
+| ------ | ------------------------ | ----------------- | ----------------- |
+| dark   | `--success-text` #22c55e | #0d0f14 / #10131a | 8.41 / 8.16       |
+| dark   | `--warning-text` #f59e0b | #0d0f14 / #10131a | 8.93 / 8.65       |
+| dark   | `--danger-text` #fa8888  | #0d0f14 / #10131a | 8.16 / 7.91       |
+| dark   | `--accent-text` #67e8f9  | #0d0f14 / #10131a | 13.22 / 12.82     |
+| purple | `--success-text` #22c55e | #18122a / #1e163a | 7.95 / 7.49       |
+| purple | `--warning-text` #f59e0b | #18122a / #1e163a | 8.44 / 7.94       |
+| purple | `--danger-text` #fa8888  | #18122a / #1e163a | 7.72 / 7.26       |
+| purple | `--accent-text` #a78bfa  | #18122a / #1e163a | 6.66 / 6.27       |
+| light  | `--success-text` #166534 | #eef3f8 / #e7edf5 | 6.39 / 6.05       |
+| light  | `--warning-text` #9a5a0a | #eef3f8 / #e7edf5 | 4.90 / 4.64       |
+| light  | `--danger-text` #b91c1c  | #eef3f8 / #e7edf5 | 5.80 / 5.49       |
+| light  | `--accent-text` #1d4ed8  | #eef3f8 / #e7edf5 | 6.00 / 5.69       |
 
 The `system` option resolves to dark or light and is measured as that theme.
 The dark values equal the previous fill colors, except `--danger-text`, which is lighter (#fa8888, rgb(250, 136, 136)) so danger text passes AA on tinted dark surfaces. The `dark-theme-text-values-unchanged` check pins this value.

@@ -879,6 +879,60 @@
       "case": "deno-installer/wizard-failure-offers-instructions",
       "platform": "linux",
       "reason": "Linux shows only instructions; no automatic install exists."
+    },
+    {
+      "scenario": "v5-fixes/ui-polish",
+      "case": "preference-live-opaque",
+      "platform": "darwin",
+      "reason": "Needs the OS reduced-transparency or contrast preference set, which the gate cannot set."
+    },
+    {
+      "scenario": "v5-fixes/ui-polish",
+      "case": "preference-live-opaque",
+      "platform": "linux",
+      "reason": "Needs the OS reduced-transparency or contrast preference set, which the gate cannot set."
+    },
+    {
+      "scenario": "v5-fixes/ui-polish",
+      "case": "preference-live-opaque",
+      "platform": "win32",
+      "reason": "Needs the OS reduced-transparency or contrast preference set, which the gate cannot set."
+    },
+    {
+      "scenario": "v5-fixes/ui-polish",
+      "case": "forced-colors-live-state",
+      "platform": "darwin",
+      "reason": "Needs forced colors active, which the gate cannot turn on."
+    },
+    {
+      "scenario": "v5-fixes/ui-polish",
+      "case": "forced-colors-live-state",
+      "platform": "linux",
+      "reason": "Needs forced colors active, which the gate cannot turn on."
+    },
+    {
+      "scenario": "v5-fixes/ui-polish",
+      "case": "forced-colors-live-state",
+      "platform": "win32",
+      "reason": "Needs forced colors active, which the gate cannot turn on."
+    },
+    {
+      "scenario": "v5-fixes/ui-polish",
+      "case": "licenses-hide-show-hide-ends-closed",
+      "platform": "darwin",
+      "reason": "The guard checks only the end state; WebDriver cannot count cleanup timers."
+    },
+    {
+      "scenario": "v5-fixes/ui-polish",
+      "case": "licenses-hide-show-hide-ends-closed",
+      "platform": "linux",
+      "reason": "The guard checks only the end state; WebDriver cannot count cleanup timers."
+    },
+    {
+      "scenario": "v5-fixes/ui-polish",
+      "case": "licenses-hide-show-hide-ends-closed",
+      "platform": "win32",
+      "reason": "The guard checks only the end state; WebDriver cannot count cleanup timers."
     }
   ],
   "profiles": {

@@ -56,9 +56,15 @@ registry (`window.__ROSI_E2E_IPC_STUBS__`, read by `call()` in
     theme, not dark.
 12. **Next and Finish stay enabled during a skip.** Check: while the defaults
     request is held, `#wizard-next` and `#wizard-back` are disabled, and a
-    programmatic click leaves the step unchanged.
+    programmatic click leaves the step unchanged. The step and the disabled
+    state are re-read after two animation frames, so the "no save" check runs
+    only once the wizard has shown the held state again. Then `saveCalls` must
+    still be 0.
 13. **Skip starts during a finish.** Check: with the Finish save held, the
-    Escape prompt's "Skip setup" never requests the defaults.
+    Escape prompt's "Skip setup" never requests the defaults. The check reads
+    `defaultsCalls` only after the prompt has closed (the skip was confirmed) and
+    two animation frames have passed, so a request that follows the confirm is
+    counted.
 14. **A failed defaults load leaves the controls locked.** Check: with
     `get_default_settings` refused, Next, Skip and the error text are restored
     (`#wizard-error` visible, buttons enabled).

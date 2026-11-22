@@ -38,7 +38,10 @@ sleeps.
 8. **Dropped modals leave a promise unresolved.** When the modal DOM is missing,
    `displayNextModal` skips a modal without showing it. Not reachable from a
    running app (the markup is static), so this row is a source check: the skip
-   path calls the modal's `onDismiss`. It is stated, not exercised natively.
+   path calls the modal's `onDismiss`. It is stated, not exercised natively. The
+   check slices `overlays.ts` between two markers. Both markers must be found and
+   in that order, so a missing marker fails the row instead of slicing to the end
+   of the file.
 
 ## Sidebar focus trap (F8)
 
@@ -63,7 +66,9 @@ sleeps.
 12. **Shift+Tab on the first stop stops wrapping.** Check: same sidebar state,
     focus the first reachable stop, press Shift+Tab with a real key; focus must
     land in the sidebar on the last reachable stop, which is not inside an inert
-    subtree. Reverting the sidebar fix leaves focus outside the sidebar, which
+    subtree. The key call is `browser.keys(["Shift", "Tab"])`. WebDriver holds
+    Shift while Tab is pressed and releases both in the same action, so no
+    trailing release entry is needed. Reverting the sidebar fix leaves focus outside the sidebar, which
     fails this row.
 13. **The overlay traps change behavior.** The licenses and modal traps use the
     same helper. Check: the dialogs spec rows C7-23 to C7-25 still pass (they run
@@ -94,7 +99,9 @@ an assertion; if it fails, the row reports that the scenario did not reproduce.
 17. **A rejection is swallowed silently.** The catch must go through the existing
     `logError` path. Not asserted by content here: the spec does not wrap the
     shared `api` object. Static: `overlays.ts` calls `logError('Modal action
-failed', ...)` for both the sync and the async path (source check).
+failed', ...)` for both the sync and the async path (source check). The check
+    slices `runModalCallback` from its start marker to `displayNextModal`. Both
+    markers must be found and in that order; a missing marker fails the row.
 
 ## Licenses cleanup timer (F12)
 
@@ -111,7 +118,12 @@ failed', ...)` for both the sync and the async path (source check).
     show, hide in one task, then wait; the overlay is closed and the lock is
     cleared. This asserts only the end state. It does not count timers, so a
     second pending cleanup timer would still pass. Counting would need a timer
-    hook that separates the licenses cleanup from unrelated page timers.
+    hook that separates the licenses cleanup from unrelated page timers. The end
+    state is still asserted, and a failing end state fails the row. A passing end
+    state is recorded `not-proven` (`invariantPassed: null`), never `passed`, and
+    the results file gets a skipped case `licenses-hide-show-hide-ends-closed`.
+    The gate then fails the area unless `e2e/suites.json` allows it on each
+    platform, because this guard cannot prove the timer count.
 
 ## What WebDriver cannot prove (stated, not checked)
 

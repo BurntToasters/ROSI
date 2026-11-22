@@ -1050,7 +1050,7 @@ describe("ROSI long-term audit: summary, preview, busy buttons, toasts, activity
 
   // U4: an info toast and an error toast shown together do not overlap.
   it("U4 info and error toasts do not overlap", async () =>
-    scenario("toasts-do-not-overlap", [17, 18, 19, 20], async () => {
+    scenario("toasts-do-not-overlap", [17, 18, 19], async () => {
       await clearToasts();
       // A two-line error: taller than the 80 px offset the audit names.
       const errorText =
@@ -1190,85 +1190,73 @@ describe("ROSI long-term audit: summary, preview, busy buttons, toasts, activity
 
   // U8: a closed settings panel and a hidden banner are inert.
   it("U8 the closed settings panel and hidden banner are inert", async () =>
-    scenario(
-      "closed-settings-and-banner-inert",
-      [31, 32, 33, 34, 35],
-      async () => {
-        await setSidebarOpen(false);
-        const closed = await readInertState();
+    scenario("closed-settings-and-banner-inert", [31, 32, 33, 34], async () => {
+      await setSidebarOpen(false);
+      const closed = await readInertState();
+      assert.equal(
+        closed.sidebarInert,
+        true,
+        "closed settings panel is not inert",
+      );
+      if (!closed.bannerActive) {
         assert.equal(
-          closed.sidebarInert,
+          closed.bannerInert,
           true,
-          "closed settings panel is not inert",
+          "hidden update banner is not inert",
         );
-        if (!closed.bannerActive) {
-          assert.equal(
-            closed.bannerInert,
-            true,
-            "hidden update banner is not inert",
-          );
-        }
-        const focusLanded = await browser.execute(() => {
-          const button = document.getElementById("closeSidebar");
-          button?.focus();
-          return document.activeElement === button;
-        });
-        assert.equal(
-          focusLanded,
-          false,
-          "a closed settings control took focus",
-        );
+      }
+      const focusLanded = await browser.execute(() => {
+        const button = document.getElementById("closeSidebar");
+        button?.focus();
+        return document.activeElement === button;
+      });
+      assert.equal(focusLanded, false, "a closed settings control took focus");
 
-        await clickById("settingsBtn");
-        const open = await waitForState(
-          readInertState,
-          (state) => state.sidebarOpen === true,
-          "settings did not open",
-        );
-        assert.equal(open.sidebarInert, false, "open settings panel is inert");
+      await clickById("settingsBtn");
+      const open = await waitForState(
+        readInertState,
+        (state) => state.sidebarOpen === true,
+        "settings did not open",
+      );
+      assert.equal(open.sidebarInert, false, "open settings panel is inert");
 
-        await clickById("closeSidebar");
-        const reclosed = await waitForState(
-          readInertState,
-          (state) => state.sidebarOpen === false,
-          "settings did not close",
-        );
-        assert.equal(
-          reclosed.sidebarInert,
-          true,
-          "settings panel is not inert after closing",
-        );
-        await setSidebarOpen(false);
-        await screenshot("longterm-audit-u8-closed-settings");
-        return { closed, open, reclosed };
-      },
-    ));
+      await clickById("closeSidebar");
+      const reclosed = await waitForState(
+        readInertState,
+        (state) => state.sidebarOpen === false,
+        "settings did not close",
+      );
+      assert.equal(
+        reclosed.sidebarInert,
+        true,
+        "settings panel is not inert after closing",
+      );
+      await setSidebarOpen(false);
+      await screenshot("longterm-audit-u8-closed-settings");
+      return { closed, open, reclosed };
+    }));
 
   // U9: danger text in Flat dark and the light reset links reach 4.5:1.
   it("U9 danger text and light reset links reach 4.5:1", async () => {
     const startTheme = startSettings.theme;
     const startFlat = startSettings.flatUi;
     try {
-      await scenario(
-        "flat-dark-danger-text-contrast",
-        [36, 37, 39, 40],
-        async () => {
-          await setControl("themeSelect", "dark");
-          await setControl("flatUiToggle", true);
-          await waitForState(
-            readThemeState,
-            (state) => state.theme === "dark" && state.flat === "true",
-            "dark theme with Flat UI did not apply",
-          );
-          const [sample] = await measureContrast("danger-probe");
-          assert.ok(
-            sample.ratio >= 4.5,
-            `Flat dark ${sample.label} is ${sample.color} on ${sample.background}: ${sample.ratio.toFixed(2)}:1`,
-          );
-          await screenshot("longterm-audit-u9-flat-dark");
-          return { sample };
-        },
-      );
+      await scenario("flat-dark-danger-text-contrast", [36, 39], async () => {
+        await setControl("themeSelect", "dark");
+        await setControl("flatUiToggle", true);
+        await waitForState(
+          readThemeState,
+          (state) => state.theme === "dark" && state.flat === "true",
+          "dark theme with Flat UI did not apply",
+        );
+        const [sample] = await measureContrast("danger-probe");
+        assert.ok(
+          sample.ratio >= 4.5,
+          `Flat dark ${sample.label} is ${sample.color} on ${sample.background}: ${sample.ratio.toFixed(2)}:1`,
+        );
+        await screenshot("longterm-audit-u9-flat-dark");
+        return { sample };
+      });
 
       await scenario(
         "light-settings-reset-contrast",
@@ -1325,6 +1313,14 @@ describe("ROSI long-term audit: summary, preview, busy buttons, toasts, activity
   // Shared profile: everything this spec changed is back to its start.
   it("shared state is put back", async () =>
     scenario("shared-state-restored", [42, 43, 44], async () => {
+      // The failed entry must exist before the cleanup, or the check after the
+      // cleanup would pass for any history.
+      const created = await activityFor(MISSING_URL);
+      assert.ok(
+        created.length >= 1,
+        "the failed download is not in Activity before the cleanup",
+      );
+      // Clears all Activity history: the API has no per-entry removal.
       await api("clearDownloadActivity");
       const page = await readPage(() =>
         window.__longtermAscii({

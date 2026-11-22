@@ -31,7 +31,13 @@ listed below are why a partial change is unsafe.
 1. Removing `transparent(...)` from the splash builder: Tauri defaults to an
    opaque window, so the splash turns opaque. If the splash body background is
    not opaque, the window shows a white or black frame at startup. Mitigation:
-   the splash html and body get a solid `--bg-gradient-mid` background.
+   the splash html and body get a solid `--bg-gradient-mid` background. The
+   platform spec reads the declarations of the rules whose selector is `html`
+   and `body.splash-screen`, and requires each one to set
+   `background: var(--bg-gradient-mid)`. A selector list that merely names one of
+   them does not count, and neither does a rule that sets only another property.
+   The splash window is not reachable from this spec, so the check reads the
+   declared background of the rules that style it, not a computed style.
 2. Light/dark: `--bg-gradient-mid` is defined per theme in `01-base.css`. If
    `theme-init.js` does not set `data-theme` before paint, the splash may show
    the wrong solid color. This is the same risk as before the change, but now

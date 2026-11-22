@@ -87,6 +87,20 @@ function writeReport() {
   );
 }
 
+// Appends a skipped case to this pass's results file (ROSI_E2E_RESULTS). The
+// gate reads skipped records there and fails the area unless a case allowance
+// matches. Records already in the file come from other specs and are kept.
+function recordGateSkip(name, reason) {
+  const resultsPath = process.env.ROSI_E2E_RESULTS;
+  if (!resultsPath) return;
+  const records = fs.existsSync(resultsPath)
+    ? JSON.parse(fs.readFileSync(resultsPath, "utf8"))
+    : [];
+  assert.ok(Array.isArray(records), "pass results file is not a JSON array");
+  records.push({ name, skipped: true, reason });
+  fs.writeFileSync(resultsPath, `${JSON.stringify(records, null, 2)}\n`);
+}
+
 // A body that returns { notProven: true, reason } records the row as
 // not-proven. Any thrown error records the row as failed and rethrows.
 async function scenario(name, failureModes, body) {
@@ -95,6 +109,7 @@ async function scenario(name, failureModes, body) {
     if (details?.notProven) {
       const rest = { ...details };
       delete rest.notProven;
+      recordGateSkip(name, rest.reason);
       report.checks.push({
         name,
         failureModes,

@@ -395,7 +395,13 @@ describe("ROSI settings export and import through the dialog seam", () => {
         },
       ),
       await scenario("settings-round-trip-values-distinct", [18], async () => {
-        assert.notEqual(observed.seeded, observed.changed);
+        // Compares values read back from the backend. changed is !seeded, so
+        // comparing those two alone could never fail.
+        assert.notEqual(
+          observed.beforeImport.backendNotifications,
+          observed.afterImport.backendNotifications,
+          "the import did not change the backend value",
+        );
         assert.equal(
           observed.beforeImport.backendNotifications,
           observed.seeded,
@@ -650,6 +656,13 @@ describe("ROSI settings export and import through the dialog seam", () => {
       await scenario("profile-setting-restored", [20], async () => {
         // The earlier cases end on the changed value, so restore it here,
         // before the check reads the profile.
+        // Read the value the earlier cases left, so the restore below is observed.
+        const left = (await api("getSettings")).notifications;
+        assert.equal(
+          left,
+          observed.changed,
+          "the earlier cases did not leave the changed value, so the restore is not exercised",
+        );
         await restoreSeededNotification();
         const backend = (await api("getSettings")).notifications;
         const sidebar = await readToggle("notificationsToggle");

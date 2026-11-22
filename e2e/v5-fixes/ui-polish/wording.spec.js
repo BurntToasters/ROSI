@@ -526,17 +526,35 @@ describe("ROSI wording, manual notifications, and toast timing", () => {
         () => window.rosiMessages?.settings?.newerVersion ?? null,
       );
       assert.equal(value, NEWER_VERSION_TEXT, "newer-version text is wrong");
-      // The key must be the message shown for NEWER_VERSION. Until
-      // settings-store.ts uses it, this check fails.
-      const source = fs.readFileSync(
-        path.join(REPO_ROOT, "src", "engine", "settings-store.ts"),
-        "utf8",
-      );
-      assert.match(
-        source,
-        /showSettingsSaveError\(UI_MESSAGES\.settings\.newerVersion/,
-        "settings-store.ts does not show the newer-version message for NEWER_VERSION",
-      );
+      // The backend answers a save with NEWER_VERSION. The stub stands in for
+      // that answer, and the save path must show the sentence to the user.
+      const original = (await api("getSettings")).askDownloadLocation;
+      await stubBridge("saveSettings", {
+        ok: false,
+        error: { code: "NEWER_VERSION", message: "newer settings file" },
+      });
+      try {
+        await setControl("askDownloadLocationToggle", !original);
+        await waitFor(
+          (expected) =>
+            (
+              document.getElementById("settingsSaveFeedback")?.textContent ?? ""
+            ).includes(expected),
+          "the newer-version sentence did not reach #settingsSaveFeedback",
+          10_000,
+          NEWER_VERSION_TEXT,
+        );
+        const saveCalls = await stubCalls("saveSettings");
+        assert.ok(saveCalls.length >= 1, "the save never reached the stub");
+      } finally {
+        await restoreBridge();
+        await setControl("askDownloadLocationToggle", original);
+        await waitForBackendSetting(
+          "askDownloadLocation",
+          original,
+          "ask-every-time was not restored",
+        );
+      }
       return { text: value };
     }));
 

@@ -14,6 +14,9 @@ Enter through WebDriver, and records a hashed `report.json` under
    button is still in its loading state 4 s after Enter, and no cancelled
    activity entry appears in that window. The test then stops the run through
    the same Cancel control, and the one activity entry must be `cancelled`.
+   The check holds for the full 4 s. It polls every 250 ms, and each poll must
+   still show no `cancelDownload` call, no `downloadVideo` call, and the loading
+   state. A change at any poll fails the row at once.
    Completion is not proven by this check. `slow.mp4` is 32 MB served at 16 KB
    per 250 ms (about 8.5 minutes), so a completion wait would not fit the gate.
    The process check matches the query marker `primary-action=enter` in process
@@ -22,8 +25,9 @@ Enter through WebDriver, and records a hashed `report.json` under
    line containing the URL verbatim.
 2. **Enter opens the folder after a download.** In the result state
    ("Open File Location") Enter must do nothing. Check
-   `primary-action-enter-keeps-download`: during the result window, Enter
-   records no `openFileLocation` call.
+   `primary-action-result-open`: after a UI download completes and the result
+   button offers "Open File Location", Enter in the URL field records no
+   `openFileLocation` call (the stub's call list stays empty).
 3. **Enter during a queue run starts a manual download.** Enter goes through the
    same click path as the button, so the queue gate in row 6 must also apply to
    Enter. Check `primary-action-queue-refusal`: Enter with a single link during a
@@ -56,6 +60,10 @@ Enter through WebDriver, and records a hashed `report.json` under
     must be refused before the console is cleared and before the output
     location is requested. Check `primary-action-queue-refusal`: the reason
     appears, the console sentinel survives, and no new activity entry is made.
+    Before the replay click, the hint-write counter and the download-request
+    counter are reset, so the wait for a refusal write sees this click's write
+    only. The absence checks run after a 1 s flush window, so a late request
+    would still be seen.
 
 ## Result state of the Download button (B9)
 

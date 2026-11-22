@@ -86,12 +86,28 @@ function writeReport() {
   );
 }
 
+// Appends a skipped case to this pass's results file (ROSI_E2E_RESULTS). The
+// gate reads skipped records there and fails the area unless a case allowance
+// matches. Records already in the file come from other specs and are kept.
+function recordGateSkip(name, reason) {
+  const resultsPath = process.env.ROSI_E2E_RESULTS;
+  if (!resultsPath) return;
+  const records = fs.existsSync(resultsPath)
+    ? JSON.parse(fs.readFileSync(resultsPath, "utf8"))
+    : [];
+  assert.ok(Array.isArray(records), "pass results file is not a JSON array");
+  records.push({ name, skipped: true, reason });
+  fs.writeFileSync(resultsPath, `${JSON.stringify(records, null, 2)}\n`);
+}
+
 // A body that returns { notProven: reason } records the row as not proven
-// (invariantPassed null). That is not a pass, and the test does not fail.
+// (invariantPassed null). That is not a pass, and the test does not fail. The
+// row is also written to the results file as a skipped case.
 async function scenario(name, body) {
   try {
     const { notProven, ...details } = (await body()) ?? {};
     if (notProven) {
+      recordGateSkip(name, notProven);
       report.checks.push({
         name,
         status: "not-proven",
@@ -828,10 +844,17 @@ describe("ROSI overlays audit: displacement, focus traps, async actions, license
   it("F2-8 the skipped-modal path settles the waiter (source)", async () => {
     await scenario("missing-dom-path-calls-dismiss", async () => {
       const source = readSource("src", "engine", "overlays.ts");
-      const branch = source.slice(
-        source.indexOf("if (!modal || !titleEl || !msgEl || !btnContainer)"),
-        source.indexOf("titleEl.textContent = title"),
+      const start = source.indexOf(
+        "if (!modal || !titleEl || !msgEl || !btnContainer)",
       );
+      const end = source.indexOf("titleEl.textContent = title");
+      // indexOf returns -1 for a missing marker, and slice(start, -1) would run to
+      // the end of the file. Both markers must exist and appear in order.
+      assert.ok(
+        start >= 0 && end > start,
+        `markers missing or out of order (${start}, ${end})`,
+      );
+      const branch = source.slice(start, end);
       assert.match(
         branch,
         /runModalCallback\(displayedModalData\.onDismiss\)/,
@@ -907,7 +930,7 @@ describe("ROSI overlays audit: displacement, focus traps, async actions, license
         `Tab from the last stop went to stop ${afterTab.stop} (${afterTab.id})`,
       );
       assert.equal((await probe("focusStop", 0)).focused, true);
-      await browser.keys(["Shift", "Tab", ""]);
+      await browser.keys(["Shift", "Tab"]);
       const afterBack = await probe("activeStop");
       assert.equal(
         afterBack.inSidebar,
@@ -990,10 +1013,14 @@ describe("ROSI overlays audit: displacement, focus traps, async actions, license
     await scenario("modal-callback-failures-are-logged", async () => {
       const source = readSource("src", "engine", "overlays.ts");
       const start = source.indexOf("function runModalCallback");
-      const body = source.slice(
-        start,
-        source.indexOf("export function displayNextModal"),
+      const end = source.indexOf("export function displayNextModal");
+      // Both markers must exist and appear in order; a -1 end would slice to the
+      // end of the file.
+      assert.ok(
+        start >= 0 && end > start,
+        `markers missing or out of order (${start}, ${end})`,
       );
+      const body = source.slice(start, end);
       const logged = body.match(/logError\('Modal action failed'/g) ?? [];
       assert.equal(logged.length, 2, "sync and async paths must both log");
       return { logCalls: logged.length };
@@ -1049,7 +1076,11 @@ describe("ROSI overlays audit: displacement, focus traps, async actions, license
       assert.equal(state.active, false, "the overlay is still open");
       assert.equal(state.overflow, "", "the scroll lock stayed");
       assert.equal(state.bodyLocked, false, "licenses-open stayed");
-      return state;
+      return {
+        ...state,
+        notProven:
+          "The end state is closed and unlocked, but this guard does not count timers, so a second pending cleanup timer would pass too. Not proven.",
+      };
     });
   });
 });

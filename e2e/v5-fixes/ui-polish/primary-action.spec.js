@@ -404,112 +404,129 @@ describe("ROSI primary action: Enter, queue refusal, result state, copy source",
 
   it("keeps a running manual download running when Enter is pressed in the URL field", async function () {
     this.timeout(240_000);
-    await scenario(
-      "primary-action-enter-keeps-download",
-      [1, 2, 22],
-      async () => {
-        // Matched in process command lines. The per-scenario query marker keeps
-        // this scenario's yt-dlp apart from any other slow.mp4 run on the machine.
-        const enterMarker = "primary-action=enter";
-        const url = `${MEDIA}/slow.mp4?${enterMarker}`;
-        await startUiDownload(url);
-        await waitFor(
-          () =>
-            document
-              .getElementById("downloadBtn")
-              ?.classList.contains("loading") === true,
-          "Download did not enter its running state",
-          15_000,
-        );
-        await browser.waitUntil(
-          async () => processesMatching(enterMarker).length > 0,
-          {
-            timeout: 30_000,
-            interval: 250,
-            timeoutMsg: "yt-dlp never started for the manual download",
-          },
-        );
+    await scenario("primary-action-enter-keeps-download", [1, 22], async () => {
+      // Matched in process command lines. The per-scenario query marker keeps
+      // this scenario's yt-dlp apart from any other slow.mp4 run on the machine.
+      const enterMarker = "primary-action=enter";
+      const url = `${MEDIA}/slow.mp4?${enterMarker}`;
+      await startUiDownload(url);
+      await waitFor(
+        () =>
+          document
+            .getElementById("downloadBtn")
+            ?.classList.contains("loading") === true,
+        "Download did not enter its running state",
+        15_000,
+      );
+      await browser.waitUntil(
+        async () => processesMatching(enterMarker).length > 0,
+        {
+          timeout: 30_000,
+          interval: 250,
+          timeoutMsg: "yt-dlp never started for the manual download",
+        },
+      );
 
-        await countBridgeCalls("cancelDownload", "downloadVideo");
-        await (await browser.$("#url")).click();
-        await browser.keys("Enter");
-        // Enter is handled in the same task, so a wrong Cancel or a second
-        // start would already have called the bridge; the frames flush the rest.
-        await nextFrames();
+      await countBridgeCalls("cancelDownload", "downloadVideo");
+      await (await browser.$("#url")).click();
+      await browser.keys("Enter");
+      // Enter is handled in the same task, so a wrong Cancel or a second
+      // start would already have called the bridge; the frames flush the rest.
+      await nextFrames();
+      assert.equal(
+        await watchedCallCount("cancelDownload"),
+        0,
+        "Enter called cancelDownload",
+      );
+      assert.equal(
+        await watchedCallCount("downloadVideo"),
+        0,
+        "Enter started another download",
+      );
+      // Hold for the full 4 s the row claims. Each 250 ms poll must still show no
+      // cancel, no second start, and the loading state, so a late effect fails here.
+      const holdUntil = Date.now() + 4_000;
+      do {
+        await browser.pause(250);
         assert.equal(
           await watchedCallCount("cancelDownload"),
           0,
-          "Enter called cancelDownload",
+          "Enter called cancelDownload during the 4 s hold",
         );
         assert.equal(
           await watchedCallCount("downloadVideo"),
           0,
-          "Enter started another download",
-        );
-
-        const during = await readDownloadButton();
-        const cancelledDuringRun = (await activityFor(url)).some(
-          (entry) => entry.outcome === "cancelled",
+          "Enter started another download during the 4 s hold",
         );
         assert.equal(
-          cancelledDuringRun,
-          false,
-          "Enter cancelled the running download",
-        );
-        assert.equal(
-          during.loading,
+          (await readDownloadButton()).loading,
           true,
-          "Enter changed the running Download control",
+          "Enter ended the loading state during the 4 s hold",
         );
-        // The run must stay alive after Enter. Activity is written only when a run
-        // ends, so the yt-dlp process and the loading state are the signals here.
-        const stillRunning = processesMatching(enterMarker).length > 0;
-        const stillLoading = (await readDownloadButton()).loading === true;
-        const cancelledLater = (await activityFor(url)).some(
-          (entry) => entry.outcome === "cancelled",
-        );
-        assert.equal(stillRunning, true, "Enter stopped yt-dlp");
-        assert.equal(stillLoading, true, "Enter ended the loading state");
-        assert.equal(
-          cancelledLater,
-          false,
-          "Enter cancelled the running download",
-        );
+      } while (Date.now() < holdUntil);
 
-        // Stop the run through the Cancel control the user would click. The slow
-        // fixture needs about 8.5 minutes to finish, so this check does not wait
-        // for completion.
-        await (await browser.$("#downloadBtn")).click();
-        const stopped = await waitForActivity(
-          (entry) => entry.url === url,
-          "cancelled download never reached the activity log",
-          60_000,
-        );
-        assert.equal(
-          stopped.outcome,
-          "cancelled",
-          `Cancel control ended the run as ${stopped.outcome}`,
-        );
-        await browser.waitUntil(
-          async () => processesMatching(enterMarker).length === 0,
-          {
-            timeout: 30_000,
-            interval: 250,
-            timeoutMsg: "yt-dlp survived the Cancel control",
-          },
-        );
-        assert.equal(
-          (await activityFor(url)).length,
-          1,
-          "Enter started a second download",
-        );
-        return {
-          runningAfterEnter: stillRunning,
-          outcome: stopped.outcome,
-          completionProven: false,
-        };
-      },
-    );
+      const during = await readDownloadButton();
+      const cancelledDuringRun = (await activityFor(url)).some(
+        (entry) => entry.outcome === "cancelled",
+      );
+      assert.equal(
+        cancelledDuringRun,
+        false,
+        "Enter cancelled the running download",
+      );
+      assert.equal(
+        during.loading,
+        true,
+        "Enter changed the running Download control",
+      );
+      // The run must stay alive after Enter. Activity is written only when a run
+      // ends, so the yt-dlp process and the loading state are the signals here.
+      const stillRunning = processesMatching(enterMarker).length > 0;
+      const stillLoading = (await readDownloadButton()).loading === true;
+      const cancelledLater = (await activityFor(url)).some(
+        (entry) => entry.outcome === "cancelled",
+      );
+      assert.equal(stillRunning, true, "Enter stopped yt-dlp");
+      assert.equal(stillLoading, true, "Enter ended the loading state");
+      assert.equal(
+        cancelledLater,
+        false,
+        "Enter cancelled the running download",
+      );
+
+      // Stop the run through the Cancel control the user would click. The slow
+      // fixture needs about 8.5 minutes to finish, so this check does not wait
+      // for completion.
+      await (await browser.$("#downloadBtn")).click();
+      const stopped = await waitForActivity(
+        (entry) => entry.url === url,
+        "cancelled download never reached the activity log",
+        60_000,
+      );
+      assert.equal(
+        stopped.outcome,
+        "cancelled",
+        `Cancel control ended the run as ${stopped.outcome}`,
+      );
+      await browser.waitUntil(
+        async () => processesMatching(enterMarker).length === 0,
+        {
+          timeout: 30_000,
+          interval: 250,
+          timeoutMsg: "yt-dlp survived the Cancel control",
+        },
+      );
+      assert.equal(
+        (await activityFor(url)).length,
+        1,
+        "Enter started a second download",
+      );
+      return {
+        runningAfterEnter: stillRunning,
+        outcome: stopped.outcome,
+        completionProven: false,
+      };
+    });
   });
 
   it("refuses Download, Enter, and Download again during a queue run without touching the console", async function () {
@@ -605,7 +622,13 @@ describe("ROSI primary action: Enter, queue refusal, result state, copy source",
           "Enter sent a download request during a queue run",
         );
 
-        // Download again from the activity row goes through the same gate.
+        // Download again from the activity row goes through the same gate. The hint
+        // write and request counters are reset first, so the wait below sees this
+        // click's refusal only.
+        await browser.execute(() => {
+          window.__primaryHintWrites = 0;
+          window.__primaryDownloadCalls = 0;
+        });
         await browser.execute((id) => {
           const row = [...document.querySelectorAll(".history-item")].find(
             (candidate) => candidate.dataset.activityId === id,
@@ -615,6 +638,8 @@ describe("ROSI primary action: Enter, queue refusal, result state, copy source",
           replay.click();
         }, seedEntry.id);
         await waitForHintWrite("Download again was not refused");
+        // A replay that is not refused would send its request within this window.
+        await browser.pause(1_000);
         assert.equal(
           await stubCallCount(),
           0,
@@ -700,7 +725,7 @@ describe("ROSI primary action: Enter, queue refusal, result state, copy source",
 
   it("opens the folder from the result button and keeps the result when the button loses focus", async function () {
     this.timeout(180_000);
-    await scenario("primary-action-result-open", [12, 14, 15], async () => {
+    await scenario("primary-action-result-open", [2, 12, 14, 15], async () => {
       const url = `${MEDIA}/clip-one.mp4?primary-action=open`;
       await stubOpenFileLocation({ ok: true, data: { opened: true } });
       await startUiDownload(url);
@@ -728,6 +753,19 @@ describe("ROSI primary action: Enter, queue refusal, result state, copy source",
         afterBlur.text,
         "Open File Location",
         "blur relabeled the result button",
+      );
+
+      // Enter in the URL field in the result state must not open the folder (row 2).
+      await (await browser.$("#url")).click();
+      await browser.keys("Enter");
+      await nextFrames();
+      const openedByEnter = await browser.execute(
+        () => (window.__primaryOpened ?? []).length,
+      );
+      assert.equal(
+        openedByEnter,
+        0,
+        "Enter opened the file location in the result state",
       );
 
       await (await browser.$("#downloadBtn")).click();

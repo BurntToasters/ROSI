@@ -95,12 +95,28 @@ function writeReport() {
   );
 }
 
+// Appends a skipped case to this pass's results file (ROSI_E2E_RESULTS). The
+// gate reads skipped records there and fails the area unless a case allowance
+// matches. Records already in the file come from other specs and are kept.
+function recordGateSkip(name, reason) {
+  const resultsPath = process.env.ROSI_E2E_RESULTS;
+  if (!resultsPath) return;
+  const records = fs.existsSync(resultsPath)
+    ? JSON.parse(fs.readFileSync(resultsPath, "utf8"))
+    : [];
+  assert.ok(Array.isArray(records), "pass results file is not a JSON array");
+  records.push({ name, skipped: true, reason });
+  fs.writeFileSync(resultsPath, `${JSON.stringify(records, null, 2)}\n`);
+}
+
 // A body that returns { notProven: reason } records the row as not proven
-// (invariantPassed null). That is not a pass, and the test does not fail.
+// (invariantPassed null). That is not a pass, and the test does not fail. The
+// row is also written to the results file as a skipped case.
 async function scenario(name, body) {
   try {
     const { notProven, ...details } = (await body()) ?? {};
     if (notProven) {
+      recordGateSkip(name, notProven);
       report.checks.push({
         name,
         status: "not-proven",
@@ -225,7 +241,9 @@ function dialogsProbe(op, arg) {
           args: {},
           // The registry call() in src/commands.ts reads (E2E builds only).
           // Each entry is a function that records the call, then settles.
-          stubs: {},
+          // Merges into the registry an earlier row left, rather than replacing
+          // it, so a stub that restore missed is still seen by beforeEach.
+          stubs: window.__ROSI_E2E_IPC_STUBS__ ?? {},
           counts: {},
           confirm: null,
           releaseDownload: null,
@@ -277,8 +295,11 @@ function dialogsProbe(op, arg) {
           });
         }
       }
-      // Removing the registry is what keeps a stub from answering a later row.
-      delete window.__ROSI_E2E_IPC_STUBS__;
+      // Stubs are removed in place, so the registry object stays. A stub that is
+      // left would still answer a later row, and beforeEach checks for it.
+      for (const command of Object.keys(window.__ROSI_E2E_IPC_STUBS__ ?? {})) {
+        delete window.__ROSI_E2E_IPC_STUBS__[command];
+      }
       delete window.__dialogsProbe;
       return { restored: true };
     }
@@ -1151,13 +1172,18 @@ describe("ROSI dialogs: Escape, dismissal, update errors, licenses focus", () =>
         path.join(REPO_ROOT, "src", "engine", "settings-store.ts"),
         "utf8",
       );
+      // Only code is matched. Block comments and whole-line or trailing comments
+      // are removed first, so a comment that mentions a name cannot fail the row.
+      const code = source
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/(^|\s)\/\/.*$/gm, "");
       assert.equal(
-        /settingsSaveErrorShownAt/.test(source),
+        /settingsSaveErrorShownAt/.test(code),
         false,
         "settingsSaveErrorShownAt is still declared or read",
       );
       assert.equal(
-        /\bsilent\b/.test(source),
+        /\bsilent\b/.test(code),
         false,
         "the silent name is still used",
       );

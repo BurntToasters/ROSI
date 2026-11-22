@@ -40,9 +40,11 @@ checks each row by the check name in the Check column.
    `settings.newerVersion` must hold "A newer ROSI version saved these settings.
    Changes made here are not kept." and `settings-store.ts` must use it for
    NEWER_VERSION. Check `newer-version-wording`: the key value equals the required
-   sentence. This does not prove the wiring in `settings-store.ts`. The
-   rendered text is not checked, because reaching NEWER_VERSION needs a newer
-   settings file on disk. Wiring is reported to the manager.
+   sentence, and a stubbed `saveSettings` that answers `NEWER_VERSION` makes the
+   save path show that sentence in `#settingsSaveFeedback`. The stub is restored
+   before the toggle is set back, so the next row starts from the real backend.
+   The stub replaces the backend answer, so the check proves the renderer's
+   handling of the answer, not that a newer settings file exists on disk.
 
 ## C11: no "effective options" in user-facing text
 
@@ -131,7 +133,7 @@ Activity".
    `hint-updates-on-location-toggle`: their regex matchers must still match the
    sentence text, which is unchanged.
 3. **An E2E matcher stays on the old text.** Examples: `clickModalButton("Cancel
-   queue")`, `clickModalButton("Reset section")`, `"Clear history"` in
+queue")`, `clickModalButton("Reset section")`, `"Clear history"` in
    `markup.spec.js`, and the `Retry save` text in `ui-polish.spec.js`. Check: a
    case-insensitive grep of `e2e/` (excluding `e2e/artifacts/`) and `src/tests/`
    for each old string finds no label matcher left. Comments and fixture status

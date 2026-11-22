@@ -110,12 +110,28 @@ function writeReport() {
   );
 }
 
+// Appends a skipped case to this pass's results file (ROSI_E2E_RESULTS). The
+// gate reads skipped records there and fails the area unless a case allowance
+// matches. Records already in the file come from other specs and are kept.
+function recordGateSkip(name, reason) {
+  const resultsPath = process.env.ROSI_E2E_RESULTS;
+  if (!resultsPath) return;
+  const records = fs.existsSync(resultsPath)
+    ? JSON.parse(fs.readFileSync(resultsPath, "utf8"))
+    : [];
+  assert.ok(Array.isArray(records), "pass results file is not a JSON array");
+  records.push({ name, skipped: true, reason });
+  fs.writeFileSync(resultsPath, `${JSON.stringify(records, null, 2)}\n`);
+}
+
 // A body that returns { notProven: reason } records the row as not proven
-// (invariantPassed null). That is not a pass, and the test does not fail.
+// (invariantPassed null). That is not a pass, and the test does not fail. The
+// row is also written to the results file as a skipped case.
 async function scenario(name, body) {
   try {
     const { notProven, ...details } = (await body()) ?? {};
     if (notProven) {
+      recordGateSkip(name, notProven);
       report.checks.push({
         name,
         status: "not-proven",
@@ -594,10 +610,10 @@ describe("ROSI full-app UI polish", () => {
       return { restored };
     }));
 
-  // A WebDriver Tab is synthetic and moves no focus, so the trap cannot be
-  // proven by this pass. The row asserts only that Tab does not dismiss the
-  // prompt; the focus location is recorded as a diagnostic, not asserted.
-  it("keeps the reset prompt open through Tab; the trap is not proven by WebDriver", async () =>
+  // Real Tab presses through the WebDriver key path. Focus must stay inside the
+  // prompt on every press. If the presses never move focus, the trap is not
+  // proven in this pass, and the row says so rather than passing.
+  it("keeps Tab focus inside the reset prompt", async () =>
     scenario("keyboard-reset-tab-trap", async () => {
       await setSidebarOpen(true);
       const resetButtonSelector = '[data-reset-section="download"]';
@@ -609,19 +625,39 @@ describe("ROSI full-app UI polish", () => {
       await pressEnterOnFocusedControl();
       await waitForModal(true);
       await waitForModalFocus();
-      for (let press = 0; press < 3; press += 1) await browser.keys("Tab");
-      // waitForModal fails the check if Tab dismissed the prompt.
-      await waitForModal(true);
-      const focusInsidePrompt = await browser.execute(() =>
-        document.getElementById("app-modal").contains(document.activeElement),
-      );
-      await browser.keys("Escape");
-      await waitForModal(false);
-      return {
-        notProven:
-          "A WebDriver Tab is synthetic and does not move focus, so the Tab trap is not proven by this pass. The prompt stayed open through three Tab presses; the trap itself was not asserted. Proven only by a native key event.",
-        focusInsidePrompt,
-      };
+      const focusStops = [];
+      try {
+        for (let press = 0; press < 6; press += 1) {
+          await browser.keys("Tab");
+          // waitForModal fails the check if Tab dismissed the prompt.
+          await waitForModal(true);
+          const stop = await browser.execute(() => {
+            const modal = document.getElementById("app-modal");
+            const active = document.activeElement;
+            return {
+              inside: modal.contains(active),
+              label: `${active?.tagName}#${active?.id}:${(active?.textContent ?? "").trim()}`,
+            };
+          });
+          focusStops.push(stop.label);
+          assert.ok(
+            stop.inside,
+            `Tab moved focus out of the reset prompt to ${stop.label} on press ${press + 1}`,
+          );
+        }
+      } finally {
+        await browser.keys("Escape");
+        await waitForModal(false);
+      }
+      const distinctStops = new Set(focusStops).size;
+      if (distinctStops < 2) {
+        return {
+          notProven:
+            "Six Tab presses through WebDriver left focus on one control, so the keys did not move focus in this pass. The trap was not proven, and it is not claimed to hold.",
+          focusStops,
+        };
+      }
+      return { focusStops, distinctStops };
     }));
 
   it("shows no save message until a real edit saves, then clears it", async () =>

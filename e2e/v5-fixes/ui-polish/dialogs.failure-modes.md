@@ -8,6 +8,10 @@ built E2E binary. Modal objects come from `window.__ROSI_E2E__.modules`; the
 hook must expose `overlays` (overlays.ts) and `settings` (settings-store.ts)
 (see the spec header).
 
+A row that returns `not-proven` (`invariantPassed: null`) is also written to the
+pass results file as a skipped case with its reason. The gate fails the area
+unless `e2e/suites.json` allows that case on the platform.
+
 Test seams used, and what they do not prove:
 
 - `window.__TAURI__.event.emit("updater-status", ...)` drives the real updater
@@ -95,6 +99,7 @@ Outside this spec: `e2e/v5-fixes/ui-polish/settings-reset.spec.js` (around
 lines 220-232, `installChannelCallLog`) assigns `internals.invoke` the same way.
 Its `readChannelCalls` assertions are likely to see an empty list. Its owner
 should move it to the same `fetch` interception.
+
 - Keyboard events on modals are dispatched with `KeyboardEvent` in the page.
   Synthetic events do not run the browser's default action (focus traversal,
   scrolling), so Tab rows assert the handler's decision and the resulting
@@ -194,7 +199,9 @@ should move it to the same `fetch` interception.
     path is not run (it would restart the app), so this row is covered by
     existing suites, not this spec.
 22. **A stale reference to `settingsSaveErrorShownAt` or `silent` survives.**
-    Check: `rg` finds no reads of either name in `src/` (static).
+    Check: `src/engine/settings-store.ts` has no code that uses either name. Comments
+    are stripped before the match, so a comment that mentions `silent` does not
+    fail the row and cannot hide a real use. (static)
 
 ## Licenses focus trap (C7)
 
@@ -265,10 +272,13 @@ should move it to the same `fetch` interception.
     `npx vite build` into a scratch directory, then grep the output for
     `__ROSI_E2E_IPC_STUBS__`; the grep must print nothing.
 31. **A stale stub survives the probe teardown.** A stub left on the registry by
-    a failed row would answer the next row's command. Check: `restore` deletes
-    `window.__ROSI_E2E_IPC_STUBS__` and settles any held promise as cancelled. The
-    `beforeEach` install then asserts the new registry is empty (`stubs` is `[]`
-    in `trace`) before the row runs.
+    a failed row would answer the next row's command. Check: `restore` settles
+    any held promise as cancelled and deletes each key of the registry in place,
+    so the registry object stays. `install` reuses an existing registry object
+    instead of replacing it. The `beforeEach` then asserts the registry is empty
+    (`stubs` is `[]` in `trace`) before the row runs. Because the object survives
+    `restore`, a stub that `restore` missed is still there and fails that
+    assertion. A fresh object would always be empty, so it proves nothing.
 32. **The macOS shortcut modifier mismatch.** `shortcuts.ts` reads `metaKey` on
     macOS and `ctrlKey` elsewhere. A probe that always sends `ctrlKey` never
     opens the sidebar on macOS, so B4-2 fails at "sidebar did not open" before the

@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { browser } from "@wdio/globals";
@@ -151,9 +152,13 @@ describe("v5 persistence acceptance (findings 2, 3, 15, 16)", () => {
       await waitForPersistedUrl(itemC);
       // The backup is written just after the primary; wait for that write
       // instead of racing it.
-      await waitForCondition(
-        () =>
-          fs.existsSync(backupPath) && readBytes(backupPath).includes(itemB),
+      // The wait's result is asserted: waitForCondition returns false on timeout.
+      assert.ok(
+        await waitForCondition(
+          () =>
+            fs.existsSync(backupPath) && readBytes(backupPath).includes(itemB),
+          "backup file never contained the first generation",
+        ),
         "backup file never contained the first generation",
       );
       const backup = JSON.parse(readBytes(backupPath));
@@ -205,12 +210,15 @@ describe("v5 persistence acceptance (findings 2, 3, 15, 16)", () => {
         readBytes(queuePath).equals(before) &&
         observation.userNotices === 1;
     } else if (mode === "settings-unreadable") {
-      observation.save = await attempt("saveSettings", { theme: "light" });
+      const before = await api("getSettings");
+      const nextTheme = before.theme === "light" ? "dark" : "light";
+      observation.save = await attempt("saveSettings", { theme: nextTheme });
       observation.loaded = await api("getSettings");
       observation.invariantPassed =
         observation.save.ok === false &&
         isDirectory(settingsPath) &&
-        typeof observation.loaded.theme === "string";
+        observation.loaded.theme === before.theme &&
+        observation.loaded.theme !== nextTheme;
     } else {
       throw new Error(`Unknown persistence mode: ${mode}`);
     }

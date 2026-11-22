@@ -663,6 +663,22 @@ describe("ROSI settings drain, close save error, and wizard skip", () => {
         assert.equal(during.backDisabled, true, "Back stayed enabled");
         assert.equal(during.skipDisabled, true, "Skip stayed enabled");
         await clickNext();
+        // Two frames let the click run. The wizard's held state is read again
+        // before the absence check, so the check runs after that state is shown.
+        await browser.executeAsync((done) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => done(true)));
+        });
+        const afterClick = await wizardState();
+        assert.equal(
+          afterClick.step,
+          during.step,
+          "Finish moved the wizard during a skip",
+        );
+        assert.equal(
+          afterClick.nextDisabled,
+          true,
+          "Finish re-enabled Next during a skip",
+        );
         assert.equal(
           await auditValue("saveCalls"),
           0,
@@ -727,7 +743,12 @@ describe("ROSI settings drain, close save error, and wizard skip", () => {
             timeoutMsg: "Finish never reached its save",
           },
         );
+        // skipThroughPrompt returns once the prompt has closed, so the skip was
+        // confirmed. Two frames then pass before the absence check.
         await skipThroughPrompt();
+        await browser.executeAsync((done) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => done(true)));
+        });
         assert.equal(
           await auditValue("defaultsCalls"),
           0,

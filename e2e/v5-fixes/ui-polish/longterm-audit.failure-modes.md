@@ -154,9 +154,12 @@ Test seams used, and what they do not prove:
     must agree.
 43. **A stub or held call stays installed.** Same check: `getVideoInfo` and
     `downloadVideo` must be the original functions, with no held promise.
-44. **The real failed download stays in Activity history.** Same check: the spec clears
-    Activity history with `clearDownloadActivity`, and no entry for the missing file
-    may remain.
+44. **The real failed download stays in Activity history.** Same check: before the
+    cleanup, the failed entry for the missing file must be in Activity (asserted,
+    so the cleanup has something to remove). The spec then clears Activity history
+    with `clearDownloadActivity`, and afterwards no entry for the missing file may
+    remain. The clear is the only removal the API offers, so it clears every entry.
+    This row runs last in the spec.
 45. **A screenshot changes after the report is written.** Not automated here. The gate
     re-hashes each `v5-screenshots` record with `verifyScreenshots`. This spec collects
     its shots during the run and appends exactly one `v5-screenshots` record in its

@@ -110,10 +110,44 @@ function writeReport() {
   );
 }
 
+// Appends a skipped case to this pass's results file (ROSI_E2E_RESULTS). The
+// gate reads skipped records there and fails the area unless a case allowance
+// matches. Records already in the file come from other specs and are kept.
+function recordGateSkip(name, reason) {
+  const resultsPath = process.env.ROSI_E2E_RESULTS;
+  if (!resultsPath) return;
+  const records = fs.existsSync(resultsPath)
+    ? JSON.parse(fs.readFileSync(resultsPath, "utf8"))
+    : [];
+  assert.ok(Array.isArray(records), "pass results file is not a JSON array");
+  records.push({ name, skipped: true, reason });
+  fs.writeFileSync(resultsPath, `${JSON.stringify(records, null, 2)}\n`);
+}
+
+// True when a window size is 900x560 within 4 px, the tolerance the
+// contrast-layout checks use.
+function reachedWindowSize(size) {
+  return Math.abs(size.width - 900) <= 4 && Math.abs(size.height - 560) <= 4;
+}
+
+// A body that returns { notProven: reason } records the row as not proven
+// (invariantPassed null). It is not a pass, and it is written to the results
+// file as a skipped case.
 async function scenario(name, body) {
   try {
-    const details = await body();
-    report.checks.push({ name, status: "passed", ...details });
+    const { notProven, ...details } = (await body()) ?? {};
+    if (notProven) {
+      recordGateSkip(name, notProven);
+      report.checks.push({
+        name,
+        status: "not-proven",
+        invariantPassed: null,
+        reason: notProven,
+        ...details,
+      });
+    } else {
+      report.checks.push({ name, status: "passed", ...details });
+    }
     writeReport();
   } catch (error) {
     report.checks.push({
@@ -763,6 +797,15 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
       assert.ok(longUrl.length >= 400, `URL is ${longUrl.length} characters`);
 
       await browser.setWindowSize(900, 560);
+      // The outer size is the resize evidence. A platform that ignores the
+      // request never reaches it, so the layout measurements are not judged.
+      await browser
+        .waitUntil(
+          async () => reachedWindowSize(await browser.getWindowSize()),
+          { timeout: 3_000, interval: 100 },
+        )
+        .catch(() => {});
+      const windowSize = await browser.getWindowSize();
       await setFolderSettings({
         askDownloadLocation: false,
         downloadFolder: longFolder,
@@ -871,6 +914,12 @@ describe("ROSI UI readiness, folder feedback, and long content", () => {
         });
       }
 
+      if (!reachedWindowSize(windowSize)) {
+        return {
+          notProven: `The window reached ${windowSize.width}x${windowSize.height}, not 900x560, so the layout was not measured. Resize is not proven on this platform.`,
+          windowSize,
+        };
+      }
       // A region is measured only while it is rendered, so the activity panel is
       // measured on its own tab and the queue on its tab.
       const onActivity = await measureRegions([

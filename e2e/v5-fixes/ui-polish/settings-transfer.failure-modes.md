@@ -84,8 +84,12 @@ answers them from a file in the profile data directory.
     handler must update the controls. Check `settings-import-restores-sidebar`: the
     `notificationsToggle` checkbox shows the restored value.
 18. **The check passes without proving anything.** If the value after the
-    change equals the exported value, a no-op import would pass. The spec
-    asserts the three values are distinct before comparing.
+    change equals the exported value, a no-op import would pass. The check reads
+    the backend value back before the import (after the revert) and after it,
+    and asserts those two observed values differ before it compares them with
+    the seeded and changed values. It does not compare `changed` with `seeded`
+    alone, because `changed` is defined as `!seeded` and that comparison can
+    never fail.
 19. **The import confirm modal is skipped or the wrong button is pressed.** The
     spec clicks the modal's `Import` button and checks the modal closed. Check
     `settings-import-confirm-gates-import`.
@@ -95,9 +99,11 @@ answers them from a file in the profile data directory.
     after the round trip. The restore to the seeded value must run inside the
     spec before the final check reads the profile. The `after` hook is only a
     backstop: it runs after every check has been recorded, so it cannot make
-    `profile-setting-restored` pass. Check `profile-setting-restored`: after the
-    restore, `get_settings.notifications` and `notificationsToggle` equal the
-    seeded value, and no seam file is queued.
+    `profile-setting-restored` pass. Check `profile-setting-restored`: before the
+    restore, `get_settings.notifications` equals the changed value that the
+    earlier cases leave, so the restore is really exercised (otherwise the check
+    fails and says so). After the restore, `get_settings.notifications` and
+    `notificationsToggle` equal the seeded value, and no seam file is queued.
 21. **Timing flakes.** The spec waits on observable state (the settings file,
     the checkbox, the event count) and never on fixed delays. Not E2E: review.
 

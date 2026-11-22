@@ -17,7 +17,13 @@ What the checks can and cannot show:
   `src/css` source for the token mapping. It proves the rules exist and target
   the right selectors. It does not prove the painted pixels.
 - A row that needs a live media query to match records `not-proven`
-  (`invariantPassed: null`), never `passed`.
+  (`invariantPassed: null`), never `passed`. The spec also writes each
+  not-proven row to the pass results file as a skipped case with its reason, so
+  the gate fails the area unless `e2e/suites.json` allows that case on the
+  platform. Rows 12 and 13 need an OS contrast, transparency or forced-colors
+  setting that the gate cannot turn on, so their allowances name that reason.
+  Rows 1 to 7 get no allowance: a not-proven result there means the engine lacks
+  support and needs a decision.
 - Engine support is checked, not assumed. Rows that read `forced-color-adjust`
   or `(forced-colors: active)` CSSOM text first run `CSS.supports('forced-color-adjust:
 none')` and a `matchMedia('(forced-colors: active)')` parse. Where either is
