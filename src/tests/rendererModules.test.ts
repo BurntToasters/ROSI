@@ -177,8 +177,12 @@ describe('renderer modules', () => {
     });
 
     it('reports platform modifier keys', () => {
-      vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
-      expect(modules().ui!.getModifierKeyName()).toBe('Cmd');
+      const platformSpy = vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+      try {
+        expect(modules().ui!.getModifierKeyName()).toBe('Cmd');
+      } finally {
+        platformSpy.mockRestore();
+      }
     });
 
     it('toggleAdvancedUI shows and hides the format options section', () => {
@@ -214,10 +218,11 @@ describe('renderer modules', () => {
 
     it('resolveQueueSectionElement finds queueSection and legacy queue-section ids', () => {
       expect(modules().queue!.resolveQueueSectionElement()?.id).toBe('queueSection');
+      document.getElementById('queueSection')?.remove();
       const legacy = document.createElement('section');
       legacy.id = 'queue-section';
       document.body.appendChild(legacy);
-      expect(modules().queue!.resolveQueueSectionElement()?.id).toBe('queueSection');
+      expect(modules().queue!.resolveQueueSectionElement()?.id).toBe('queue-section');
     });
 
     it('renderQueue shows an empty-state message', () => {

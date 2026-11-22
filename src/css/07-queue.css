@@ -14,8 +14,9 @@
 
 .queue-url-input {
   flex: 1;
-  min-height: 30px;
-  height: 30px;
+  /* em keeps the one-row and expanded heights in step with the text size. */
+  min-height: 2.6em;
+  height: auto;
   max-height: 96px;
   overscroll-behavior: none;
   padding-top: 0.35rem;
@@ -45,11 +46,16 @@ textarea.queue-url-input {
 /* One line at rest; room for several links while in use. */
 .queue-url-input:focus,
 .queue-url-input:not(:placeholder-shown) {
-  height: 64px;
+  min-height: 5.6em;
 }
 
 .queue-url-input:placeholder-shown {
   overflow: hidden;
+}
+
+/* The placeholder is UI text, so it uses the sans font; typed URLs stay mono. */
+.queue-url-input::placeholder {
+  font-family: var(--font-sans);
 }
 
 .queue-url-input.drag-over {

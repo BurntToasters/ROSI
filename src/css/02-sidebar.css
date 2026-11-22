@@ -404,6 +404,17 @@
   background: var(--accent-contrast);
 }
 
+/* The light off track is a darker slate with a visible edge, so the white
+   thumb and the track both reach 3:1 against the light background. */
+:root[data-theme='light'] input:not(:checked) + .toggle-slider {
+  background: #7a8497;
+  border-color: #5b6578;
+}
+
+:root[data-theme='light'] input:not(:checked) + .toggle-slider::after {
+  background: linear-gradient(to bottom, #ffffff, #f4f6f9);
+}
+
 .toggle-text {
   display: flex;
   align-items: center;
@@ -512,8 +523,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   font-size: 0.7rem;
   font-weight: var(--weight-bold);
   color: var(--accent-text);

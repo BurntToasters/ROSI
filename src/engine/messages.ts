@@ -92,19 +92,19 @@ export const UI_MESSAGES = {
     resolveFailed: (reason: string) =>
       `${UI_MESSAGES.options.failed(reason)} Download still checks these options when it starts.`,
     runtimeCheckFailed:
-      "Couldn't check for Deno, so some YouTube downloads may fail. Open the install instructions, then restart ROSI to check again.",
+      'Could not check for Deno, so some YouTube downloads may fail. Open the install instructions, then restart ROSI to check again.',
   },
   wizard: {
     folderCancelled: 'No folder was chosen. Choose a folder or ask ROSI before each download.',
     folderFailed: 'ROSI could not open the folder picker. Try again or ask before each download.',
-    saveFailed: 'ROSI could not save setup. Your choices are still here; try Finish or Skip again.',
+    saveFailed: 'ROSI could not save setup. Your choices are still here; try Finish again.',
     defaultsFailed: 'ROSI could not load default settings, so setup was not skipped. Try again.',
     denoMissing: "Deno isn't installed. Some YouTube videos may not download until it is.",
     denoChecking: 'Checking for Deno…',
     denoInstalling: 'Installing Deno. This may take a moment…',
     denoInstalled: 'Deno is installed. YouTube downloads are fully supported.',
     denoInstalledRestart: 'Deno is installed. Restart ROSI after setup to use it.',
-    denoCheckFailed: "Couldn't check for Deno. Open the official install instructions for help.",
+    denoCheckFailed: 'Could not check for Deno. Open the official install instructions for help.',
     denoInstallFailed: (reason: string) => `Automatic install failed: ${reason}`,
     flatpakRuntime:
       'This Flatpak build includes its own JavaScript runtime. YouTube downloads are fully supported.',

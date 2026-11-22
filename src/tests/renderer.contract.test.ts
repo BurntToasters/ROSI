@@ -46,9 +46,9 @@ describe('renderer wiring and accessibility contracts', () => {
     const indexHtml = readRendererFile('index.html');
 
     expect(indexHtml).toMatch(/<label class="sr-only" for="url">Video URL<\/label>/);
-    expect(indexHtml).toMatch(/id="url"[\s\S]*aria-label="Video URL"/);
+    expect(indexHtml).toMatch(/id="url"[^>]*aria-label="Video URL"/);
     expect(indexHtml).toMatch(/<label class="sr-only" for="queueUrlInput">Queue URLs<\/label>/);
-    expect(indexHtml).toMatch(/id="queueUrlInput"[\s\S]*aria-label="Queue URLs"/);
+    expect(indexHtml).toMatch(/id="queueUrlInput"[^>]*aria-label="Queue URLs"/);
   });
 
   it('keeps queue controls and status messaging accessible', () => {
@@ -56,9 +56,9 @@ describe('renderer wiring and accessibility contracts', () => {
     const queueModule = readRendererFile('modules/queue.ts');
 
     expect(indexHtml).toMatch(/id="queueSection"/);
-    expect(indexHtml).toMatch(/id="queueStatusMessage"[\s\S]*role="status"/);
-    expect(indexHtml).toMatch(/id="queueStatusMessage"[\s\S]*aria-live="polite"/);
-    expect(indexHtml).toMatch(/id="queueStatusMessage"[\s\S]*aria-atomic="true"/);
+    expect(indexHtml).toMatch(/id="queueStatusMessage"[^>]*role="status"/);
+    expect(indexHtml).toMatch(/id="queueStatusMessage"[^>]*aria-live="polite"/);
+    expect(indexHtml).toMatch(/id="queueStatusMessage"[^>]*aria-atomic="true"/);
     expect(indexHtml).toMatch(/id="queueList"[^>]*role="list"/);
     expect(indexHtml).not.toMatch(/id="queueList"[^>]*aria-live/);
     expect(queueModule).toMatch(/setAttribute\('role', 'listitem'\)/);
@@ -77,22 +77,22 @@ describe('renderer wiring and accessibility contracts', () => {
     const indexHtml = readRendererFile('index.html');
 
     expect(indexHtml).toMatch(
-      /id="settingsSectionHeaderDownload"[\s\S]*aria-controls="settingsSectionBodyDownload"/
+      /id="settingsSectionHeaderDownload"[^>]*aria-controls="settingsSectionBodyDownload"/
     );
     expect(indexHtml).toMatch(
-      /id="settingsSectionHeaderBrowser"[\s\S]*aria-controls="settingsSectionBodyBrowser"/
+      /id="settingsSectionHeaderBrowser"[^>]*aria-controls="settingsSectionBodyBrowser"/
     );
     expect(indexHtml).toMatch(
-      /id="settingsSectionHeaderInterface"[\s\S]*aria-controls="settingsSectionBodyInterface"/
+      /id="settingsSectionHeaderInterface"[^>]*aria-controls="settingsSectionBodyInterface"/
     );
     expect(indexHtml).toMatch(
-      /id="settingsSectionHeaderApplication"[\s\S]*aria-controls="settingsSectionBodyApplication"/
+      /id="settingsSectionHeaderApplication"[^>]*aria-controls="settingsSectionBodyApplication"/
     );
-    expect(indexHtml).toMatch(/id="dockTabQueue"[\s\S]*aria-controls="queueSection"/);
-    expect(indexHtml).toMatch(/id="dockTabActivity"[\s\S]*aria-controls="download-history"/);
-    expect(indexHtml).toMatch(/id="dockTabConsole"[\s\S]*aria-controls="console-section"/);
-    expect(indexHtml).toMatch(/id="progress-bar-wrapper"[\s\S]*role="progressbar"/);
-    expect(indexHtml).toMatch(/id="settingsBtn"[\s\S]*aria-expanded="false"/);
+    expect(indexHtml).toMatch(/id="dockTabQueue"[^>]*aria-controls="queueSection"/);
+    expect(indexHtml).toMatch(/id="dockTabActivity"[^>]*aria-controls="download-history"/);
+    expect(indexHtml).toMatch(/id="dockTabConsole"[^>]*aria-controls="console-section"/);
+    expect(indexHtml).toMatch(/id="progress-bar-wrapper"[^>]*role="progressbar"/);
+    expect(indexHtml).toMatch(/id="settingsBtn"[^>]*aria-expanded="false"/);
     expect(indexHtml).toMatch(/<title>ROSI<\/title>/);
     expect(indexHtml).toMatch(/aria-label="Learn more about SponsorBlock"/);
     expect(readEngineSources()).toMatch(/onSettingsImported/);

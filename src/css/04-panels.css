@@ -234,6 +234,11 @@
     opacity var(--transition-fast);
 }
 
+/* At 0.55 the light-theme icons fall to about 2.9:1; 0.8 keeps them above 3:1. */
+:root[data-theme='light'] .history-item-actions .btn--icon {
+  opacity: 0.8;
+}
+
 .history-item-actions .btn--icon:focus,
 .history-item-actions .btn--icon:focus-visible,
 .history-item-actions .btn--icon.is-focused {
@@ -294,6 +299,11 @@
   word-break: break-word;
   overflow-wrap: anywhere;
   background: var(--console-bg);
+}
+
+.console-output:empty::before {
+  content: 'No output yet.';
+  color: var(--text-muted);
 }
 
 /* ── Footer ── */

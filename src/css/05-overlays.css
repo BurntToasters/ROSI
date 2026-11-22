@@ -318,6 +318,9 @@
 
 .toast-message {
   flex: 1;
+  /* Lets a long URL wrap inside the toast instead of pushing out the dismiss button. */
+  min-width: 0;
+  overflow-wrap: anywhere;
   line-height: 1.4;
 }
 

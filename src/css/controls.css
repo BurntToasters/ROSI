@@ -472,7 +472,7 @@ select option {
   position: absolute;
   z-index: 20;
   padding: var(--spacing-md);
-  background: color-mix(in srgb, var(--modal-bg-start) 94%, transparent);
+  background: var(--modal-bg-start);
   -webkit-backdrop-filter: blur(var(--blur-lg));
   backdrop-filter: blur(var(--blur-lg));
   border: 1px solid var(--border-default);

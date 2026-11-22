@@ -23,6 +23,23 @@
   overscroll-behavior: none;
 }
 
+.main-stage::-webkit-scrollbar {
+  width: var(--scrollbar-width);
+}
+
+.main-stage::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.main-stage::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 3px;
+}
+
+.main-stage::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+
 /* ── Top bar ── */
 .top-bar {
   flex: 0 0 auto;
@@ -317,6 +334,17 @@
     0 0 0 2px color-mix(in srgb, var(--url-valid-border) 20%, transparent);
 }
 
+/* The valid rule above has the same specificity as the focus rule and comes
+   after it, so the focus ring is restored here. */
+.url-input-container.is-valid input:focus {
+  outline: 2px solid transparent;
+  outline-offset: 4px;
+  border-color: var(--accent);
+  box-shadow:
+    var(--well-shadow),
+    0 0 0 4px var(--accent-subtle);
+}
+
 .url-input-container.is-invalid input {
   border-color: var(--url-invalid-border);
   box-shadow:
@@ -503,6 +531,10 @@
   margin: 0.15rem 0 0;
   font-size: var(--text-xs);
   color: var(--text-muted);
+}
+
+.preset-status:empty {
+  display: none;
 }
 
 /* ── Custom formats (expands under the profile row) ── */
@@ -827,7 +859,8 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-xs);
-  opacity: 0.3;
+  /* 0.3 left the inactive labels near 2:1; 0.65 keeps them at 4.5:1 or better. */
+  opacity: 0.65;
   transition: opacity var(--transition-normal);
 }
 

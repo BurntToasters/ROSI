@@ -65,7 +65,8 @@
 
 .wizard-progress-bar {
   height: 100%;
-  width: 25%;
+  /* Seven steps: the default matches step 1 until the wizard sets the width. */
+  width: 14.29%;
   background: var(--accent);
   border-radius: 2px;
   transition: width var(--transition-normal);
@@ -85,6 +86,23 @@
 .wizard-step.active {
   display: flex;
   animation: wizardFadeIn 0.3s ease both;
+}
+
+.wizard-step::-webkit-scrollbar {
+  width: var(--scrollbar-width);
+}
+
+.wizard-step::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.wizard-step::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 3px;
+}
+
+.wizard-step::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
 }
 
 .wizard-icon {
