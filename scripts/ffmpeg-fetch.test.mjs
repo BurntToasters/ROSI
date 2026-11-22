@@ -19,6 +19,7 @@
 // F15 update-ffmpeg must refuse a non-https server before backing anything up.
 // F16 the version parser must not accept ffprobe or garbage output.
 // F17 regenerating checksums must keep a known version when it cannot be probed.
+// F21 the FFmpeg notices must name the checksums.json version.
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -620,6 +621,63 @@ test("F20: the bundled checksums.json records 9.0.2 and covers all six targets",
       { platform: "linux", arch: "x64" },
       { platform: "linux", arch: "arm64" },
     ]),
+    [],
+  );
+  const bundled = (name) =>
+    fs.readFileSync(
+      path.join(import.meta.dirname, "..", "resources", "ffmpeg", name),
+      "utf8",
+    );
+  assert.deepEqual(
+    checkFfmpeg.noticeVersionProblems(manifest.version, {
+      "resources/ffmpeg/NOTICE.txt": bundled("NOTICE.txt"),
+      "resources/ffmpeg/SOURCE_OFFER.txt": bundled("SOURCE_OFFER.txt"),
+    }),
+    [],
+  );
+});
+
+// F21: the NOTICE and SOURCE_OFFER texts must name the checksums.json version.
+// A different version, a longer number that only contains it, or a missing
+// file each fail; the bundled texts pass.
+test("F21: FFmpeg notices must name the checksums.json version", () => {
+  const notices = (text) => ({
+    "resources/ffmpeg/NOTICE.txt": text,
+    "resources/ffmpeg/SOURCE_OFFER.txt": text,
+  });
+  assert.deepEqual(
+    checkFfmpeg.noticeVersionProblems(
+      "9.0.2",
+      notices("  - FFmpeg 9.0.2: Windows.\nhttps://x/ffmpeg-v9.0.2\n"),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    checkFfmpeg.noticeVersionProblems("9.0.2", notices("FFmpeg 9.0.1 only")),
+    [
+      "resources/ffmpeg/NOTICE.txt does not mention FFmpeg 9.0.2 (resources/ffmpeg/checksums.json)",
+      "resources/ffmpeg/SOURCE_OFFER.txt does not mention FFmpeg 9.0.2 (resources/ffmpeg/checksums.json)",
+    ],
+  );
+  assert.deepEqual(
+    checkFfmpeg.noticeVersionProblems(
+      "9.0.2",
+      notices("FFmpeg 19.0.2 and 9.0.20 and 9.0.2x"),
+    ),
+    [
+      "resources/ffmpeg/NOTICE.txt does not mention FFmpeg 9.0.2 (resources/ffmpeg/checksums.json)",
+      "resources/ffmpeg/SOURCE_OFFER.txt does not mention FFmpeg 9.0.2 (resources/ffmpeg/checksums.json)",
+    ],
+  );
+  assert.deepEqual(
+    checkFfmpeg.noticeVersionProblems("9.0.2", {
+      "resources/ffmpeg/NOTICE.txt": "FFmpeg 9.0.2.",
+      "resources/ffmpeg/SOURCE_OFFER.txt": null,
+    }),
+    ["resources/ffmpeg/SOURCE_OFFER.txt is missing"],
+  );
+  assert.deepEqual(
+    checkFfmpeg.noticeVersionProblems(undefined, notices("no version here")),
     [],
   );
 });

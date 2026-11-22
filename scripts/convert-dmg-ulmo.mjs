@@ -14,6 +14,7 @@ import path from "path";
 import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
 import { MACOS_TARGETS, macosPackageName } from "./zip-macos.js";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const reportPath = path.join(root, "e2e", "artifacts", "dmg-ulmo-report.json");
@@ -360,10 +361,7 @@ function main() {
   }
 }
 
-if (
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-) {
+if (isDirectExecutionOf(import.meta.url)) {
   try {
     main();
   } catch (error) {

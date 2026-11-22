@@ -47,6 +47,33 @@ test("G1: a detached signature is accepted only as a clean VALIDSIG from the pin
   );
 });
 
+// R16: gpg output must carry exactly one VALIDSIG line. A second line, even
+// one from the pinned key, is refused rather than taking the first match.
+test("R16: two VALIDSIG lines are refused, never the first one", () => {
+  const pinnedLine = `[GNUPG:] VALIDSIG ${"B".repeat(40)} 2026-01-01 1 0 4 0 1 10 00 ${PINNED_FINGERPRINT}`;
+  const otherLine = `[GNUPG:] VALIDSIG ${"C".repeat(40)} 2026-01-01 1 0 4 0 1 10 00 ${"C".repeat(40)}`;
+  assert.throws(
+    () =>
+      gpgSignerFromStatus(
+        `${pinnedLine}
+${pinnedLine}
+`,
+        PINNED_FINGERPRINT,
+      ),
+    /2 VALIDSIG lines; exactly one is required/,
+  );
+  assert.throws(
+    () =>
+      gpgSignerFromStatus(
+        `${otherLine}
+${pinnedLine}
+`,
+        PINNED_FINGERPRINT,
+      ),
+    /2 VALIDSIG lines; exactly one is required/,
+  );
+});
+
 const MSYS_HOME = "Home: /home/runneradmin/.gnupg\n";
 const NATIVE_HOME = "Home: C:/Users/runneradmin/AppData/Roaming/gnupg\n";
 

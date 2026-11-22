@@ -194,6 +194,64 @@ function ffmpegVersionFromOutput(text) {
   return match ? match[1] : null;
 }
 
+const NOTICE_FILES = [
+  "resources/ffmpeg/NOTICE.txt",
+  "resources/ffmpeg/SOURCE_OFFER.txt",
+];
+
+/**
+ * True when `text` names `version` as a whole token. A longer number that only
+ * contains it (19.0.2, 9.0.20) or a word glued to it (9.0.2x) does not count.
+ */
+function mentionsVersion(text, version) {
+  const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![\\d.])${escaped}(?![\\w]|\\.\\w)`).test(text);
+}
+
+/**
+ * Notice texts that do not name the checksums.json FFmpeg version. A null text
+ * is a missing file. Without a recorded version there is nothing to compare.
+ * @param {string | undefined} version
+ * @param {Record<string, string | null>} notices
+ * @returns {string[]}
+ */
+function noticeVersionProblems(version, notices) {
+  if (!version) return [];
+  const problems = [];
+  for (const [relativePath, text] of Object.entries(notices)) {
+    if (text === null) {
+      problems.push(`${relativePath} is missing`);
+    } else if (!mentionsVersion(text, version)) {
+      problems.push(
+        `${relativePath} does not mention FFmpeg ${version} (resources/ffmpeg/checksums.json)`,
+      );
+    }
+  }
+  return problems;
+}
+
+function assertNoticeVersions() {
+  const manifest = loadChecksums();
+  const notices = {};
+  for (const relativePath of NOTICE_FILES) {
+    const absolutePath = path.join(projectRoot, relativePath);
+    notices[relativePath] = fs.existsSync(absolutePath)
+      ? fs.readFileSync(absolutePath, "utf8")
+      : null;
+  }
+  const problems = noticeVersionProblems(manifest?.version, notices);
+  if (problems.length > 0) {
+    console.error("\nFFmpeg notice version check failed.");
+    for (const item of problems) {
+      console.error(`- ${item}`);
+    }
+    console.error(
+      "\nUpdate the FFmpeg version and source links in those files to match checksums.json.",
+    );
+    process.exit(1);
+  }
+}
+
 function runVersionProbe(binaryPath) {
   const result = spawnSync(binaryPath, ["-version"], {
     encoding: "utf8",
@@ -444,6 +502,7 @@ function main() {
   } else {
     validateTargets(targets, requireChecksums);
   }
+  assertNoticeVersions();
   const checksumNote = loadChecksums()
     ? " (checksums verified)"
     : " (no checksum manifest found)";
@@ -457,6 +516,7 @@ module.exports = {
   buildChecksumEntry,
   ffmpegVersionFromOutput,
   missingEntryProblems,
+  noticeVersionProblems,
 };
 
 if (require.main === module) main();

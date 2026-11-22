@@ -78,7 +78,7 @@ if (fs.existsSync(manifest)) {
   }
   if (!yaml.includes("--before=") || !yaml.includes("3 days ago")) {
     fail(
-      "node24 SDK npm 11 must be upgraded to newest npm 12 with a 3-day --before age gate before npm ci",
+      "node24 SDK npm 11 must be upgraded to the exact CI npm version (NPM_VERSION in ci.yml) with a 3-day --before age gate before npm ci",
     );
   }
   if (!yaml.includes("tauri build --no-bundle -- --locked")) {

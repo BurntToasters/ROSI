@@ -38,6 +38,7 @@ jobs:
   commit-message-policy:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -192,6 +193,7 @@ jobs:
 
   updater-manifest:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -295,6 +297,7 @@ jobs:
 
   security-audit:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -341,6 +344,7 @@ jobs:
       - updater-manifest
       - security-audit
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: Require scheduled checks
         env:
@@ -361,6 +365,7 @@ jobs:
       - smoke-build
       - security-audit
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: Require every release check
         env:

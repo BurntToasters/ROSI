@@ -91,7 +91,7 @@ export function assertVendoredUpdaterParity(root, lockBytes) {
     "tauri-plugin-updater",
     "Cargo.toml",
   );
-  if (!declared && !existsSync(vendorManifestPath)) return;
+  if (!declared) return;
   const vendorManifest = readFileSync(vendorManifestPath, "utf8");
   const packageStart = vendorManifest.indexOf("[package]");
   const packageEnd = vendorManifest.indexOf("\n[", packageStart + 1);

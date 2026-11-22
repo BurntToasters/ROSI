@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const DEFAULT_MAX = "2.39";
 const SIDECARS = ["rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"];
@@ -94,4 +95,4 @@ function main() {
   console.log(`[check-linux-glibc] All binaries run on glibc ${max}.`);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main();
+if (isDirectExecutionOf(import.meta.url)) main();

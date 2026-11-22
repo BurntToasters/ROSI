@@ -4,6 +4,9 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 0
     groups:
       dev-dependencies:
         dependency-type: development
@@ -18,6 +21,9 @@ updates:
     directory: "/src-tauri"
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 0
     # [patch.crates-io] points tauri-plugin-updater at vendor/, so a version
     # bump here would change nothing. Rebase the vendored fork by hand instead.
     ignore:
@@ -31,3 +37,6 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 0

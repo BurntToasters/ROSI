@@ -14,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const reportPath = path.join(
@@ -225,10 +226,7 @@ function main() {
   }
 }
 
-if (
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-) {
+if (isDirectExecutionOf(import.meta.url)) {
   try {
     main();
   } catch (error) {

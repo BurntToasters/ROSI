@@ -1758,6 +1758,35 @@ test("46d. npm update keeps JavaScript updater pinned to the vendored Rust versi
   }
 });
 
+test("46e. npm update skips updater parity when the JavaScript updater is not declared", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "npm-updater-undeclared-"));
+  try {
+    const vendor = path.join(
+      root,
+      "src-tauri",
+      "vendor",
+      "tauri-plugin-updater",
+    );
+    mkdirSync(vendor, { recursive: true });
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ dependencies: { react: "18.3.1" } }),
+    );
+    writeFileSync(
+      path.join(vendor, "Cargo.toml"),
+      '[package]\nname = "tauri-plugin-updater"\nversion = "2.10.1"\n\n[dependencies]\n',
+    );
+    const lock = Buffer.from(
+      JSON.stringify({
+        packages: { "node_modules/react": { version: "18.3.1" } },
+      }),
+    );
+    assert.doesNotThrow(() => assertVendoredUpdaterParity(root, lock));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("47. concurrent Cargo dependency updates are rejected", () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "cargo-update-lock-"));
   try {

@@ -180,7 +180,7 @@ function assertHttpsUrl(url, label) {
   try {
     parsed = new URL(String(url));
   } catch {
-    throw new Error(`${label} is not a valid URL: ${url}`);
+    throw new Error(`${label} is not a valid URL.`);
   }
   if (parsed.protocol !== "https:") {
     throw new Error(`${label} must use https (got ${parsed.protocol}//).`);
@@ -250,13 +250,11 @@ function download(url, destPath, options = {}) {
           res.resume();
           const location = res.headers["location"];
           if (!location) {
-            fail(
-              new Error(`Redirect with no Location header from ${requestUrl}`),
-            );
+            fail(new Error("Redirect with no Location header."));
             return;
           }
           if (redirects >= MAX_REDIRECTS) {
-            fail(new Error(`Too many redirects from ${url}`));
+            fail(new Error("Too many redirects."));
             return;
           }
           doRequest(new URL(location, requestUrl).href, redirects + 1);
@@ -603,7 +601,7 @@ async function main() {
   console.log(
     `\nDownloading ffmpeg binaries for: ${targets.map((t) => `${t.platform}:${t.arch}`).join(", ")}`,
   );
-  console.log(`Server: ${base}\n`);
+  console.log(`Server: custom FFmpeg server\n`);
 
   for (const { platform, arch } of targets) {
     const urlSegment = PLATFORM_URL_SEGMENT[platform];

@@ -236,10 +236,18 @@ function gpgSignerFromStatus(statusText, pinnedFingerprint) {
       fail(`SHA2-256SUMS signature rejected by gpg (${keyword}).`);
     }
   }
-  const validLine = lines.find((line) => line.startsWith("[GNUPG:] VALIDSIG "));
-  if (!validLine) {
+  const validLines = lines.filter((line) =>
+    line.startsWith("[GNUPG:] VALIDSIG "),
+  );
+  if (validLines.length === 0) {
     fail("SHA2-256SUMS signature verification failed");
   }
+  if (validLines.length !== 1) {
+    fail(
+      `SHA2-256SUMS gpg output has ${validLines.length} VALIDSIG lines; exactly one is required.`,
+    );
+  }
+  const validLine = validLines[0];
   // Last field of VALIDSIG is the primary key fingerprint.
   const primary = validLine.trim().split(" ").pop().toUpperCase();
   if (primary !== pinnedFingerprint.toUpperCase()) {
