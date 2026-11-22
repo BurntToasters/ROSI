@@ -62,11 +62,10 @@ in E2E builds. The method list is still hand-written, so this item is not done.
 
 **Problem.** The API object (formerly `src/tauri-bridge.ts`, now `src/api.ts`)
 copies the v4 Electron contract onto Tauri. The renderer also depends on IIFE modules
-exposed as window globals. The settings shape is written twice by hand:
-`src-tauri/src/types.rs:59` (`struct Settings`) and the TypeScript copy in
-`src/rosiEngine.ts:39` (`theme: 'system' | 'light' | 'dark' | 'purple'`). They
-can drift without a compile error. Neither `tauri-specta` nor `ts-rs` is in
-`src-tauri/Cargo.toml`.
+exposed as window globals. The settings shape is generated. `src/generated/ipc-types.ts` renders the `Settings` struct (`src-tauri/src/types.rs:133`) through the `ts-rs` test, and the hand
+copy that was in `src/rosiEngine.ts` is gone. `src/engine/theme.ts` still
+hand-types `ThemeName`. `tauri-specta` is not in `src-tauri/Cargo.toml`, and
+`ts-rs` is a dev-dependency only.
 
 **Plan.**
 
@@ -223,10 +222,13 @@ idle relay still wakes up on its sleep.
 
 **Status (2026-11-07): implemented with residue, see [IMPLEMENTATION-5.1.md](IMPLEMENTATION-5.1.md).**
 `e2e/suites.json`, `--group` selection, and `scenarioGroups` in reports are in
-place. No file name under `e2e/` contains `round`, `audit`, or `repair`. Residue:
+place. Tracked file names under `e2e/` no longer contain `round` or `repair`, but 12
+tracked files in `e2e/v5-fixes/ui-polish/` still contain `audit` (six specs and
+six failure-mode files). Residue:
 
-- No residue in the file layout or suite list: `scripts/test-e2e.js` is 764
-  lines (target < 800), reads `e2e/suites.json` through `scripts/e2e/manifest.js`,
+- File names: the `audit` names in `e2e/v5-fixes/ui-polish/` listed above.
+- `scripts/test-e2e.js` is 828 lines, over its target of under 800. It reads
+  `e2e/suites.json` through `scripts/e2e/manifest.js`,
   and runs the runners from `scripts/e2e/runners/`. Whether the gate still
   produces the same results after the move is not re-proved at HEAD.
 
@@ -376,10 +378,11 @@ release too. [KEY-COMPROMISE.md](KEY-COMPROMISE.md) describes this limit.
 
 **Problem.** yt-dlp uses Deno as its default JavaScript runtime for YouTube.
 Deno is expected to shut down around October 2027, and yt-dlp has not picked a
-replacement. ROSI finds Deno by path in `src-tauri/src/deno.rs:19` to `:48`, and
-no `--js-runtimes` argument is built in `src-tauri/src/`. Deno-specific code is
-spread across `deno.rs`, `process_util.rs`, the startup reminder, and the setup
-wizard in `src/rosiEngine.ts`. See also the "Deno end of life" section of
+replacement. ROSI finds Deno by path in `src-tauri/src/deno.rs:13` to `:48`. `--js-runtimes`
+is built only in the Flatpak, by `js_runtime_args_for` in
+`src-tauri/src/command_builders.rs`, and only when the bundled Node.js is
+runnable. Deno-specific code is spread across `deno.rs`, `process_util.rs`, the
+startup reminder, and the setup wizard in `src/engine/wizard.ts`. See also the "Deno end of life" section of
 [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 **Plan.**
@@ -434,7 +437,8 @@ started. The proof gaps for the accepted milestones are in
 ### Open follow-ups from the 5.1 audit plan
 
 These items came from the audit plan that previously lived in `plan.md`. Each
-was checked against source at HEAD `8e32e90`. Items already done in source were
+was checked against source at HEAD `8e32e90`. HEAD is now `306ecf5`, so recheck an
+item against current source before relying on it. Items already done in source were
 dropped, and no results from these checks are claimed as passing evidence.
 
 - **Full-gate evidence at HEAD.** Run `npm run test:all -- --require-clean-proof`

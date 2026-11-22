@@ -8,8 +8,9 @@ previews, metadata, thumbnails, downloads, and media tools. The rules live in
 ## Layers
 
 1. **URL syntax** (`is_syntactically_safe_http_url`): http or https only, no
-   credentials, and literal IP hosts must be public. Domain names pass here;
-   they are checked when the operation resolves them.
+   credentials, and literal IP hosts and the reserved hostnames below must be
+   public. Other domain names pass here; they are checked when the operation
+   resolves them.
 2. **Pinned proxy** (`network_security.rs`): every HTTP request and HTTPS
    CONNECT is resolved, every returned address must be public, and the
    connection is made to exactly those addresses. Redirects go back through the
@@ -25,8 +26,9 @@ previews, metadata, thumbnails, downloads, and media tools. The rules live in
   `127.0.0.0/8`, `169.254.0.0/16` (link-local, including cloud metadata
   `169.254.169.254`), `172.16.0.0/12`, `192.0.0.0/24`, `192.0.2.0/24`,
   `192.88.99.0/24`, `192.168.0.0/16`, `198.18.0.0/15`, `198.51.100.0/24`,
-  `203.0.113.0/24`, `224.0.0.0/4` (multicast and reserved), and
-  `255.255.255.255`.
+  `203.0.113.0/24`, `224.0.0.0/4` (multicast), `240.0.0.0/4` (reserved),
+  and `255.255.255.255`. The code blocks every address from `224.0.0.0` upward,
+  so these ranges are covered by one rule.
 - **IPv6**: only global unicast `2000::/3` is allowed. Also blocked are
   `2001::/23`, `2001:db8::/32`, `2002::/16` (6to4), `3fff::/20`
   (documentation), and every IPv4-mapped or IPv4-compatible address.
@@ -34,6 +36,12 @@ previews, metadata, thumbnails, downloads, and media tools. The rules live in
   IP address (`*.nip.io`, `*.sslip.io`, `*.xip.io`, `*.localtest.me`,
   `*.lvh.me`), and numeric hosts in inet_aton forms (for example `0x7f000001`),
   which are checked as their IPv4 value.
+
+Hostname rules run in the URL pre-checks in `validation.rs`, not in the pinned
+proxy. The proxy checks only the addresses a name resolves to, so a name that
+resolves to a blocked address is still refused there.
+
+Destination ports are not restricted. The address rules apply to every port.
 
 ## NAT64 (RFC 6052)
 
@@ -118,3 +126,16 @@ Limits to understand before enabling it:
 - A DNS lookup that returns more than 32 answers is cut to the first 32. Every
   kept address must still be public, and the connection is made only to those
   addresses.
+
+## Local proxy answers
+
+The local proxy writes these answers itself (`network_security_async.rs`):
+
+- 400: an unsupported request, or a request that fails the framing rules above.
+- 403 `Destination Blocked`: the address rules refuse the destination.
+- 502 `Bad Gateway`: DNS resolution fails or returns no address, or a direct
+  connection fails.
+- 502 `Upstream Proxy Failed`: the upstream proxy cannot be reached or refuses
+  the tunnel. Upstream timeouts also return 502.
+- 504 `Gateway Timeout`: a direct connection attempt times out and no address
+  connects.

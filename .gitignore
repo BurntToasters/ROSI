@@ -60,6 +60,7 @@ public/yt-dlp-notices.txt
 public/ffmpeg-notice.txt
 public/ffmpeg-license.txt
 public/ffmpeg-source-offer.txt
+public/node-license.txt
 
 # FFmpeg binaries (fetched with npm run get:ffmpeg, never committed)
 resources/ffmpeg/**/ffmpeg

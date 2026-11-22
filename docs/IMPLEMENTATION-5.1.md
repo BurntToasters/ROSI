@@ -9,9 +9,10 @@ own status when they produce implementation and platform evidence.
 
 The only full-gate pass recorded for this milestone set is macOS arm64 at commit
 `9e60f970d2a62d636a019d7b15975c9814364dde`. That commit predates HEAD
-`8e32e90`, so it is not evidence for the current tree. No platform has full-gate
-E2E evidence at the current HEAD yet. Windows x64 has E2E evidence on an
-uncommitted tree based on `8e63cd8`; see the 5.1 audit section.
+`306ecf5`, so it is not evidence for the current tree. No platform has full-gate
+E2E evidence at HEAD `306ecf5` yet. Windows x64 E2E evidence was recorded on an
+uncommitted tree based on `8e63cd8`. Its fixes were committed after that commit,
+so that run does not map to HEAD; see the 5.1 audit section.
 
 | #   | Milestone                                                                 | Evidence status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | --- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -46,14 +47,15 @@ the saved clean snapshot.
 
 ## Baseline artifact
 
-The retained current-only inventory is
-`e2e/artifacts/benchmark-51-current-final-win32-x64.json`, with its adjacent
-`.sha256` file. It records the source revision and dirty-file hashes, the saved
-clean-snapshot identity, host and tool versions, evidence artifact and sidecar
-sizes, the static and dynamic suite inventory, and references to existing
-reports. Native release packages are `not-measured` when no packages are
-present; frontend `dist/` is recorded separately. The benchmark records that no
-scenarios were executed by that command.
+The current-only inventory `e2e/artifacts/benchmark-51-current-final-win32-x64.json`,
+with its adjacent `.sha256` file, is not retained. `e2e/artifacts/` is gitignored,
+and neither file exists in this checkout. The file was meant to record the source
+revision and dirty-file hashes, the saved clean-snapshot identity, host and tool
+versions, evidence artifact and sidecar sizes, the static and dynamic suite
+inventory, and references to existing reports. Native release packages are
+`not-measured` when no packages are present; frontend `dist/` is recorded
+separately. The benchmark would also note that no scenarios were executed by that
+command.
 
 The older schema 1 file named `benchmark-51-baseline-win32-x64.json` is a
 current-only capture made after the initial report was overwritten. It is not
@@ -105,7 +107,7 @@ current supported platforms remain in the required release-verification scope.
 ## Named Windows gaps
 
 - **Windows Job Object leader exit (not proven).** The record
-  `windows-job-object-leader-exit` in `e2e/specs/native-downloads.spec.js` is
+  `windows-job-object-leader-exit` in `e2e/native-downloads.spec.js` is
   skipped on every platform and reports `invariantPassed: null`. The suite does
   not force a real app helper leader to exit while a descendant keeps an
   inherited pipe open. The native gate requires the record to stay skipped with
@@ -121,8 +123,10 @@ current supported platforms remain in the required release-verification scope.
 ## 5.1 audit: fixed findings and Windows x64 proof
 
 Finding IDs refer to the 5.1 audit plan, which is not in the repository. The
-fixes are uncommitted on top of `8e63cd8`. Waves 1 to 3 are verified by the
-Windows x64 runs below. Each fix has its own failure-mode file and E2E spec.
+fixes were uncommitted on top of `8e63cd8` when the runs below were made. The
+commits after `8e63cd8` (27 to HEAD `306ecf5`) include this work, but the exact
+tree of those runs is not recorded. Waves 1 to 3 are verified by the Windows x64
+runs below. Each fix has its own failure-mode file and E2E spec.
 
 - **Backend:** A1 (legacy v4 import never overwrites ROSI 5 data), A2 (manual
   cancel, queue cancel, and clear act only on their own owner), A3 (a cancelled
@@ -168,7 +172,7 @@ Not done in this tree: A8, A11, A12, C16, and T8 (the rest of package 9). Deferr
 owner decision: A9 and T4 (renames) are deferred; T10 is done (`core.hooksPath`
 points at `.githooks`); T11 is declined for now (the yt-dlp notice stays tracked). Still needs a Mac run: A13, and the macOS paths of A4 and A8.
 
-Windows x64 proof before the audit commit (uncommitted tree on `8e63cd8`):
+Windows x64 proof before the audit commit (uncommitted tree on `8e63cd8`, not reproducible at HEAD `306ecf5`):
 
 - `npm run test:e2e:core -- --repeat 3` after wave 3: 3 of 3 passed, no flaky
   runs.

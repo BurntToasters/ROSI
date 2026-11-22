@@ -125,8 +125,12 @@ from `assets/ytdlp-checksums.json`, so a bump needs no script edit.
 A PR opened with the default `GITHUB_TOKEN` gets no CI on its own: GitHub does
 not start push or pull_request workflows for events that token creates. The
 watch job therefore runs `gh workflow run ci.yml --ref <branch>` after it opens
-the PR. `workflow_dispatch` is the one event such a token may trigger, and the
-job holds `actions: write` only for that step.
+the PR. `workflow_dispatch` is the one event such a token may trigger. The
+`contents: write`, `pull-requests: write`, `issues: write`, and `actions: write`
+grants are set at job level, so every step of the job holds them, not only the
+dispatch step. `actions/checkout` also persists its token in `.git/config`,
+because the workflow does not set `persist-credentials: false`, and the push
+step relies on it.
 
 Maintainers must check that the required checks for the PR come from a CI run
 on the bump commit. If the dispatch failed (the job logs a `::warning::`), or
@@ -138,13 +142,10 @@ around this.
 
 ## yt-dlp binary history
 
-Earlier v5 builds committed the yt-dlp binaries (about 155 MB per bump), so
-`.git` is about 1.4 GB. The binaries are now untracked and gitignored, but the
-old blobs remain in history. History was not rewritten here. A maintainer can
-prune them later on a fresh mirror clone with
-`git filter-repo --invert-paths --path assets/yt-dlp.exe --path assets/yt-dlp_arm64.exe --path assets/yt-dlp_macos --path assets/yt-dlp_linux --path assets/yt-dlp_linux_aarch64`.
-That rewrites every commit SHA and tag, so do it only after release tags are
-archived, coordinate a force push with forks, and have every clone re-clone.
+Earlier v5 builds committed the yt-dlp binaries. They are now untracked and
+gitignored. The history was rewritten to remove them on 2026-10-08. See
+[docs/HISTORY-PRUNE.md](docs/HISTORY-PRUNE.md) for what was removed, the effect
+on commit IDs, and how to re-sync an existing clone.
 
 ## Updater signing key
 
@@ -168,6 +169,18 @@ and key-ID guard in the final v4 release before publishing v5 artifacts.
 unresolved-package report. Every prerelease and stable release runs
 `npm run release:licenses`, which uses `licenses:cargo:strict` and fails until
 every dependency has a verified license notice.
+
+## Local git hooks
+
+`.githooks/` holds the pre-commit and commit-msg hooks. `npm ci` runs the
+`prepare` script (`scripts/install-git-hooks.js`), which sets `core.hooksPath`
+to `.githooks`. That script does nothing when `CI` is set or outside a git
+checkout. `workspace:bootstrap` uses `npm ci --ignore-scripts`, so it does not
+run that step. Run the script by hand in that case:
+
+```sh
+npm run prepare
+```
 
 ## Verify the toolchain
 

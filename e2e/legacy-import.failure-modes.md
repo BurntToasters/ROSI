@@ -122,8 +122,9 @@ no E2E case in this change reaches that path; the report lists them.
 
 ## Scope note
 
-`legacy-v4-preserve-v5` needs a profile that already holds ROSI 5 data and a
-finished marker before the app launches. The spec cannot seed that itself, since
-the import runs at startup. The seed must come from the pass builder in
-`scripts/e2e/runners/wdio-passes.js` and a helper in `e2e/helpers/legacy-v4.js`.
-Neither file is in this change's list, so the case is not wired yet.
+`legacy-v4-preserve-v5` is wired. `e2e/specs/legacy-import.spec.js` runs three
+passes (`import`, `corrupt-settings`, and `preserve-v5`), each in a fresh profile
+and a separate app launch. `scripts/e2e/runners/wdio-passes.js` builds them. The
+`preserve-v5` pass starts with ROSI 5 data and a finished import marker, planted
+by `seedLegacyV4Data` in `e2e/helpers/legacy-v4.js`, because the import runs at
+startup and the spec cannot seed that itself.

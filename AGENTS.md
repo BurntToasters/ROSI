@@ -23,33 +23,33 @@ Paths in the next two tables are relative to their named source directory.
 
 ### Frontend: `src/`
 
-| Area | Entry points and ownership |
-| --- | --- |
-| Startup and windows | `index.html`, `main.ts`, and `rosiEngine.ts` load the API, icons, bindings, settings, and readiness handshake. `splash.html` and `splash.ts` own the splash renderer. |
-| IPC boundary | `api.ts` exposes the shared renderer API and event subscriptions. `commands.ts` defines typed Rust command calls. `generated/ipc-types.ts` contains generated Rust payload types. |
-| Event bindings | `engine/bind/` connects DOM controls and backend events to feature behavior: downloads, queue, settings, activity, presets, playlist, URL input, shortcuts, and app shell. |
-| Downloads and media | `engine/manual-download.ts`, `progress.ts`, `preview.ts`, `preview-controller.ts`, `formats.ts`, `playlist.ts`, `presets.ts`, and `url-actions.ts` coordinate requests and visible state. |
+| Area                    | Entry points and ownership                                                                                                                                                                           |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Startup and windows     | `index.html`, `main.ts`, and `rosiEngine.ts` load the API, icons, bindings, settings, and readiness handshake. `splash.html` and `splash.ts` own the splash renderer.                                |
+| IPC boundary            | `api.ts` exposes the shared renderer API and event subscriptions. `commands.ts` defines typed Rust command calls. `generated/ipc-types.ts` contains generated Rust payload types.                    |
+| Event bindings          | `engine/bind/` connects DOM controls and backend events to feature behavior: downloads, queue, settings, activity, presets, playlist, URL input, shortcuts, and app shell.                           |
+| Downloads and media     | `engine/manual-download.ts`, `progress.ts`, `preview.ts`, `preview-controller.ts`, `formats.ts`, `playlist.ts`, `presets.ts`, and `url-actions.ts` coordinate requests and visible state.            |
 | Settings and onboarding | `engine/settings-store.ts` owns revisions and serialized saves; `settings-view.ts` applies settings to the UI. `wizard.ts`, `theme.ts`, and `deno.ts` handle onboarding, appearance, and Deno setup. |
-| Queue and updates | `engine/queue-controller.ts` coordinates queue UI/actions. `engine/updater-ui.ts` owns update interactions and listeners. |
-| Shared UI | `engine/refs.ts`, `core.ts`, `constants.ts`, `messages.ts`, `overlays.ts`, and `ui-helpers.ts` provide DOM references, common types, messages, dialogs, and helpers. |
-| Rendering modules | `modules/` contains activity, dock, queue, downloads, settings, icons, UI, and update presentation helpers. |
-| Styling and assets | `css/` separates base, sidebar, main, panels, overlays, responsive, queue, wizard, controls, and splash styles. `fonts/` contains bundled fonts. |
-| Test bridge | `e2e-hook.ts` exposes the real renderer API/modules for E2E builds. `tests/` holds existing frontend contracts and DOM checks. |
+| Queue and updates       | `engine/queue-controller.ts` coordinates queue UI/actions. `engine/updater-ui.ts` owns update interactions and listeners.                                                                            |
+| Shared UI               | `engine/refs.ts`, `core.ts`, `constants.ts`, `messages.ts`, `overlays.ts`, and `ui-helpers.ts` provide DOM references, common types, messages, dialogs, and helpers.                                 |
+| Rendering modules       | `modules/` contains activity, dock, queue, downloads, settings, icons, UI, and update presentation helpers.                                                                                          |
+| Styling and assets      | `css/` separates base, sidebar, main, panels, overlays, responsive, queue, wizard, controls, and splash styles. `fonts/` contains bundled fonts.                                                     |
+| Test bridge             | `e2e-hook.ts` exposes the real renderer API/modules for E2E builds. `tests/` holds existing frontend contracts and DOM checks.                                                                       |
 
 ### Native backend: `src-tauri/src/`
 
-| Area | Entry points and ownership |
-| --- | --- |
-| Application setup | `main.rs` registers commands/plugins and initializes native services. `app_state.rs` resolves app/user directories and provides the shared event sink. |
-| Window lifecycle | `window.rs` owns readiness, close/flush, and restart behavior. `app_menu.rs`, `platform.rs`, and `notices.rs` handle menus, OS operations, and native notices. |
-| Command contracts | `ipc.rs` defines command inputs/errors; `types.rs` defines shared payloads; `constants.rs` holds common limits/default versions. |
-| Download sessions | `downloader.rs` coordinates execution; `downloader/session_owner.rs` serializes session ownership; `conversion.rs` and `publication.rs` in that directory handle conversion and final output publication. |
-| Queue ownership | `coordinator.rs` owns queue transitions and routes terminal session results. `queue.rs` handles queue commands, persistence, and the runner. |
-| Media execution | `download_options.rs` resolves request/preset options, `command_builders.rs` builds tool arguments, `media_info.rs` fetches formats/metadata, and `progress.rs` reports structured progress. |
-| Processes and files | `process_util.rs` manages child processes/termination. `sidecars.rs` resolves tools; `ffmpeg_guard.rs` guards media-tool execution; `staging.rs` reserves staging/output paths; `fs_util.rs` provides persistence helpers. |
-| Network boundary | `validation.rs` checks URLs/paths, `ip_policy.rs` defines destination policy, and `network_security.rs` with `network_security_async.rs` handles vetted connections, proxies, and cancellation. |
-| Durable state | `settings.rs`, `activity.rs`, `stats.rs`, and `legacy.rs` own settings, download history/statistics, and legacy migration. |
-| Updates and dependencies | `updater.rs` manages update state/download/install. `deno.rs` and `gpu.rs` handle Deno and encoder detection. `logging.rs` owns logs and panic reporting. |
+| Area                     | Entry points and ownership                                                                                                                                                                                                                                                                                       |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Application setup        | `main.rs` registers commands/plugins and initializes native services. `app_state.rs` resolves app/user directories and provides the shared event sink.                                                                                                                                                           |
+| Window lifecycle         | `window.rs` owns readiness, close/flush, and restart behavior. `app_menu.rs`, `platform.rs`, and `notices.rs` handle menus, OS operations, and native notices.                                                                                                                                                   |
+| Command contracts        | `ipc.rs` defines command inputs/errors; `types.rs` defines shared payloads; `constants.rs` holds common limits/default versions.                                                                                                                                                                                 |
+| Download sessions        | `downloader.rs` coordinates execution; `downloader/session_owner.rs` serializes session ownership; `conversion.rs` and `publication.rs` in that directory handle conversion and final output publication.                                                                                                        |
+| Queue ownership          | `coordinator.rs` owns queue transitions and routes terminal session results. `queue.rs` handles queue commands, persistence, and the runner.                                                                                                                                                                     |
+| Media execution          | `download_options.rs` resolves request/preset options, `command_builders.rs` builds tool arguments, `media_info.rs` fetches formats/metadata, and `progress.rs` reports structured progress.                                                                                                                     |
+| Processes and files      | `process_util.rs` manages child processes/termination. `process_watchdog.rs` (POSIX only) ends registered child process groups if ROSI dies. `sidecars.rs` resolves tools; `ffmpeg_guard.rs` guards media-tool execution; `staging.rs` reserves staging/output paths; `fs_util.rs` provides persistence helpers. |
+| Network boundary         | `validation.rs` checks URLs/paths, `ip_policy.rs` defines destination policy, and `network_security.rs` with `network_security_async.rs` handles vetted connections, proxies, and cancellation.                                                                                                                  |
+| Durable state            | `settings.rs`, `activity.rs`, `stats.rs`, and `legacy.rs` own settings, download history/statistics, and legacy migration.                                                                                                                                                                                       |
+| Updates and dependencies | `updater.rs` manages update state/download/install. `deno.rs` and `gpu.rs` handle Deno and encoder detection. `logging.rs` owns logs and panic reporting.                                                                                                                                                        |
 
 ### Supporting directories
 
@@ -74,16 +74,16 @@ Network policy is defined in `docs/NETWORK-POLICY.md`. A URL pre-check alone is 
 
 ## Verification workflows
 
-| Command | Purpose |
-| --- | --- |
-| `npm run test:e2e:core` | Fast local feedback: selected existing main scenarios plus complete state/updater, renderer, offline queue, and renderer DOM suites. Requires working FFmpeg and ffprobe. |
-| `npm run test:e2e` | Full native E2E gate, including specialized network, process, recovery, platform, and feature regressions. |
-| `npm run test:e2e:core -- --repeat 3` | Repeated core runs with retained stability evidence; each invocation still uses the normal incremental build path. |
-| `npm run test:e2e:stability` | Five full E2E runs for stability investigation. |
-| `npm run test:all` | Aggregate frontend, tooling/policy, Rust, and full E2E gate. |
-| `npm run typecheck`, `npm run lint`, `npm run format:check` | Static checks. These do not replace E2E verification. |
-| `npm run test:scripts` | Node tests for every `scripts/*.test.*` file (release, E2E orchestration, policy and tooling). `test:cargo-safe-update` is an alias. |
-| `npm test`, `npm run test:rust` | Existing frontend and Rust checks. Follow the critical testing instructions above when adding coverage. |
+| Command                                                     | Purpose                                                                                                                                                                   |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run test:e2e:core`                                     | Fast local feedback: selected existing main scenarios plus complete state/updater, renderer, offline queue, and renderer DOM suites. Requires working FFmpeg and ffprobe. |
+| `npm run test:e2e`                                          | Full native E2E gate, including specialized network, process, recovery, platform, and feature regressions.                                                                |
+| `npm run test:e2e:core -- --repeat 3`                       | Repeated core runs with retained stability evidence; each invocation still uses the normal incremental build path.                                                        |
+| `npm run test:e2e:stability`                                | Five full E2E runs for stability investigation.                                                                                                                           |
+| `npm run test:all`                                          | Aggregate frontend, tooling/policy, Rust, and full E2E gate.                                                                                                              |
+| `npm run typecheck`, `npm run lint`, `npm run format:check` | Static checks. These do not replace E2E verification.                                                                                                                     |
+| `npm run test:scripts`                                      | Node tests for every `scripts/*.test.*` file (release, E2E orchestration, policy and tooling). `test:cargo-safe-update` is an alias.                                      |
+| `npm test`, `npm run test:rust`                             | Existing frontend and Rust checks. Follow the critical testing instructions above when adding coverage.                                                                   |
 
 The canonical E2E inventory is `e2e/suites.json`. The orchestrator is `scripts/test-e2e.js`, with selection/build/runner/stability helpers under `scripts/e2e/`. WebdriverIO configuration lives in `e2e/wdio.conf.js`. Read `e2e/README.md` for coverage, runner ownership, platform allowances, focused selectors, and measured local runtimes.
 
