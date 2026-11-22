@@ -2,10 +2,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { REPO_ROOT } from "../../../e2e/helpers/profile.js";
 import { sha256 } from "../../../e2e/helpers/media-server.js";
 import { ARTIFACT_DIR, e2eChildEnv, relativeToRepo } from "../common.js";
+import { spawnSyncTree } from "../process-tree.js";
 
 const ROUND3_CHECK_COUNT = 15;
 
@@ -18,7 +18,7 @@ export function runRound3Renderer({ snapshotPath = null } = {}) {
   );
   // Remove the previous record so a crashed run cannot be read as passing.
   fs.rmSync(artifact, { force: true });
-  const result = spawnSync(
+  const result = spawnSyncTree(
     process.execPath,
     ["e2e/renderer-dom-checks/run.cjs"],
     {

@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
  * Options must be an object literal or omitted. A number, boolean, array or
  * class instance passed by mistake would otherwise be ignored by destructuring.
  */
-function assertOptionsObject(helper, options) {
+function assertOptionsObject(helper, options, allowed) {
   if (options === undefined) return {};
   const proto = options === null ? undefined : Object.getPrototypeOf(options);
   const plain =
@@ -24,6 +24,13 @@ function assertOptionsObject(helper, options) {
           : typeof options;
     throw new TypeError(
       `${helper} takes an options object or nothing, got ${kind}`,
+    );
+  }
+  // A misspelled key would otherwise be ignored and its default used silently.
+  const unknown = Object.keys(options).filter((key) => !allowed.includes(key));
+  if (unknown.length > 0) {
+    throw new TypeError(
+      `${helper} does not accept option(s) ${unknown.join(", ")}; allowed: ${allowed.join(", ")}`,
     );
   }
   return options;
@@ -101,6 +108,7 @@ export async function waitForNoProcess(needle, message, options) {
   const { timeout = 15_000, interval = 250 } = assertOptionsObject(
     "waitForNoProcess",
     options,
+    ["timeout", "interval"],
   );
   if (!message) throw new TypeError("waitForNoProcess needs a message");
   const deadline = Date.now() + timeout;
@@ -136,6 +144,7 @@ export function createRecorder(options) {
   const { filePath = null, status = null } = assertOptionsObject(
     "createRecorder",
     options,
+    ["filePath", "status"],
   );
   const entries = [];
   const failures = [];

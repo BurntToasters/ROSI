@@ -65,21 +65,43 @@ export async function startUpdaterFixture({
   };
 }
 
-/** Sets the persisted update channel through the engine's command. */
+/** The failure to report for a channel-command result, or null when it succeeded. */
+export function updateChannelFailure(result) {
+  if (result?.error !== undefined) {
+    return `set_update_channel failed: ${result.error}`;
+  }
+  return result?.ok === true ? null : "set_update_channel returned no result";
+}
+
+/** The failure to report when the manual-check button was not clicked, or null. */
+export function manualCheckFailure(clicked) {
+  return clicked === true
+    ? null
+    : "checkUpdateBtn is missing, so the manual update check did not start";
+}
+
+/** Sets the persisted update channel through the engine's command. Throws on failure. */
 export async function setUpdateChannel(channel) {
-  await browser.executeAsync((next, done) => {
+  const result = await browser.executeAsync((next, done) => {
     window.__TAURI__.core.invoke("set_update_channel", { channel: next }).then(
       () => done({ ok: true }),
       (error) => done({ error: String(error) }),
     );
   }, channel);
+  const failure = updateChannelFailure(result);
+  if (failure) throw new Error(failure);
 }
 
-/** Starts a manual check the way the Check for updates button does. */
+/** Starts a manual check the way the Check for updates button does. Throws if the button is missing. */
 export async function clickManualCheck() {
-  await browser.execute(() =>
-    document.getElementById("checkUpdateBtn")?.click(),
-  );
+  const clicked = await browser.execute(() => {
+    const button = document.getElementById("checkUpdateBtn");
+    if (!button) return false;
+    button.click();
+    return true;
+  });
+  const failure = manualCheckFailure(clicked);
+  if (failure) throw new Error(failure);
 }
 
 /** Captures updater-status events in the page, in arrival order. */

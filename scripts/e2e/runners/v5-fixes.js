@@ -2,25 +2,33 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { REPO_ROOT } from "../../../e2e/helpers/profile.js";
 import { sha256 } from "../../../e2e/helpers/media-server.js";
 import { ARTIFACT_DIR, e2eChildEnv, relativeToRepo } from "../common.js";
 import { caseSkipProblems } from "../manifest.js";
 import { verifyRunnerReport } from "../runner-report.js";
 import { pruneRunnerArtifacts } from "../prune-artifacts.js";
+import { spawnSyncTree } from "../process-tree.js";
 
 const V5_FIXES_ROOT = path.join(REPO_ROOT, "e2e", "v5-fixes");
 // Record name a v5-fixes spec uses in its results file to hand the gate its
 // screenshots (e2e/v5-fixes/ui-polish/ui-polish.spec.js).
 const V5_SCREENSHOT_RECORD = "v5-screenshots";
+// `.skip`/`.only` need no following "(": `(cond ? describe : describe.skip)(` is a skip.
 const SKIP_OR_FOCUS_PATTERN =
-  /\b(?:describe|it|context|test)\.(?:skip|only)\s*\(|\b(?:xit|xdescribe|xtest)\s*\(|\bthis\.skip\s*\(/;
+  /\b(?:describe|it|context|test)\.(?:skip|only)\b|\b(?:xit|xdescribe|xtest)\s*\(|\bthis\.skip\s*\(/;
 // Run folders the v5 runners create: <ISO time>-<pid>. The runners write
 // either "HH-MM-SS-mmmZ" or "HH-MM-SS.mmmZ" for the time part.
 export const V5_RUN_DIR_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}[.-]\d{3}Z-\d+$/;
 const V5_RETAINED_RUN_FOLDERS = 20;
+// Outer budget for an area runner. Its own WebdriverIO launches each get 300 s
+// (async-proxy, deno-installer, downloader, network), so one launch fits well
+// inside it.
+export const V5_RUNNER_TIMEOUT_MS = 1_200_000;
+// The persistence runner launches WebdriverIO once per seed mode (13 modes in
+// e2e/v5-fixes/persistence/run.mjs), each with a 180 s budget, plus 120 s of setup.
+export const PERSISTENCE_RUNNER_TIMEOUT_MS = 13 * 180_000 + 120_000;
 
 /**
  * Lists each e2e/v5-fixes/<area>/ with a *.spec.js file or a run.mjs runner.
@@ -70,7 +78,7 @@ export function runV5FixesRunner(area, binary, ffmpeg) {
   });
   // The gate checks each report against the hash of the binary it launched.
   const binarySha256 = sha256(fs.readFileSync(binary));
-  const result = spawnSync(process.execPath, [area.runner], {
+  const result = spawnSyncTree(process.execPath, [area.runner], {
     cwd: REPO_ROOT,
     env: e2eChildEnv({
       ROSI_E2E_BINARY: binary,
@@ -79,7 +87,10 @@ export function runV5FixesRunner(area, binary, ffmpeg) {
     }),
     encoding: "utf8",
     windowsHide: true,
-    timeout: 1_200_000,
+    timeout:
+      area.area === "persistence"
+        ? PERSISTENCE_RUNNER_TIMEOUT_MS
+        : V5_RUNNER_TIMEOUT_MS,
     maxBuffer: 64 * 1024 * 1024,
   });
   if (result.stdout) process.stdout.write(result.stdout);

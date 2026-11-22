@@ -464,6 +464,16 @@ export function e2eRunPlan({
     );
   }
   if (onlySpec === null && selectedGroups.length === 0) {
+    // The full gate is release evidence: an area a feature group names must be
+    // on disk, or deleting it would still pass the gate.
+    const missingGroupedAreas = [...mappedV5Areas].filter(
+      (area) => !v5AreaNames.includes(area),
+    );
+    if (missingGroupedAreas.length > 0) {
+      throw new Error(
+        `full E2E run is missing v5-fixes area(s) named in e2e/suites.json groupAreas: ${missingGroupedAreas.join(", ")}`,
+      );
+    }
     return {
       fullSuite: true,
       mainSpecs: "./specs/main.spec.js",

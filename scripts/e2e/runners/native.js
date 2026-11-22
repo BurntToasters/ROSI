@@ -3,7 +3,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { REPO_ROOT, e2eBinaryPath } from "../../../e2e/helpers/profile.js";
 import { sha256 } from "../../../e2e/helpers/media-server.js";
 import {
@@ -14,6 +13,7 @@ import {
   run,
 } from "../common.js";
 import { companionFfprobe } from "../fixtures.js";
+import { spawnSyncTree } from "../process-tree.js";
 import { ROUND2_NATIVE_OBSERVATIONS } from "../manifest.js";
 import { normalizeRunnerReport, verifyRunnerReport } from "../runner-report.js";
 import { pruneRunnerArtifacts } from "../prune-artifacts.js";
@@ -21,6 +21,9 @@ import { pruneRunnerArtifacts } from "../prune-artifacts.js";
 // Upper bound for one native child. The round-two and process-repair runners
 // had none, so a hung child used to block the gate until the CI job timed out.
 export const NATIVE_RUNNER_TIMEOUT_MS = 900_000;
+// The long-term runner launches WebdriverIO 15 times (e2e/long-term-persistence-run.mjs),
+// each with a 180 s spawn budget. 15 x 180 s plus 120 s of setup and cleanup.
+export const LONG_TERM_RUNNER_TIMEOUT_MS = 15 * 180_000 + 120_000;
 const RETAINED_RUN_FOLDERS = 20;
 // Folder names these runners write: <ISO time, with - for : and .>-<pid>.
 const ROUND2_RUN_FOLDER = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-\d+$/;
@@ -32,9 +35,9 @@ function escapeRegExp(text) {
 }
 
 /** A message when a child was stopped by its timeout, otherwise null. */
-function timeoutReason(error, label) {
+function timeoutReason(error, label, timeoutMs = NATIVE_RUNNER_TIMEOUT_MS) {
   if (error?.code !== "ETIMEDOUT") return null;
-  return `${label} timed out after ${NATIVE_RUNNER_TIMEOUT_MS} ms and was stopped`;
+  return `${label} timed out after ${timeoutMs} ms and was stopped`;
 }
 
 export function round2NativeReportProblems(report, expected) {
@@ -157,7 +160,7 @@ export function runLongTermPersistenceRepairs() {
     status: "failed",
     reportPath: `${relative}/report.json`,
   };
-  const result = spawnSync(
+  const result = spawnSyncTree(
     process.execPath,
     ["e2e/long-term-persistence-run.mjs"],
     {
@@ -167,7 +170,7 @@ export function runLongTermPersistenceRepairs() {
       // This runner performs 15 isolated app launches. WebKitGTK startup on
       // hosted Linux takes roughly 30 seconds per launch, so four minutes
       // kills the runner mid-suite and leaves its WebDriver child behind.
-      timeout: NATIVE_RUNNER_TIMEOUT_MS,
+      timeout: LONG_TERM_RUNNER_TIMEOUT_MS,
       maxBuffer: 8 * 1024 * 1024,
     },
   );
@@ -186,6 +189,7 @@ export function runLongTermPersistenceRepairs() {
     const timedOut = timeoutReason(
       result.error,
       "The long-term persistence runner",
+      LONG_TERM_RUNNER_TIMEOUT_MS,
     );
     if (timedOut) problems.push(timedOut);
     else if (result.status !== 0) {
@@ -246,7 +250,7 @@ export function runLongTermPersistenceRepairs() {
 
 export function runRound2NativeRepairs(
   { ffmpeg, binary, suiteStartedAt },
-  { spawnCommand = spawnSync, artifactsDir = ARTIFACT_DIR } = {},
+  { spawnCommand = spawnSyncTree, artifactsDir = ARTIFACT_DIR } = {},
 ) {
   const scenario = { name: "round2-native", status: "failed" };
   if (!ffmpeg) {
@@ -574,14 +578,18 @@ export function runAudit4Repairs({ ffmpeg, binary, suiteStartedAt }) {
   };
   const ffprobe = companionFfprobe(ffmpeg.binary);
   if (ffprobe) env.ROSI_AUDIT4_FFPROBE = ffprobe;
-  const result = spawnSync(process.execPath, ["e2e/download-session-run.mjs"], {
-    cwd: REPO_ROOT,
-    env: e2eChildEnv(env),
-    encoding: "utf8",
-    windowsHide: true,
-    timeout: 600_000,
-    maxBuffer: 16 * 1024 * 1024,
-  });
+  const result = spawnSyncTree(
+    process.execPath,
+    ["e2e/download-session-run.mjs"],
+    {
+      cwd: REPO_ROOT,
+      env: e2eChildEnv(env),
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 600_000,
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  );
   if (result.stderr) process.stderr.write(result.stderr);
   scenario.reportPath = relativeToRepo(reportPath);
   const problems = [];

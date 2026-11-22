@@ -219,3 +219,91 @@ test("runCommand passes a step that writes more than 1 MiB of output", () => {
   assert.equal(results.chatty.status, "passed");
   assert.equal(seen, 4 * 1024 * 1024);
 });
+
+test("main refuses partial E2E selectors left in the environment", () => {
+  for (const name of ["ROSI_E2E_ONLY", "ROSI_E2E_GROUPS", "ROSI_E2E_REUSE"]) {
+    const previous = process.env[name];
+    process.env[name] =
+      name === "ROSI_E2E_REUSE" ? "1" : "./specs/main.spec.js";
+    const calls = [];
+    try {
+      const exitCode = main({
+        root: repoRoot,
+        clearProof: () => calls.push("clearProof"),
+        recordProof: () => {
+          calls.push("recordProof");
+          return { recorded: true };
+        },
+        runner: (name) => {
+          calls.push(`run:${name}`);
+          return true;
+        },
+      });
+      assert.equal(exitCode, 1, name);
+      assert.deepEqual(
+        calls.filter((call) => call !== "clearProof"),
+        [],
+        `${name} must stop before any check or proof`,
+      );
+    } finally {
+      if (previous === undefined) delete process.env[name];
+      else process.env[name] = previous;
+    }
+  }
+});
+
+test("blank partial E2E selectors count as unset", () => {
+  const previous = process.env.ROSI_E2E_GROUPS;
+  process.env.ROSI_E2E_GROUPS = "   ";
+  const calls = [];
+  try {
+    main({
+      root: repoRoot,
+      clearProof: () => {},
+      recordProof: () => ({ recorded: false }),
+      parseCoverage: (results) => {
+        results.coverage.status = "passed";
+      },
+      runner: (name, _cmd, _args, _parser, results) => {
+        calls.push(name);
+        results[name].status = "passed";
+        return true;
+      },
+    });
+    assert.ok(calls.includes("typecheck"));
+  } finally {
+    if (previous === undefined) delete process.env.ROSI_E2E_GROUPS;
+    else process.env.ROSI_E2E_GROUPS = previous;
+  }
+});
+
+test("--skip-e2e keeps working when a partial E2E selector is set", () => {
+  const previous = process.env.ROSI_E2E_ONLY;
+  process.env.ROSI_E2E_ONLY = "./specs/main.spec.js";
+  const calls = [];
+  try {
+    const exitCode = main({
+      root: repoRoot,
+      skipE2e: true,
+      clearProof: () => {},
+      recordProof: () => {
+        calls.push("recordProof");
+        return { recorded: true };
+      },
+      parseCoverage: (results) => {
+        results.coverage.status = "passed";
+      },
+      runner: (name, _cmd, _args, _parser, results) => {
+        calls.push(`run:${name}`);
+        results[name].status = "passed";
+        return true;
+      },
+    });
+    assert.equal(exitCode, 0);
+    assert.ok(calls.includes("recordProof"));
+    assert.ok(!calls.includes("run:e2e"));
+  } finally {
+    if (previous === undefined) delete process.env.ROSI_E2E_ONLY;
+    else process.env.ROSI_E2E_ONLY = previous;
+  }
+});

@@ -4,11 +4,16 @@
 E2E binary once, runs every suite below against that binary, writes evidence to
 `e2e/artifacts/`, and fails if any suite fails, skips without an allowance in
 `ALLOWED_E2E_SKIPS`, or does not report. Every allowance names a platform and a
-non-empty `reason` in `e2e/suites.json`. CI runs the same command.
+non-empty `reason`. Allowances live in `e2e/suites.json`, except three hard-coded in
+`scripts/e2e/runners/native.js` (see "Skip allowances" below). CI runs the same
+command.
 
 `ROSI_E2E_ONLY=<spec>` runs one ad-hoc spec for debugging. Its verdict comes
 from that spec alone, and its report sets `fullSuite: false` and `onlySpec`, so
 release evidence rejects it. A blank value counts as unset.
+`npm run test:all` refuses to start while `ROSI_E2E_ONLY`, `ROSI_E2E_GROUPS` or
+`ROSI_E2E_REUSE` holds a non-blank value, unless `--skip-e2e` is given. A leftover
+selector would otherwise turn the gate into a partial run that exits 0.
 
 `e2e/suites.json` is the canonical static scenario inventory and feature index.
 It maps the existing files to their current runner owners. Files are named by
@@ -66,7 +71,7 @@ delays, so both modes use the same waits.
 
 | Suite                                                               | Area                                                                              | How the gate runs it                                                            |
 | ------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `specs/legacy-import.spec.js`                                       | Legacy import                                                                     | WebdriverIO pass, twice: import and corrupt settings                            |
+| `specs/legacy-import.spec.js`                                       | Legacy import                                                                     | WebdriverIO pass, three times: import, corrupt settings, preserved ROSI 5 data  |
 | `specs/main.spec.js`                                                | Persistence, settings, UI, downloads, close flow                                  | WebdriverIO main pass                                                           |
 | `specs/security-release-offline-queue.spec.js`                      | Security and network (offline queue)                                              | WebdriverIO pass                                                                |
 | `specs/security-release-checks.spec.js`                             | Security and network                                                              | WebdriverIO pass                                                                |
@@ -89,6 +94,29 @@ The report keeps the original flat `expectedScenarios` inventory for release
 checks and adds `scenarioGroups` so outcomes can be read by feature. Existing
 runner ownership, platform-specific skip allowances, fresh-report checks, and
 the E2E binary hash checks are described in the manifest and runner.
+
+### Skip allowances, timeouts, and orphaned apps
+
+- Skip allowances live in `e2e/suites.json` (`allowedSkips` and
+  `allowedCaseSkips`), with three exceptions hard-coded in
+  `scripts/e2e/runners/native.js`: `windows-job-object-leader-exit` (any
+  platform), and `source-identity-preserves-replacement` and
+  `deno-version-probe` (Windows only). Each exception still needs a non-empty
+  skip reason.
+- A runner that times out is stopped with its whole process tree
+  (`scripts/e2e/process-tree.js`: `taskkill /T` on Windows, a process-group kill
+  elsewhere). Each outer timeout is larger than the inner budgets it wraps. The
+  long-term runner makes 15 launches with 180 s budgets, so its outer budget is
+  15 x 180 s plus 120 s. The persistence runner makes 13 launches with 180 s
+  budgets, so its outer budget is 13 x 180 s plus 120 s.
+  `scripts/e2e-runners.test.mjs` checks these counts against the runner files.
+- Before each WebdriverIO pass and each runner stage, the gate waits up to 15 s
+  for the embedded WebDriver port (127.0.0.1:4445, or `TAURI_WEBDRIVER_PORT`) to
+  stop accepting connections. If it does not, the stage
+  fails, so an app orphaned by an earlier pass cannot answer the next one.
+- The report records the SHA-256 of the E2E binary and of the sidecars beside
+  it (`rosi-yt-dlp`, `rosi-ffmpeg`, `rosi-ffprobe`), checked again at the end
+  of the run. `reusedBinary` records whether the build step was skipped.
 
 ### Windows skips for the process-repair suites
 
@@ -190,10 +218,12 @@ by hand. Their reports are not gate evidence.
   bundled FFmpeg, and writes a hashed report. It does not launch the app.
 - `e2e/v5-fixes/persistence/queue-publication-verify.mjs`: reads
   `src-tauri/src/queue.rs` and writes a hashed report under
-  `e2e/artifacts/v5-fixes-persistence/`.
+  `e2e/artifacts/v5-fixes-persistence/`. Retired: the functions it greps for have
+  moved, so it checks nothing now. Do not cite its output.
 - `e2e/v5-fixes/proxy-sockets/verify.ps1`: PowerShell check of the proxy socket
   code. It extracts exact Rust functions from the source and checks them. Run it
-  on Windows.
+  on Windows. Retired: the functions it extracts have moved, so it no longer
+  checks the proxy code. Do not cite its output.
 - `e2e/webview2-lockout-probe.mjs`: temporary Windows probe for the WebView2
   lockout workaround. It is removed with that workaround. See
   `e2e/webview2-lockout.failure-modes.md`.
@@ -243,3 +273,8 @@ that were documented before this change (`ytdlp/verify.mjs` and
 check that they ran. The audit-round documents remain as failure-mode records. The `audit3-native-targeted`
 caption enumeration and identity-race cases are not in `download-process.spec.js`,
 so that suite is not a duplicate.
+
+Two of the six are retired. `persistence/queue-publication-verify.mjs` and
+`proxy-sockets/verify.ps1` no longer check anything, because the functions they
+look for have moved. Their files stay unedited as records. Do not cite their
+output as evidence.

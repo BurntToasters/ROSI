@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import net from "node:net";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { REPO_ROOT } from "../e2e/helpers/profile.js";
 import {
   verifyRunnerReport,
   normalizeRunnerReport,
@@ -11,14 +13,26 @@ import {
 } from "./e2e/runner-report.js";
 import { pruneRunnerArtifacts } from "./e2e/prune-artifacts.js";
 import {
+  LONG_TERM_RUNNER_TIMEOUT_MS,
+  NATIVE_RUNNER_TIMEOUT_MS,
   downloadProcessObservationProblems,
   runDownloadProcessRepairs,
   runRound2NativeRepairs,
   round2NativeReportProblems,
 } from "./e2e/runners/native.js";
 import { probeReportProblems } from "./e2e/runners/probes.js";
+import { waitForPortFree } from "./e2e/common.js";
+import {
+  manualCheckFailure,
+  updateChannelFailure,
+} from "../e2e/helpers/updater-engine-fixture.js";
+import { createRecorder, waitForNoProcess } from "../e2e/helpers/host.js";
+import { setControl, stubBridge, waitForModal } from "../e2e/helpers/ui.js";
+import { TREE_KILL_GRACE_MS, spawnSyncTree } from "./e2e/process-tree.js";
 import {
   V5_RUN_DIR_PATTERN,
+  PERSISTENCE_RUNNER_TIMEOUT_MS,
+  discoverV5Fixes,
   findRunnerReport,
   reportedSkips,
   v5AreaScenario,
@@ -977,4 +991,157 @@ test("v5AreaScenario reads skip records from a spec-only pass and needs an allow
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** True once the pid is gone; a zombie still counts as running until reaped. */
+function waitForPidGone(pid, ms = 5000) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if (error.code === "ESRCH") return true;
+    }
+    if (Date.now() >= deadline) return false;
+    sleepSync(100);
+  }
+}
+
+test("spawnSyncTree stops a timed-out child and the grandchildren it started", () => {
+  withTempDir((root) => {
+    const pidFile = path.join(root, "grandchild.pid");
+    const script = `const fs = require("fs"); const { spawn } = require("child_process");
+const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));
+setInterval(() => {}, 1000);`;
+    const started = Date.now();
+    const result = spawnSyncTree(process.execPath, ["-e", script], {
+      timeout: 4000,
+      encoding: "utf8",
+    });
+    assert.equal(result.error?.code, "ETIMEDOUT");
+    assert.ok(Date.now() - started < 30000, "the tree kill must be prompt");
+    const grandchild = Number(fs.readFileSync(pidFile, "utf8"));
+    assert.ok(grandchild > 0);
+    assert.equal(waitForPidGone(grandchild), true);
+  });
+});
+
+test("spawnSyncTree returns the child's exit status and captured output", () => {
+  const result = spawnSyncTree(
+    process.execPath,
+    ["-e", "process.stdout.write('ok'); process.exit(3)"],
+    { timeout: 20000, encoding: "utf8" },
+  );
+  assert.equal(result.status, 3);
+  assert.equal(result.error, undefined);
+  assert.equal(result.stdout, "ok");
+});
+
+test("spawnSyncTree without a timeout runs the child to completion", () => {
+  const result = spawnSyncTree(process.execPath, ["-e", "process.exit(0)"], {
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0);
+  assert.equal(result.error, undefined);
+});
+
+test("each outer runner timeout exceeds the inner budgets it wraps", () => {
+  // Each inner WebdriverIO launch in these runners has a 180 s spawn budget.
+  // The outer budget must cover every launch plus the tree-kill grace.
+  const LAUNCH_MS = 180_000;
+  const countIn = (file, pattern) => {
+    const text = fs.readFileSync(path.join(REPO_ROOT, file), "utf8");
+    return (text.match(pattern) ?? []).length;
+  };
+  const longTermLaunches = countIn(
+    "e2e/long-term-persistence-run.mjs",
+    /^  run\("/gm,
+  );
+  assert.equal(longTermLaunches, 15);
+  assert.ok(
+    LONG_TERM_RUNNER_TIMEOUT_MS >
+      longTermLaunches * LAUNCH_MS + TREE_KILL_GRACE_MS,
+  );
+  const seedModes = countIn(
+    "e2e/v5-fixes/persistence/run.mjs",
+    /^  "[^"]+": \(/gm,
+  );
+  assert.equal(seedModes, 13);
+  assert.ok(
+    PERSISTENCE_RUNNER_TIMEOUT_MS > seedModes * LAUNCH_MS + TREE_KILL_GRACE_MS,
+  );
+  assert.ok(NATIVE_RUNNER_TIMEOUT_MS >= 900_000);
+  assert.ok(TREE_KILL_GRACE_MS > 0);
+});
+
+test("discoverV5Fixes flags conditional describe.skip and it.only forms", () => {
+  withTempDir((root) => {
+    const area = path.join(root, "area");
+    fs.mkdirSync(area);
+    const files = {
+      "cond.spec.js": "(cond ? describe : describe.skip)('x', () => {});",
+      "only.spec.js": "it.only('x', () => {});",
+      "plain.spec.js": "describe('x', () => { it('y', () => {}); });",
+    };
+    for (const [name, text] of Object.entries(files)) {
+      fs.writeFileSync(path.join(area, name), text);
+    }
+    const [found] = discoverV5Fixes(root);
+    assert.deepEqual(found.skipFiles, ["cond.spec.js", "only.spec.js"]);
+  });
+});
+
+test("waitForPortFree fails clearly while a port still accepts connections", async () => {
+  const server = net.createServer();
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const busy = server.address().port;
+  try {
+    await assert.rejects(waitForPortFree(busy, 300), (error) => {
+      assert.match(error.message, new RegExp(`127\.0\.0\.1:${busy}`));
+      assert.match(error.message, /300 ms/);
+      return true;
+    });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+  await waitForPortFree(busy, 300);
+});
+
+test("the updater fixture reports a rejected channel change and a missing manual-check button", () => {
+  assert.equal(updateChannelFailure({ ok: true }), null);
+  assert.match(
+    updateChannelFailure({ error: "Error: channel refused" }),
+    /set_update_channel failed: Error: channel refused/,
+  );
+  assert.match(updateChannelFailure(undefined), /no result/);
+  assert.equal(manualCheckFailure(true), null);
+  assert.match(manualCheckFailure(false), /checkUpdateBtn is missing/);
+});
+
+test("E2E helper options reject misspelled keys and name the allowed ones", async () => {
+  await assert.rejects(
+    setControl("settingsToggle", true, { inptu: true }),
+    /setControl does not accept option\(s\) inptu; allowed: input/,
+  );
+  await assert.rejects(
+    waitForModal(true, { timout: 1 }),
+    /waitForModal does not accept option\(s\) timout; allowed: timeout, timeoutMsg, match/,
+  );
+  await assert.rejects(
+    waitForNoProcess("rosi", "gone", { tmeout: 1 }),
+    /waitForNoProcess does not accept option\(s\) tmeout; allowed: timeout, interval/,
+  );
+  assert.throws(
+    () => createRecorder({ filePth: "x" }),
+    /createRecorder does not accept option\(s\) filePth; allowed: filePath, status/,
+  );
+  assert.throws(
+    () => stubBridge("setUpdateChannel", 1, { holdd: true }),
+    /stubBridge does not accept option\(s\) holdd; allowed: hold, holdMatch/,
+  );
 });

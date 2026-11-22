@@ -12,6 +12,7 @@ import {
   verifyQualityGateEvidence,
 } from "./release-session.js";
 import { localCargoConfigSha256 } from "./e2e/common.js";
+import { E2E_SUITE_MANIFEST } from "./e2e/manifest.js";
 import { REVIEWED_SOURCE_OMISSIONS } from "./generate-cargo-licenses.js";
 import {
   EXPECTED_SCENARIOS,
@@ -313,6 +314,28 @@ function writeFullE2eFixture(directory, mutate = () => {}) {
     sha256: hash(wizardBytes),
     bytes: wizardBytes.length,
   };
+  // The full gate needs every v5-fixes area its feature groups name, on disk and
+  // reported. Each area gets one spec and one passing scenario.
+  const v5Areas = Object.values(E2E_SUITE_MANIFEST.dynamicV5Fixes.groupAreas)
+    .flat()
+    .sort((left, right) => left.localeCompare(right));
+  for (const area of v5Areas) {
+    const areaDirectory = path.join(directory, "e2e", "v5-fixes", area);
+    fs.mkdirSync(areaDirectory, { recursive: true });
+    fs.writeFileSync(path.join(areaDirectory, "area.spec.js"), "// fixture\n");
+  }
+  const v5ScenarioNames = v5Areas.map((area) => `v5-fixes/${area}`);
+  const polishBytes = Buffer.from("fixture ui-polish screenshot bytes");
+  fs.writeFileSync(
+    path.join(path.dirname(screenshotPath), "ui-polish.png"),
+    polishBytes,
+  );
+  const polishShot = {
+    name: "ui-polish",
+    file: "ui-polish.png",
+    sha256: hash(polishBytes),
+    bytes: polishBytes.length,
+  };
   const startedAt = new Date(now - 120_000).toISOString();
   const finishedAt = new Date(now - 60_000).toISOString();
   const identity = {
@@ -334,8 +357,8 @@ function writeFullE2eFixture(directory, mutate = () => {}) {
     passed: true,
     worktreeDirty: false,
     worktreeStatusSha256: hash(""),
-    expectedScenarios: [...EXPECTED_SCENARIOS],
-    scenarios: EXPECTED_SCENARIOS.map((name) => ({
+    expectedScenarios: [...EXPECTED_SCENARIOS, ...v5ScenarioNames],
+    scenarios: [...EXPECTED_SCENARIOS, ...v5ScenarioNames].map((name) => ({
       name,
       status: "passed",
       ...(name === "ui-screenshots"
@@ -350,6 +373,7 @@ function writeFullE2eFixture(directory, mutate = () => {}) {
           }
         : {}),
       ...(name === "setup-wizard" ? { shots: [wizardShot] } : {}),
+      ...(name === "v5-fixes/ui-polish" ? { shots: [polishShot] } : {}),
     })),
     missingScenarios: [],
     scenarioProblems: [],
@@ -366,6 +390,12 @@ function writeFullE2eFixture(directory, mutate = () => {}) {
         path: "e2e/artifacts/screenshots/darwin-arm64/wizard-welcome.png",
         sha256: wizardShot.sha256,
         bytes: wizardBytes.length,
+      },
+      {
+        name: "ui-polish",
+        path: "e2e/artifacts/screenshots/darwin-arm64/ui-polish.png",
+        sha256: polishShot.sha256,
+        bytes: polishBytes.length,
       },
     ],
     screenshotProblems: [],

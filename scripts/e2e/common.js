@@ -2,13 +2,65 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { REPO_ROOT } from "../../e2e/helpers/profile.js";
 import { sha256 } from "../../e2e/helpers/media-server.js";
 import { usesWindowsCmdShell } from "../npm-safe-update.mjs";
+import { spawnSyncTree } from "./process-tree.js";
 
 export const ARTIFACT_DIR = path.join(REPO_ROOT, "e2e", "artifacts");
+
+/** The embedded WebDriver port ROSI app launches use; wdio.conf.js reads the same variable. */
+export const EMBEDDED_WEBDRIVER_PORT =
+  Number.parseInt(process.env.TAURI_WEBDRIVER_PORT ?? "", 10) || 4445;
+const PORT_FREE_TIMEOUT_MS = 15_000;
+
+/** One TCP probe of 127.0.0.1:port: "refused" means nothing is listening. */
+function probeLoopbackPort(port) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: "127.0.0.1", port });
+    const finish = (state) => {
+      socket.destroy();
+      resolve(state);
+    };
+    socket.setTimeout(1_000, () => finish("timeout"));
+    socket.once("connect", () => finish("listening"));
+    socket.once("error", (error) =>
+      finish(
+        error.code === "ECONNREFUSED"
+          ? "refused"
+          : `error:${error.code ?? error.message}`,
+      ),
+    );
+  });
+}
+
+/**
+ * Resolves once nothing accepts connections on 127.0.0.1:port. A ROSI app left
+ * running by an earlier timed-out pass would otherwise answer the next pass's
+ * WebDriver session. Fails after `timeoutMs` (15 s by default) while the port
+ * still answers.
+ */
+export async function waitForPortFree(
+  port = EMBEDDED_WEBDRIVER_PORT,
+  timeoutMs = PORT_FREE_TIMEOUT_MS,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let state = "listening";
+  for (;;) {
+    state = await probeLoopbackPort(port);
+    if (state === "refused") return;
+    if (Date.now() >= deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(
+    `127.0.0.1:${port} still accepts connections after ${timeoutMs} ms (last probe: ${state}). ` +
+      "An E2E app or runner from an earlier pass may be orphaned; stop it and rerun.",
+  );
+}
 
 export function npmCommand() {
   return process.platform === "win32" ? "npm.cmd" : "npm";
@@ -37,7 +89,7 @@ export function run(command, args, options = {}) {
       `run timeout must be a positive whole number of milliseconds, got ${timeout}`,
     );
   }
-  const result = spawnSync(command, args, {
+  const result = spawnSyncTree(command, args, {
     cwd: options.cwd ?? REPO_ROOT,
     env: e2eChildEnv(options.env),
     stdio: "inherit",
@@ -184,40 +236,123 @@ export function gitSourceTree(cwd = REPO_ROOT) {
 }
 
 // Git-ignored Cargo configs change how the binary is built, so git status
-// cannot vouch for them. Cargo reads these from src-tauri and its parents.
-const LOCAL_CARGO_CONFIG_FILES = [
-  ["src-tauri", ".cargo", "config.toml"],
-  ["src-tauri", ".cargo", "config"],
-  [".cargo", "config.toml"],
-  [".cargo", "config"],
-];
+// cannot vouch for them. Cargo reads config.toml and config from the directory
+// it runs in, from every parent of that directory, and from CARGO_HOME. The
+// E2E build runs from src-tauri, so src-tauri and all of its parents are read.
+const CARGO_CONFIG_NAMES = ["config.toml", "config"];
+// Cargo reads these variables as extra compiler flags. Only their hashes are
+// recorded, because the values can hold credentials or paths.
+const CARGO_RUSTFLAGS_VARIABLES = ["RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"];
+// git's well-known empty tree, the diff base for a repository with no commits.
+const EMPTY_TREE_SHA1 = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/** Every existing Cargo config that a build started in `cwd` may read. */
+function cargoConfigFiles(cwd, env) {
+  const directories = [env.CARGO_HOME || path.join(os.homedir(), ".cargo")];
+  for (let dir = path.resolve(cwd, "src-tauri"); ;) {
+    directories.push(path.join(dir, ".cargo"));
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  const files = [];
+  for (const directory of new Set(
+    directories.map((item) => path.resolve(item)),
+  )) {
+    for (const name of CARGO_CONFIG_NAMES) {
+      const file = path.join(directory, name);
+      if (fs.existsSync(file)) files.push(file);
+    }
+  }
+  return files;
+}
 
 /**
- * Hash of every local Cargo config that exists, or null when there is none.
- * A config that exists but cannot be read throws, so callers fail closed.
+ * Hash of every Cargo config a build in `cwd` may read, or null when there is
+ * none. A config that exists but cannot be read throws, so callers fail closed.
  */
-export function localCargoConfigSha256(cwd = REPO_ROOT) {
+export function localCargoConfigSha256(cwd = REPO_ROOT, env = process.env) {
+  const files = cargoConfigFiles(cwd, env);
+  if (files.length === 0) return null;
   const hash = crypto.createHash("sha256");
-  let found = false;
-  for (const parts of LOCAL_CARGO_CONFIG_FILES) {
-    const file = path.join(cwd, ...parts);
-    if (!fs.existsSync(file)) continue;
-    found = true;
-    hash.update(`${parts.join("/")}\0`);
+  for (const file of files) {
+    hash.update(`${file}\0`);
     hash.update(fs.readFileSync(file));
     hash.update("\0");
   }
-  return found ? hash.digest("hex") : null;
+  return hash.digest("hex");
+}
+
+/**
+ * For each Cargo rustflags variable: "unset", or the SHA-256 of its value. An
+ * empty value that is set still gets a hash, so set and unset always differ.
+ */
+export function cargoRustflagsFingerprint(env = process.env) {
+  return Object.fromEntries(
+    CARGO_RUSTFLAGS_VARIABLES.map((name) => [
+      name,
+      env[name] === undefined ? "unset" : sha256(env[name]),
+    ]),
+  );
+}
+
+/**
+ * Content hash of the worktree beyond the status listing: the diff against
+ * HEAD and the bytes of each untracked file, minus the release allowlist.
+ * Returns null when git or a file cannot be read, so callers fail closed.
+ */
+function worktreeContentSha256(cwd, statusText) {
+  try {
+    const hash = crypto.createHash("sha256");
+    hash.update(statusText);
+    const base = gitCommit(cwd) ? "HEAD" : EMPTY_TREE_SHA1;
+    const excludes = [
+      ...GENERATED_TAURI_SCHEMA_PATHS,
+      RELEASE_SESSION_RELATIVE_PATH,
+      QUALITY_GATE_RELATIVE_PATH,
+    ].map((file) => `:(exclude,literal)${file.replaceAll("\\", "/")}`);
+    const diff = spawnSync(
+      "git",
+      ["diff", "--binary", base, "--", ".", ...excludes],
+      { cwd, maxBuffer: 256 * 1024 * 1024 },
+    );
+    if (diff.status !== 0 || !Buffer.isBuffer(diff.stdout)) return null;
+    if (diff.stdout.length > 0) {
+      hash.update("\0diff\0");
+      hash.update(diff.stdout);
+    }
+    const listed = spawnSync(
+      "git",
+      ["ls-files", "--others", "--exclude-standard", "-z"],
+      {
+        cwd,
+        maxBuffer: 256 * 1024 * 1024,
+      },
+    );
+    if (listed.status !== 0 || !Buffer.isBuffer(listed.stdout)) return null;
+    const names = listed.stdout
+      .toString("utf8")
+      .split("\0")
+      .filter((name) => name && !isIgnorableReleaseDirtyPath(name))
+      .sort();
+    for (const name of names) {
+      hash.update(`\0untracked\0${name}\0`);
+      hash.update(fs.readFileSync(path.join(cwd, name)));
+    }
+    return hash.digest("hex");
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Whether the working tree differs from HEAD, plus a hash of the status
- * listing, and a hash of any local Cargo config. Paths on the release
- * allowlist (generated Tauri schemas, release proofs) are left out, matching
- * the release checks. An unreadable status or config fails closed: it counts as
- * dirty, with no hash.
+ * listing, of the diff, and of untracked file contents, and a hash of any local
+ * Cargo config. Paths on the release allowlist (generated Tauri schemas, release
+ * proofs) are left out, matching the release checks. An unreadable status or
+ * config fails closed: it counts as dirty, with no hash.
  */
-export function gitWorktreeState(cwd = REPO_ROOT) {
+export function gitWorktreeState(cwd = REPO_ROOT, env = process.env) {
   const result = spawnSync("git", ["status", "--porcelain=v1", "-uall"], {
     cwd,
     encoding: "utf8",
@@ -232,7 +367,7 @@ export function gitWorktreeState(cwd = REPO_ROOT) {
   let cargoConfigSha256 = null;
   let cargoConfigReadable = true;
   try {
-    cargoConfigSha256 = localCargoConfigSha256(cwd);
+    cargoConfigSha256 = localCargoConfigSha256(cwd, env);
   } catch {
     cargoConfigReadable = false;
   }
@@ -249,20 +384,18 @@ export function gitWorktreeState(cwd = REPO_ROOT) {
     .join("");
   return {
     worktreeDirty: kept.length > 0 || !cargoConfigReadable,
-    worktreeStatusSha256: crypto
-      .createHash("sha256")
-      .update(kept)
-      .digest("hex"),
+    worktreeStatusSha256: worktreeContentSha256(cwd, kept),
     localCargoConfigSha256: cargoConfigSha256,
   };
 }
 
-/** Commit, source tree and worktree state read together. */
-export function gitSourceSnapshot(cwd = REPO_ROOT) {
+/** Commit, source tree, worktree state and Cargo build settings read together. */
+export function gitSourceSnapshot(cwd = REPO_ROOT, env = process.env) {
   return {
     commit: gitCommit(cwd),
     sourceTree: gitSourceTree(cwd),
-    ...gitWorktreeState(cwd),
+    ...gitWorktreeState(cwd, env),
+    cargoRustflags: cargoRustflagsFingerprint(env),
   };
 }
 
@@ -276,13 +409,18 @@ export function sourceChangeProblems(before, after) {
     ["source tree", "sourceTree"],
     ["worktree status", "worktreeStatusSha256"],
     ["local Cargo config", "localCargoConfigSha256"],
+    ["Cargo rustflags", "cargoRustflags"],
   ];
   const problems = [];
   for (const [label, key] of checks) {
     const unreadable =
       key !== "localCargoConfigSha256" &&
+      key !== "cargoRustflags" &&
       (before[key] === null || after[key] === null);
-    if (unreadable || before[key] !== after[key]) problems.push(label);
+    const changed =
+      JSON.stringify(before[key] ?? null) !==
+      JSON.stringify(after[key] ?? null);
+    if (unreadable || changed) problems.push(label);
   }
   return problems;
 }

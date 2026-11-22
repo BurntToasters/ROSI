@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { E2E_SUITE_MANIFEST } from "./e2e/manifest.js";
 import {
   EXPECTED_SCENARIOS,
   e2eOnlySpec,
@@ -8,6 +9,11 @@ import {
   onlyRunScenarioProblems,
   scenarioOutcomeProblems,
 } from "./test-e2e.js";
+
+// Every v5-fixes area a feature group names. Full mode must find all of them on disk.
+const GROUPED_AREAS = Object.values(
+  E2E_SUITE_MANIFEST.dynamicV5Fixes.groupAreas,
+).flat();
 
 test("blank ROSI_E2E_ONLY values mean the full gate", () => {
   for (const value of [undefined, "", "   ", "\n\t"]) {
@@ -44,25 +50,36 @@ test("only a v5-fixes directory prefix counts as a v5-fixes spec", () => {
 test("full mode keeps the complete inventory and full-suite flag", () => {
   const plan = e2eRunPlan({
     onlySpec: null,
-    v5AreaNames: ["network", "persistence"],
+    v5AreaNames: GROUPED_AREAS,
   });
   assert.equal(plan.fullSuite, true);
   assert.equal(plan.mainSpecs, "./specs/main.spec.js");
   assert.deepEqual(plan.expectedScenarios, [
     ...EXPECTED_SCENARIOS,
-    "v5-fixes/network",
-    "v5-fixes/persistence",
+    ...GROUPED_AREAS.map((area) => `v5-fixes/${area}`),
   ]);
 });
 
-test("full mode with no v5-fixes areas expects only the inventory", () => {
-  const plan = e2eRunPlan({ onlySpec: null, v5AreaNames: [] });
-  assert.equal(plan.fullSuite, true);
-  assert.deepEqual(plan.expectedScenarios, EXPECTED_SCENARIOS);
+test("full mode fails when a v5-fixes area named in groupAreas is missing", () => {
+  assert.throws(
+    () => e2eRunPlan({ onlySpec: null, v5AreaNames: [] }),
+    (error) => {
+      assert.match(error.message, /missing v5-fixes area/);
+      for (const area of GROUPED_AREAS) {
+        assert.ok(error.message.includes(area), area);
+      }
+      return true;
+    },
+  );
+  const withoutNetwork = GROUPED_AREAS.filter((area) => area !== "network");
+  assert.throws(
+    () => e2eRunPlan({ onlySpec: null, v5AreaNames: withoutNetwork }),
+    /groupAreas: network$/,
+  );
 });
 
 test("full mode still rejects a run that reports only one suite", () => {
-  const plan = e2eRunPlan({ onlySpec: null, v5AreaNames: [] });
+  const plan = e2eRunPlan({ onlySpec: null, v5AreaNames: GROUPED_AREAS });
   const problems = scenarioOutcomeProblems(
     [{ name: "launch", status: "passed" }],
     "linux",

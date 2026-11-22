@@ -10,7 +10,12 @@ import {
 } from "../../../e2e/helpers/profile.js";
 import { sha256 } from "../../../e2e/helpers/media-server.js";
 import { seedLegacyV4Data } from "../../../e2e/helpers/legacy-v4.js";
-import { ARTIFACT_DIR, npxCommand, runAsync } from "../common.js";
+import {
+  ARTIFACT_DIR,
+  npxCommand,
+  runAsync,
+  waitForPortFree,
+} from "../common.js";
 import { companionFfprobe } from "../fixtures.js";
 import { round2RendererResultProblems } from "../manifest.js";
 
@@ -119,6 +124,9 @@ export function buildSharedWdioEnv({ ffmpeg, ffprobe, server, fixtures }) {
 }
 
 async function runWdioPass(pass, env, sharedEnv) {
+  // The app listens on a fixed port. Launching while an orphan holds it would
+  // attach this pass to that stale app, so fail here instead.
+  await waitForPortFree();
   return runAsync(npxCommand(), ["wdio", "run", "e2e/wdio.conf.js"], {
     env: {
       ...pass.profile.env,

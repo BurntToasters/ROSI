@@ -9,6 +9,7 @@ import {
   e2eStampPath,
   REPO_ROOT,
 } from "./helpers/profile.js";
+import { cleanupProfile } from "../scripts/e2e/common.js";
 
 const stampContents = "e2e-feature-1\n";
 const binary = e2eBinaryPath();
@@ -66,6 +67,9 @@ const artifactDirectory = path.join(
 );
 fs.mkdirSync(artifactDirectory, { recursive: true });
 const profile = createE2eProfile();
+// Removed on every exit path, including a thrown error. cleanupProfile retries
+// briefly for WebView2 handles and never throws, so cleanup cannot fail the run.
+process.on("exit", () => cleanupProfile(profile.profileDir));
 const fixtureDirectory = path.join(profile.profileDir, "round2-native");
 fs.mkdirSync(fixtureDirectory, { recursive: true });
 const tone = path.join(fixtureDirectory, "round2-tone.mp4");
@@ -292,7 +296,6 @@ fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, {
   mode: 0o600,
 });
 console.log(`Round 2 native evidence: ${reportPath}`);
-console.log(`Isolated profile retained at: ${profile.profileDir}`);
 if (!report.passed) process.exitCode = 1;
 
 function sha256(bytes) {

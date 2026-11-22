@@ -288,9 +288,10 @@ test("worktree state records dirtiness and a hash of the porcelain status", () =
     assert.match(status, /untracked\.txt/);
     assert.deepEqual(gitWorktreeState(dir), {
       worktreeDirty: true,
-      worktreeStatusSha256: sha256(status),
+      worktreeStatusSha256: gitWorktreeState(dir).worktreeStatusSha256,
       localCargoConfigSha256: null,
     });
+    assert.notEqual(gitWorktreeState(dir).worktreeStatusSha256, sha256(status));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -347,7 +348,8 @@ test("worktree state ignores the release allowlist but not other paths", () => {
       .join("");
     assert.match(kept, /unexpected\.json/);
     assert.equal(state.worktreeDirty, true);
-    assert.equal(state.worktreeStatusSha256, sha256(kept));
+    assert.match(state.worktreeStatusSha256, /^[a-f0-9]{64}$/);
+    assert.notEqual(state.worktreeStatusSha256, sha256(kept));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -721,6 +723,42 @@ test("binaryChangeProblems fails when the E2E binary is replaced during the run"
   assert.notDeepEqual(binaryChangeProblems(hash, null), []);
 });
 
+test("the E2E sidecars are named per platform and any change fails the gate", () => {
+  const { e2eSidecarNames, sidecarChangeProblems } = testE2eModule;
+  assert.deepEqual(e2eSidecarNames("win32"), [
+    "rosi-yt-dlp.exe",
+    "rosi-ffmpeg.exe",
+    "rosi-ffprobe.exe",
+  ]);
+  assert.deepEqual(e2eSidecarNames("linux"), [
+    "rosi-yt-dlp",
+    "rosi-ffmpeg",
+    "rosi-ffprobe",
+  ]);
+  const hash = "a".repeat(64);
+  const atBuild = {
+    "rosi-yt-dlp": hash,
+    "rosi-ffmpeg": "b".repeat(64),
+    "rosi-ffprobe": null,
+  };
+  assert.deepEqual(sidecarChangeProblems(atBuild, { ...atBuild }), []);
+  assert.match(
+    sidecarChangeProblems(atBuild, {
+      ...atBuild,
+      "rosi-ffmpeg": "c".repeat(64),
+    }).join(),
+    /rosi-ffmpeg/,
+  );
+  assert.match(
+    sidecarChangeProblems(atBuild, { ...atBuild, "rosi-yt-dlp": null }).join(),
+    /rosi-yt-dlp/,
+  );
+  assert.match(
+    sidecarChangeProblems(atBuild, { ...atBuild, "rosi-ffprobe": hash }).join(),
+    /rosi-ffprobe/,
+  );
+});
+
 // The E2E cargo build must use the committed lockfile, like the release builds.
 test("the E2E tauri build passes --locked through to cargo", () => {
   const { e2eTauriBuildArgs } = buildModule;
@@ -730,4 +768,106 @@ test("the E2E tauri build passes --locked through to cargo", () => {
   assert.notEqual(separator, -1);
   assert.ok(args.slice(separator + 1).includes("--locked"));
   assert.ok(args.slice(separator + 1).includes("--features"));
+});
+
+test("a second edit to an already-dirty tracked file changes the worktree hash", () => {
+  const { dir } = initCommittedRepo("rosi-dirty-twice-");
+  try {
+    fs.writeFileSync(path.join(dir, "tracked.txt"), "two");
+    const first = gitWorktreeState(dir).worktreeStatusSha256;
+    fs.writeFileSync(path.join(dir, "tracked.txt"), "three");
+    const second = gitWorktreeState(dir).worktreeStatusSha256;
+    assert.match(first, /^[a-f0-9]{64}$/);
+    assert.notEqual(second, first);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the worktree hash covers the content of untracked files", () => {
+  const { dir } = initCommittedRepo("rosi-untracked-content-");
+  try {
+    fs.writeFileSync(path.join(dir, "new.txt"), "alpha");
+    const first = gitWorktreeState(dir).worktreeStatusSha256;
+    assert.equal(gitWorktreeState(dir).worktreeStatusSha256, first);
+    fs.writeFileSync(path.join(dir, "new.txt"), "bravo");
+    assert.notEqual(gitWorktreeState(dir).worktreeStatusSha256, first);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a git-ignored file is left out of the worktree hash", () => {
+  const { dir, git } = initCommittedRepo("rosi-ignored-file-");
+  try {
+    fs.writeFileSync(path.join(dir, ".gitignore"), "*.log\n");
+    assert.equal(git(["add", "-A"]).status, 0);
+    assert.equal(git(["commit", "-q", "-m", "ignore"]).status, 0);
+    const before = gitWorktreeState(dir);
+    fs.writeFileSync(path.join(dir, "debug.log"), "noise");
+    assert.deepEqual(gitWorktreeState(dir), before);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the Cargo config hash covers CARGO_HOME and each parent of the checkout", () => {
+  const { dir } = initCommittedRepo("rosi-cargo-home-");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "rosi-cargo-env-"));
+  try {
+    const env = { CARGO_HOME: home };
+    assert.equal(localCargoConfigSha256(dir, env), null);
+    fs.writeFileSync(path.join(home, "config.toml"), "[build]\njobs = 1\n");
+    const fromHome = localCargoConfigSha256(dir, env);
+    assert.match(fromHome, /^[a-f0-9]{64}$/);
+    fs.writeFileSync(path.join(home, "config.toml"), "[build]\njobs = 2\n");
+    assert.notEqual(localCargoConfigSha256(dir, env), fromHome);
+    fs.rmSync(path.join(home, "config.toml"));
+    // A config in a parent directory of a nested checkout is still read.
+    const nested = path.join(dir, "packages", "app");
+    fs.mkdirSync(nested, { recursive: true });
+    fs.mkdirSync(path.join(dir, ".cargo"));
+    fs.writeFileSync(path.join(dir, ".cargo", "config"), "[build]\n");
+    assert.match(localCargoConfigSha256(nested, env), /^[a-f0-9]{64}$/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("the build snapshot records RUSTFLAGS only as a hash", () => {
+  const { dir } = initCommittedRepo("rosi-rustflags-");
+  try {
+    const unset = gitSourceSnapshot(dir, {}).cargoRustflags;
+    assert.deepEqual(unset, {
+      RUSTFLAGS: "unset",
+      CARGO_ENCODED_RUSTFLAGS: "unset",
+    });
+    const set = gitSourceSnapshot(dir, {
+      RUSTFLAGS: "-Dsecret-marker",
+    }).cargoRustflags;
+    assert.match(set.RUSTFLAGS, /^[a-f0-9]{64}$/);
+    assert.equal(JSON.stringify(set).includes("secret-marker"), false);
+    assert.notDeepEqual(set, unset);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a RUSTFLAGS change during a run is reported", () => {
+  const { dir } = initCommittedRepo("rosi-rustflags-change-");
+  try {
+    const start = gitSourceSnapshot(dir, {});
+    const changed = gitSourceSnapshot(dir, { RUSTFLAGS: "-Dwarnings" });
+    assert.match(
+      sourceChangeProblems(start, changed).join(),
+      /Cargo rustflags/,
+    );
+    assert.deepEqual(
+      sourceChangeProblems(start, gitSourceSnapshot(dir, {})),
+      [],
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

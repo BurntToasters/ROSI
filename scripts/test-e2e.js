@@ -24,6 +24,7 @@ import {
   gitSourceSnapshot,
   relativeToRepo,
   sourceChangeProblems,
+  waitForPortFree,
   which,
 } from "./e2e/common.js";
 import {
@@ -96,6 +97,38 @@ export { buildE2eBinary, mayReuseE2eBinary } from "./e2e/build.js";
  * The binary is hashed right after the build and again at the end. A binary
  * replaced in between no longer matches the evidence, so the gate fails.
  */
+/** The sidecars next to the E2E binary: the yt-dlp, FFmpeg and ffprobe the app runs. */
+export function e2eSidecarNames(platform = process.platform) {
+  const extension = platform === "win32" ? ".exe" : "";
+  return ["rosi-yt-dlp", "rosi-ffmpeg", "rosi-ffprobe"].map(
+    (name) => `${name}${extension}`,
+  );
+}
+
+/** SHA-256 of each sidecar beside the binary, or null for one that is absent. */
+export function sidecarHashes(binaryPath, platform = process.platform) {
+  return Object.fromEntries(
+    e2eSidecarNames(platform).map((name) => {
+      const file = path.join(path.dirname(binaryPath), name);
+      return [name, fs.existsSync(file) ? sha256(fs.readFileSync(file)) : null];
+    }),
+  );
+}
+
+/**
+ * A sidecar whose hash differs between build and end fails the run, including
+ * one that appears or disappears. Absent at both points is not a change.
+ */
+export function sidecarChangeProblems(atBuild, atEnd) {
+  const names = new Set([...Object.keys(atBuild), ...Object.keys(atEnd)]);
+  return [...names]
+    .filter((name) => (atBuild[name] ?? null) !== (atEnd[name] ?? null))
+    .map(
+      (name) =>
+        `${name} changed during the run (${atBuild[name] ?? "absent"} -> ${atEnd[name] ?? "absent"})`,
+    );
+}
+
 export function binaryChangeProblems(atBuild, atEnd) {
   if (!atBuild || !atEnd) return ["E2E binary hash is unreadable"];
   if (atBuild !== atEnd) {
@@ -301,7 +334,7 @@ async function runE2e(timing, options = {}) {
   // The full suite is release evidence and must always run against a freshly
   // compiled binary. Reuse is limited to an explicitly selected ad-hoc spec.
   const reuseRequested = process.env.ROSI_E2E_REUSE === "1";
-  await timedStage(timing, "build", () => {
+  const build = await timedStage(timing, "build", () => {
     const reuse = mayReuseE2eBinary({
       onlySpec: Boolean(onlySpec) && selectedGroups.length === 0,
       reuseRequested,
@@ -311,6 +344,9 @@ async function runE2e(timing, options = {}) {
     return { reusedBinary: reuse };
   });
   const binarySha256AtBuild = sha256(fs.readFileSync(e2eBinaryPath()));
+  const sidecarSha256AtBuild = sidecarHashes(e2eBinaryPath());
+  // Recorded so the report shows whether this run reused an existing binary.
+  const reusedBinary = build.reusedBinary === true;
 
   let ffmpeg;
   let ffprobe;
@@ -377,6 +413,13 @@ async function runE2e(timing, options = {}) {
     await server?.close();
     throw error;
   }
+  // Each runner waits for the embedded WebDriver port first, so an orphan from
+  // an earlier stage fails this stage instead of being attached to.
+  const runnerStage = (name, action) =>
+    timedStage(timing, name, async () => {
+      await waitForPortFree();
+      return action();
+    });
   const runRecordedPass = (pass, env) =>
     timedStage(timing, `wdio:${pass.name}`, async () => {
       await runRecordedWdioPass(pass, env, sharedEnv);
@@ -515,14 +558,14 @@ async function runE2e(timing, options = {}) {
     onlySpec || !ownerEnabled("process-repairs")
       ? []
       : [
-          await timedStage(timing, "runner:download-process-repairs", () =>
+          await runnerStage("runner:download-process-repairs", () =>
             runDownloadProcessRepairs({
               ffmpeg,
               binary: e2eBinaryPath(),
               suiteStartedAt: startedAt,
             }),
           ),
-          await timedStage(timing, "runner:audit3-native-targeted", () =>
+          await runnerStage("runner:audit3-native-targeted", () =>
             runDownloadProcessRepairs({
               ffmpeg,
               binary: e2eBinaryPath(),
@@ -536,7 +579,7 @@ async function runE2e(timing, options = {}) {
     onlySpec || !ownerEnabled("round2-native")
       ? []
       : [
-          await timedStage(timing, "runner:round2-native", () =>
+          await runnerStage("runner:round2-native", () =>
             runRound2NativeRepairs({
               ffmpeg,
               binary: e2eBinaryPath(),
@@ -551,7 +594,7 @@ async function runE2e(timing, options = {}) {
     onlySpec || !ownerEnabled("persistence")
       ? []
       : [
-          await timedStage(timing, "runner:long-term-persistence", () =>
+          await runnerStage("runner:long-term-persistence", () =>
             runLongTermPersistenceRepairs(),
           ),
         ];
@@ -559,21 +602,21 @@ async function runE2e(timing, options = {}) {
   const auditScenarios = [];
   if (!onlySpec && ownerEnabled("audit4-repairs")) {
     auditScenarios.push(
-      await timedStage(timing, "runner:audit4-repairs", () =>
+      await runnerStage("runner:audit4-repairs", () =>
         runAudit4Repairs({ ffmpeg, binary, suiteStartedAt: startedAt }),
       ),
     );
   }
   if (!onlySpec && ownerEnabled("audit-v5-beta2")) {
     auditScenarios.push(
-      await timedStage(timing, "runner:audit-v5-beta2", () =>
+      await runnerStage("runner:audit-v5-beta2", () =>
         runAuditV5Probes({ ffmpeg, binary, suiteStartedAt: startedAt }),
       ),
     );
   }
   if (!onlySpec && ownerEnabled("round3-renderer")) {
     auditScenarios.push(
-      await timedStage(timing, "runner:round3-renderer", () =>
+      await runnerStage("runner:round3-renderer", () =>
         runRound3Renderer({
           snapshotPath: runPaths
             ? path.join(runPaths.runDir, "renderer-dom-checks.json")
@@ -586,7 +629,7 @@ async function runE2e(timing, options = {}) {
     for (const area of v5Areas) {
       const pass = v5Passes.find((candidate) => candidate.area === area);
       const scenario = area.runner
-        ? await timedStage(timing, `runner:v5-fixes/${area.area}`, () => {
+        ? await runnerStage(`runner:v5-fixes/${area.area}`, () => {
             const runnerResult = runV5FixesRunner(area, binary, ffmpeg);
             return v5AreaScenario(
               area,
@@ -685,7 +728,11 @@ async function runE2e(timing, options = {}) {
     failure = failure ? `${failure}; ${detail}` : detail;
   }
   const binarySha256 = sha256(fs.readFileSync(e2eBinaryPath()));
-  const binaryChanges = binaryChangeProblems(binarySha256AtBuild, binarySha256);
+  const sidecarSha256 = sidecarHashes(e2eBinaryPath());
+  const binaryChanges = [
+    ...binaryChangeProblems(binarySha256AtBuild, binarySha256),
+    ...sidecarChangeProblems(sidecarSha256AtBuild, sidecarSha256),
+  ];
   if (binaryChanges.length > 0) {
     const detail = binaryChanges.join("; ");
     failure = failure ? `${failure}; ${detail}` : detail;
@@ -731,6 +778,9 @@ async function runE2e(timing, options = {}) {
       node: process.version,
       binarySha256,
       binarySha256AtBuild,
+      sidecarSha256,
+      sidecarSha256AtBuild,
+      reusedBinary,
       startedAt,
       ...(runPlan.requiredTools
         ? { requiredTools: runPlan.requiredTools }

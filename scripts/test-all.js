@@ -436,6 +436,11 @@ ${colors.reset}`);
   return 1;
 }
 
+// Partial E2E selectors. Left in the environment they make the E2E gate run a
+// subset, which still exits 0, so test:all refuses them like SKIP_E2E. A blank
+// value counts as unset, as it does for the gate.
+const PARTIAL_E2E_ENV = ["ROSI_E2E_ONLY", "ROSI_E2E_GROUPS", "ROSI_E2E_REUSE"];
+
 function main({
   root = resolve(__dirname, ".."),
   clearProof = clearQualityGateProof,
@@ -453,6 +458,16 @@ function main({
   if (process.env.SKIP_E2E === "1") {
     console.error(
       `${colors.red}SKIP_E2E=1 is not allowed for npm run test:all. Unset it so the unpackaged WebdriverIO suite runs.${colors.reset}`,
+    );
+    return 1;
+  }
+  // --skip-e2e never runs the E2E gate, so leftover selectors cannot make a partial run.
+  const partialSelectors = skipE2e
+    ? []
+    : PARTIAL_E2E_ENV.filter((name) => (process.env[name] ?? "").trim() !== "");
+  if (partialSelectors.length > 0) {
+    console.error(
+      `${colors.red}${partialSelectors.join(", ")} ${partialSelectors.length === 1 ? "is" : "are"} set. npm run test:all runs the full E2E gate, and these variables would make it a partial run that still passes. Unset them and rerun.${colors.reset}`,
     );
     return 1;
   }

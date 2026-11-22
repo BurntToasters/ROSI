@@ -3,7 +3,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { REPO_ROOT } from "../../../e2e/helpers/profile.js";
 import { sha256 } from "../../../e2e/helpers/media-server.js";
 import {
@@ -13,6 +12,7 @@ import {
   relativeToRepo,
 } from "../common.js";
 import { verifyRunnerReport } from "../runner-report.js";
+import { spawnSyncTree } from "../process-tree.js";
 
 // Each mode is a separate launch of the same binary, as documented in
 // e2e/platform-probes/README.md. The spec enables one describe block per mode.
@@ -93,7 +93,7 @@ export function runAuditV5Probes({ ffmpeg, binary, suiteStartedAt }) {
       "probe-report.json",
     );
     fs.rmSync(reportFile, { force: true });
-    const result = spawnSync(
+    const result = spawnSyncTree(
       process.execPath,
       ["e2e/platform-probes/run-probes.mjs", ...mode.args],
       {

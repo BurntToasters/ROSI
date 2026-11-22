@@ -9,7 +9,7 @@ export { api, clickById, waitForAppReady };
  * Options must be an object literal or omitted. A number, boolean, array or
  * class instance passed by mistake would otherwise be ignored by destructuring.
  */
-function assertOptionsObject(helper, options) {
+function assertOptionsObject(helper, options, allowed) {
   if (options === undefined) return {};
   const proto = options === null ? undefined : Object.getPrototypeOf(options);
   const plain =
@@ -26,6 +26,13 @@ function assertOptionsObject(helper, options) {
           : typeof options;
     throw new TypeError(
       `${helper} takes an options object or nothing, got ${kind}`,
+    );
+  }
+  // A misspelled key would otherwise be ignored and its default used silently.
+  const unknown = Object.keys(options).filter((key) => !allowed.includes(key));
+  if (unknown.length > 0) {
+    throw new TypeError(
+      `${helper} does not accept option(s) ${unknown.join(", ")}; allowed: ${allowed.join(", ")}`,
     );
   }
   return options;
@@ -74,7 +81,9 @@ export async function reloadRenderer() {
  * refuses the value throws.
  */
 export async function setControl(id, value, options) {
-  const { input = false } = assertOptionsObject("setControl", options);
+  const { input = false } = assertOptionsObject("setControl", options, [
+    "input",
+  ]);
   if (value === undefined || value === null) {
     throw new TypeError(`setControl(${id}) needs a value, got ${value}`);
   }
@@ -110,6 +119,7 @@ export async function waitForBackendSetting(key, value, message, options) {
   const { timeout = 10_000, interval = 150 } = assertOptionsObject(
     "waitForBackendSetting",
     options,
+    ["timeout", "interval"],
   );
   if (typeof message !== "string" || message === "") {
     throw new TypeError("waitForBackendSetting needs a non-empty message");
@@ -160,7 +170,11 @@ export async function waitForModal(target, options) {
     timeout = 10_000,
     timeoutMsg = null,
     match = "exact",
-  } = assertOptionsObject("waitForModal", options);
+  } = assertOptionsObject("waitForModal", options, [
+    "timeout",
+    "timeoutMsg",
+    "match",
+  ]);
   const byTitle = typeof target === "string";
   if (!byTitle && typeof target !== "boolean") {
     throw new TypeError("waitForModal needs a boolean or a title string");
@@ -260,6 +274,7 @@ export function stubBridge(name, value, options) {
   const { hold = false, holdMatch = null } = assertOptionsObject(
     "stubBridge",
     options,
+    ["hold", "holdMatch"],
   );
   return installStubs([{ name, value: value ?? null, hold, holdMatch }]);
 }
