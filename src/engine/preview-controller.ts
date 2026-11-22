@@ -132,7 +132,7 @@ export async function runVideoPreview(auto = false) {
       previewState.previewAbort?.();
       hideVideoPreview();
     },
-    'Cancel preview',
+    'Cancel Preview',
     'Cancel Preview'
   );
 
@@ -151,7 +151,7 @@ export async function runVideoPreview(auto = false) {
       if (result?.error?.code === 'NOT_AVAILABLE') return;
       hideVideoPreview();
       if (auto) {
-        setPreviewButtonLabel('Retry preview');
+        setPreviewButtonLabel('Retry Preview');
       } else {
         showToast(`Could not load preview. ${message}`, { type: 'error' });
       }
@@ -164,7 +164,7 @@ export async function runVideoPreview(auto = false) {
     if (!wasCancelled && requestToken === previewController.previewRequestToken) {
       hideVideoPreview();
       if (auto) {
-        setPreviewButtonLabel('Retry preview');
+        setPreviewButtonLabel('Retry Preview');
       } else {
         showToast('Could not load preview.', { type: 'error' });
       }

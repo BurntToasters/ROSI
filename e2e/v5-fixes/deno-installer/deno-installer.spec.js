@@ -266,7 +266,7 @@ describe("V5 fix: Deno installer fails before any dialog and offers instructions
       const failed = await waitForDenoState("error");
       assert.match(failed.text, /^Automatic install failed: /);
       assert.match(failed.text, PLATFORM_ERRORS[process.platform]);
-      assert.equal(failed.action, "Open install instructions");
+      assert.equal(failed.action, "Open Install Instructions");
 
       await clickById("wizard-deno-action");
       await browser.waitUntil(async () => (await externalCalls()).length > 0, {

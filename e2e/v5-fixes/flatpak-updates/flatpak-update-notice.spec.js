@@ -230,7 +230,7 @@ describe("Flatpak update notice E2E", () => {
     await installScenario({ flatpak: true, channel: "stable", version: null });
 
     await clickManualCheck();
-    const modal = await waitForModal("ROSI is up to date!", {
+    const modal = await waitForModal("ROSI Is Up to Date!", {
       timeout: 15_000,
     });
     assert.ok(modal.message.includes(`(v${current})`), modal.message);

@@ -107,3 +107,56 @@ checks each row by the check name in the Check column.
     in `#toast-container-assertive` (aria-live assertive). Info sits in
     `#toast-container` (polite). Check `one-live-mechanism`: the nearest live
     region of each toast type has the expected value.
+
+## Label capitalization: Title Case for every label
+
+Rule: every label is Title Case. That covers button text, tab names,
+segmented-control options, headings and section titles, dialog titles and dialog
+buttons, settings row and checkbox/toggle labels, wizard step and card titles,
+menu items, `aria-label` and `title` on controls, and popover titles. Sentences,
+hints, descriptions, help text, placeholders, toasts, status lines, error
+messages, console text, and file names keep their case. Minor words (a, an, the,
+and, or, but, for, to, of, in, on, at, by, per, vs, via) stay lowercase unless
+they are the first or last word. Product spellings stay exact: yt-dlp, FFmpeg,
+ffprobe, SponsorBlock, GPU, URL, URLs, MP4, MP3, UI, Deno, ROSI, macOS. Words
+after a hyphen are capitalized ("Built-In"). "Clear history" becomes "Clear
+Activity".
+
+1. **A missed label stays in sentence case.** For example "Convert after
+   download" on a toggle. No spec checks case for every label, so the proof is
+   the grep inventory of `src/index.html`, `src/engine/**`, `src/modules/**`, and
+   `src/splash.html` for button, title, heading, and `aria-label` strings.
+2. **A sentence or hint is capitalized.** For example "Choose a save location to
+   see what this download will use." Check `hint-names-only-missing-url` and
+   `hint-updates-on-location-toggle`: their regex matchers must still match the
+   sentence text, which is unchanged.
+3. **An E2E matcher stays on the old text.** Examples: `clickModalButton("Cancel
+   queue")`, `clickModalButton("Reset section")`, `"Clear history"` in
+   `markup.spec.js`, and the `Retry save` text in `ui-polish.spec.js`. Check: a
+   case-insensitive grep of `e2e/` (excluding `e2e/artifacts/`) and `src/tests/`
+   for each old string finds no label matcher left. Comments and fixture status
+   text do not count.
+4. **A matcher passes only because it is case-insensitive.** A regex with the
+   `i` flag or a lowercased comparison still passes on the old text, so it proves
+   nothing about the new label. Check: the updated matchers compare the exact
+   Title Case text (for example `button.textContent === "Download Again"`).
+5. **The aria-label diverges from the visible text.** The Clear Activity control
+   has `title` and `aria-label` that must both read "Clear Activity". Check
+   `markup.spec.js` (the `#clearHistory` title and ariaLabel assertions).
+6. **The Deno action has two or three labels.** The same Deno action is labelled
+   "Open Deno Instructions" in one dialog and "Open Install Instructions" in
+   another. Check `deno-installer.spec.js`: every dialog and the failed-action
+   assertion use the one label that `UI_MESSAGES.wizard.installInstructions` returns.
+7. **A product spelling breaks.** For example "Yt-dlp", "Ffmpeg", "Mp4", "Macos",
+   or "Ytdlp". Check: a grep of the changed lines for those spellings finds
+   nothing.
+8. **A hyphenated word is wrong.** For example "Auto-detect" stays lowercase
+   after the hyphen. Check: "Auto-Detect" in `src/index.html` and the GPU select
+   matchers use the same text.
+9. **A visible label and its inline reference differ.** The wizard names the
+   Skip button inside a `<strong>` in the description. Check: that `<strong>`
+   reads "Skip Setup", the same as the button and the `Skip Setup?` prompt that
+   `main.spec.js` clicks.
+10. **A title attribute that is a tooltip sentence is changed.** Tooltip
+    sentences such as "Choose exact source formats" are descriptions and keep
+    their case. Check: the profile tooltips in `src/index.html` are unchanged.

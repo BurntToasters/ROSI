@@ -152,7 +152,7 @@ async function applyAppVersion() {
       versionLink.textContent = `v${version}`;
       versionLink.setAttribute(
         'aria-label',
-        `View release notes for v${version} (opens externally)`
+        `View Release Notes for v${version} (Opens Externally)`
       );
       versionLink.addEventListener('click', (event) => {
         event.preventDefault();
@@ -175,7 +175,7 @@ async function applyAppVersion() {
       // No release to open, so drop the link: plain text, not a focusable "#" anchor.
       versionLink.removeAttribute('href');
       versionLink.removeAttribute('aria-label');
-      versionLink.textContent = 'Version unknown';
+      versionLink.textContent = 'Version Unknown';
     }
   }
 }

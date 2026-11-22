@@ -203,12 +203,12 @@ export function bindQueueControls() {
     cancelQueueBtn.addEventListener('click', () => {
       if (queueController.queueActionLocks > 0) return;
       showModal({
-        title: 'Cancel queue',
+        title: 'Cancel Queue',
         message: 'Stops the active download and marks every pending item as cancelled.',
         buttons: [
           { label: 'Keep Running' },
           {
-            label: 'Cancel queue',
+            label: 'Cancel Queue',
             danger: true,
             action: async () => {
               const endQueueAction = beginQueueAction();

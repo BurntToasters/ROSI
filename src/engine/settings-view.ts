@@ -238,7 +238,7 @@ export function maybeShowSupportModal() {
         },
       },
       {
-        label: 'No thanks',
+        label: 'No Thanks',
         action: () => {
           settingsStore.settings.hideSupportModal = true;
           void persistSettings();

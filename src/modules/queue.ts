@@ -133,7 +133,7 @@ function buildProgressBlock(item: QueueItem): HTMLElement | null {
   const track = document.createElement('div');
   track.className = 'queue-item-progress-track';
   track.setAttribute('role', 'progressbar');
-  track.setAttribute('aria-label', `${getHostname(item.url)} download progress`);
+  track.setAttribute('aria-label', `${getHostname(item.url)} Download Progress`);
   track.setAttribute('aria-valuemin', '0');
   track.setAttribute('aria-valuemax', '100');
   const bar = document.createElement('div');
@@ -357,7 +357,7 @@ export function renderQueue(queue: QueueItem[], elements: QueueElements, deps: Q
         `${item.status === 'failed' ? 'Retry' : 'Requeue'} ${hostname}`
       );
       const copy = createActionButton(
-        'Copy details',
+        'Copy Details',
         'queue-item-copy',
         item,
         () => copyDiagnostics(item),
@@ -367,7 +367,7 @@ export function renderQueue(queue: QueueItem[], elements: QueueElements, deps: Q
     } else if (item.status === 'completed' && item.outputPath && openFileLocation) {
       actions.append(
         createActionButton(
-          'Open folder',
+          'Open Folder',
           'queue-item-open',
           item,
           () => openFileLocation(item.outputPath as string, item.id),
@@ -403,7 +403,7 @@ export function renderQueue(queue: QueueItem[], elements: QueueElements, deps: Q
       // The focus restore after a broadcast finds controls by these keys.
       summary.dataset.queueId = item.id;
       summary.dataset.queueAction = 'details';
-      summary.textContent = item.status === 'failed' ? 'Failure details' : 'Cancellation details';
+      summary.textContent = item.status === 'failed' ? 'Failure Details' : 'Cancellation Details';
       const message = document.createElement('p');
       message.textContent =
         item.error ||

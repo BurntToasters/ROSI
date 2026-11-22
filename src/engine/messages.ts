@@ -40,9 +40,9 @@ export const UI_MESSAGES = {
     result: (details: string) => `This download will use: ${details}`,
     profiles: {
       compatible: 'Compatible',
-      'best-video': 'Best video',
-      audio: 'Audio only',
-      custom: 'Custom formats',
+      'best-video': 'Best Video',
+      audio: 'Audio Only',
+      custom: 'Custom Formats',
     } satisfies Record<DownloadRequestOptions['profile'] & string, string>,
   },
   settings: {
@@ -51,11 +51,11 @@ export const UI_MESSAGES = {
     saveFailed: 'Settings did not save. Your choices are still here; retry the save.',
     // NEWER_VERSION case: a newer ROSI wrote the file, so no outside edit is implied.
     newerVersion: 'A newer ROSI version saved these settings. Changes made here are not kept.',
-    retry: 'Retry save',
-    resetTitle: (section: string) => `Reset ${section.toLowerCase()} settings?`,
+    retry: 'Retry Save',
+    resetTitle: (section: string) => `Reset ${section} Settings?`,
     resetMessage: (section: string) =>
       `${section} settings will return to their defaults. You can cancel without changing them.`,
-    resetConfirm: 'Reset section',
+    resetConfirm: 'Reset Section',
     resetCancel: 'Cancel',
     defaultsFailed: 'Could not load default settings. Nothing was reset.',
     resetSaved: 'Section restored to defaults.',
@@ -75,7 +75,7 @@ export const UI_MESSAGES = {
   },
   activity: {
     completed: 'Completed',
-    partial: 'Partially completed',
+    partial: 'Partially Completed',
     failed: 'Failed',
     cancelled: 'Cancelled',
     partialCount: (successes: number, total: number) =>
@@ -108,9 +108,9 @@ export const UI_MESSAGES = {
     denoInstallFailed: (reason: string) => `Automatic install failed: ${reason}`,
     flatpakRuntime:
       'This Flatpak build includes its own JavaScript runtime. YouTube downloads are fully supported.',
-    installInstructions: 'Open install instructions',
+    installInstructions: 'Open Install Instructions',
     installDeno: 'Install Deno',
-    denoCheckUnavailableTitle: 'Deno check unavailable',
+    denoCheckUnavailableTitle: 'Deno Check Unavailable',
     later: 'Later',
   },
 } as const;

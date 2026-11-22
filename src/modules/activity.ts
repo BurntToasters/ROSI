@@ -74,7 +74,7 @@ function activityTitle(entry: Pick<RosiDownloadActivity, 'filename' | 'url'>) {
 function describeActivityProfile(entry: RosiDownloadActivity) {
   if (entry.presetName) return entry.presetName;
   if (entry.profile === 'compatible') return 'Compatible';
-  if (entry.profile === 'best-video') return 'Best video';
+  if (entry.profile === 'best-video') return 'Best Video';
   if (entry.profile === 'audio') return 'Audio';
   if (entry.profile === 'custom') return 'Custom';
   return '';
@@ -264,7 +264,7 @@ function appendActivityRowActions(
         createActivityActionButton(
           icon,
           'rotate-ccw',
-          'Download again',
+          'Download Again',
           `Download ${row.title} again`,
           'replay',
           () => {
@@ -280,7 +280,7 @@ function appendActivityRowActions(
       createActivityActionButton(
         icon,
         'link',
-        'Copy source',
+        'Copy Source',
         `Copy source link for ${row.title}`,
         'copy',
         () => {
@@ -299,7 +299,7 @@ function appendActivityRowActions(
       createActivityActionButton(
         icon,
         'folder-open',
-        'Open folder',
+        'Open Folder',
         `Open file location for ${row.title}`,
         'reveal',
         () => {

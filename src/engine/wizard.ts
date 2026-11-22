@@ -650,11 +650,11 @@ export function launchSetupWizard(
       e.preventDefault();
       e.stopPropagation();
       showModal({
-        title: 'Skip setup?',
+        title: 'Skip Setup?',
         message: 'Skip setup and start with the default settings?',
         buttons: [
-          { label: 'Keep setting up', primary: true },
-          { label: 'Skip setup', action: () => void skipWizard() },
+          { label: 'Keep Setting Up', primary: true },
+          { label: 'Skip Setup', action: () => void skipWizard() },
         ],
       });
       return;

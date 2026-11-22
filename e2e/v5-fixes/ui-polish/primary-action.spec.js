@@ -876,7 +876,7 @@ describe("ROSI primary action: Enter, queue refusal, result state, copy source",
       await waitFor(
         () =>
           document.getElementById("downloadBtn")?.textContent.trim() ===
-          "Download complete",
+          "Download Complete",
         "no-path completion did not show Download complete",
         10_000,
       );

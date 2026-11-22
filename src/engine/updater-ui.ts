@@ -373,7 +373,7 @@ export function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boole
           hideUpdateBanner();
           if (wasManualCheck) {
             showModal({
-              title: 'ROSI is up to date!',
+              title: 'ROSI Is Up to Date!',
               message: `You are running the latest version (v${data.version}).`,
               buttons: [{ label: 'OK', primary: true }],
               priority: true,

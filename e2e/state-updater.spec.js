@@ -535,7 +535,7 @@ describe("state and updater repair E2E", () => {
 
       await browser.execute(() => {
         [...document.querySelectorAll("#modal-buttons button")]
-          .find((button) => button.textContent.includes("No, don't remind me"))
+          .find((button) => button.textContent.includes("No, Don't Remind Me"))
           ?.click();
       });
       await waitForStoredSetting(
@@ -809,7 +809,7 @@ describe("state and updater repair E2E", () => {
             const button = document.getElementById("downloadBtn");
             return (
               !button.classList.contains("loading") &&
-              /Open File Location|Download complete/.test(button.textContent)
+              /Open File Location|Download Complete/.test(button.textContent)
             );
           }),
         {

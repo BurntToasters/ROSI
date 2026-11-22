@@ -660,7 +660,7 @@ describe("Updater engine failure modes", () => {
       await clickManualCheck();
       await waitForModal(expectedTitle, MODAL_TIMEOUT);
       await clickModalButton(
-        expectedTitle === "ROSI is up to date!" ? "OK" : "Later",
+        expectedTitle === "ROSI Is Up to Date!" ? "OK" : "Later",
       );
       const settled = (await statuses("engineStatuses"))
         .slice(statusIndex)
@@ -694,7 +694,7 @@ describe("Updater engine failure modes", () => {
       payload: Buffer.from("legacy payload that must not be offered"),
       fileName: "ROSI-9.0.7.app.tar.gz",
     });
-    const empty = await manualCheck("ROSI is up to date!");
+    const empty = await manualCheck("ROSI Is Up to Date!");
     assert.deepEqual(empty.feeds, [compact, compact]);
     assert.ok(empty.settled.includes("not-available"), JSON.stringify(empty));
 
@@ -1294,7 +1294,7 @@ describe("Updater engine failure modes", () => {
     fixture.server.respond(osName(), 204);
     statusIndex = (await statuses("engineStatuses")).length;
     await clickManualCheck();
-    await waitForModal("ROSI is up to date!", MODAL_TIMEOUT);
+    await waitForModal("ROSI Is Up to Date!", MODAL_TIMEOUT);
     await clickModalButton("OK");
     const released = await invoke("download_update", {
       candidateId: offeredId,
@@ -1332,7 +1332,7 @@ describe("Updater engine failure modes", () => {
     await checkAndDismiss("9.9.2", "Update Available!", "Later");
     fixture.server.respond(osName(), 204);
     await clickManualCheck();
-    await waitForModal("ROSI is up to date!", MODAL_TIMEOUT);
+    await waitForModal("ROSI Is Up to Date!", MODAL_TIMEOUT);
     await clickModalButton("OK");
     const events = (await statuses("engineStatuses"))
       .slice(statusIndex)

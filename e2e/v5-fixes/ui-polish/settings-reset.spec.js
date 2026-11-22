@@ -414,7 +414,7 @@ describe("ROSI settings reset, playlist toasts, and settings search", () => {
       );
 
       await openSectionReset("browser");
-      await clickModalButton("Reset section");
+      await clickModalButton("Reset Section");
       await waitForModal(false);
       await waitFor(
         (want) => {
@@ -483,7 +483,7 @@ describe("ROSI settings reset, playlist toasts, and settings search", () => {
 
         // A section that does not own the channel must not send it.
         await openSectionReset("browser");
-        await clickModalButton("Reset section");
+        await clickModalButton("Reset Section");
         await waitForModal(false);
         await waitForBackendSetting(
           "browserChoice",
@@ -504,7 +504,7 @@ describe("ROSI settings reset, playlist toasts, and settings search", () => {
         // Application owns the channel: reset sends the default and saves it.
         await clearChannelCalls();
         await openSectionReset("application");
-        await clickModalButton("Reset section");
+        await clickModalButton("Reset Section");
         await waitForModal(false);
         await browser.waitUntil(
           async () => (await readChannelCalls()).includes(defaultChannel),

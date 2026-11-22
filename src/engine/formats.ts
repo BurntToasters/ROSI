@@ -135,7 +135,7 @@ export async function fetchFormats() {
         api.cancelFormats();
         fetchFormatsAbort?.();
       },
-      'Cancel format check'
+      'Cancel Format Check'
     );
     setSelectMessage(videoSelect, 'Loading...');
     setSelectMessage(audioSelect, 'Loading...');

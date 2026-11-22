@@ -64,13 +64,13 @@ describe('renderer wiring and accessibility contracts', () => {
     expect(queueModule).toMatch(/setAttribute\('role', 'listitem'\)/);
 
     expect(indexHtml).toMatch(/id="addToQueueBtn"/);
-    expect(indexHtml).toMatch(/title="Add to queue"/);
+    expect(indexHtml).toMatch(/title="Add to Queue"/);
     expect(indexHtml).toMatch(/id="startQueueBtn"/);
-    expect(indexHtml).toMatch(/title="Start queue"/);
+    expect(indexHtml).toMatch(/title="Start Queue"/);
     expect(indexHtml).toMatch(/id="cancelQueueBtn"/);
-    expect(indexHtml).toMatch(/title="Cancel queue"/);
+    expect(indexHtml).toMatch(/title="Cancel Queue"/);
     expect(indexHtml).toMatch(/id="clearQueueBtn"/);
-    expect(indexHtml).toMatch(/title="Clear queue"/);
+    expect(indexHtml).toMatch(/title="Clear Queue"/);
   });
 
   it('wires collapsible regions with explicit aria-controls relationships', () => {
@@ -94,7 +94,7 @@ describe('renderer wiring and accessibility contracts', () => {
     expect(indexHtml).toMatch(/id="progress-bar-wrapper"[^>]*role="progressbar"/);
     expect(indexHtml).toMatch(/id="settingsBtn"[^>]*aria-expanded="false"/);
     expect(indexHtml).toMatch(/<title>ROSI<\/title>/);
-    expect(indexHtml).toMatch(/aria-label="Learn more about SponsorBlock"/);
+    expect(indexHtml).toMatch(/aria-label="Learn More About SponsorBlock"/);
     expect(readEngineSources()).toMatch(/onSettingsImported/);
     expect(readRendererFile('modules/settings.ts')).toMatch(/stopPropagation/);
   });
@@ -116,7 +116,7 @@ describe('renderer wiring and accessibility contracts', () => {
     const uiModule = readRendererFile('modules/ui.ts');
 
     expect(indexHtml).toMatch(/id="licenses-overlay"[^>]*aria-hidden="true"/);
-    expect(indexHtml).toMatch(/id="licenses-frame"[^>]*title="ROSI licenses"/);
+    expect(indexHtml).toMatch(/id="licenses-frame"[^>]*title="ROSI Licenses"/);
     expect(engine).toMatch(/licensesOverlayEl\.addEventListener\('click'/);
     expect(engine).not.toMatch(/licensesOverlay\.addEventListener\('click'/);
 
@@ -129,7 +129,7 @@ describe('renderer wiring and accessibility contracts', () => {
     );
     expect(indexHtml).toMatch(/id="progress-status"[^>]*aria-live="polite"/);
     expect(indexHtml).toMatch(/id="progress-details" class="progress-details"><\/div>/);
-    expect(indexHtml).toMatch(/id="versionLink"[^>]*opens externally/);
+    expect(indexHtml).toMatch(/id="versionLink"[^>]*Opens Externally/);
     expect(engine).toMatch(/barWrapper\.setAttribute\('aria-valuenow', '0'\)/);
     expect(engine).toMatch(/aria-current', 'step'/);
     expect(engine).toMatch(/busy: true/);
@@ -141,7 +141,7 @@ describe('renderer wiring and accessibility contracts', () => {
       fs.readFileSync(path.join(process.cwd(), 'public', 'licenses-iframe.html'), 'utf8')
     ).toMatch(/<html lang="en">/);
     expect(uiModule).toMatch(/setAttribute\('aria-label', cancelLabel\)/);
-    expect(engine).toMatch(/'Cancel format check'/);
-    expect(engine).toMatch(/'Cancel preview'/);
+    expect(engine).toMatch(/'Cancel Format Check'/);
+    expect(engine).toMatch(/'Cancel Preview'/);
   });
 });

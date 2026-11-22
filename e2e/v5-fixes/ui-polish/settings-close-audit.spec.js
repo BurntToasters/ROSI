@@ -453,7 +453,7 @@ async function skipThroughPrompt() {
     );
   });
   await waitForModal(true);
-  await clickModalButton("Skip setup");
+  await clickModalButton("Skip Setup");
   await waitForModal(false);
 }
 

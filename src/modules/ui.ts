@@ -238,7 +238,7 @@ export function setButtonLoading(
   button: UiButtonElement | null,
   isLoading: boolean,
   onCancel?: (() => void) | null,
-  cancelLabel = 'Cancel download',
+  cancelLabel = 'Cancel Download',
   cancelText = 'Cancel'
 ) {
   if (!button) return;

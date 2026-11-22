@@ -28,7 +28,7 @@ export function renderPresetOptions(selectedId = refs.downloadPresetSelect?.valu
   select.replaceChildren();
   const placeholder = document.createElement('option');
   placeholder.value = '';
-  placeholder.textContent = presets.length === 0 ? 'No saved presets' : 'Use current settings';
+  placeholder.textContent = presets.length === 0 ? 'No Saved Presets' : 'Use Current Settings';
   select.appendChild(placeholder);
   presets.forEach((preset) => {
     const option = document.createElement('option');

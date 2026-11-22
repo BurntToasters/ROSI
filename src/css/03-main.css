@@ -161,6 +161,16 @@
     width var(--transition-fast);
 }
 
+/* Same light off track as the sidebar toggle, so the header toggle reaches 3:1. */
+:root[data-theme='light'] .flat-ui-toggle-wrap input:not(:checked) + .flat-ui-toggle-slider {
+  background: #7a8497;
+  border-color: #5b6578;
+}
+
+:root[data-theme='light'] .flat-ui-toggle-wrap input:not(:checked) + .flat-ui-toggle-slider::after {
+  background: linear-gradient(to bottom, #ffffff, #f4f6f9);
+}
+
 .flat-ui-toggle-wrap input:checked + .flat-ui-toggle-slider {
   background: var(--accent);
   border-color: var(--accent-dark);

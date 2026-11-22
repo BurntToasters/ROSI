@@ -2406,7 +2406,7 @@ describe("ROSI main window", () => {
       finished.label,
       finished.icon === "folder-open"
         ? "Open File Location"
-        : "Download complete",
+        : "Download Complete",
     );
     let restored = null;
     await browser.waitUntil(
@@ -3118,9 +3118,9 @@ describe("ROSI main window", () => {
     await pressEscape();
     await waitModal(true);
     const prompt = await modalState();
-    assert.equal(prompt.title, "Skip setup?");
-    assert.deepEqual(prompt.buttons, ["Keep setting up", "Skip setup"]);
-    await clickModal("Keep setting up");
+    assert.equal(prompt.title, "Skip Setup?");
+    assert.deepEqual(prompt.buttons, ["Keep Setting Up", "Skip Setup"]);
+    await clickModal("Keep Setting Up");
     await waitModal(false);
     const kept = await wizardState();
     assert.equal(kept.open, true, "Keep setting up closed the wizard");
@@ -3136,7 +3136,7 @@ describe("ROSI main window", () => {
 
     await pressEscape();
     await waitModal(true);
-    await clickModal("Skip setup");
+    await clickModal("Skip Setup");
     await waitForWizardClosed();
     await waitForSavedSetting(
       "firstLaunch",
@@ -3304,7 +3304,7 @@ describe("ROSI main window", () => {
     view = await waitDeno("error");
     assert.equal(view.icon, "circle-x");
     assert.match(view.text, /winget exploded/);
-    assert.equal(view.action, "Open install instructions");
+    assert.equal(view.action, "Open Install Instructions");
     await clickById("wizard-deno-action");
     await waitForExternalCalls(1);
     assert.deepEqual((await denoView()).calls.external, [
@@ -3316,14 +3316,14 @@ describe("ROSI main window", () => {
     // A failed lookup still offers the instructions.
     await toDenoStep({ check: "throw", installs: [] });
     view = await waitDeno("error");
-    assert.equal(view.action, "Open install instructions");
+    assert.equal(view.action, "Open Install Instructions");
     seen.checkFailure = view.state;
     await leave();
 
     // Linux has no automatic install: it links to the instructions.
     await toDenoStep({ linux: true, installs: [] });
     view = await waitDeno("missing");
-    assert.equal(view.action, "Open install instructions");
+    assert.equal(view.action, "Open Install Instructions");
     await clickById("wizard-deno-action");
     await waitForExternalCalls(1);
     view = await denoView();
@@ -3631,7 +3631,7 @@ describe("ROSI main window", () => {
     await waitForModal(true, {
       timeoutMsg: "section reset did not reopen the prompt",
     });
-    await clickModalButton("Reset section");
+    await clickModalButton("Reset Section");
     await waitForModal(false, {
       timeoutMsg: "confirmed reset did not close the prompt",
     });
@@ -4382,8 +4382,8 @@ describe("ROSI main window", () => {
     );
     await clickById("cancelQueueBtn");
     const stop = await waitForModal(true, { timeoutMsg: "Stop asked nothing" });
-    assert.equal(stop.title, "Cancel queue");
-    await clickModalButton("Cancel queue");
+    assert.equal(stop.title, "Cancel Queue");
+    await clickModalButton("Cancel Queue");
     await browser.waitUntil(
       async () =>
         (await api("getQueue")).find((item) => item.url === slow)?.status ===
@@ -4521,7 +4521,7 @@ describe("ROSI main window", () => {
       );
       await clickById("cancelQueueBtn");
       await waitForModal(true, { timeoutMsg: "Cancel modal did not open" });
-      await clickModalButton("Cancel queue");
+      await clickModalButton("Cancel Queue");
       await browser.waitUntil(
         async () =>
           (await api("getQueue")).find((item) => item.url === slow)?.status ===

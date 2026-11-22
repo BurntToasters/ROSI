@@ -984,7 +984,7 @@ describe("ROSI long-term audit: summary, preview, busy buttons, toasts, activity
           );
           assert.equal(
             busyNow.ariaLabel,
-            "Cancel download",
+            "Cancel Download",
             "busy Download button lost its cancel label",
           );
           await screenshot("longterm-audit-u3-busy-button");
@@ -1025,7 +1025,7 @@ describe("ROSI long-term audit: summary, preview, busy buttons, toasts, activity
           );
           assert.equal(
             previewBusy.ariaLabel,
-            "Cancel preview",
+            "Cancel Preview",
             "busy Preview button lost its cancel label",
           );
           await releaseHeld("getVideoInfo");

@@ -542,7 +542,7 @@ describe("ROSI full-app UI polish", () => {
         document.querySelector('[data-reset-section="download"]').click();
       });
       await waitForModal(true);
-      await clickModalButton("Reset section");
+      await clickModalButton("Reset Section");
       await waitForModal(false);
       await waitFor(
         (expected) =>
@@ -938,7 +938,7 @@ describe("ROSI full-app UI polish", () => {
       });
       // One output was saved before the failure, so the 5.1 activity model
       // reports a partial completion rather than a plain failure.
-      assert.equal(row.status, "Partially completed");
+      assert.equal(row.status, "Partially Completed");
       assert.match(row.errorText, /could not be converted/i);
       assert.match(row.action, /file location/i);
       await browser.execute(() =>

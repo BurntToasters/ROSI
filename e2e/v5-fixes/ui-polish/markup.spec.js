@@ -16,7 +16,7 @@ import {
 import { REPO_ROOT } from "../../helpers/profile.js";
 
 const MEDIA = process.env.ROSI_E2E_MEDIA_URL;
-const CANCEL_LABEL = "Cancel queue";
+const CANCEL_LABEL = "Cancel Queue";
 const CANCEL_MESSAGE =
   "Stops the active download and marks every pending item as cancelled.";
 const REMOVE_FINISHED_MESSAGE = "Removed 4 finished items.";
@@ -542,7 +542,7 @@ describe("ROSI markup, queue cancel labels, and Remove finished", () => {
     await waitForModal(false);
 
     await openSectionReset("download");
-    await clickModalButton("Reset section");
+    await clickModalButton("Reset Section");
     await waitForBackendSettings(
       (settings) => settings.convertFormat === defaults.convertFormat,
       "Conversion reset did not reach the backend",
@@ -569,7 +569,7 @@ describe("ROSI markup, queue cancel labels, and Remove finished", () => {
     });
 
     await openSectionReset("application");
-    await clickModalButton("Reset section");
+    await clickModalButton("Reset Section");
     await waitForBackendSettings(
       (settings) => settings.upstreamProxy === defaults.upstreamProxy,
       "Application reset did not clear the proxy",
@@ -657,8 +657,8 @@ describe("ROSI markup, queue cancel labels, and Remove finished", () => {
           ariaLabel: element?.getAttribute("aria-label") ?? null,
         };
       });
-      assert.equal(button.title, "Clear history", "title differs");
-      assert.equal(button.ariaLabel, "Clear history", "aria-label differs");
+      assert.equal(button.title, "Clear Activity", "title differs");
+      assert.equal(button.ariaLabel, "Clear Activity", "aria-label differs");
       return button;
     });
 

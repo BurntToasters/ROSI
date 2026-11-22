@@ -176,7 +176,7 @@ export function showManualDownloadCompletion(
     } else {
       // No path to open, so this result only reports the outcome.
       showDownloadResult(
-        { label: 'Download complete', icon: 'check', onActivate: null },
+        { label: 'Download Complete', icon: 'check', onActivate: null },
         2500,
         operation
       );

@@ -37,7 +37,7 @@ export async function checkDenoInstallation(
           'Recent updates to yt-dlp require Deno for full YouTube functionality.\n\nInstall Deno with the official instructions (or your package manager), then restart ROSI.',
         buttons: [
           {
-            label: 'Open Deno Instructions',
+            label: UI_MESSAGES.wizard.installInstructions,
             primary: true,
             action: () => {
               void openExternalLink(DENO_INSTALL_DOCS, 'the Deno instructions');
@@ -45,7 +45,7 @@ export async function checkDenoInstallation(
           },
           { label: UI_MESSAGES.wizard.later },
           {
-            label: "No, don't remind me",
+            label: "No, Don't Remind Me",
             action: () => {
               settings.denoReminderDismissed = true;
               void persist();
@@ -120,7 +120,7 @@ export async function checkDenoInstallation(
                     : `Deno could not be installed automatically.\n\n${errMsg}\n\nInstall Deno with the official instructions, then restart ROSI.`,
                   buttons: [
                     {
-                      label: 'Open Install Instructions',
+                      label: UI_MESSAGES.wizard.installInstructions,
                       primary: true,
                       action: () => {
                         void openExternalLink(DENO_INSTALL_DOCS, 'the Deno instructions');
@@ -135,7 +135,7 @@ export async function checkDenoInstallation(
           },
           { label: 'Later' },
           {
-            label: "No, don't remind me",
+            label: "No, Don't Remind Me",
             action: () => {
               settings.denoReminderDismissed = true;
               void persist();

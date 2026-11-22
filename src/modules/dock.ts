@@ -40,7 +40,7 @@ function setUnseen(button: HTMLElement, unseen: boolean) {
   if (existing) return;
   const label = document.createElement('span');
   label.className = 'sr-only dock-unseen-label';
-  label.textContent = 'new activity';
+  label.textContent = 'New Activity';
   button.appendChild(label);
 }
 
@@ -93,7 +93,7 @@ function render() {
   dock?.classList.toggle('collapsed', state.collapsed);
   const collapseBtn = document.getElementById('dockCollapseBtn');
   if (collapseBtn) {
-    const label = state.collapsed ? 'Expand panel' : 'Collapse panel';
+    const label = state.collapsed ? 'Expand Panel' : 'Collapse Panel';
     collapseBtn.setAttribute('aria-expanded', String(!state.collapsed));
     collapseBtn.setAttribute('aria-label', label);
     collapseBtn.title = label;

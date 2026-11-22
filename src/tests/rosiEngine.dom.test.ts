@@ -663,7 +663,7 @@ describe('rosiEngine DOM wiring', () => {
     await flush();
 
     const replayBtn = Array.from(document.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Download again'
+      (button) => button.textContent === 'Download Again'
     );
     expect(replayBtn).toBeTruthy();
     replayBtn!.click();
