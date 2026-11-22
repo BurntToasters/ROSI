@@ -454,9 +454,11 @@ pub fn build_ytdlp_args(input: YtdlpArgsInput<'_>) -> (Vec<String>, Vec<String>)
             "--progress-delta",
             "1",
             "--progress-template",
-            "download:%(progress)j",
+            // Without `|null` a missing `info.playlist_index` prints a bare `NA`,
+            // which is not JSON; `null` keeps the line parseable outside a playlist.
+            r#"download:{"progress": %(progress)j, "playlist_index": %(info.playlist_index|null)j}"#,
             "--progress-template",
-            "postprocess:%(progress)j",
+            r#"postprocess:{"progress": %(progress)j, "playlist_index": %(info.playlist_index|null)j}"#,
             "-f",
             "",
             "--",

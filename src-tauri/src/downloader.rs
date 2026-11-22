@@ -34,7 +34,7 @@ use crate::validation::{is_path_within, is_safe_http_url, resolve_path};
 use std::collections::{HashSet, VecDeque};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
@@ -70,6 +70,8 @@ struct Session {
     ffmpeg: Option<Arc<crate::process_util::ManagedChild>>,
     ytdlp_postprocess: bool,
     ytdlp_download_finished: bool,
+    /// Playlist entry the progress flags above belong to.
+    ytdlp_playlist_index: Option<f64>,
     conversion_format: Option<String>,
     completed_paths: Vec<PathBuf>,
     failed_paths: Vec<PathBuf>,
@@ -143,8 +145,9 @@ fn apply_taskbar(event: &JobProgressEvent) {
     let _ = window.set_progress_bar(state);
 }
 
-fn emit_job_progress(id: u64, event: JobProgressEvent) {
+fn emit_job_progress(id: u64, mut event: JobProgressEvent) {
     with_session(id, move |session| {
+        session.reporter.hold_indeterminate(&mut event);
         if session.reporter.should_emit(&event) {
             crate::app_state::emit("job-progress", event.clone());
             if session.reporter.show_taskbar {
@@ -202,6 +205,18 @@ fn handle_progress_line(id: u64, line: &str) -> bool {
     let result = with_session(id, move |session| {
         let line = owned.as_str();
         if let Some(json) = progress::try_parse_json(line) {
+            // A new playlist entry starts its own download; clear the flags the
+            // previous entry left set, so it is not reported as merging.
+            if let Some(index) = json.playlist_index {
+                if session
+                    .ytdlp_playlist_index
+                    .is_some_and(|previous| previous != index)
+                {
+                    session.ytdlp_download_finished = false;
+                    session.ytdlp_postprocess = false;
+                }
+                session.ytdlp_playlist_index = Some(index);
+            }
             if let Some(postprocessor) = json.postprocessor.as_deref() {
                 // Post-processing reports no byte counts; it occupies the
                 // merge span of the progress plan.
@@ -580,7 +595,7 @@ fn cancel_locked(
     session.cancelled = true;
     session.network_cancellation.send_replace(true);
     let show = notify || (notify_manual && session.owner == Owner::Manual);
-    session.cancel_notify = show;
+    session.cancel_notify |= show;
     let wait = session.ytdlp_exit_pending || session.conversion_pending || session.ytdlp.is_some();
     if wait {
         session.ytdlp_exit_pending = true;
@@ -697,10 +712,13 @@ fn wait_for_readers(readers: [std::sync::mpsc::Receiver<()>; 2]) -> bool {
     })
 }
 
-fn append_bounded(buffer: &Mutex<String>, line: &str, limit: usize, keep_tail: bool) {
+/// Append one line within `limit` bytes. Returns whether older text was dropped
+/// to make room, which leaves a partial first line in the buffer.
+fn append_bounded(buffer: &Mutex<String>, line: &str, limit: usize, keep_tail: bool) -> bool {
     let Ok(mut text) = buffer.lock() else {
-        return;
+        return false;
     };
+    let mut cut_text = false;
     let marker = "[truncated]";
     let max_line = limit.saturating_sub(1);
     let bounded_line = if line.len() > max_line {
@@ -720,7 +738,7 @@ fn append_bounded(buffer: &Mutex<String>, line: &str, limit: usize, keep_tail: b
     let addition_len = bounded_line.len().saturating_add(1);
     if text.len() + addition_len > limit {
         if !keep_tail {
-            return;
+            return false;
         }
         let mut cut = text
             .len()
@@ -730,9 +748,11 @@ fn append_bounded(buffer: &Mutex<String>, line: &str, limit: usize, keep_tail: b
             cut += 1;
         }
         text.drain(..cut);
+        cut_text = true;
     }
     text.push_str(&bounded_line);
     text.push('\n');
+    cut_text
 }
 
 /// Returned when another owner holds the session slot. The caller keeps its
@@ -849,6 +869,7 @@ fn new_session(
         ffmpeg: None,
         ytdlp_postprocess: false,
         ytdlp_download_finished: false,
+        ytdlp_playlist_index: None,
         conversion_format: None,
         completed_paths: Vec::new(),
         failed_paths: Vec::new(),
@@ -1205,16 +1226,20 @@ fn watch_ytdlp(child: Arc<crate::process_util::ManagedChild>, watch: ExitWatch) 
         ffmpeg_guard,
     } = watch;
     let stdout_buffer = Arc::new(Mutex::new(String::new()));
+    let stdout_cut = Arc::new(AtomicBool::new(false));
     let stderr_buffer = Arc::new(Mutex::new(String::new()));
     let stdout_reader = {
         let buffer = Arc::clone(&stdout_buffer);
+        let cut = Arc::clone(&stdout_cut);
         let proxy_url = proxy_url.clone();
         read_lines(child.take_stdout(), move |line| {
             if line.is_empty() || !is_active(id) {
                 return;
             }
             let sanitized = line.replace(&proxy_url, "<ephemeral proxy credentials>");
-            append_bounded(&buffer, &sanitized, MAX_OUTPUT_BUFFER, true);
+            if append_bounded(&buffer, &sanitized, MAX_OUTPUT_BUFFER, true) {
+                cut.store(true, Ordering::SeqCst);
+            }
             handle_ytdlp_line(id, &sanitized, false);
         })
     };
@@ -1251,6 +1276,7 @@ fn watch_ytdlp(child: Arc<crate::process_util::ManagedChild>, watch: ExitWatch) 
             id,
             code,
             stdout,
+            stdout_cut: stdout_cut.load(Ordering::SeqCst),
             stderr,
             diagnostics_complete,
             path_output_file,
@@ -1268,6 +1294,8 @@ struct YtdlpExit {
     id: u64,
     code: Option<i32>,
     stdout: String,
+    /// Whether the start of `stdout` was dropped, so its first line may be partial.
+    stdout_cut: bool,
     stderr: String,
     diagnostics_complete: bool,
     path_output_file: PathBuf,
@@ -1291,6 +1319,7 @@ fn downloaded_file_paths(exit: &YtdlpExit) -> Result<Vec<PathBuf>, String> {
     let raw_paths = recorded.unwrap_or_else(|| {
         exit.stdout
             .lines()
+            .skip(usize::from(exit.stdout_cut))
             .map(str::trim)
             .filter(|line| !line.is_empty() && !line.starts_with('[') && !line.starts_with('{'))
             .map(str::to_string)
@@ -1507,6 +1536,14 @@ fn complete_cancelled(id: u64, meta: CompletionMeta, cancel_notify: bool) {
     );
 }
 
+/// `(cancelled, cancel_notify)` read in one owner task. Read before a failure
+/// is reported, so a cancel that landed after the exit was classified still
+/// reports as cancelled. A missing session reads as cancelled, which makes the
+/// completion a no-op.
+fn cancel_state(id: u64) -> (bool, bool) {
+    with_session(id, |session| (session.cancelled, session.cancel_notify)).unwrap_or((true, false))
+}
+
 fn on_ytdlp_exit(mut exit: YtdlpExit) {
     if let Err(error) = exit.stage.snapshot_owned_contents() {
         crate::logging::error(&format!(
@@ -1519,6 +1556,9 @@ fn on_ytdlp_exit(mut exit: YtdlpExit) {
         session.ytdlp = None;
         (session.cancelled, session.cancel_notify)
     }) else {
+        // The session was replaced or finished. Keep the staged downloads for
+        // recovery rather than deleting them with the stage.
+        exit.stage.preserve_on_drop = true;
         remove_path_file(&exit);
         return;
     };
@@ -1595,6 +1635,15 @@ fn finish_pipes_open_exit(mut exit: YtdlpExit) {
     let id = exit.id;
     let (paths, mut failed, mut errors) = recover_staged_downloads(&mut exit);
     remove_path_file(&exit);
+    let (cancelled, cancel_notify) = cancel_state(id);
+    if cancelled {
+        complete_cancelled(
+            id,
+            completion_meta_for_paths(paths, failed, joined_errors(&errors)),
+            cancel_notify,
+        );
+        return;
+    }
     let message = "yt-dlp output pipes remained open after the process ended.";
     errors.push(message.to_string());
     failed.extend(paths.iter().filter(|path| !path.exists()).cloned());
@@ -1623,8 +1672,17 @@ fn finish_failed_exit(mut exit: YtdlpExit) {
         None => format!("yt-dlp process exited with code {code}"),
     };
     let (paths, failed, mut errors) = recover_staged_downloads(&mut exit);
-    errors.insert(0, failure.clone());
     remove_path_file(&exit);
+    let (cancelled, cancel_notify) = cancel_state(id);
+    if cancelled {
+        complete_cancelled(
+            id,
+            completion_meta_for_paths(paths, failed, joined_errors(&errors)),
+            cancel_notify,
+        );
+        return;
+    }
+    errors.insert(0, failure.clone());
     send_progress(id, format!("❌ Download failed: {failure}"));
     if exit.stderr.contains("different Team IDs")
         || exit.stderr.contains("[PYI-")
@@ -1654,6 +1712,11 @@ fn finish_downloaded_exit(mut exit: YtdlpExit) {
                 exit.stage.directory.display()
             );
             remove_path_file(&exit);
+            let (cancelled, cancel_notify) = cancel_state(id);
+            if cancelled {
+                complete_cancelled(id, error_meta(error), cancel_notify);
+                return;
+            }
             send_progress(
                 id,
                 "❌ Error determining downloaded file path after download.",
@@ -1757,14 +1820,7 @@ fn publish_without_conversion(mut exit: YtdlpExit, staged_downloads: Vec<PathBuf
         ),
     );
     send_progress(id, "ℹ️ Conversion not enabled for this download.");
-    let expect_convert =
-        with_session(id, |session| session.reporter.plan.expect_convert).unwrap_or(false);
-    let phase = if expect_convert {
-        Phase::Convert
-    } else {
-        Phase::Download
-    };
-    emit_phase(id, phase, 100.0, "Download complete", Some(false));
+    emit_phase(id, Phase::Download, 100.0, "Download complete", Some(false));
     let meta = completion_meta_for_paths(downloaded, Vec::new(), None);
     let (cancelled, cancel_notify) =
         with_session(id, |session| (session.cancelled, session.cancel_notify))
@@ -1900,6 +1956,7 @@ mod audit4_tests {
             ffmpeg: None,
             ytdlp_postprocess: false,
             ytdlp_download_finished: false,
+            ytdlp_playlist_index: None,
             conversion_format: None,
             completed_paths: vec![],
             failed_paths: vec![],

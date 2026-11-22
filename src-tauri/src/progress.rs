@@ -29,6 +29,8 @@ pub struct YtdlpProgress {
     pub speed: Option<f64>,
     pub fragment_index: Option<f64>,
     pub fragment_count: Option<f64>,
+    /// Position of the entry in a playlist run. Absent or `NA` for a single video.
+    pub playlist_index: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -91,22 +93,29 @@ pub fn try_parse_json(line: &str) -> Option<YtdlpProgress> {
     let Ok(Value::Object(object)) = serde_json::from_str::<Value>(trimmed) else {
         return None;
     };
+    // The progress template nests yt-dlp's progress dict under "progress" and
+    // puts the playlist index beside it. A flat object is read as before.
+    let progress = object
+        .get("progress")
+        .and_then(Value::as_object)
+        .unwrap_or(&object);
     Some(YtdlpProgress {
-        status: object
+        status: progress
             .get("status")
             .and_then(Value::as_str)
             .map(str::to_string),
-        postprocessor: object
+        postprocessor: progress
             .get("postprocessor")
             .and_then(Value::as_str)
             .map(str::to_string),
-        downloaded_bytes: number_field(&object, "downloaded_bytes"),
-        total_bytes: number_field(&object, "total_bytes"),
-        total_bytes_estimate: number_field(&object, "total_bytes_estimate"),
-        eta: number_field(&object, "eta"),
-        speed: number_field(&object, "speed"),
-        fragment_index: number_field(&object, "fragment_index"),
-        fragment_count: number_field(&object, "fragment_count"),
+        downloaded_bytes: number_field(progress, "downloaded_bytes"),
+        total_bytes: number_field(progress, "total_bytes"),
+        total_bytes_estimate: number_field(progress, "total_bytes_estimate"),
+        eta: number_field(progress, "eta"),
+        speed: number_field(progress, "speed"),
+        fragment_index: number_field(progress, "fragment_index"),
+        fragment_count: number_field(progress, "fragment_count"),
+        playlist_index: number_field(&object, "playlist_index"),
     })
 }
 
@@ -390,6 +399,8 @@ pub struct Reporter {
     pub show_taskbar: bool,
     last_emit: Option<Instant>,
     last_overall: f64,
+    /// Item and overall percent of the last event that had a phase percent.
+    last_known: Option<(f64, f64)>,
 }
 
 impl Reporter {
@@ -400,6 +411,20 @@ impl Reporter {
             show_taskbar,
             last_emit: None,
             last_overall: -1.0,
+            last_known: None,
+        }
+    }
+
+    /// An event without a phase percent is indeterminate. It keeps the last
+    /// known overall values, so the bar does not jump back to a phase's start.
+    pub fn hold_indeterminate(&mut self, event: &mut JobProgressEvent) {
+        if event.phase_percent.is_none() {
+            if let Some((item_overall, overall)) = self.last_known {
+                event.item_overall_percent = item_overall;
+                event.overall_percent = overall;
+            }
+        } else {
+            self.last_known = Some((event.item_overall_percent, event.overall_percent));
         }
     }
 

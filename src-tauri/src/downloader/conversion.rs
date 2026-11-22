@@ -158,13 +158,16 @@ fn install_conversion_output(
         let candidate = download_dir.join(name);
         match install_no_replace(temp, &candidate) {
             Ok(()) => {
-                crate::fs_util::sync_directory(download_dir).map_err(|error| {
-                    format!(
+                // The file is already installed under its final name. A failed
+                // directory sync is a warning: returning an error here would mark
+                // the entry failed while the converted file stays in the folder.
+                if let Err(error) = crate::fs_util::sync_directory(download_dir) {
+                    crate::logging::warn(&format!(
                         "Could not sync output directory {} after installing {}: {error}",
                         download_dir.display(),
                         candidate.display()
-                    )
-                })?;
+                    ));
+                }
                 return Ok(candidate);
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
