@@ -9,8 +9,14 @@ export function formatBytes(bytes: number | null | undefined): string {
   const k = 1024;
   const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), SIZE_UNITS.length - 1);
   // Under 1 byte the log is negative, so clamp to the first unit.
-  const unit = Math.max(i, 0);
-  return parseFloat((bytes / Math.pow(k, unit)).toFixed(2)) + ' ' + SIZE_UNITS[unit];
+  let unit = Math.max(i, 0);
+  let value = parseFloat((bytes / Math.pow(k, unit)).toFixed(2));
+  // Rounding can reach the next unit (1048575 bytes is 1024.00 KB), so pick the unit after rounding.
+  if (value >= k && unit < SIZE_UNITS.length - 1) {
+    unit += 1;
+    value = parseFloat((bytes / Math.pow(k, unit)).toFixed(2));
+  }
+  return value + ' ' + SIZE_UNITS[unit];
 }
 
 /** Host name of a URL, or an empty string when it is missing or does not parse. */

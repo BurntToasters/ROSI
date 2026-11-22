@@ -8,7 +8,7 @@ import { logError } from './core';
 import { formatUpdateProgressInfo } from '../modules/updates';
 import { currentModalData, modalQueue, retireModal, showModal } from './overlays';
 import { formatBytes } from './progress';
-import { openExternalLink, setButtonLoading } from './ui-helpers';
+import { openExternalLink, setButtonLoading, showToast } from './ui-helpers';
 import { api } from '../api';
 
 // The public ROSI website, the same host as the website and support links.
@@ -55,6 +55,13 @@ export async function checkForUpdates() {
     return;
   }
 
+  // The updater refuses a check during a download with no status event, so the
+  // user is told here instead of waiting for the timeout below.
+  if (isUpdateDownloadActive()) {
+    showToast('An update is already downloading.', { type: 'info' });
+    return;
+  }
+
   if (isManualUpdateCheck) return;
 
   isManualUpdateCheck = true;
@@ -76,7 +83,9 @@ export async function checkForUpdates() {
   }, 30000);
 
   try {
-    // Null means the check started; its result arrives as updater-status events.
+    // Null means the check started (its result arrives as updater-status events)
+    // or the Rust updater was busy with another operation and sent no event.
+    // The transfer case is refused above; the timeout covers any other busy case.
     const refusal = await call('check_for_updates');
 
     if (refusal?.reason === 'dev-mode') {
@@ -131,12 +140,22 @@ function setBannerInert(banner: HTMLElement, isInert: boolean) {
   }
 }
 
+// True from the Download & Install click until the banner hides, the same window
+// the banner shows. The Rust updater is busy for this span.
+let updateDownloadActive = false;
+
+/** Whether an update download is running, so checks and restarts must wait or ask. */
+export function isUpdateDownloadActive(): boolean {
+  return updateDownloadActive;
+}
+
 export function showUpdateBanner() {
   const banner = document.getElementById('update-banner');
   const bar = document.getElementById('update-banner-bar') as HTMLElement | null;
   const progressWrapper = document.getElementById('update-banner-progress');
   const info = document.getElementById('update-banner-info');
   const text = document.getElementById('update-banner-text');
+  updateDownloadActive = true;
   if (bar) bar.style.width = '0%';
   if (progressWrapper) {
     progressWrapper.setAttribute('aria-valuenow', '0');
@@ -152,6 +171,7 @@ export function showUpdateBanner() {
 }
 
 export function hideUpdateBanner() {
+  updateDownloadActive = false;
   const banner = document.getElementById('update-banner');
   if (banner) {
     banner.classList.remove('active');

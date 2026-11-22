@@ -243,13 +243,17 @@ export function renderQueue(queue: RosiQueueItem[]) {
     if (!queue.some((item) => item.id === id)) queueController.rowErrors.delete(id);
   }
   updateQueueButtonStates(queue);
+  // The panel input is disabled while an action holds the lock, so its focus waits
+  // for the unlock in syncQueueActionBusyState.
+  const panelFocusWanted = queueController.focusPanelOnRender;
+  const panelLocked = queueController.queueActionLocks > 0;
   renderQueueRows(
     queue,
     { queueList: refs.queueList, queueSection: refs.queueSection, queueCount: refs.queueCount },
     {
       focusQueueItemId: queueController.focusQueueItemId,
       focusQueueAction: queueController.focusQueueAction,
-      focusPanelRequested: queueController.focusPanelOnRender,
+      focusPanelRequested: panelFocusWanted && !panelLocked,
       focusPanelControl: refs.queueUrlInput,
       retryQueueItem: async (id: string) => {
         queueController.focusQueueItemId = id;
@@ -381,6 +385,7 @@ export function renderQueue(queue: RosiQueueItem[]) {
   queueController.focusQueueItemId = null;
   queueController.focusQueueAction = null;
   queueController.focusPanelOnRender = false;
+  if (panelFocusWanted && panelLocked) queueController.panelFocusPending = true;
 }
 
 /** Drops a pending focus move after a removal failed, so it cannot apply later. */
@@ -388,6 +393,7 @@ function clearRemoveFocus() {
   queueController.focusQueueItemId = null;
   queueController.focusQueueAction = null;
   queueController.focusPanelOnRender = false;
+  queueController.panelFocusPending = false;
 }
 
 /**
@@ -458,6 +464,11 @@ export function syncQueueActionBusyState() {
   if (refs.queueSection) {
     refs.queueSection.setAttribute('aria-busy', String(isBusy));
   }
+  // Focus can land on the input only once it is enabled, so apply a deferred move now.
+  if (!isBusy && queueController.panelFocusPending) {
+    queueController.panelFocusPending = false;
+    refs.queueUrlInput?.focus();
+  }
 }
 
 export function beginQueueAction() {
@@ -476,6 +487,8 @@ export const queueController: {
   focusQueueAction: string | null;
   // Set when a removal left no row to focus, so the queue panel control takes focus.
   focusPanelOnRender: boolean;
+  // A panel focus that was due while the action lock disabled the input. Applied on unlock.
+  panelFocusPending: boolean;
   currentQueue: RosiQueueItem[];
   queueStatusTimer: ReturnType<typeof setTimeout> | null;
   queueActionLocks: number;
@@ -490,6 +503,7 @@ export const queueController: {
   focusQueueItemId: null,
   focusQueueAction: null,
   focusPanelOnRender: false,
+  panelFocusPending: false,
   currentQueue: [],
   queueStatusTimer: null,
   queueActionLocks: 0,

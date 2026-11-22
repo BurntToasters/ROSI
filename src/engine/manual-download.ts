@@ -5,6 +5,7 @@ import {
   hideProgressBar,
   revealFileLocation,
   showProgressComplete,
+  showProgressFailed,
   updateProgressBar,
 } from './progress';
 import { refs } from './refs';
@@ -183,11 +184,14 @@ export function showManualDownloadCompletion(
   } else {
     refs.downloadBtn.onclick = refs.downloadBtn._originalClick ?? null;
     // A user cancel is not a failure, so only a failed outcome notifies.
-    if (completion.outcome === 'failed' && settingsStore.settings.notifications) {
-      void api.showNotification({
-        title: 'Download Failed',
-        body: failureNotificationBody(completion.error || completion.statusMessage),
-      });
+    if (completion.outcome === 'failed') {
+      showProgressFailed();
+      if (settingsStore.settings.notifications) {
+        void api.showNotification({
+          title: 'Download Failed',
+          body: failureNotificationBody(completion.error || completion.statusMessage),
+        });
+      }
     }
   }
   scheduleProgressHide(operation);

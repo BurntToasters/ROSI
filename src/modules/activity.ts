@@ -119,9 +119,10 @@ function restoreActivityFocus(listEl: HTMLElement, key: ActivityFocusKey | null)
   target?.focus({ preventScroll: true });
 }
 
-// One polite region, never cleared, so each new entry is read once. Progress
-// ticks never write to it. It sits beside the panel, which is hidden while
-// another dock tab is selected.
+// One polite region. Each new entry is announced by clearing the text and setting
+// the new message in a later task. Progress ticks never write to it. It is a
+// visually hidden child of the body, outside the dock, so it stays in the
+// accessibility tree while the dock is collapsed.
 function createActivityAnnouncer(): HTMLElement {
   const announcer = document.createElement('p');
   announcer.id = LIVE_REGION_ID;
@@ -129,7 +130,7 @@ function createActivityAnnouncer(): HTMLElement {
   announcer.setAttribute('role', 'status');
   announcer.setAttribute('aria-live', 'polite');
   announcer.setAttribute('aria-atomic', 'true');
-  document.getElementById('download-history')?.before(announcer);
+  document.body.appendChild(announcer);
   return announcer;
 }
 
@@ -137,10 +138,16 @@ function announceNewEntries(announcer: HTMLElement, rows: ActivityRow[], newIds:
   const newRows = rows.filter((row) => newIds.has(row.id));
   const [only] = newRows;
   if (!only) return;
-  announcer.textContent =
+  const message =
     newRows.length === 1
       ? `${activityStatusLabel(only)}: ${only.title}.`
       : `${newRows.length} new downloads recorded.`;
+  // Clear first, then set the text in a later task: a screen reader announces a
+  // change to the text, so identical text would otherwise be silent.
+  announcer.textContent = '';
+  setTimeout(() => {
+    announcer.textContent = message;
+  }, 0);
 }
 
 /** Detail text followed by the relative time, the form every row's time line uses. */
@@ -149,7 +156,9 @@ function activityTimeText(
   timestamp: number,
   formatRelativeTime: RosiActivityPanelDeps['formatRelativeTime']
 ) {
-  return [details, formatRelativeTime(timestamp)].filter(Boolean).join(' • ');
+  // A row without a valid time must not render "Invalid Date".
+  const when = Number.isFinite(timestamp) ? formatRelativeTime(timestamp) : 'Unknown time';
+  return [details, when].filter(Boolean).join(' • ');
 }
 
 function toActivityRows(activityEntries: RosiDownloadActivity[]): ActivityRow[] {
@@ -523,5 +532,11 @@ export function initActivityPanel(deps: RosiActivityPanelDeps): RosiActivityPane
 
   bindActivityFilterButtons(setActivityFilter);
 
-  return { setEntries: setActivityEntries, clear: clearActivity };
+  return {
+    setEntries: setActivityEntries,
+    clear: clearActivity,
+    markLoadFailed: () => {
+      activityLoaded = true;
+    },
+  };
 }

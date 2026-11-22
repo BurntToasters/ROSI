@@ -31,6 +31,8 @@ interface RosiActivityPanelDeps {
 interface RosiActivityPanel {
   setEntries: (entries: RosiDownloadActivity[]) => void;
   clear: () => Promise<boolean>;
+  // A failed startup read counts as the load, so the next event is news, not history.
+  markLoadFailed: () => void;
 }
 
 // `progress` is attached by the renderer, not sent by the backend.

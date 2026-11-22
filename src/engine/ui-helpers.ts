@@ -49,9 +49,10 @@ export function setButtonLoading(
   button: HTMLButtonElement | null,
   isLoading: boolean,
   onCancel?: (() => void) | null,
-  cancelLabel?: string
+  cancelLabel?: string,
+  cancelText?: string
 ) {
-  setLoading(button, isLoading, onCancel, cancelLabel);
+  setLoading(button, isLoading, onCancel, cancelLabel, cancelText);
 }
 
 export function toggleSidebar() {

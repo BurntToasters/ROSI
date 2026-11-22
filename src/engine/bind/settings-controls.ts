@@ -277,9 +277,7 @@ function bindDownloadSectionControls() {
       void persistSettings();
     });
   if (ffmpegPathInput) {
-    ffmpegPathInput.addEventListener('input', (e) => {
-      settingsStore.settings.ffmpegPath = (e.target as HTMLInputElement | HTMLSelectElement).value;
-    });
+    // Commit on change only: a save per keystroke would validate partial paths.
     ffmpegPathInput.addEventListener('change', (e) => {
       settingsStore.settings.ffmpegPath = (e.target as HTMLInputElement | HTMLSelectElement).value;
       void persistSettings();
@@ -472,9 +470,7 @@ function bindInterfaceSectionControls() {
 function bindApplicationSectionControls() {
   const { checkUpdatesOnStartupToggle, upstreamProxyInput } = refs;
   if (upstreamProxyInput) {
-    upstreamProxyInput.addEventListener('input', (e) => {
-      settingsStore.settings.upstreamProxy = (e.target as HTMLInputElement).value;
-    });
+    // Commit on change only: a save per keystroke would validate partial proxy URLs.
     upstreamProxyInput.addEventListener('change', (e) => {
       settingsStore.settings.upstreamProxy = (e.target as HTMLInputElement).value;
       void persistSettings();

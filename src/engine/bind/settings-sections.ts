@@ -123,6 +123,12 @@ async function applySectionReset(keys: string[]) {
   // chrome never reaches the select, which would show blank.
   enforceWindowsBrowserChoice();
   updateUIFromSettings();
+  // The default language list is valid, so an earlier validation error no longer applies.
+  if (keys.includes('subtitleLangs')) {
+    refs.subtitleLangsInput?.removeAttribute('aria-invalid');
+    const subtitleLangsError = document.getElementById('subtitleLangsError');
+    if (subtitleLangsError) subtitleLangsError.textContent = '';
+  }
   applyTheme(settingsStore.settings.theme ?? 'system');
   // Same notice as the channel select, so the updater retires a candidate from the old channel.
   notifyChannelIfChanged(previousChannel, settingsStore.settings.updateChannel);

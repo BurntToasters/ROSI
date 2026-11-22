@@ -497,10 +497,15 @@ export function launchSetupWizard(
   }
 
   async function finalizeWizard(skipped: boolean): Promise<boolean> {
+    // A failed save must not leave these values in memory, or the close flush saves them.
+    const before = { ...settings } as RosiSettings;
     if (!skipped) gatherSettings();
     settings.firstLaunch = false;
     const saved = await persistSettingsFn(false, true);
-    if (!saved) return false;
+    if (!saved) {
+      Object.assign(settings, before);
+      return false;
+    }
 
     const themeSelect = document.getElementById('themeSelect') as HTMLSelectElement | null;
     if (themeSelect) themeSelect.value = settings.theme || 'system';

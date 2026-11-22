@@ -19,11 +19,14 @@ export function bindActivityControls() {
   const { activityPanel, clearConsoleBtn, clearHistoryBtn, outputEl } = refs;
   const updatesBeforeRead = activityUpdatesSeen;
   // A failed startup read is non-blocking: the panel stays usable and the next
-  // activity event still fills it in.
-  const reportLoadFailure = () =>
+  // activity event still fills it in. No toast once an event has already filled it.
+  const reportLoadFailure = () => {
+    activityPanel?.markLoadFailed();
+    if (activityUpdatesSeen !== updatesBeforeRead) return;
     showToast('Could not load download activity. It will update after the next download.', {
       type: 'warning',
     });
+  };
   api
     .getDownloadActivity()
     .then((result) => {

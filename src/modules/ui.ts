@@ -1,6 +1,12 @@
 import { icon as lucideIcon, renderStatus } from './icons';
 import { setTabAvailable } from './dock';
-import { focusFirstElement, getFocusableElements } from '../engine/overlays';
+import {
+  focusFirstElement,
+  getFocusableElements,
+  getTopActiveOverlayId,
+  setMainContentInert,
+  syncModalAccessibility,
+} from '../engine/overlays';
 
 type ToastType = 'warning' | 'error' | 'success' | 'info';
 
@@ -196,6 +202,10 @@ export function showToast(message: unknown, options: ToastOptions = {}) {
  */
 export function appendConsoleOutput(outputEl: HTMLElement | null, text: string) {
   if (!outputEl) return;
+  // Follow new output only while the user is at the bottom (within 24 px). A hidden
+  // console has no height; it counts as at the bottom so it opens on the newest line.
+  const distanceFromBottom = outputEl.scrollHeight - outputEl.scrollTop - outputEl.clientHeight;
+  const wasNearBottom = outputEl.clientHeight === 0 || distanceFromBottom <= 24;
   const lines = String(text).split('\n');
   for (const line of lines) {
     const lineEl = document.createElement('span');
@@ -207,7 +217,7 @@ export function appendConsoleOutput(outputEl: HTMLElement | null, text: string) 
     outputEl.firstChild?.remove();
     if (outputEl.firstChild?.nodeType === Node.TEXT_NODE) outputEl.firstChild.remove();
   }
-  outputEl.scrollTop = outputEl.scrollHeight;
+  if (wasNearBottom) outputEl.scrollTop = outputEl.scrollHeight;
 }
 
 /**
@@ -228,7 +238,8 @@ export function setButtonLoading(
   button: UiButtonElement | null,
   isLoading: boolean,
   onCancel?: (() => void) | null,
-  cancelLabel = 'Cancel download'
+  cancelLabel = 'Cancel download',
+  cancelText = 'Cancel'
 ) {
   if (!button) return;
   if (!button.dataset.defaultHtml) {
@@ -244,7 +255,7 @@ export function setButtonLoading(
     const cancellable = typeof onCancel === 'function';
     button.classList.add('loading');
     button.replaceChildren(
-      ...busyContent(cancellable ? 'Cancel' : button.dataset.defaultText || 'Loading')
+      ...busyContent(cancellable ? cancelText : button.dataset.defaultText || 'Loading')
     );
     button.disabled = false;
     button.setAttribute('aria-busy', 'true');
@@ -275,17 +286,6 @@ function setSidebarInert(sidebar: HTMLElement, isInert: boolean) {
   }
 }
 
-function getTopActiveOverlayId() {
-  for (const id of ['app-modal', 'licenses-overlay', 'setup-wizard', 'sidebar']) {
-    const overlay = document.getElementById(id);
-    const active =
-      id === 'sidebar'
-        ? overlay?.classList.contains('open')
-        : overlay?.classList.contains('active');
-    if (active) return id;
-  }
-  return null;
-}
 let previousSidebarFocus: HTMLElement | null = null;
 
 function focusFirstSidebarElement(sidebar: HTMLElement): boolean {
@@ -296,21 +296,6 @@ function focusFirstSidebarElement(sidebar: HTMLElement): boolean {
     return true;
   }
   return false;
-}
-
-function setMainContentInert(isInert: boolean) {
-  const mainContent =
-    document.getElementById('main-content') || document.querySelector('.main-content');
-  if (!(mainContent instanceof HTMLElement)) return;
-  const shouldBeInert = isInert || getTopActiveOverlayId() !== null;
-  if ('inert' in mainContent) {
-    (mainContent as HTMLElement & { inert: boolean }).inert = shouldBeInert;
-  }
-  if (shouldBeInert) {
-    mainContent.setAttribute('aria-hidden', 'true');
-  } else {
-    mainContent.removeAttribute('aria-hidden');
-  }
 }
 
 export function closeSidebar() {
@@ -332,6 +317,7 @@ export function closeSidebar() {
   if (overlay) overlay.classList.remove('active');
   document.body.classList.remove('sidebar-open');
   setMainContentInert(false);
+  syncModalAccessibility();
   const settingsBtn = document.getElementById('settingsBtn');
   if (settingsBtn instanceof HTMLElement) settingsBtn.setAttribute('aria-expanded', 'false');
   if (!getTopActiveOverlayId()) {
@@ -362,6 +348,7 @@ export function toggleSidebar() {
   if (overlay) overlay.classList.add('active');
   document.body.classList.add('sidebar-open');
   setMainContentInert(true);
+  syncModalAccessibility();
   const settingsBtn = document.getElementById('settingsBtn');
   if (settingsBtn instanceof HTMLElement) {
     settingsBtn.setAttribute('aria-expanded', 'true');

@@ -132,7 +132,8 @@ export async function runVideoPreview(auto = false) {
       previewState.previewAbort?.();
       hideVideoPreview();
     },
-    'Cancel preview'
+    'Cancel preview',
+    'Cancel Preview'
   );
 
   try {

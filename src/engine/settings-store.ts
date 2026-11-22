@@ -4,7 +4,7 @@ import { refreshEffectiveOptionsSummary, UI_MESSAGES } from './messages';
 import { showModal } from './overlays';
 import { downloadState } from './progress';
 import { queueController } from './queue-controller';
-import { checkForUpdatesOnStartup, showRestartFailure } from './updater-ui';
+import { checkForUpdatesOnStartup, isUpdateDownloadActive, showRestartFailure } from './updater-ui';
 import { api } from '../api';
 
 // Copy used as the backend-confirmed baseline. Plain JSON, like saved snapshots.
@@ -276,11 +276,19 @@ export async function persistSettings(options: { immediate?: boolean } = {}): Pr
  */
 export function confirmInterruptActiveWork(action: string): Promise<boolean> {
   const queueActive = queueController.currentQueue.some((item) => item.status === 'downloading');
-  if (!downloadState.isDownloading && !queueActive) return Promise.resolve(true);
+  const downloadActive = !!downloadState.isDownloading || queueActive;
+  const updateActive = isUpdateDownloadActive();
+  if (!downloadActive && !updateActive) return Promise.resolve(true);
+  const stopped = [
+    downloadActive ? 'the active download' : null,
+    updateActive ? 'the active update download' : null,
+  ]
+    .filter(Boolean)
+    .join(' and ');
   return new Promise((resolve) => {
     showModal({
       title: 'Download in Progress',
-      message: `${action} stops the active download.${
+      message: `${action} stops ${stopped}.${
         queueActive ? ' The interrupted queue item goes back to the queue.' : ''
       }`,
       priority: true,

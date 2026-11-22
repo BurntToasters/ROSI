@@ -1,5 +1,5 @@
 // Modal queue, focus trapping, overlay accessibility, and the licenses overlay.
-import { getModifierKeyName, logError, setButtonIconLabel } from './core';
+import { getModifierKeyName, isMac, logError, setButtonIconLabel } from './core';
 import { appliedTheme, syncLicensesTheme } from './theme';
 
 export function setMainContentInert(isInert: boolean) {
@@ -35,6 +35,17 @@ export function syncModalAccessibility() {
   for (const id of ['app-modal', 'licenses-overlay', 'setup-wizard']) {
     const overlay = document.getElementById(id);
     if (overlay) overlay.setAttribute('aria-modal', String(topOverlayId === id));
+  }
+  // The sidebar is a modal dialog only while it is open and on top. A closed sidebar
+  // keeps the inert and aria-hidden state that closeSidebar and toggleSidebar set.
+  const sidebar = document.getElementById('sidebar');
+  if (sidebar) {
+    const isOpen = sidebar.classList.contains('open');
+    const isTop = topOverlayId === 'sidebar';
+    sidebar.setAttribute('aria-modal', String(isOpen && isTop));
+    if (isOpen && 'inert' in sidebar) {
+      (sidebar as HTMLElement & { inert: boolean }).inert = !isTop;
+    }
   }
 }
 
@@ -490,10 +501,12 @@ export function retireModal(key: string) {
 
 export function showKeyboardShortcuts() {
   const modKey = getModifierKeyName();
+  // macOS calls the Alt key Option.
+  const altKey = isMac() ? 'Option' : 'Alt';
   showModal({
     title: 'Keyboard Shortcuts',
-    message: `${modKey}+D - Restart application\n${modKey}+F - Focus URL input field\n${modKey}+, - Open settings\n${modKey}+Shift+, - Toggle settings sidebar\n${modKey}+Enter - Submit queue URLs (when focused)\nAlt+↑ / Alt+↓ - Move a pending queue item (when focused)
-Alt+1 / Alt+2 / Alt+3 - Show Queue, Activity, or Console`,
+    message: `${modKey}+D - Restart application\n${modKey}+F - Focus URL input field\n${modKey}+, - Open settings\n${modKey}+Shift+, - Toggle settings sidebar\n${modKey}+Enter - Submit queue URLs (when focused)\nEnter - Start a download from the URL field\nEscape - Close dialogs and panels\n${altKey}+↑ / ${altKey}+↓ - Move a pending queue item (when focused)
+${altKey}+1 / ${altKey}+2 / ${altKey}+3 - Show Queue, Activity, or Console`,
     buttons: [{ label: 'OK', primary: true }],
   });
 }

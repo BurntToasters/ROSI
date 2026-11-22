@@ -2,7 +2,7 @@
 import { noteActivityUpdate } from './activity';
 import { logError } from '../core';
 import { handleManualDownloadCompletion, manualDownload } from '../manual-download';
-import { showLicenses } from '../overlays';
+import { currentModalData, showLicenses } from '../overlays';
 import { renderPresetOptions } from '../presets';
 import { applyJobProgress, downloadState, hideProgressBar, showProgressBar } from '../progress';
 import { applyQueueItemProgress, queueController, renderQueue } from '../queue-controller';
@@ -16,6 +16,15 @@ import { api } from '../../api';
 
 // Delay before a finished queue run hides the shared progress bar.
 const QUEUE_PROGRESS_HIDE_MS = 2000;
+
+// A visible prompt or the setup wizard must stay on top: menu actions cannot open
+// the settings sidebar over them.
+function isSidebarOpenBlocked(): boolean {
+  return (
+    currentModalData !== null ||
+    document.getElementById('setup-wizard')?.classList.contains('active') === true
+  );
+}
 
 /** Backend events: progress, completion, queue, activity, and menu actions. */
 export function bindBackendEvents() {
@@ -92,13 +101,18 @@ export function bindBackendEvents() {
       }
       if (action === 'open-settings') {
         const sidebar = document.getElementById('sidebar');
-        if (sidebar && !sidebar.classList.contains('open')) {
+        if (sidebar && !sidebar.classList.contains('open') && !isSidebarOpenBlocked()) {
           toggleSidebar();
         }
         return;
       }
       if (action === 'toggle-sidebar') {
-        toggleSidebar();
+        // Closing an open sidebar is always allowed; only opening waits for the
+        // prompt or setup wizard to be dismissed.
+        const sidebar = document.getElementById('sidebar');
+        if (sidebar?.classList.contains('open') || !isSidebarOpenBlocked()) {
+          toggleSidebar();
+        }
         return;
       }
       if (action === 'show-licenses') {

@@ -143,6 +143,14 @@ export function applyJobProgress(event: RosiJobProgressEvent) {
   updateProgressBar(displayPercent, event.status, event.details ?? null);
 }
 
+/** A failed run keeps the card on screen until its hide timer, so the card says so. */
+export function showProgressFailed(status = 'Download failed') {
+  const statusEl = document.getElementById('progress-status');
+  const bar = document.getElementById('progress-bar') as HTMLElement | null;
+  if (statusEl) renderStatusText(statusEl, status);
+  if (bar) bar.classList.remove('indeterminate', 'active-glow');
+}
+
 export function hideProgressBar() {
   const container = document.getElementById('progress-container');
   const bar = document.getElementById('progress-bar');
