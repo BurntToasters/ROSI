@@ -22,8 +22,11 @@ What the checks can and cannot show:
   the gate fails the area unless `e2e/suites.json` allows that case on the
   platform. Rows 12 and 13 need an OS contrast, transparency or forced-colors
   setting that the gate cannot turn on, so their allowances name that reason.
-  Rows 1 to 7 get no allowance: a not-proven result there means the engine lacks
-  support and needs a decision.
+  Rows 1 to 7 get no allowance on Windows or Linux: a not-proven result there
+  means the engine lacks support and needs a decision. The one exception is
+  darwin (WebKit has no `forced-color-adjust` support), where rows 5
+  (`forced-colors-adjust-scope`) and 7 (`forced-colors-confined-to-media`) have
+  allowances that name that reason.
 - Engine support is checked, not assumed. Rows that read `forced-color-adjust`
   or `(forced-colors: active)` CSSOM text first run `CSS.supports('forced-color-adjust:
 none')` and a `matchMedia('(forced-colors: active)')` parse. Where either is

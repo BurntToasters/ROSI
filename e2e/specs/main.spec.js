@@ -3949,7 +3949,13 @@ describe("ROSI main window", () => {
       timeoutMsg: "shortcuts did not open",
     });
     assert.equal(modal.title, "Keyboard Shortcuts");
-    assert.match(modal.message, /Alt\+1 \/ Alt\+2 \/ Alt\+3/);
+    // The app names the Alt key "Option" on macOS (src/engine/overlays.ts).
+    assert.match(
+      modal.message,
+      process.platform === "darwin"
+        ? /Option\+1 \/ Option\+2 \/ Option\+3 - Show Queue, Activity, or Console/
+        : /Alt\+1 \/ Alt\+2 \/ Alt\+3 - Show Queue, Activity, or Console/,
+    );
     await clickModalButton("OK");
     await waitForModal(false, { timeoutMsg: "shortcuts did not close" });
 

@@ -918,6 +918,18 @@
     },
     {
       "scenario": "v5-fixes/ui-polish",
+      "case": "forced-colors-adjust-scope",
+      "platform": "darwin",
+      "reason": "WebKit does not support forced-color-adjust (CSS.supports is false), so the scope check cannot run on macOS."
+    },
+    {
+      "scenario": "v5-fixes/ui-polish",
+      "case": "forced-colors-confined-to-media",
+      "platform": "darwin",
+      "reason": "WebKit does not support forced-color-adjust (CSS.supports is false), so the confinement check cannot run on macOS."
+    },
+    {
+      "scenario": "v5-fixes/ui-polish",
       "case": "licenses-hide-show-hide-ends-closed",
       "platform": "darwin",
       "reason": "The guard checks only the end state; WebDriver cannot count cleanup timers."
@@ -933,6 +945,12 @@
       "case": "licenses-hide-show-hide-ends-closed",
       "platform": "win32",
       "reason": "The guard checks only the end state; WebDriver cannot count cleanup timers."
+    },
+    {
+      "scenario": "v5-fixes/ui-polish",
+      "case": "keyboard-reset-tab-trap",
+      "platform": "darwin",
+      "reason": "WebDriver Tab presses do not move focus in the macOS WKWebView harness, so the reset prompt's Tab trap cannot be proven."
     },
     {
       "scenario": "v5-fixes/ui-polish",
