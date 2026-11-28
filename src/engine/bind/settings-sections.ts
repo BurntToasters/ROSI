@@ -69,7 +69,6 @@ export function initSettingsSearch() {
       'showConsoleOutput',
       'animateBackground',
       'theme',
-      'flatUi',
       'notifications',
       'showTaskbarProgress',
     ],

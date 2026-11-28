@@ -11,6 +11,7 @@ import {
   setPresetPopoverOpen,
   setPresetStatus,
 } from '../presets';
+import { showModal } from '../overlays';
 import { byId, refs } from '../refs';
 import { getPresets, persistSettings, settingsStore } from '../settings-store';
 
@@ -93,23 +94,36 @@ export function initPresets() {
     });
   }
   if (deletePresetBtn) {
-    deletePresetBtn.addEventListener('click', async () => {
+    deletePresetBtn.addEventListener('click', () => {
       const preset = getSelectedPreset();
       if (!preset) return;
-      const previous = getPresets();
-      deletePresetBtn.disabled = true;
-      let saved = false;
-      try {
-        settingsStore.settings.downloadPresets = previous.filter(
-          (candidate) => candidate.id !== preset.id
-        );
-        saved = await persistSettings({ immediate: true });
-      } finally {
-        // A failed save must not leave the preset removed in memory.
-        if (!saved) settingsStore.settings.downloadPresets = previous;
-        renderPresetOptions(saved ? '' : preset.id);
-      }
-      setPresetStatus(saved ? `Deleted ${preset.name}.` : 'Could not delete the preset.');
+      showModal({
+        title: 'Delete Preset?',
+        message: `Delete the preset "${preset.name}"? This cannot be undone.`,
+        buttons: [
+          { label: 'Cancel' },
+          {
+            label: 'Delete',
+            danger: true,
+            action: async () => {
+              const previous = getPresets();
+              deletePresetBtn.disabled = true;
+              let saved = false;
+              try {
+                settingsStore.settings.downloadPresets = previous.filter(
+                  (candidate) => candidate.id !== preset.id
+                );
+                saved = await persistSettings({ immediate: true });
+              } finally {
+                // A failed save must not leave the preset removed in memory.
+                if (!saved) settingsStore.settings.downloadPresets = previous;
+                renderPresetOptions(saved ? '' : preset.id);
+              }
+              setPresetStatus(saved ? `Deleted ${preset.name}.` : 'Could not delete the preset.');
+            },
+          },
+        ],
+      });
     });
   }
   renderPresetOptions();

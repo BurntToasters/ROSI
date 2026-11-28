@@ -1,6 +1,6 @@
 // First-run setup wizard.
 import { icon } from '../modules/icons';
-import { RosiSettings, isValidSubtitleLangs, logError, renderFolderSummary } from './core';
+import { RosiSettings, isValidSubtitleLangs, logError } from './core';
 import { DENO_INSTALL_DOCS, isLinuxPlatform } from './deno';
 import { UI_MESSAGES } from './messages';
 import { openExternalLink } from './ui-helpers';
@@ -507,23 +507,7 @@ export function launchSetupWizard(
       return false;
     }
 
-    const themeSelect = document.getElementById('themeSelect') as HTMLSelectElement | null;
-    if (themeSelect) themeSelect.value = settings.theme || 'system';
-    const notificationsToggle = document.getElementById(
-      'notificationsToggle'
-    ) as HTMLInputElement | null;
-    if (notificationsToggle) notificationsToggle.checked = settings.notifications;
-    const checkUpdatesToggle = document.getElementById(
-      'checkUpdatesOnStartupToggle'
-    ) as HTMLInputElement | null;
-    if (checkUpdatesToggle) checkUpdatesToggle.checked = settings.checkUpdatesOnStartup;
-    const askLocationToggle = document.getElementById(
-      'askDownloadLocationToggle'
-    ) as HTMLInputElement | null;
-    if (askLocationToggle) askLocationToggle.checked = settings.askDownloadLocation;
-    const folderSummary = document.getElementById('downloadFolderSummary');
-    if (folderSummary) renderFolderSummary(folderSummary, settings.downloadFolder);
-
+    // The onComplete handler runs updateUIFromSettings, which syncs these controls.
     return true;
   }
 

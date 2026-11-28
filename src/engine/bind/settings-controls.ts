@@ -521,10 +521,8 @@ export function bindSettingsActions() {
     showUpdateChannelBtn.addEventListener('click', () => {
       const isVisible = updateChannelContainer.classList.contains('visible');
       updateChannelContainer.classList.toggle('visible', !isVisible);
+      // The label and chevron stay in the markup; CSS rotates the chevron from aria-expanded.
       syncUpdateChannelAria();
-      showUpdateChannelBtn.textContent = isVisible
-        ? '▸ Update channel settings'
-        : '▾ Hide update channel';
     });
   }
 
@@ -626,7 +624,7 @@ export function bindSettingsActions() {
                     showToast('Settings imported successfully.', { type: 'success' });
                   }
                 } else {
-                  showToast(result?.error?.message || 'Import failed or was cancelled.', {
+                  showToast(result?.error?.message || 'Import failed.', {
                     type: 'error',
                   });
                 }
@@ -667,17 +665,35 @@ export function bindSettingsActions() {
           buttons: [
             {
               label: 'Reset Stats',
-              action: async () => {
-                try {
-                  const result = await api.resetStats();
-                  if (!result.ok) {
-                    showToast('Could not reset statistics. Please try again.', { type: 'error' });
-                    return;
-                  }
-                  showToast('Statistics reset.', { type: 'info' });
-                } catch {
-                  showToast('Could not reset statistics. Please try again.', { type: 'error' });
-                }
+              action: () => {
+                // Cancel leaves the statistics as they are.
+                showModal({
+                  title: 'Reset Statistics?',
+                  message: 'Reset all download statistics to zero? This cannot be undone.',
+                  buttons: [
+                    { label: 'Cancel' },
+                    {
+                      label: 'Reset Stats',
+                      danger: true,
+                      action: async () => {
+                        try {
+                          const result = await api.resetStats();
+                          if (!result.ok) {
+                            showToast('Could not reset statistics. Please try again.', {
+                              type: 'error',
+                            });
+                            return;
+                          }
+                          showToast('Statistics reset.', { type: 'info' });
+                        } catch {
+                          showToast('Could not reset statistics. Please try again.', {
+                            type: 'error',
+                          });
+                        }
+                      },
+                    },
+                  ],
+                });
               },
             },
             { label: 'Close', primary: true },

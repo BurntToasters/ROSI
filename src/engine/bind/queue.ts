@@ -136,9 +136,14 @@ export function bindQueueControls() {
   if (clearQueueBtn) {
     clearQueueBtn.addEventListener('click', () => {
       if (queueController.queueActionLocks > 0) return;
+      const downloadRunning = queueController.currentQueue.some(
+        (item) => item.status === 'downloading'
+      );
       showModal({
         title: 'Clear Queue',
-        message: 'Remove all queued and completed items?',
+        message: downloadRunning
+          ? 'Remove all queued and completed items? The current download will be stopped too.'
+          : 'Remove all queued and completed items?',
         buttons: [
           { label: 'Cancel' },
           {

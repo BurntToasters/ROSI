@@ -54,17 +54,73 @@ export function prepareManualDownloadStart(operation: number) {
   manualDownload.manualSessionIdentityReceived = false;
 }
 
+/**
+ * Puts the Download button in its running state. Its Cancel click ends only
+ * this operation. The Download button and "Download again" both use it.
+ */
+export function showManualDownloadRunning(operation: number) {
+  downloadState.downloadAbort = () => {
+    if (operation !== manualDownload.manualDownloadOperation) return;
+    downloadState.isDownloading = false;
+    setButtonLoading(refs.downloadBtn, false);
+    syncPrimaryActionState();
+  };
+  setButtonLoading(refs.downloadBtn, true, () => cancelManualDownload(operation));
+}
+
+/**
+ * Cancel for the running operation. While the start is pending there is no
+ * session to stop yet, so the stop is sent when the reply arrives.
+ */
+export function cancelManualDownload(operation: number) {
+  if (operation !== manualDownload.manualDownloadOperation) return;
+  manualDownload.cancelledOperation = operation;
+  if (manualDownload.manualDownloadStartPending) {
+    // The reply may arrive after the user starts another download. Remember
+    // this operation so that reply can still stop the session it started.
+    const pending = manualDownload.cancelledPendingOperations;
+    if (pending.size >= CANCELLED_PENDING_MAX)
+      pending.delete(pending.values().next().value as number);
+    pending.add(operation);
+  } else {
+    api.cancelDownload();
+  }
+  downloadState.downloadAbort?.();
+  hideProgressBar();
+}
+
+/** Upper bound on remembered cancelled starts. Entries also leave when their reply or failure settles. */
+const CANCELLED_PENDING_MAX = 4;
+
+/** True once the user cancelled the current operation. Its late events must not reopen the bar. */
+export function isManualDownloadCancelled(): boolean {
+  return manualDownload.cancelledOperation === manualDownload.manualDownloadOperation;
+}
+
 export function receiveManualDownloadStart(
   started: { started: boolean; sessionId?: number },
   operation: number
 ) {
-  if (operation !== manualDownload.manualDownloadOperation) return;
+  if (operation !== manualDownload.manualDownloadOperation) {
+    // A stale reply. If its operation was cancelled while the start was
+    // pending, the session it started is still running and nothing else stops it.
+    // Sending the stop is safe: the cancelled operation held the manual slot
+    // until this reply, so a newer operation cannot own a session yet.
+    if (manualDownload.cancelledPendingOperations.delete(operation) && started.started === true) {
+      api.cancelDownload();
+    }
+    return;
+  }
+  manualDownload.cancelledPendingOperations.delete(operation);
   manualDownload.manualDownloadStartPending = false;
   manualDownload.manualSessionIdentityReceived = true;
   manualDownload.manualDownloadSessionId =
     typeof started.sessionId === 'number' && Number.isSafeInteger(started.sessionId)
       ? started.sessionId
       : null;
+  // Cancel was pressed before this reply. Stop the session that just started.
+  // Only this call sends that stop, and only for the matching operation.
+  if (isManualDownloadCancelled()) api.cancelDownload();
   const earlyCompletion =
     manualDownload.manualDownloadSessionId === null
       ? undefined
@@ -74,6 +130,8 @@ export function receiveManualDownloadStart(
 }
 
 export function failManualDownloadStart(operation: number) {
+  // A failed start has no session to stop, so its entry leaves the set.
+  manualDownload.cancelledPendingOperations.delete(operation);
   if (operation !== manualDownload.manualDownloadOperation) return;
   manualDownload.manualDownloadStartPending = false;
   manualDownload.manualSessionIdentityReceived = true;
@@ -244,6 +302,8 @@ export const manualDownload: {
   downloadResult: DownloadResultState | null;
   downloadResultTimer: ReturnType<typeof setTimeout> | null;
   progressHideTimer: ReturnType<typeof setTimeout> | null;
+  cancelledOperation: number | null;
+  cancelledPendingOperations: Set<number>;
 } = {
   manualDownloadOperation: 0,
   manualDownloadSessionId: null,
@@ -252,4 +312,6 @@ export const manualDownload: {
   downloadResult: null,
   downloadResultTimer: null,
   progressHideTimer: null,
+  cancelledOperation: null,
+  cancelledPendingOperations: new Set<number>(),
 };

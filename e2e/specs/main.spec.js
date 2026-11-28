@@ -3966,6 +3966,11 @@ describe("ROSI main window", () => {
       new RegExp(`Successful: ${stats.successfulDownloads}\\b`),
     );
     await clickModalButton("Reset Stats");
+    // Reset Stats asks first; only the confirm resets.
+    await waitForModal("Reset Statistics?", {
+      timeoutMsg: "Reset Stats did not ask for confirmation",
+    });
+    await clickModalButton("Reset Stats");
     await waitForModal(false, {
       timeoutMsg: "Reset Stats did not close the dialog",
     });
@@ -4092,6 +4097,10 @@ describe("ROSI main window", () => {
     assert.match(await presetStatus(), /Applied E2E Audio/);
 
     await clickById("deletePresetBtn");
+    await waitForModal("Delete Preset?", {
+      timeoutMsg: "Delete preset did not ask for confirmation",
+    });
+    await clickModalButton("Delete");
     await browser.waitUntil(
       async () =>
         !settingsOnDisk().downloadPresets.some(

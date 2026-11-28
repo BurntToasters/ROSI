@@ -27,6 +27,24 @@ function record(name, details) {
 // handled it too.
 const afterPageTurn = () => browser.executeAsync((done) => setTimeout(done, 0));
 
+// A cancelled update download reports itself as an info toast, not a modal.
+async function waitForCancelToast() {
+  await browser.waitUntil(
+    () =>
+      browser.execute(() =>
+        [...document.querySelectorAll(".toast.toast-info .toast-message")].some(
+          (element) =>
+            element.textContent.includes("The update download was cancelled."),
+        ),
+      ),
+    {
+      timeout: 20_000,
+      interval: 100,
+      timeoutMsg: "the cancelled update download showed no info toast",
+    },
+  );
+}
+
 async function dismissModal(titleText, label) {
   await waitForModal(titleText, { match: "includes" });
   await clickModalButton(label);
@@ -173,7 +191,7 @@ describe("renderer round-two repairs", () => {
 
       // Cancel, then let the held response finish: its bytes are discarded.
       await engine("cancel_update_download");
-      await dismissModal("Download Cancelled", "OK");
+      await waitForCancelToast();
       releaseFirst();
       await browser.waitUntil(
         () => browser.execute(() => window.round2FirstDownload !== undefined),

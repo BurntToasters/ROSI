@@ -149,6 +149,10 @@ export function updateQueueButtonStates(queue: RosiQueueItem[]) {
   if (refs.cancelQueueBtn) {
     refs.cancelQueueBtn.disabled = queueController.queueActionLocks > 0 || !isRunning;
   }
+  if (refs.clearQueueBtn) {
+    // Clear removes queued and completed items, so an empty queue has nothing to clear.
+    refs.clearQueueBtn.disabled = queueController.queueActionLocks > 0 || queue.length === 0;
+  }
   if (refs.clearFinishedQueueBtn) {
     refs.clearFinishedQueueBtn.disabled =
       queueController.queueActionLocks > 0 ||
@@ -456,7 +460,6 @@ export function syncQueueActionBusyState() {
     button.setAttribute('aria-busy', String(isBusy));
   });
   if (refs.addToQueueBtn) refs.addToQueueBtn.disabled = isBusy;
-  if (refs.clearQueueBtn) refs.clearQueueBtn.disabled = isBusy;
   updateQueueButtonStates(queueController.currentQueue);
   if (refs.queueUrlInput) {
     refs.queueUrlInput.disabled = isBusy;

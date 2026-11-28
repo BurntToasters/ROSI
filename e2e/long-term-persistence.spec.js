@@ -198,6 +198,21 @@ describe("long-term V5 observational audit", () => {
           .find((button) => button.textContent.includes("Reset Stats"))
           .click();
       });
+      // Reset Stats asks first; the confirm button is the one that resets.
+      await browser.waitUntil(
+        () =>
+          browser.execute(
+            () =>
+              document.getElementById("modal-title")?.textContent.trim() ===
+              "Reset Statistics?",
+          ),
+        { timeout: 10000 },
+      );
+      await browser.execute(() => {
+        Array.from(document.querySelectorAll("#modal-buttons button"))
+          .find((button) => button.textContent.trim() === "Reset Stats")
+          .click();
+      });
       await browser.waitUntil(
         () =>
           browser.execute(() =>

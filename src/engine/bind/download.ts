@@ -7,6 +7,7 @@ import {
   manualDownload,
   prepareManualDownloadStart,
   receiveManualDownloadStart,
+  showManualDownloadRunning,
 } from '../manual-download';
 import { isPlaylistScopeVisible, resolvePlaylistSelection } from '../playlist';
 import { buildRequestOverrides, readAdvancedFormatSelections } from '../presets';
@@ -167,17 +168,7 @@ export function bindDownloadControls() {
           return;
         }
         if (outputEl) outputEl.textContent = '';
-        downloadState.downloadAbort = () => {
-          if (operation !== manualDownload.manualDownloadOperation) return;
-          downloadState.isDownloading = false;
-          setButtonLoading(downloadBtn, false);
-          syncPrimaryActionState();
-        };
-        setButtonLoading(downloadBtn, true, () => {
-          api.cancelDownload();
-          downloadState.downloadAbort?.();
-          hideProgressBar();
-        });
+        showManualDownloadRunning(operation);
 
         const { videoFormat, audioFormat } = formatSelections;
 
@@ -192,7 +183,12 @@ export function bindDownloadControls() {
           ...(savePath ? { outputPath: savePath } : {}),
           ...requestOverrides,
         });
-        if (operation !== manualDownload.manualDownloadOperation) return;
+        if (operation !== manualDownload.manualDownloadOperation) {
+          // A stale reply still settles its own start (see receiveManualDownloadStart).
+          if (startResult?.ok === true) receiveManualDownloadStart(startResult.data, operation);
+          else failManualDownloadStart(operation);
+          return;
+        }
         if (!startResult || startResult.ok !== true) {
           failManualDownloadStart(operation);
           downloadState.isDownloading = false;

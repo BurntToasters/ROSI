@@ -395,12 +395,7 @@ export function setupAutoUpdater(flushSettingsBeforeRestart: () => Promise<boole
           retireModal('updater-candidate');
           retireModal('updater-downloaded');
           hideUpdateBanner();
-          showModal({
-            title: 'Download Cancelled',
-            message: 'The update download was cancelled.',
-            buttons: [{ label: 'OK', primary: true }],
-            priority: true,
-          });
+          showToast('The update download was cancelled.', { type: 'info' });
           break;
 
         case 'downloaded': {

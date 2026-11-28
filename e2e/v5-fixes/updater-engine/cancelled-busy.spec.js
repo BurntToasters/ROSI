@@ -137,6 +137,24 @@ async function startScenario(options) {
   await captureUpdaterStatuses("engineStatuses");
 }
 
+// A cancelled update download reports itself as an info toast, not a modal.
+async function waitForCancelToast() {
+  await browser.waitUntil(
+    () =>
+      browser.execute(() =>
+        [...document.querySelectorAll(".toast.toast-info .toast-message")].some(
+          (element) =>
+            element.textContent.includes("The update download was cancelled."),
+        ),
+      ),
+    {
+      timeout: 20_000,
+      interval: 100,
+      timeoutMsg: "the cancelled update download showed no info toast",
+    },
+  );
+}
+
 describe("Updater engine: cancelled download still stopping", () => {
   before(waitForAppReady);
   after(async () => {
@@ -203,8 +221,8 @@ describe("Updater engine: cancelled download still stopping", () => {
 
       // Cancel: the held transfer cannot be aborted, so it keeps the engine busy.
       await invoke("cancel_update_download");
-      await waitForModal("Download Cancelled", { timeout: 20_000 });
-      await clickModalButton("OK");
+      await waitForCancelToast();
+      await waitForModal(false, { timeoutMsg: "cancel opened a modal" });
       const statusBaseline = (await statuses()).length;
       const feedBaseline = requestCount("/latest-");
       const artifactBaseline = requestCount("/artifacts/");

@@ -1,7 +1,11 @@
 // Startup bindings for backend events.
 import { noteActivityUpdate } from './activity';
 import { logError } from '../core';
-import { handleManualDownloadCompletion, manualDownload } from '../manual-download';
+import {
+  handleManualDownloadCompletion,
+  isManualDownloadCancelled,
+  manualDownload,
+} from '../manual-download';
 import { currentModalData, showLicenses } from '../overlays';
 import { renderPresetOptions } from '../presets';
 import { applyJobProgress, downloadState, hideProgressBar, showProgressBar } from '../progress';
@@ -63,10 +67,13 @@ export function bindBackendEvents() {
 
   ipcCleanupFunctions.push(
     api.onJobProgress((event) => {
+      // Manual events count only for the live session the user has not cancelled.
       if (
         !event.queueItemId &&
-        (manualDownload.manualDownloadStartPending ||
+        (isManualDownloadCancelled() ||
+          manualDownload.manualDownloadStartPending ||
           !manualDownload.manualSessionIdentityReceived ||
+          manualDownload.manualDownloadSessionId === null ||
           (event.sessionId ?? null) !== manualDownload.manualDownloadSessionId)
       ) {
         return;

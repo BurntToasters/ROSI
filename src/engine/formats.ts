@@ -2,7 +2,7 @@
 import { isValidUrl, logError } from './core';
 import { showModal } from './overlays';
 import { refs } from './refs';
-import { setButtonLoading } from './ui-helpers';
+import { setButtonLoading, showToast } from './ui-helpers';
 import { api, type RosiCookieChoice } from '../api';
 
 export let isFetchingFormats = false;
@@ -90,21 +90,15 @@ export async function fetchFormats() {
 
   try {
     if (!btn || !videoUrl) {
-      showModal({
-        title: 'Input Error',
-        message: 'Please enter a video URL first.',
-        buttons: [{ label: 'OK', primary: true }],
-      });
+      showToast('Please enter a video URL first.', { type: 'warning' });
       return;
     }
 
     if (!isValidUrl(videoUrl)) {
       clearAdvancedFormatSelections();
       setPickerMessage('Invalid URL');
-      showModal({
-        title: 'Invalid URL',
-        message: 'Please enter a valid URL starting with http:// or https://',
-        buttons: [{ label: 'OK', primary: true }],
+      showToast('Please enter a valid URL starting with http:// or https://', {
+        type: 'warning',
       });
       return;
     }

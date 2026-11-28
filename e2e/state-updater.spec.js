@@ -59,6 +59,24 @@ async function clickDownload(url) {
   }, url);
 }
 
+// A cancelled update download reports itself as an info toast, not a modal.
+async function waitForCancelToast() {
+  await browser.waitUntil(
+    () =>
+      browser.execute(() =>
+        [...document.querySelectorAll(".toast.toast-info .toast-message")].some(
+          (element) =>
+            element.textContent.includes("The update download was cancelled."),
+        ),
+      ),
+    {
+      timeout: 20_000,
+      interval: 100,
+      timeoutMsg: "the cancelled update download showed no info toast",
+    },
+  );
+}
+
 async function dismissModal(titleText, buttonText) {
   await waitForModal(titleText, { match: "includes" });
   await clickModalButton(buttonText);
@@ -1104,7 +1122,7 @@ describe("state and updater repair E2E", () => {
       });
       await setUpdateChannel("stable");
       await engineInvoke("cancel_update_download");
-      await dismissModal("Download Cancelled", "OK");
+      await waitForCancelToast();
       // Compared in the page: WebDriver returns an undefined value as null.
       assert.equal(
         await browser.execute(() => window.auditDownloadBResult === undefined),

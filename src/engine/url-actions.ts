@@ -7,6 +7,7 @@ import {
   manualDownload,
   prepareManualDownloadStart,
   receiveManualDownloadStart,
+  showManualDownloadRunning,
 } from './manual-download';
 import { refreshEffectiveOptionsSummary } from './messages';
 import { resetPlaylistScope } from './playlist';
@@ -107,24 +108,19 @@ export async function replayActivityDownload(entry: RosiDownloadActivity) {
   const operation = beginManualDownloadOperation();
   downloadState.isDownloading = true;
   if (refs.outputEl) refs.outputEl.textContent = '';
-  downloadState.downloadAbort = () => {
-    if (operation !== manualDownload.manualDownloadOperation) return;
-    downloadState.isDownloading = false;
-    setButtonLoading(refs.downloadBtn, false);
-    syncPrimaryActionState();
-  };
-  setButtonLoading(refs.downloadBtn, true, () => {
-    api.cancelDownload();
-    downloadState.downloadAbort?.();
-    hideProgressBar();
-  });
+  showManualDownloadRunning(operation);
   // The Cancel control must be clickable; a stale idle-state disabled class would hide it.
   refs.downloadBtn?.classList.remove('is-disabled');
   applyActiveDownloadProgressPhases(settingsStore.settings, 'Starting download...');
   try {
     prepareManualDownloadStart(operation);
     const result = await api.downloadVideo(request);
-    if (operation !== manualDownload.manualDownloadOperation) return;
+    if (operation !== manualDownload.manualDownloadOperation) {
+      // A stale reply still settles its own start (see receiveManualDownloadStart).
+      if (result?.ok === true) receiveManualDownloadStart(result.data, operation);
+      else failManualDownloadStart(operation);
+      return;
+    }
     if (!result || result.ok !== true) {
       failManualDownloadStart(operation);
       downloadState.isDownloading = false;

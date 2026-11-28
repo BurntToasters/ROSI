@@ -109,7 +109,8 @@ export function updateProgressBar(
     barWrapper.removeAttribute('aria-valuetext');
   }
   if (statusText && statusEl) renderStatusText(statusEl, statusText);
-  if (detailsText && details) details.textContent = detailsText;
+  // An event without details clears the old speed/ETA text.
+  if (details) details.textContent = detailsText ?? '';
 }
 
 export function setProgressIndeterminate(status = 'Processing...') {
@@ -194,7 +195,7 @@ export async function revealFileLocation(filePath: string) {
 
 // Shared with the renderer controller, which updates these while it runs.
 export const downloadState: {
-  isDownloading: unknown;
+  isDownloading: boolean;
   downloadAbort: (() => void) | null;
 } = {
   isDownloading: false,

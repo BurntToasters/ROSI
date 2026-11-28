@@ -908,6 +908,8 @@ describe("ROSI renderer actions audit: toasts, replay, presets, links, formats",
         await browser.execute(() =>
           document.getElementById("deletePresetBtn").click(),
         );
+        await waitForModal("Delete Preset?");
+        await clickModalButton("Delete");
         await waitForPresetStatus("Could not delete the preset.");
         const failedDelete = await presetState();
         assert.ok(
@@ -922,6 +924,8 @@ describe("ROSI renderer actions audit: toasts, replay, presets, links, formats",
         await browser.execute(() =>
           document.getElementById("deletePresetBtn").click(),
         );
+        await waitForModal("Delete Preset?");
+        await clickModalButton("Delete");
         await waitForPresetStatus("Deleted audit keep.");
         const after = await presetState();
         assert.deepEqual(after.storeNames, before.storeNames);

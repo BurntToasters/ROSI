@@ -88,6 +88,24 @@ function holdResponse() {
   return { gate, release };
 }
 
+// A cancelled update download reports itself as an info toast, not a modal.
+async function waitForCancelToast() {
+  await browser.waitUntil(
+    () =>
+      browser.execute(() =>
+        [...document.querySelectorAll(".toast.toast-info .toast-message")].some(
+          (element) =>
+            element.textContent.includes("The update download was cancelled."),
+        ),
+      ),
+    {
+      timeout: 20_000,
+      interval: 100,
+      timeoutMsg: "the cancelled update download showed no info toast",
+    },
+  );
+}
+
 async function dismissModal() {
   const modal = await modalState();
   if (modal.active) {
@@ -547,9 +565,8 @@ describe("Updater engine failure modes", () => {
       },
     );
     await invoke("cancel_update_download");
-    await waitForModal("Download Cancelled", MODAL_TIMEOUT);
-    await clickModalButton("OK");
-    // The cancel notice must be gone, so only a late prompt can be open below.
+    await waitForCancelToast();
+    // The cancel notice is a toast, so only a late prompt can be open below.
     await waitForModal(false, MODAL_TIMEOUT);
 
     releaseArtifact();
@@ -1420,8 +1437,7 @@ describe("Updater engine failure modes", () => {
       },
     );
     await invoke("cancel_update_download");
-    await waitForModal("Download Cancelled", MODAL_TIMEOUT);
-    await clickModalButton("OK");
+    await waitForCancelToast();
     const atCancel = await browser.execute(() => window.__progress.length);
     // The cancelled transfer runs on until its body ends; the command returns
     // then, after every late progress callback.

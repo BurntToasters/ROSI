@@ -48,6 +48,12 @@ ROSI! A cross platform yt-dlp GUI built on Tauri V2!
 - **Accessibility:** In Windows High Contrast, toggles, progress bars and the selected wizard card stay visible. With "increase contrast" or "reduce transparency" turned on, panels are opaque.
 - **Accessibility:** Focus stays inside the sidebar and dialogs, skipping hidden and inactive controls.
 - **Formats:** A failed format fetch reports the end of yt-dlp's error output instead of all of its output. Download sizes show consistently across the queue, Activity and statistics.
+- **Downloads:** Pressing Cancel before a download starts now stops it once it starts, instead of letting it run while the window looks idle. Progress that arrives after a cancel no longer reopens the progress bar, and old speed and time remaining text is cleared.
+- **Settings:** The update channel button keeps its label and icon when opened. Reset Stats and preset Delete ask for confirmation first. Resetting the Interface section no longer resets Flat UI, which is set from the top bar. A failed settings import says "Import failed."
+- **Updater:** Cancelling an update download shows a short info message instead of a dialog.
+- **Queue:** Clear Queue says that the current download stops too, and the button is disabled when the queue is empty.
+- **Formats:** A missing or invalid URL in the format picker shows a message instead of a dialog.
+- **Tests:** New end-to-end coverage for cancelling a manual download before it starts, settings and preset confirmations, Clear Queue gating, and format picker messages.
 - **Tests:** Release preflight refuses the green `ci-gate` posted by the weekly scheduled CI run, and E2E proof fails if the source changes during the run.
 - **Tests:** E2E specs wait for the state they need instead of sleeping for a fixed time, and share one set of helpers.
 - **Downloads:** In a playlist, each entry after the first now shows its own download progress instead of reporting a merge, and the overall bar no longer jumps back during indeterminate steps.

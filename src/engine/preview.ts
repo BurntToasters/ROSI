@@ -125,7 +125,7 @@ export function renderVideoPreview(info: RosiVideoInfo) {
 
 // Shared with the renderer controller, which updates these while it runs.
 export const previewState: {
-  isFetchingPreview: unknown;
+  isFetchingPreview: boolean;
   previewAbort: (() => void) | null;
 } = {
   isFetchingPreview: false,
